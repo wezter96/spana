@@ -8,7 +8,7 @@ interface PlaywrightConfig {
   baseUrl?: string;
 }
 
-function makePlaywrightDriver(config: PlaywrightConfig): Effect.Effect<RawDriverService, DriverError> {
+export function makePlaywrightDriver(config: PlaywrightConfig): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const browser = yield* Effect.tryPromise({
       try: () => chromium.launch({ headless: config.headless ?? true }),
