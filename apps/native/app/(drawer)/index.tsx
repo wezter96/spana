@@ -10,11 +10,12 @@ export default function Home() {
 
   return (
     <Container>
-      <ScrollView style={styles.scrollView}>
-        <View style={styles.content}>
-          <Text style={[styles.title, { color: theme.text }]}>BETTER T STACK</Text>
+      <ScrollView testID="home-scroll" style={styles.scrollView}>
+        <View testID="home-content" style={styles.content}>
+          <Text testID="home-title" style={[styles.title, { color: theme.text }]}>BETTER T STACK</Text>
 
           <View
+            testID="home-card"
             style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
           ></View>
         </View>

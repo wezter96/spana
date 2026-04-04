@@ -10,10 +10,10 @@ export default function TabOne() {
 
   return (
     <Container>
-      <ScrollView style={styles.scrollView}>
-        <View style={styles.content}>
-          <Text style={[styles.title, { color: theme.text }]}>Tab One</Text>
-          <Text style={[styles.subtitle, { color: theme.text, opacity: 0.7 }]}>
+      <ScrollView testID="tab-one-scroll" style={styles.scrollView}>
+        <View testID="tab-one-content" style={styles.content}>
+          <Text testID="tab-one-title" style={[styles.title, { color: theme.text }]}>Tab One</Text>
+          <Text testID="tab-one-subtitle" style={[styles.subtitle, { color: theme.text, opacity: 0.7 }]}>
             Explore the first section of your app
           </Text>
         </View>
