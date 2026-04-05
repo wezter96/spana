@@ -1,10 +1,12 @@
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import astroMermaid from "astro-mermaid";
 
 export default defineConfig({
   site: "https://wezter96.github.io",
   base: "/prov",
   integrations: [
+    astroMermaid(),
     starlight({
       title: "prov",
       description: "TypeScript-native E2E testing for React Native + Web",
