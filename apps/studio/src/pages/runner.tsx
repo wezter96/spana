@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { orpc, client } from "@/lib/client";
 import { FlowList } from "@/components/flow-list";
@@ -42,7 +42,7 @@ export function RunnerPage() {
   const runCompleted = statusData?.status === "completed";
 
   // Auto-select all flows on first load
-  useMemo(() => {
+  useEffect(() => {
     if (flows.length > 0 && selectedFlows.size === 0) {
       setSelectedFlows(new Set(flows.map((f) => f.name)));
     }

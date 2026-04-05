@@ -17,6 +17,9 @@ interface DeviceScreenshotProps {
   onHoverEnd: () => void;
 }
 
+const boundsEqual = (a?: Bounds, b?: Bounds) =>
+  a && b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
 export function DeviceScreenshot({
   image,
   selectedBounds,
@@ -100,7 +103,7 @@ export function DeviceScreenshot({
           ) : null;
         })()}
       {hoveredBounds &&
-        hoveredBounds !== selectedBounds &&
+        !boundsEqual(hoveredBounds, selectedBounds) &&
         (() => {
           const style = boundsToStyle(hoveredBounds);
           return style ? (

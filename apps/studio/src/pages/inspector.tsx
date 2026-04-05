@@ -6,10 +6,7 @@ import { DeviceScreenshot } from "@/components/device-screenshot";
 import { ElementDetails } from "@/components/element-details";
 import { ElementTree } from "@/components/element-tree";
 import { RefreshCw, Radio } from "lucide-react";
-import {
-  elementsAtPoint,
-  getElementByPath,
-} from "../../../../packages/spana/src/studio/core/element-tree.js";
+import { elementsAtPoint, getElementByPath } from "@/lib/element-tree";
 
 type Platform = "web" | "android" | "ios";
 

@@ -1,4 +1,20 @@
-import type { Element } from "../../schemas/element.js";
+/** Pure tree operations on Element-like plain objects. No Effect dependency. */
+
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Element {
+  elementType?: string;
+  resourceId?: string;
+  text?: string;
+  accessibilityLabel?: string;
+  bounds?: Bounds;
+  children?: readonly Element[];
+}
 
 export interface FlatElement {
   element: Element;
@@ -19,7 +35,7 @@ export function flattenTree(root: Element, depth = 0, path: number[] = []): Flat
 
 /** Find an element by path indices in the tree. */
 export function getElementByPath(root: Element, path: number[]): Element | undefined {
-  let current = root;
+  let current: Element = root;
   for (const index of path) {
     if (!current.children?.[index]) return undefined;
     current = current.children[index];
@@ -36,17 +52,4 @@ export function elementsAtPoint(root: Element, x: number, y: number): FlatElemen
       return x >= bx && x <= bx + width && y >= by && y <= by + height;
     })
     .reverse(); // deepest first
-}
-
-/** Search elements by text, resourceId, accessibilityLabel, or elementType (case-insensitive substring). */
-export function searchElements(root: Element, query: string): FlatElement[] {
-  const q = query.toLowerCase();
-  return flattenTree(root).filter(({ element: el }) => {
-    return (
-      el.text?.toLowerCase().includes(q) ||
-      el.resourceId?.toLowerCase().includes(q) ||
-      el.accessibilityLabel?.toLowerCase().includes(q) ||
-      el.elementType?.toLowerCase().includes(q)
-    );
-  });
 }

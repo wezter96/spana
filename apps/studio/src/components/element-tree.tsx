@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { ChevronRight, ChevronDown, Search } from "lucide-react";
 
 interface Bounds {
@@ -158,7 +158,7 @@ export function ElementTree({ root, selectedPath, onSelect }: ElementTreeProps) 
   }, []);
 
   // Auto-expand path to selected element
-  useMemo(() => {
+  useEffect(() => {
     if (!selectedPath) return;
     setExpandedPaths((prev) => {
       const next = new Set(prev);
