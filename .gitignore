@@ -1,5 +1,6 @@
 # Dependencies
 node_modules
+.npmrc
 .pnp
 .pnp.js
 
@@ -59,3 +60,6 @@ drivers/*.xctest
 # Expo / React Native
 apps/native/android/
 apps/native/ios/
+
+# Studio embedded build
+packages/spana/studio-dist/

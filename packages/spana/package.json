@@ -24,7 +24,8 @@
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "studio-dist"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -45,7 +46,9 @@
     "test": "bun test",
     "test:e2e:framework-app": "bun run build && bun ./dist/cli.js test --config ./spana.config.ts",
     "test:watch": "bun test --watch",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "embed-studio": "bun scripts/embed-studio.ts",
+    "postbuild": "bun scripts/embed-studio.ts"
   },
   "dependencies": {
     "@effect/cli": "^0.75.0",
