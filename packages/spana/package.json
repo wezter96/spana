@@ -38,6 +38,10 @@
     "./steps": {
       "types": "./dist/gherkin/steps.d.ts",
       "import": "./dist/gherkin/steps.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
     }
   },
   "scripts": {
@@ -54,6 +58,7 @@
     "@effect/cli": "^0.75.0",
     "@effect/platform": "^0.96.0",
     "@effect/platform-node": "^0.106.0",
+    "@hono/node-server": "^1.19.12",
     "@orpc/client": "^1.13.13",
     "@orpc/server": "^1.13.13",
     "@orpc/zod": "^1.13.13",

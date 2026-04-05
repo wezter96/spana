@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { serveStatic } from "hono/bun";
+import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ManagedRuntime, Layer } from "effect";
@@ -49,7 +50,7 @@ export async function startStudio(options: StudioOptions) {
     app.get("/*", serveStatic({ root: staticDir, path: "index.html" }));
   }
 
-  const server = Bun.serve({ port, fetch: app.fetch });
+  const server = serve({ fetch: app.fetch, port });
 
   console.log(`\n  Spana Studio running at http://localhost:${port}\n`);
 
@@ -66,6 +67,7 @@ export async function startStudio(options: StudioOptions) {
 
   const shutdown = async () => {
     console.log("\n  Shutting down Spana Studio...\n");
+    server.close();
     await runtime.dispose();
   };
 
