@@ -2,7 +2,7 @@
 
 TypeScript-native E2E testing for React Native + Web
 
-[Documentation](https://wezter96.github.io/spana/) | [GitHub](https://github.com/wezter96/spana) | [npm](https://www.npmjs.com/package/spana)
+[Documentation](https://wezter96.github.io/spana/) | [GitHub](https://github.com/wezter96/spana) | [npm](https://www.npmjs.com/package/spana) | [E2E Test Report](https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html)
 
 ---
 
@@ -94,31 +94,31 @@ export default flow(
   { tags: ["smoke", "payments"], platforms: ["android", "ios"], timeout: 60000 },
   async ({ app, expect }) => {
     // ...
-  }
+  },
 );
 ```
 
 ### FlowConfig options
 
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `tags` | `string[]` | — | Tag for filtering with `--tag` |
-| `platforms` | `Platform[]` | all | Restrict to specific platforms |
-| `timeout` | `number` | config default | Timeout in ms for this flow |
-| `autoLaunch` | `boolean` | `true` | Launch app before flow starts |
+| Option       | Type         | Default        | Description                    |
+| ------------ | ------------ | -------------- | ------------------------------ |
+| `tags`       | `string[]`   | —              | Tag for filtering with `--tag` |
+| `platforms`  | `Platform[]` | all            | Restrict to specific platforms |
+| `timeout`    | `number`     | config default | Timeout in ms for this flow    |
+| `autoLaunch` | `boolean`    | `true`         | Launch app before flow starts  |
 
 ---
 
 ## CLI Commands
 
-| Command | Description |
-|---|---|
-| `spana test [path]` | Run test flows (default: `./flows`) |
-| `spana hierarchy` | Dump full element hierarchy as JSON |
-| `spana selectors` | List actionable elements with suggested selectors |
-| `spana validate [path]` | Validate flow files without a device connection |
-| `spana devices` | List connected devices across all platforms |
-| `spana version` | Show version |
+| Command                 | Description                                       |
+| ----------------------- | ------------------------------------------------- |
+| `spana test [path]`     | Run test flows (default: `./flows`)               |
+| `spana hierarchy`       | Dump full element hierarchy as JSON               |
+| `spana selectors`       | List actionable elements with suggested selectors |
+| `spana validate [path]` | Validate flow files without a device connection   |
+| `spana devices`         | List connected devices across all platforms       |
+| `spana version`         | Show version                                      |
 
 ### test options
 
@@ -147,31 +147,39 @@ import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
-    web:     { url: "http://localhost:3000" },
+    web: { url: "http://localhost:3000" },
     android: { packageName: "com.example.app" },
-    ios:     { bundleId: "com.example.app" },
+    ios: { bundleId: "com.example.app" },
   },
   platforms: ["web", "android", "ios"],
   flowDir: "./flows",
   reporters: ["console", "json"],
   defaults: {
-    waitTimeout:   5000,  // ms to wait for element
-    pollInterval:  200,   // ms between polls
-    settleTimeout: 300,   // ms of stability before match
-    retries:       2,     // retries on action failure
+    waitTimeout: 5000, // ms to wait for element
+    pollInterval: 200, // ms between polls
+    settleTimeout: 300, // ms of stability before match
+    retries: 2, // retries on action failure
   },
   artifacts: {
-    outputDir:        ".spana/artifacts",
-    captureOnFailure: true,   // screenshot + hierarchy on failure
+    outputDir: ".spana/artifacts",
+    captureOnFailure: true, // screenshot + hierarchy on failure
     captureOnSuccess: false,
-    screenshot:       true,
-    uiHierarchy:      true,
+    screenshot: true,
+    uiHierarchy: true,
   },
   hooks: {
-    beforeAll:  async ({ app }) => { /* setup */ },
-    beforeEach: async ({ app }) => { /* reset state */ },
-    afterEach:  async ({ app, result }) => { /* teardown */ },
-    afterAll:   async ({ app, summary }) => { /* cleanup */ },
+    beforeAll: async ({ app }) => {
+      /* setup */
+    },
+    beforeEach: async ({ app }) => {
+      /* reset state */
+    },
+    afterEach: async ({ app, result }) => {
+      /* teardown */
+    },
+    afterAll: async ({ app, summary }) => {
+      /* cleanup */
+    },
   },
 });
 ```
@@ -180,12 +188,12 @@ export default defineConfig({
 
 ## Selectors
 
-| Selector | Example | Notes |
-|---|---|---|
-| `testID` | `{ testID: "login-btn" }` | Preferred — maps to `accessibilityIdentifier` (iOS), `resource-id` (Android), `data-testid` (web) |
-| `text` | `{ text: "Sign In" }` | Visible label text, partial match supported |
-| `accessibilityLabel` | `{ accessibilityLabel: "Close" }` | OS accessibility label |
-| `point` | `{ point: { x: 100, y: 200 } }` | Absolute coordinate tap, use as last resort |
+| Selector             | Example                           | Notes                                                                                             |
+| -------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `testID`             | `{ testID: "login-btn" }`         | Preferred — maps to `accessibilityIdentifier` (iOS), `resource-id` (Android), `data-testid` (web) |
+| `text`               | `{ text: "Sign In" }`             | Visible label text, partial match supported                                                       |
+| `accessibilityLabel` | `{ accessibilityLabel: "Close" }` | OS accessibility label                                                                            |
+| `point`              | `{ point: { x: 100, y: 200 } }`   | Absolute coordinate tap, use as last resort                                                       |
 
 Selectors can be combined. When multiple fields are set, all must match.
 
@@ -224,12 +232,12 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for details.
 
 ## Platforms
 
-| Platform | Driver | Companion binary |
-|---|---|---|
-| Web / RN Web | Playwright (CDP) | None — Playwright is a dev dependency |
-| Android | UiAutomator2 HTTP client | Appium UiAutomator2 server APK (bundled, ~2-3 MB) |
-| iOS Simulator | WebDriverAgent HTTP client | WDA XCTest bundle (bundled unsigned, ~5 MB) |
-| iOS Device | Same WDA bundle | Re-signed with user certificate via `codesign`; requires `iproxy` |
+| Platform      | Driver                     | Companion binary                                                  |
+| ------------- | -------------------------- | ----------------------------------------------------------------- |
+| Web / RN Web  | Playwright (CDP)           | None — Playwright is a dev dependency                             |
+| Android       | UiAutomator2 HTTP client   | Appium UiAutomator2 server APK (bundled, ~2-3 MB)                 |
+| iOS Simulator | WebDriverAgent HTTP client | WDA XCTest bundle (bundled unsigned, ~5 MB)                       |
+| iOS Device    | Same WDA bundle            | Re-signed with user certificate via `codesign`; requires `iproxy` |
 
 ---
 
