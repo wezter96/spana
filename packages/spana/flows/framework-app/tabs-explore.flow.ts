@@ -4,39 +4,34 @@ import type { Platform } from "../../src/schemas/selector.js";
 const WEB_BASE_URL = "http://127.0.0.1:8081";
 
 function homePath(_platform: Platform): string {
-	return "/(drawer)";
+  return "/(drawer)";
 }
 
 function homeHref(platform: Platform): string {
-	const path = homePath(platform);
-	return platform === "web" ? `${WEB_BASE_URL}${path}` : `spana://${path}`;
+  const path = homePath(platform);
+  return platform === "web" ? `${WEB_BASE_URL}${path}` : `spana://${path}`;
 }
 
 export default flow(
-	"Framework app - navigate to tabs explore through the UI",
-	{
-		tags: ["e2e", "framework-app", "tabs"],
-		platforms: ["web", "android", "ios"],
-		autoLaunch: false,
-		artifacts: {
-			captureOnSuccess: true,
-			captureSteps: true,
-		},
-	},
-	async ({ app, expect, platform }) => {
-		if (platform === "ios") {
-			// iOS deep links via openLink trigger a system confirmation dialog; use launch instead
-			await app.launch();
-		} else {
-			await app.openLink(homeHref(platform));
-		}
-		await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
-		await app.tap({ accessibilityLabel: "Show navigation menu" });
-		await expect({ testID: "drawer-tabs-item" }).toBeVisible({ timeout: 10_000 });
-		await app.tap({ testID: "drawer-tabs-item" });
-		await expect({ testID: "tab-one-title" }).toBeVisible();
-		await app.tap({ accessibilityLabel: "Open explore tab" });
-		await expect({ testID: "tab-two-title" }).toBeVisible();
-		await expect({ testID: "tab-two-subtitle" }).toHaveText("Discover more features and content");
-	},
+  "Framework app - navigate to tabs explore through the UI",
+  {
+    tags: ["e2e", "framework-app", "tabs"],
+    platforms: ["web", "android", "ios"],
+    autoLaunch: false,
+    artifacts: {
+      captureOnSuccess: true,
+      captureSteps: true,
+    },
+  },
+  async ({ app, expect, platform }) => {
+    await app.openLink(homeHref(platform));
+    await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
+    await app.tap({ accessibilityLabel: "Show navigation menu" });
+    await expect({ testID: "drawer-tabs-item" }).toBeVisible({ timeout: 10_000 });
+    await app.tap({ testID: "drawer-tabs-item" });
+    await expect({ testID: "tab-one-title" }).toBeVisible();
+    await app.tap({ accessibilityLabel: "Open explore tab" });
+    await expect({ testID: "tab-two-title" }).toBeVisible();
+    await expect({ testID: "tab-two-subtitle" }).toHaveText("Discover more features and content");
+  },
 );

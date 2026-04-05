@@ -63,9 +63,13 @@ export function createWDADriver(
           terminateOnSimulator(simulatorUdid, targetBundleId);
           await sleep(500);
           launchWithUrlOnSimulator(simulatorUdid, targetBundleId, candidate);
-          await sleep(3000);
+          await sleep(1500);
           // Re-create WDA session to attach to the freshly launched app
-          try { await client.deleteSession(); } catch { /* old session may be stale */ }
+          try {
+            await client.deleteSession();
+          } catch {
+            /* old session may be stale */
+          }
           await client.createSession(targetBundleId);
           await client.disableQuiescence();
           await sleep(500);
@@ -81,15 +85,13 @@ export function createWDADriver(
     // Create session — must succeed before we can do anything
     yield* Effect.tryPromise({
       try: () => client.createSession(bundleId || undefined),
-      catch: (e) =>
-        new DriverError({ message: `Failed to create WDA session: ${e}` }),
+      catch: (e) => new DriverError({ message: `Failed to create WDA session: ${e}` }),
     });
 
     // Disable quiescence to prevent XCTest crashes on animated UIs
     yield* Effect.tryPromise({
       try: () => client.disableQuiescence(),
-      catch: (e) =>
-        new DriverError({ message: `Failed to disable quiescence: ${e}` }),
+      catch: (e) => new DriverError({ message: `Failed to disable quiescence: ${e}` }),
     });
 
     const service: RawDriverService = {
@@ -99,8 +101,7 @@ export function createWDADriver(
       dumpHierarchy: () =>
         Effect.tryPromise({
           try: () => client.getSource(),
-          catch: (e) =>
-            new DriverError({ message: `Failed to get page source: ${e}` }),
+          catch: (e) => new DriverError({ message: `Failed to get page source: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------
@@ -115,16 +116,14 @@ export function createWDADriver(
       doubleTapAtCoordinate: (x, y) =>
         Effect.tryPromise({
           try: () => client.doubleTap(x, y),
-          catch: (e) =>
-            new DriverError({ message: `Double tap failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Double tap failed: ${e}` }),
         }),
 
       longPressAtCoordinate: (x, y, duration) =>
         Effect.tryPromise({
           // duration arrives in ms (spana convention) → convert to seconds for WDA
           try: () => client.longPress(x, y, msToSec(duration)),
-          catch: (e) =>
-            new DriverError({ message: `Long press failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Long press failed: ${e}` }),
         }),
 
       swipe: (sx, sy, ex, ey, dur) =>
@@ -140,8 +139,7 @@ export function createWDADriver(
       inputText: (text) =>
         Effect.tryPromise({
           try: () => client.sendKeys(text),
-          catch: (e) =>
-            new DriverError({ message: `Input text failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Input text failed: ${e}` }),
         }),
 
       pressKey: (key) =>
@@ -160,8 +158,7 @@ export function createWDADriver(
             // Keys not mappable to a WDA button are silently ignored — callers
             // targeting Android key codes should use the UiAutomator2 driver.
           },
-          catch: (e) =>
-            new DriverError({ message: `Press key failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Press key failed: ${e}` }),
         }),
 
       hideKeyboard: () =>
@@ -169,8 +166,7 @@ export function createWDADriver(
           // WDA hides the keyboard when no text field has focus; pressing home
           // is the most reliable cross-version approach.
           try: () => client.pressHome(),
-          catch: (e) =>
-            new DriverError({ message: `Hide keyboard failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Hide keyboard failed: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------
@@ -179,8 +175,7 @@ export function createWDADriver(
       takeScreenshot: () =>
         Effect.tryPromise({
           try: () => client.getScreenshot(),
-          catch: (e) =>
-            new DriverError({ message: `Screenshot failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Screenshot failed: ${e}` }),
         }),
 
       getDeviceInfo: () =>
@@ -197,8 +192,7 @@ export function createWDADriver(
               driverType: "wda" as const,
             };
           },
-          catch: (e) =>
-            new DriverError({ message: `Get device info failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Get device info failed: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------
@@ -220,8 +214,7 @@ export function createWDADriver(
 
             await (opts?.deepLink ? client.openUrl(opts.deepLink) : client.launchApp(appBundleId));
           },
-          catch: (e) =>
-            new DriverError({ message: `Launch app failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Launch app failed: ${e}` }),
         }),
 
       stopApp: (appBundleId) =>
@@ -234,8 +227,7 @@ export function createWDADriver(
 
             return client.terminateApp(appBundleId);
           },
-          catch: (e) =>
-            new DriverError({ message: `Stop app failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Stop app failed: ${e}` }),
         }),
 
       killApp: (appBundleId) =>
@@ -248,8 +240,7 @@ export function createWDADriver(
 
             return client.terminateApp(appBundleId);
           },
-          catch: (e) =>
-            new DriverError({ message: `Kill app failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Kill app failed: ${e}` }),
         }),
 
       clearAppState: (appBundleId) =>
@@ -264,8 +255,7 @@ export function createWDADriver(
             // Full state clear (data + keychain) requires simctl / idb, which
             // are outside the scope of the HTTP-only client.
           },
-          catch: (e) =>
-            new DriverError({ message: `Clear app state failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Clear app state failed: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------
@@ -281,8 +271,7 @@ export function createWDADriver(
 
             await client.openUrl(url);
           },
-          catch: (e) =>
-            new DriverError({ message: `Open link failed: ${e}` }),
+          catch: (e) => new DriverError({ message: `Open link failed: ${e}` }),
         }),
 
       back: () =>
