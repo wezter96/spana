@@ -6,7 +6,7 @@ import type { RawDriverService } from "../drivers/raw-driver.js";
 import { findElement } from "./element-matcher.js";
 
 export interface WaitOptions {
-  timeout?: number;      // default 5000ms
+  timeout?: number; // default 5000ms
   pollInterval?: number; // default 200ms
   settleTimeout?: number; // default 500ms — wait for hierarchy to stabilize
 }
@@ -37,7 +37,7 @@ export function waitForElement(
       yield* Effect.sleep(Duration.millis(pollInterval));
     }
     return yield* new ElementNotFoundError({
-      message: `Element not found within ${timeout}ms`,
+      message: `Element not found within ${timeout}ms — selector: ${JSON.stringify(selector)}`,
       selector,
       timeoutMs: timeout,
     });
@@ -64,7 +64,7 @@ export function waitForNotVisible(
       yield* Effect.sleep(Duration.millis(pollInterval));
     }
     return yield* new WaitTimeoutError({
-      message: `Element still visible after ${timeout}ms`,
+      message: `Element still visible after ${timeout}ms — selector: ${JSON.stringify(selector)}`,
       selector,
       timeoutMs: timeout,
     });

@@ -139,3 +139,66 @@ describe("auto wait", () => {
     }
   });
 });
+
+describe("error messages", () => {
+  test("ElementNotFoundError includes selector in message", () => {
+    const err = new ElementNotFoundError({
+      message: 'Element not found within 5000ms — selector: {"testID":"login-btn"}',
+      selector: { testID: "login-btn" },
+      timeoutMs: 5000,
+    });
+    expect(err.message).toContain("testID");
+    expect(err.message).toContain("login-btn");
+    expect(err.message).toContain("5000");
+  });
+
+  test("WaitTimeoutError includes selector in message", () => {
+    const err = new WaitTimeoutError({
+      message: 'Element still visible after 3000ms — selector: {"text":"Loading"}',
+      selector: { text: "Loading" },
+      timeoutMs: 3000,
+    });
+    expect(err.message).toContain("text");
+    expect(err.message).toContain("Loading");
+    expect(err.message).toContain("3000");
+  });
+
+  test("waitForElement error message includes selector JSON", async () => {
+    const { driver } = createDriver([createElement()]);
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        waitForElement(driver, { testID: "login-btn" }, parse, {
+          timeout: 5,
+          pollInterval: 0,
+        }),
+      ),
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.message).toContain("testID");
+      expect(result.left.message).toContain("login-btn");
+    }
+  });
+
+  test("waitForNotVisible error message includes selector JSON", async () => {
+    const target = createElement({ text: "Loading" });
+    const { driver } = createDriver([createElement({ children: [target] })]);
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        waitForNotVisible(driver, { text: "Loading" }, parse, {
+          timeout: 5,
+          pollInterval: 0,
+        }),
+      ),
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.message).toContain("text");
+      expect(result.left.message).toContain("Loading");
+    }
+  });
+});
