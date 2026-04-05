@@ -57,8 +57,20 @@ export async function startStudio(options: StudioOptions) {
     const { exec } = await import("node:child_process");
     const cmd =
       process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-    exec(`${cmd} http://localhost:${port}`);
+    exec(`${cmd} http://localhost:${port}`, (error) => {
+      if (error) {
+        console.warn(`[studio] Failed to open browser:`, error.message);
+      }
+    });
   }
 
-  return server;
+  const shutdown = async () => {
+    console.log("\n  Shutting down Spana Studio...\n");
+    await runtime.dispose();
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  return { server, shutdown };
 }
