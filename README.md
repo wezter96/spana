@@ -13,7 +13,7 @@ TypeScript-native E2E testing for React Native + Web
 - Web via Playwright (CDP), Android via UiAutomator2, iOS via WebDriverAgent
 - Agent-first design — JSON reporter, hierarchy dump, and selector discovery for AI agents
 - Auto-wait with configurable poll interval, settle timeout, and retries
-- Multiple reporters: console, JSON, JUnit XML, HTML, Allure
+- Multiple reporters: console, JSON, JUnit XML, HTML
 - Artifact capture (screenshots + UI hierarchy) on failure
 
 ---
@@ -128,6 +128,7 @@ spana test --platform android,ios      # target platforms (default: web)
 spana test --tag smoke                 # filter by tag
 spana test --grep "log in"             # filter by name pattern
 spana test --reporter json             # reporter format
+spana test --reporter html             # self-contained HTML report
 spana test --config ./spana.config.ts   # explicit config path
 ```
 
@@ -153,7 +154,7 @@ export default defineConfig({
   },
   platforms: ["web", "android", "ios"],
   flowDir: "./flows",
-  reporters: ["console", "json"],
+  reporters: ["console", "json", "html"],
   defaults: {
     waitTimeout: 5000, // ms to wait for element
     pollInterval: 200, // ms between polls

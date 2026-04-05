@@ -17,13 +17,13 @@ spana test [path] [options]
 
 ### Options
 
-| Flag | Description |
-|---|---|
+| Flag                     | Description                                               |
+| ------------------------ | --------------------------------------------------------- |
 | `--platform <platforms>` | Comma-separated platform targets: `web`, `android`, `ios` |
-| `--tag <tag>` | Run only flows with this tag |
-| `--grep <pattern>` | Run only flows whose name matches this pattern |
-| `--reporter <name>` | Reporter: `console`, `json`, `junit`, `html`, `allure` |
-| `--config <path>` | Path to config file (default: `./spana.config.ts`) |
+| `--tag <tag>`            | Run only flows with this tag                              |
+| `--grep <pattern>`       | Run only flows whose name matches this pattern            |
+| `--reporter <name>`      | Reporter: `console`, `json`, `junit`, `html`              |
+| `--config <path>`        | Path to config file (default: `./spana.config.ts`)        |
 
 ### Examples
 
@@ -74,8 +74,8 @@ spana version
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| `0` | All flows passed |
-| `1` | One or more flows failed |
-| `2` | Configuration or setup error |
+| Code | Meaning                      |
+| ---- | ---------------------------- |
+| `0`  | All flows passed             |
+| `1`  | One or more flows failed     |
+| `2`  | Configuration or setup error |

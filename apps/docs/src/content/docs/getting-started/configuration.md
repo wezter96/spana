@@ -22,31 +22,39 @@ import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
-    web:     { url: "http://localhost:3000" },
+    web: { url: "http://localhost:3000" },
     android: { packageName: "com.example.app" },
-    ios:     { bundleId: "com.example.app" },
+    ios: { bundleId: "com.example.app" },
   },
   platforms: ["web", "android", "ios"],
   flowDir: "./flows",
-  reporters: ["console", "json"],
+  reporters: ["console", "json", "html"],
   defaults: {
-    waitTimeout:   5000,
-    pollInterval:  200,
+    waitTimeout: 5000,
+    pollInterval: 200,
     settleTimeout: 300,
-    retries:       2,
+    retries: 2,
   },
   artifacts: {
-    outputDir:        ".spana/artifacts",
+    outputDir: ".spana/artifacts",
     captureOnFailure: true,
     captureOnSuccess: false,
-    screenshot:       true,
-    uiHierarchy:      true,
+    screenshot: true,
+    uiHierarchy: true,
   },
   hooks: {
-    beforeAll:  async ({ app }) => { /* global setup */ },
-    beforeEach: async ({ app }) => { /* reset state */ },
-    afterEach:  async ({ app, result }) => { /* teardown */ },
-    afterAll:   async ({ app, summary }) => { /* cleanup */ },
+    beforeAll: async ({ app }) => {
+      /* global setup */
+    },
+    beforeEach: async ({ app }) => {
+      /* reset state */
+    },
+    afterEach: async ({ app, result }) => {
+      /* teardown */
+    },
+    afterAll: async ({ app, summary }) => {
+      /* cleanup */
+    },
   },
 });
 ```
@@ -63,11 +71,11 @@ apps: {
 }
 ```
 
-| Field | Platform | Description |
-|---|---|---|
-| `web.url` | Web | Base URL Playwright navigates to on launch |
-| `android.packageName` | Android | Android application ID (e.g. `com.example.app`) |
-| `ios.bundleId` | iOS | iOS bundle identifier (e.g. `com.example.app`) |
+| Field                 | Platform | Description                                     |
+| --------------------- | -------- | ----------------------------------------------- |
+| `web.url`             | Web      | Base URL Playwright navigates to on launch      |
+| `android.packageName` | Android  | Android application ID (e.g. `com.example.app`) |
+| `ios.bundleId`        | iOS      | iOS bundle identifier (e.g. `com.example.app`)  |
 
 ## `platforms`
 
@@ -97,13 +105,12 @@ reporters?: string[]
 
 One or more reporter names. Available reporters:
 
-| Name | Output |
-|---|---|
-| `console` | Human-readable terminal output (default) |
-| `json` | Structured JSON events to stdout |
-| `junit` | JUnit XML — compatible with CI artifact ingestion |
-| `html` | HTML report written to disk |
-| `allure` | Allure-compatible report data |
+| Name      | Output                                               |
+| --------- | ---------------------------------------------------- |
+| `console` | Human-readable terminal output (default)             |
+| `json`    | Structured JSON events to stdout                     |
+| `junit`   | JUnit XML — compatible with CI artifact ingestion    |
+| `html`    | Self-contained HTML report with embedded screenshots |
 
 Default: `["console"]`
 
@@ -120,12 +127,12 @@ defaults?: {
 }
 ```
 
-| Option | Default | Description |
-|---|---|---|
-| `waitTimeout` | `5000` | Maximum ms to wait for an element to appear |
-| `pollInterval` | `200` | ms between hierarchy polls |
-| `settleTimeout` | `300` | ms the element must remain stable before matching |
-| `retries` | `2` | Number of retries on action failure (e.g. tap on stale element) |
+| Option          | Default | Description                                                     |
+| --------------- | ------- | --------------------------------------------------------------- |
+| `waitTimeout`   | `5000`  | Maximum ms to wait for an element to appear                     |
+| `pollInterval`  | `200`   | ms between hierarchy polls                                      |
+| `settleTimeout` | `300`   | ms the element must remain stable before matching               |
+| `retries`       | `2`     | Number of retries on action failure (e.g. tap on stale element) |
 
 ## `artifacts`
 
@@ -141,13 +148,13 @@ artifacts?: {
 }
 ```
 
-| Option | Default | Description |
-|---|---|---|
-| `outputDir` | `".spana/artifacts"` | Directory to write captured artifacts |
-| `captureOnFailure` | `true` | Capture on failed flows |
-| `captureOnSuccess` | `false` | Capture on passed flows |
-| `screenshot` | `true` | Include screenshot in capture |
-| `uiHierarchy` | `true` | Include UI hierarchy dump in capture |
+| Option             | Default              | Description                           |
+| ------------------ | -------------------- | ------------------------------------- |
+| `outputDir`        | `".spana/artifacts"` | Directory to write captured artifacts |
+| `captureOnFailure` | `true`               | Capture on failed flows               |
+| `captureOnSuccess` | `false`              | Capture on passed flows               |
+| `screenshot`       | `true`               | Include screenshot in capture         |
+| `uiHierarchy`      | `true`               | Include UI hierarchy dump in capture  |
 
 ## `hooks`
 
@@ -162,11 +169,11 @@ hooks?: {
 }
 ```
 
-| Hook | When it runs |
-|---|---|
-| `beforeAll` | Once before all flows on a platform |
-| `beforeEach` | Before each individual flow |
-| `afterEach` | After each individual flow (always runs, even on failure) |
-| `afterAll` | Once after all flows on a platform |
+| Hook         | When it runs                                              |
+| ------------ | --------------------------------------------------------- |
+| `beforeAll`  | Once before all flows on a platform                       |
+| `beforeEach` | Before each individual flow                               |
+| `afterEach`  | After each individual flow (always runs, even on failure) |
+| `afterAll`   | Once after all flows on a platform                        |
 
 `HookContext` provides `app`, `expect`, `platform`, `result` (in `afterEach`), and `summary` (in `afterAll`).

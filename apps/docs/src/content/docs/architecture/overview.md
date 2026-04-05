@@ -21,6 +21,7 @@ graph TD
     F --> G1[console]
     F --> G2[json]
     F --> G3[junit]
+    F --> G4[html]
 ```
 
 Platforms run in parallel. Within each platform, flows run serially. Results are collected and passed to the configured reporter(s).
@@ -183,6 +184,6 @@ graph TD
     Src --> Agent[agent/ — session.ts for agent/CLI inspection]
     Src --> CLI2[cli/ — CLI entry point]
     Src --> Device[device/ — ADB, simctl device discovery]
-    Src --> Report[report/ — console, json, junit reporters]
+    Src --> Report[report/ — console, json, junit, html reporters]
     Src --> Schemas[schemas/ — Element, Selector, DeviceInfo types]
 ```
