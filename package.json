@@ -20,13 +20,15 @@
   "scripts": {
     "dev": "turbo dev",
     "build": "turbo build",
-    "prepare": "effect-language-service patch",
+    "prepare": "lefthook install && effect-language-service patch",
+    "lint": "oxlint .",
+    "test": "bun test packages",
     "check-types": "turbo check-types",
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "dev:tui": "turbo -F tui dev",
     "test:e2e:framework-app": "bun run --cwd packages/spana test:e2e:framework-app",
-    "check": "oxlint && oxfmt --write"
+    "check": "bun run lint && oxfmt --write"
   },
   "dependencies": {
     "@spana/env": "workspace:*",
@@ -37,6 +39,7 @@
     "@babel/code-frame": "^7.29.0",
     "@effect/language-service": "^0.84.3",
     "@spana/config": "workspace:*",
+    "@types/node": "^25.5.2",
     "lefthook": "^2.0.13",
     "oxfmt": "^0.26.0",
     "oxlint": "^1.41.0",

@@ -1,4 +1,4 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, ScrollView, StyleSheet } from "react-native";
 
 import { Container } from "@/components/container";
 import { NAV_THEME } from "@/lib/constants";
@@ -12,7 +12,9 @@ export default function Home() {
     <Container>
       <ScrollView testID="home-scroll" style={styles.scrollView}>
         <View testID="home-content" style={styles.content}>
-          <Text testID="home-title" style={[styles.title, { color: theme.text }]}>BETTER T STACK</Text>
+          <Text testID="home-title" style={[styles.title, { color: theme.text }]}>
+            BETTER T STACK
+          </Text>
 
           <View
             testID="home-card"

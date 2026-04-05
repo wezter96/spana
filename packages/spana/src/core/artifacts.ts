@@ -24,14 +24,20 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
 };
 
 function safeName(value: string): string {
-  return value
-    .replace(/[^a-zA-Z0-9-_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 80) || "artifact";
+  return (
+    value
+      .replace(/[^a-zA-Z0-9-_]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || "artifact"
+  );
 }
 
-function flowArtifactDir(config: ResolvedArtifactConfig, flowName: string, platform: string): string {
+function flowArtifactDir(
+  config: ResolvedArtifactConfig,
+  flowName: string,
+  platform: string,
+): string {
   const dir = join(config.outputDir, `${safeName(flowName)}-${platform}`);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -47,7 +53,7 @@ export function resolveArtifactConfig(
   return configs.reduce<ResolvedArtifactConfig>(
     (resolved, config) => ({
       ...resolved,
-      ...(config ?? {}),
+      ...config,
     }),
     { ...DEFAULT_ARTIFACT_CONFIG },
   );
@@ -72,9 +78,7 @@ export async function captureArtifacts(
 
   if (config.screenshot) {
     try {
-      const screenshot = await Effect.runPromise(
-        Effect.orDie(driver.takeScreenshot()),
-      );
+      const screenshot = await Effect.runPromise(Effect.orDie(driver.takeScreenshot()));
       const path = join(dir, "screenshot.png");
       writeFileSync(path, screenshot);
       attachments.push(createAttachment(`${status}-screenshot`, "image/png", path));
@@ -85,9 +89,7 @@ export async function captureArtifacts(
 
   if (config.uiHierarchy) {
     try {
-      const hierarchy = await Effect.runPromise(
-        Effect.orDie(driver.dumpHierarchy()),
-      );
+      const hierarchy = await Effect.runPromise(Effect.orDie(driver.dumpHierarchy()));
       const path = join(dir, "hierarchy.json");
       writeFileSync(path, hierarchy, "utf-8");
       attachments.push(createAttachment(`${status}-hierarchy`, "application/json", path));
@@ -115,7 +117,7 @@ export async function captureStepScreenshot(
     mkdirSync(dir, { recursive: true });
     const fileName = `${String(stepIndex).padStart(3, "0")}-${safeName(stepName)}.png`;
     const path = join(dir, fileName);
-    const bytes = screenshot ?? await Effect.runPromise(Effect.orDie(driver.takeScreenshot()));
+    const bytes = screenshot ?? (await Effect.runPromise(Effect.orDie(driver.takeScreenshot())));
     writeFileSync(path, bytes);
     return createAttachment(stepName, "image/png", path);
   } catch {

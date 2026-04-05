@@ -82,7 +82,7 @@ function tokenizeXML(xml: string): RawNode[] {
 
     // Read tag name
     const tagStart = pos;
-    while (pos < xml.length && !/[\s\/>]/.test(xml[pos]!)) pos++;
+    while (pos < xml.length && !/[\s/>]/.test(xml[pos]!)) pos++;
     const tagName = xml.slice(tagStart, pos);
 
     // Read through tag body to find end of opening tag
@@ -153,7 +153,7 @@ function tokenizeXML(xml: string): RawNode[] {
     // Peek at tag name
     const peek = pos + 1;
     let nameEnd = peek;
-    while (nameEnd < xml.length && !/[\s\/>]/.test(xml[nameEnd]!)) nameEnd++;
+    while (nameEnd < xml.length && !/[\s/>]/.test(xml[nameEnd]!)) nameEnd++;
     const peekName = xml.slice(peek, nameEnd);
 
     if (peekName === "AppiumAUT") {
@@ -208,11 +208,9 @@ function rawNodeToElement(node: RawNode): Element {
   const focused = a["focused"] !== undefined ? a["focused"] === "true" : undefined;
 
   // iOS doesn't expose a clickable attribute — infer from element type
-  const clickable =
-    elementType !== undefined ? CLICKABLE_TYPES.has(elementType) : undefined;
+  const clickable = elementType !== undefined ? CLICKABLE_TYPES.has(elementType) : undefined;
 
-  const children =
-    node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
+  const children = node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
 
   return {
     ...(id !== undefined ? { id } : {}),

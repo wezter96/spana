@@ -5,7 +5,7 @@ import type { Element } from "../../schemas/element.js";
  */
 function parseBounds(s: string): Element["bounds"] {
   // "[x1,y1][x2,y2]" → "x1,y1,x2,y2"
-  const normalized = s.replace("][", ",").replace(/[\[\]]/g, "");
+  const normalized = s.replace("][", ",").replace(/[[\]]/g, "");
   const parts = normalized.split(",");
   if (parts.length !== 4) {
     return { x: 0, y: 0, width: 0, height: 0 };
@@ -91,7 +91,7 @@ function tokenizeXML(xml: string): RawNode[] {
 
     // Read tag name
     const tagStart = pos;
-    while (pos < xml.length && !/[\s\/>]/.test(xml[pos]!)) pos++;
+    while (pos < xml.length && !/[\s/>]/.test(xml[pos]!)) pos++;
     const tagName = xml.slice(tagStart, pos);
 
     // Read until end of opening tag
@@ -166,7 +166,7 @@ function tokenizeXML(xml: string): RawNode[] {
     // Peek at tag name
     const peek = pos + 1;
     let nameEnd = peek;
-    while (nameEnd < xml.length && !/[\s\/>]/.test(xml[nameEnd]!)) nameEnd++;
+    while (nameEnd < xml.length && !/[\s/>]/.test(xml[nameEnd]!)) nameEnd++;
     const peekName = xml.slice(peek, nameEnd);
 
     if (peekName === "hierarchy") {
@@ -212,8 +212,7 @@ function rawNodeToElement(node: RawNode): Element {
   const focused = a["focused"] !== undefined ? a["focused"] === "true" : undefined;
   const clickable = a["clickable"] !== undefined ? a["clickable"] === "true" : undefined;
 
-  const children =
-    node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
+  const children = node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
 
   return {
     ...(id !== undefined ? { id } : {}),
