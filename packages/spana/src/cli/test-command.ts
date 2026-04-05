@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { Effect } from "effect";
 import { discoverFlows, loadFlowFile, filterFlows } from "../core/runner.js";
 import { orchestrate, type PlatformConfig } from "../core/orchestrator.js";
@@ -29,7 +29,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   // 1. Load config
   let config: ProvConfig = {};
   const configPath = resolve(opts.configPath ?? "spana.config.ts");
-  const configDir = configPath.replace(/\/[^/]+$/, "");
+  const configDir = dirname(configPath);
   try {
     const mod = await import(configPath);
     config = mod.default ?? {};
@@ -43,12 +43,17 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     config.artifacts.outputDir = resolveFromConfig(config.artifacts.outputDir);
   }
 
-  const platforms: Platform[] = opts.platforms.length > 0
-    ? opts.platforms
-    : (config.platforms && config.platforms.length > 0 ? config.platforms : ["web"]);
+  const platforms: Platform[] =
+    opts.platforms.length > 0
+      ? opts.platforms
+      : config.platforms && config.platforms.length > 0
+        ? config.platforms
+        : ["web"];
   const reporterNames = opts.reporter?.trim()
     ? opts.reporter
-    : (config.reporters && config.reporters.length > 0 ? config.reporters.join(",") : "console");
+    : config.reporters && config.reporters.length > 0
+      ? config.reporters.join(",")
+      : "console";
 
   // 2. Discover flows
   const flowDir = opts.flowPath ?? resolveFromConfig(config.flowDir ?? "./flows");
@@ -97,9 +102,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
           },
         },
         autoLaunch: true,
-        flowTimeout: config.defaults?.waitTimeout
-          ? config.defaults.waitTimeout * 10
-          : 60_000,
+        flowTimeout: config.defaults?.waitTimeout ? config.defaults.waitTimeout * 10 : 60_000,
         artifactConfig: config.artifacts,
       };
       platformConfigs.push({ platform, driver, engineConfig });
@@ -129,14 +132,14 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
             },
           },
           autoLaunch: true,
-          flowTimeout: config.defaults?.waitTimeout
-            ? config.defaults.waitTimeout * 10
-            : 60_000,
+          flowTimeout: config.defaults?.waitTimeout ? config.defaults.waitTimeout * 10 : 60_000,
           artifactConfig: config.artifacts,
         };
         platformConfigs.push({ platform, driver, engineConfig });
       } catch (e) {
-        console.log(`Android setup failed on ${device.serial}: ${e instanceof Error ? e.message : e}`);
+        console.log(
+          `Android setup failed on ${device.serial}: ${e instanceof Error ? e.message : e}`,
+        );
       }
     }
 
@@ -170,9 +173,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
             },
           },
           autoLaunch: true,
-          flowTimeout: config.defaults?.waitTimeout
-            ? config.defaults.waitTimeout * 10
-            : 60_000,
+          flowTimeout: config.defaults?.waitTimeout ? config.defaults.waitTimeout * 10 : 60_000,
           artifactConfig: config.artifacts,
         };
         platformConfigs.push({ platform, driver, engineConfig });
@@ -188,23 +189,27 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   // 6. Report
   const { createConsoleReporter } = await import("../report/console.js");
   const { createJsonReporter } = await import("../report/json.js");
-
   const { createJUnitReporter } = await import("../report/junit.js");
+  const { createHtmlReporter } = await import("../report/html.js");
 
+  const resolvedOutputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
   const reporters = reporterNames.split(",").map((r) => {
     switch (r.trim()) {
-      case "json": return createJsonReporter();
-      case "junit": return createJUnitReporter(resolveFromConfig(config.artifacts?.outputDir ?? "./spana-output"));
-      default: return createConsoleReporter();
+      case "json":
+        return createJsonReporter();
+      case "junit":
+        return createJUnitReporter(resolvedOutputDir);
+      case "html":
+        return createHtmlReporter(resolvedOutputDir);
+      default:
+        return createConsoleReporter();
     }
   });
 
   for (const r of result.results) {
     const flowResult = {
       ...r,
-      error: r.error
-        ? { message: r.error.message, stack: r.error.stack }
-        : undefined,
+      error: r.error ? { message: r.error.message, stack: r.error.stack } : undefined,
     };
     for (const reporter of reporters) {
       if (r.status === "passed") {
@@ -224,9 +229,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       durationMs: result.totalDurationMs,
       results: result.results.map((r) => ({
         ...r,
-        error: r.error
-          ? { message: r.error.message, stack: r.error.stack }
-          : undefined,
+        error: r.error ? { message: r.error.message, stack: r.error.stack } : undefined,
       })),
       platforms,
     });
