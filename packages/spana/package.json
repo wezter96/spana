@@ -1,5 +1,5 @@
 {
-  "name": "spana",
+  "name": "spana-test",
   "version": "0.0.1",
   "description": "TypeScript-native E2E testing for React Native + Web",
   "keywords": [
@@ -23,7 +23,8 @@
   },
   "files": [
     "dist",
-    "LICENSE"
+    "LICENSE",
+    "README.md"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -45,7 +46,7 @@
   "dependencies": {
     "@effect/cli": "^0.75.0",
     "@effect/platform": "^0.96.0",
-    "@effect/platform-bun": "^0.89.0",
+    "@effect/platform-node": "^0.106.0",
     "effect": "^3.21.0",
     "playwright-core": "^1.49.0"
   },
