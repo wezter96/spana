@@ -51,8 +51,13 @@
     "@effect/cli": "^0.75.0",
     "@effect/platform": "^0.96.0",
     "@effect/platform-node": "^0.106.0",
+    "@orpc/client": "^1.13.13",
+    "@orpc/server": "^1.13.13",
+    "@orpc/zod": "^1.13.13",
     "effect": "^3.21.0",
-    "playwright-core": "^1.49.0"
+    "hono": "^4.12.10",
+    "playwright-core": "^1.49.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cucumber/cucumber-expressions": "^19.0.0",
