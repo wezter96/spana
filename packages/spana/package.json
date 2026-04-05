@@ -2,6 +2,15 @@
   "name": "spana",
   "version": "0.0.1",
   "description": "TypeScript-native E2E testing for React Native + Web",
+  "keywords": [
+    "android",
+    "cross-platform",
+    "e2e",
+    "ios",
+    "playwright",
+    "react-native",
+    "testing"
+  ],
   "license": "Apache-2.0",
   "author": "Anton Wester",
   "repository": {
@@ -9,34 +18,21 @@
     "url": "git+https://github.com/wezter96/spana.git",
     "directory": "packages/spana"
   },
-  "keywords": [
-    "e2e",
-    "testing",
-    "react-native",
-    "playwright",
-    "ios",
-    "android",
-    "cross-platform"
-  ],
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "bin": {
+    "spana": "dist/cli.js"
+  },
   "files": [
     "dist",
     "LICENSE"
   ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./agent": {
-      "types": "./dist/agent/index.d.ts",
-      "import": "./dist/agent/index.js"
     }
-  },
-  "bin": {
-    "spana": "dist/cli.js"
   },
   "scripts": {
     "dev": "tsup --watch",
@@ -50,8 +46,6 @@
     "@effect/cli": "^0.75.0",
     "@effect/platform": "^0.96.0",
     "@effect/platform-bun": "^0.89.0",
-    "appium-uiautomator2-server": "^9.11.1",
-    "appium-webdriveragent": "^11.4.1",
     "effect": "^3.21.0",
     "playwright-core": "^1.49.0"
   },
@@ -59,5 +53,9 @@
     "@types/bun": "^1.2.0",
     "tsup": "^8.3.5",
     "typescript": "^5.7.2"
+  },
+  "optionalDependencies": {
+    "appium-uiautomator2-server": "^9.11.1",
+    "appium-webdriveragent": "^11.4.1"
   }
 }

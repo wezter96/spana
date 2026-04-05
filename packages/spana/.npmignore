@@ -1,0 +1,8 @@
+src/
+flows/
+scripts/
+spana-output/
+spana.config.ts
+tsconfig.json
+tsup.config.ts
+*.tsbuildinfo
