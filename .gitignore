@@ -49,3 +49,13 @@ coverage
 .cache
 tmp
 temp
+
+# Prov
+prov-output/
+.wda-builds/
+drivers/*.apk
+drivers/*.xctest
+
+# Expo / React Native
+apps/native/android/
+apps/native/ios/
