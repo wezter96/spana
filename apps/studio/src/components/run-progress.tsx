@@ -26,6 +26,8 @@ interface RunProgressProps {
   results: FlowResult[];
   isRunning: boolean;
   onSelectResult?: (result: FlowResult) => void;
+  onRemoveResult?: (index: number) => void;
+  onClearResults?: () => void;
   selectedResult?: FlowResult;
 }
 
@@ -51,6 +53,8 @@ export function RunProgress({
   results,
   isRunning,
   onSelectResult,
+  onRemoveResult,
+  onClearResults,
   selectedResult,
 }: RunProgressProps) {
   const passed = results.filter((r) => r.status === "passed").length;
@@ -67,6 +71,15 @@ export function RunProgress({
             {passed > 0 && <span className="text-emerald-400">{passed} passed</span>}
             {failed > 0 && <span className="text-red-400">{failed} failed</span>}
             {skipped > 0 && <span className="text-zinc-500">{skipped} skipped</span>}
+            {results.length > 0 && !isRunning && onClearResults && (
+              <button
+                onClick={onClearResults}
+                className="text-zinc-500 hover:text-zinc-300 transition-colors ml-1"
+                title="Clear all results"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -85,20 +98,36 @@ export function RunProgress({
           const isSelected =
             selectedResult?.name === result.name && selectedResult?.platform === result.platform;
           return (
-            <button
+            <div
               key={`${result.name}-${result.platform}-${i}`}
-              onClick={() => onSelectResult?.(result)}
-              className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded text-left transition-colors ${
+              className={`group flex items-center gap-0.5 rounded transition-colors ${
                 isSelected ? "bg-zinc-800 ring-1 ring-zinc-700" : "hover:bg-zinc-800/50"
               }`}
             >
-              <StatusIcon status={result.status} />
-              <span className="text-sm text-zinc-200 truncate flex-1">{result.name}</span>
-              <span className="text-xs text-zinc-500">{result.platform}</span>
-              <span className="text-xs text-zinc-500 tabular-nums">
-                {formatDuration(result.durationMs)}
-              </span>
-            </button>
+              <button
+                onClick={() => onSelectResult?.(result)}
+                className="flex-1 flex items-center gap-2.5 px-2 py-1.5 text-left min-w-0"
+              >
+                <StatusIcon status={result.status} />
+                <span className="text-sm text-zinc-200 truncate flex-1">{result.name}</span>
+                <span className="text-xs text-zinc-500">{result.platform}</span>
+                <span className="text-xs text-zinc-500 tabular-nums">
+                  {formatDuration(result.durationMs)}
+                </span>
+              </button>
+              {onRemoveResult && !isRunning && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveResult(i);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-1 mr-1 text-zinc-600 hover:text-zinc-300 transition-all shrink-0"
+                  title="Remove result"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           );
         })}
       </div>

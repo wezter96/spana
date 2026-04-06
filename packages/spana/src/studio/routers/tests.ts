@@ -231,6 +231,7 @@ export const testsRouter = {
                         return {
                           name: a.name,
                           contentType: a.contentType,
+                          path: a.path,
                           url: `/artifacts/${relativePath}`,
                         };
                       }) ?? [];

@@ -287,7 +287,10 @@ export function startIproxy(
   proc.unref();
 
   // Give iproxy a moment to bind
-  execSync("sleep 1");
+  const waitUntil = Date.now() + 1500;
+  while (Date.now() < waitUntil) {
+    /* busy wait */
+  }
 
   return {
     host: "localhost",
