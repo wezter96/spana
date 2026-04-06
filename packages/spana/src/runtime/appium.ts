@@ -28,13 +28,9 @@ export async function buildAppiumAndroidRuntime(
   const sessionCaps = client.getSessionCaps();
   const serverUrl = appiumConfig.serverUrl!;
 
-  // Detect cloud provider and extract metadata
+  // Detect cloud provider
   const detectedProvider = detectProvider(serverUrl);
-  let providerName: string | undefined;
-  if (detectedProvider && sessionId) {
-    detectedProvider.extractMeta(sessionId, sessionCaps ?? {}, {} as Record<string, string>);
-    providerName = detectedProvider.name();
-  }
+  const providerName = detectedProvider?.name();
 
   return {
     runtime: {
@@ -92,13 +88,9 @@ export async function buildAppiumIOSRuntime(
   const sessionCaps = client.getSessionCaps();
   const serverUrl = appiumConfig.serverUrl!;
 
-  // Detect cloud provider and extract metadata
+  // Detect cloud provider
   const detectedProvider = detectProvider(serverUrl);
-  let providerName: string | undefined;
-  if (detectedProvider && sessionId) {
-    detectedProvider.extractMeta(sessionId, sessionCaps ?? {}, {} as Record<string, string>);
-    providerName = detectedProvider.name();
-  }
+  const providerName = detectedProvider?.name();
 
   return {
     runtime: {
