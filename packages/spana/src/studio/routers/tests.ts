@@ -8,13 +8,9 @@ import {
   discoverStepFiles,
   loadStepFiles,
 } from "../../core/runner.js";
-import { orchestrate, type PlatformConfig } from "../../core/orchestrator.js";
 import type { FlowResult, RunSummary } from "../../report/types.js";
 import type { Platform } from "../../schemas/selector.js";
 import type { FlowDefinition } from "../../api/flow.js";
-import type { EngineConfig } from "../../core/engine.js";
-import type { ProvConfig } from "../../schemas/config.js";
-import { Effect } from "effect";
 
 // ---------------------------------------------------------------------------
 // In-memory run tracking
@@ -154,86 +150,91 @@ export const testsRouter = {
       const run: ActiveRun = { id: runId, status: "running", results: [] };
       activeRuns.set(runId, run);
 
-      // Fire-and-forget: run tests in background
+      // Fire-and-forget: run tests via bun subprocess (Node can't import .ts drivers)
       void (async () => {
+        const platforms = input.platforms as Platform[];
+        const flowDir = input.flowDir ?? context.config.flowDir ?? "./flows";
         try {
-          const flowDir = input.flowDir ?? context.config.flowDir ?? "./flows";
-          const flows = await discoverAndLoad(flowDir);
-          const platforms = input.platforms as Platform[];
-          const filtered = filterFlows(flows, {
-            tags: input.tags,
-            grep: input.grep,
-            platforms,
+          const { spawn } = await import("node:child_process");
+
+          // Use the spana CLI via bun to run tests with JSON reporter
+          const args = [
+            "packages/spana/dist/cli.js",
+            "test",
+            flowDir,
+            "--platform",
+            platforms.join(","),
+            "--reporter",
+            "json",
+          ];
+          if (input.grep) {
+            args.push("--grep", input.grep);
+          }
+          if (input.tags && input.tags.length > 0) {
+            args.push("--tag", input.tags.join(","));
+          }
+
+          const child = spawn("bun", args, {
+            cwd: resolve("."),
+            stdio: ["ignore", "pipe", "pipe"],
           });
 
-          if (filtered.length === 0) {
-            run.status = "completed";
-            run.summary = {
-              total: 0,
-              passed: 0,
-              failed: 0,
-              skipped: 0,
-              flaky: 0,
-              durationMs: 0,
-              results: [],
-              platforms,
-            };
-            return;
-          }
-
-          // Build platform configs — requires driver setup per platform
-          const platformConfigs = await buildPlatformConfigs(platforms);
-
-          if (platformConfigs.length === 0) {
-            run.status = "completed";
-            run.summary = {
-              total: 0,
-              passed: 0,
-              failed: 0,
-              skipped: 0,
-              flaky: 0,
-              durationMs: 0,
-              results: [],
-              platforms,
-            };
-            return;
-          }
-
-          const result = await orchestrate(filtered, platformConfigs);
-
-          // Map results to FlowResult (serializable)
-          run.results = result.results.map((r) => ({
-            name: r.name,
-            platform: r.platform,
-            status: r.status,
-            durationMs: r.durationMs,
-            error: r.error ? { message: r.error.message, stack: r.error.stack } : undefined,
-            steps: r.steps,
-          }));
-
-          run.summary = {
-            total: result.results.length,
-            passed: result.passed,
-            failed: result.failed,
-            skipped: result.skipped,
-            flaky: result.flaky,
-            durationMs: result.totalDurationMs,
-            results: run.results,
-            platforms,
-          };
-          run.status = "completed";
-
-          // Cleanup drivers
-          for (const pc of platformConfigs) {
-            try {
-              await Effect.runPromise(pc.driver.killApp(""));
-            } catch {
-              // ignore cleanup errors
+          let stdout = "";
+          child.stdout.on("data", (chunk: Buffer) => {
+            stdout += chunk.toString();
+            // Parse streaming JSON events line by line
+            const lines = stdout.split("\n");
+            stdout = lines.pop() ?? ""; // keep incomplete last line
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const event = JSON.parse(line);
+                if (event.event === "flowPass" || event.event === "flowFail") {
+                  run.results.push({
+                    name: event.name,
+                    platform: event.platform,
+                    status: event.status,
+                    durationMs: event.durationMs,
+                    error: event.error,
+                    steps: event.steps,
+                  });
+                }
+                if (event.event === "runComplete") {
+                  run.summary = {
+                    total: event.total,
+                    passed: event.passed,
+                    failed: event.failed,
+                    skipped: event.skipped,
+                    flaky: event.flaky ?? 0,
+                    durationMs: event.durationMs,
+                    results: run.results,
+                    platforms,
+                  };
+                }
+              } catch {
+                // not JSON, skip
+              }
             }
-          }
-        } catch {
+          });
+
+          child.on("close", () => {
+            run.status = "completed";
+            if (!run.summary) {
+              run.summary = {
+                total: run.results.length,
+                passed: run.results.filter((r) => r.status === "passed").length,
+                failed: run.results.filter((r) => r.status === "failed").length,
+                skipped: run.results.filter((r) => r.status === "skipped").length,
+                flaky: 0,
+                durationMs: 0,
+                results: run.results,
+                platforms,
+              };
+            }
+          });
+        } catch (err) {
+          console.error("[studio] Failed to start test run:", err);
           run.status = "completed";
-          run.results = [];
           run.summary = {
             total: 0,
             passed: 0,
@@ -242,7 +243,7 @@ export const testsRouter = {
             flaky: 0,
             durationMs: 0,
             results: [],
-            platforms: input.platforms as Platform[],
+            platforms,
           };
         }
       })();
@@ -272,127 +273,3 @@ export const testsRouter = {
     return run.summary ?? null;
   }),
 };
-
-// ---------------------------------------------------------------------------
-// Platform config builder (simplified — loads config if available)
-// ---------------------------------------------------------------------------
-
-async function buildPlatformConfigs(platforms: Platform[]): Promise<PlatformConfig[]> {
-  const configs: PlatformConfig[] = [];
-
-  // Try loading project config
-  let provConfig: ProvConfig = {};
-  try {
-    const configPath = resolve("spana.config.ts");
-    const mod = await import(configPath);
-    provConfig = mod.default ?? {};
-  } catch {
-    // No config, use defaults
-  }
-
-  for (const platform of platforms) {
-    try {
-      if (platform === "web") {
-        const { makePlaywrightDriver } = await import("../../drivers/playwright.js");
-        const { parseWebHierarchy } = await import("../../drivers/playwright-parser.js");
-        const webUrl = provConfig.apps?.web?.url ?? "http://localhost:3000";
-        const driver = await Effect.runPromise(
-          makePlaywrightDriver({ headless: true, baseUrl: webUrl }),
-        );
-        const engineConfig: EngineConfig = {
-          appId: webUrl,
-          platform: "web",
-          coordinatorConfig: {
-            parse: parseWebHierarchy,
-            defaults: {
-              timeout: provConfig.defaults?.waitTimeout,
-              pollInterval: provConfig.defaults?.pollInterval,
-            },
-          },
-          autoLaunch: true,
-          flowTimeout: provConfig.defaults?.waitTimeout
-            ? provConfig.defaults.waitTimeout * 10
-            : 60_000,
-          artifactConfig: provConfig.artifacts,
-        };
-        configs.push({ platform, driver, engineConfig });
-      }
-
-      if (platform === "android") {
-        const { firstAndroidDevice } = await import("../../device/android.js");
-        const { setupUiAutomator2 } = await import("../../drivers/uiautomator2/installer.js");
-        const { createUiAutomator2Driver } = await import("../../drivers/uiautomator2/driver.js");
-        const { parseAndroidHierarchy } = await import("../../drivers/uiautomator2/pagesource.js");
-
-        const device = firstAndroidDevice();
-        if (!device) continue;
-
-        const packageName = provConfig.apps?.android?.packageName ?? "";
-        const hostPort = 8200 + Math.floor(Math.random() * 100);
-        const conn = await setupUiAutomator2(device.serial, hostPort);
-        const driver = await Effect.runPromise(
-          createUiAutomator2Driver(conn.host, conn.port, device.serial, packageName),
-        );
-        const engineConfig: EngineConfig = {
-          appId: packageName,
-          platform: "android",
-          coordinatorConfig: {
-            parse: parseAndroidHierarchy,
-            defaults: {
-              timeout: provConfig.defaults?.waitTimeout,
-              pollInterval: provConfig.defaults?.pollInterval,
-            },
-          },
-          autoLaunch: true,
-          flowTimeout: provConfig.defaults?.waitTimeout
-            ? provConfig.defaults.waitTimeout * 10
-            : 60_000,
-          artifactConfig: provConfig.artifacts,
-        };
-        configs.push({ platform, driver, engineConfig });
-      }
-
-      if (platform === "ios") {
-        const { firstIOSSimulatorWithApp, bootSimulator } = await import("../../device/ios.js");
-        const { setupWDA } = await import("../../drivers/wda/installer.js");
-        const { createWDADriver } = await import("../../drivers/wda/driver.js");
-        const { parseIOSHierarchy } = await import("../../drivers/wda/pagesource.js");
-
-        const bundleId = provConfig.apps?.ios?.bundleId ?? "";
-        const simulator = firstIOSSimulatorWithApp(bundleId);
-        if (!simulator) continue;
-
-        if (simulator.state !== "Booted") {
-          bootSimulator(simulator.udid);
-        }
-
-        const wdaPort = 8100 + Math.floor(Math.random() * 100);
-        const conn = await setupWDA(simulator.udid, wdaPort);
-        const driver = await Effect.runPromise(
-          createWDADriver(conn.host, conn.port, bundleId, simulator.udid),
-        );
-        const engineConfig: EngineConfig = {
-          appId: bundleId,
-          platform: "ios",
-          coordinatorConfig: {
-            parse: parseIOSHierarchy,
-            defaults: {
-              timeout: provConfig.defaults?.waitTimeout,
-              pollInterval: provConfig.defaults?.pollInterval,
-            },
-          },
-          autoLaunch: true,
-          flowTimeout: provConfig.defaults?.waitTimeout
-            ? provConfig.defaults.waitTimeout * 10
-            : 60_000,
-          artifactConfig: provConfig.artifacts,
-        };
-        configs.push({ platform, driver, engineConfig });
-      }
-    } catch {
-      // Skip platform on setup failure
-    }
-  }
-
-  return configs;
-}
