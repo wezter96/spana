@@ -22,6 +22,7 @@
     "spana": "dist/cli.js"
   },
   "files": [
+    ".agents",
     "dist",
     "LICENSE",
     "README.md",
