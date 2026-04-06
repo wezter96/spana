@@ -41,17 +41,20 @@ export class Session {
   private appId: string;
   readonly platform: Platform;
   private parse: (raw: string) => Element;
+  private cleanups: (() => void)[];
 
   constructor(
     driver: RawDriverService,
     platform: Platform,
     parse: (raw: string) => Element,
     appId = "",
+    cleanups: (() => void)[] = [],
   ) {
     this.driver = driver;
     this.platform = platform;
     this.parse = parse;
     this.appId = appId;
+    this.cleanups = cleanups;
   }
 
   // ---------------------------------------------------------------------------
@@ -223,6 +226,13 @@ export class Session {
     } catch {
       // ignore
     }
+    for (const cleanup of this.cleanups) {
+      try {
+        cleanup();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 
@@ -257,7 +267,7 @@ export async function connect(opts: ConnectOptions): Promise<Session> {
     const driver = await Effect.runPromise(
       createUiAutomator2Driver(conn.host, conn.port, device.serial, packageName),
     );
-    return new Session(driver, "android", parseAndroidHierarchy, packageName);
+    return new Session(driver, "android", parseAndroidHierarchy, packageName, [conn.cleanup]);
   }
 
   if (opts.platform === "ios") {
@@ -283,7 +293,7 @@ export async function connect(opts: ConnectOptions): Promise<Session> {
     const driver = await Effect.runPromise(
       createWDADriver(conn.host, conn.port, bundleId, sim.udid),
     );
-    return new Session(driver, "ios", parseIOSHierarchy, bundleId);
+    return new Session(driver, "ios", parseIOSHierarchy, bundleId, [conn.cleanup]);
   }
 
   throw new Error(`Unsupported platform: ${opts.platform}`);

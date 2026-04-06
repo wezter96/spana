@@ -40,6 +40,8 @@ export interface TestCommandOptions {
 }
 
 export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
+  const cleanups: (() => void)[] = [];
+
   // 1. Load config
   let config: ProvConfig = {};
   const configPath = resolve(opts.configPath ?? "spana.config.ts");
@@ -201,6 +203,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       try {
         // Auto-setup: start server, forward port
         const conn = await setupUiAutomator2(device.serial, hostPort);
+        cleanups.push(conn.cleanup);
         const driver = await Effect.runPromise(
           createUiAutomator2Driver(conn.host, conn.port, device.serial, packageName),
         );
@@ -246,6 +249,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         const wdaPort = allocatePort(8100);
         try {
           const conn = await setupWDA(targetDevice.id, wdaPort);
+          cleanups.push(conn.cleanup);
           const driver = await Effect.runPromise(
             createWDADriver(conn.host, conn.port, bundleId, targetDevice.id),
           );
@@ -305,6 +309,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
             // WDA assumed to be running already (started manually via Xcode)
             conn = connectPhysicalDevice(physicalDevice.udid);
           }
+          if (conn.cleanup) cleanups.push(conn.cleanup);
 
           const driver = await Effect.runPromise(createWDADriver(conn.host, conn.port, bundleId));
           const engineConfig: EngineConfig = {
@@ -349,6 +354,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       const wdaPort = allocatePort(8100);
       try {
         const conn = await setupWDA(simulator.udid, wdaPort);
+        cleanups.push(conn.cleanup);
         const driver = await Effect.runPromise(
           createWDADriver(conn.host, conn.port, bundleId, simulator.udid),
         );
@@ -376,6 +382,26 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   }
 
   // 5. Run
+  const handleSignal = () => {
+    for (const pc of platformConfigs) {
+      try {
+        Effect.runSync(pc.driver.killApp(""));
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const cleanup of cleanups) {
+      try {
+        cleanup();
+      } catch {
+        /* ignore */
+      }
+    }
+    process.exit(1);
+  };
+  process.on("SIGINT", handleSignal);
+  process.on("SIGTERM", handleSignal);
+
   const retries = opts.retries ?? config.defaults?.retries ?? 0;
   const result = await orchestrate(filtered, platformConfigs, { retries });
 
@@ -440,6 +466,15 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       // ignore cleanup errors
     }
   }
+  for (const cleanup of cleanups) {
+    try {
+      cleanup();
+    } catch {
+      /* ignore */
+    }
+  }
+  process.removeListener("SIGINT", handleSignal);
+  process.removeListener("SIGTERM", handleSignal);
 
   return result.failed === 0;
 }
