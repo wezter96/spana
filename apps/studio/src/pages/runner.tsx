@@ -233,7 +233,7 @@ export function RunnerPage() {
       </div>
 
       {/* 3-column grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_350px] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
         {/* Left: Flow list */}
         <div className="bg-zinc-900 rounded-lg border border-zinc-800 min-h-0 overflow-hidden">
           <FlowList
