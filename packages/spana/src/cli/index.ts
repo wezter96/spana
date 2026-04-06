@@ -133,6 +133,10 @@ if (command === "test") {
   }
   const { runStudioCommand } = await import("./studio-command.js");
   await runStudioCommand({ port, open, config: config as any });
+} else if (command === "init") {
+  const force = args.includes("--force");
+  const { runInitCommand } = await import("./init-command.js");
+  await runInitCommand({ force });
 } else if (command === "devices") {
   const { discoverDevices } = await import("../device/discover.js");
   const devices = discoverDevices(["web", "android", "ios"]);
@@ -154,6 +158,7 @@ if (command === "test") {
   console.log("  spana selectors --platform <p> List actionable elements with suggested selectors");
   console.log("  spana validate [path]          Validate flow files without device connection");
   console.log("  spana studio                   Launch Spana Studio UI");
+  console.log("  spana init                     Initialize a new spana project");
   console.log("  spana devices                  List connected devices across platforms");
   console.log("  spana version                  Show version");
   console.log("");
@@ -169,4 +174,5 @@ if (command === "test") {
   console.log("  --pretty                   Pretty-print JSON output (hierarchy command)");
   console.log("  --port <number>            Studio port (default: 4400)");
   console.log("  --no-open                  Don't open browser (studio command)");
+  console.log("  --force                    Overwrite existing files (init command)");
 }
