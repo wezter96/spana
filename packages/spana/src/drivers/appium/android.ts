@@ -155,7 +155,7 @@ export function createAppiumAndroidDriver(
       Effect.tryPromise({
         try: async () => {
           if (opts?.clearState) {
-            // Terminate -> remove -> activate (clean launch)
+            // Terminate -> clearApp -> activate (clean launch without uninstalling)
             try {
               await client.request("POST", client.sessionPath("/appium/device/terminate_app"), {
                 appId: bundleId,
@@ -163,7 +163,7 @@ export function createAppiumAndroidDriver(
             } catch {
               /* app may not be running */
             }
-            await client.request("POST", client.sessionPath("/appium/device/remove_app"), {
+            await client.request("POST", client.sessionPath("/appium/execute_mobile/clearApp"), {
               appId: bundleId,
             });
             await client.request("POST", client.sessionPath("/appium/device/activate_app"), {
@@ -224,7 +224,7 @@ export function createAppiumAndroidDriver(
           } catch {
             /* app may not be running */
           }
-          await client.request("POST", client.sessionPath("/appium/device/remove_app"), {
+          await client.request("POST", client.sessionPath("/appium/execute_mobile/clearApp"), {
             appId: bundleId,
           });
         },

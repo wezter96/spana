@@ -223,11 +223,11 @@ describe("Appium Android driver", () => {
     });
   });
 
-  test("launchApp with clearState terminates, removes, and activates", async () => {
+  test("launchApp with clearState terminates, clears app data, and activates", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([
       { body: { value: null } }, // terminate
-      { body: { value: null } }, // remove
+      { body: { value: null } }, // clearApp
       { body: { value: null } }, // activate
     ]);
 
@@ -235,7 +235,8 @@ describe("Appium Android driver", () => {
     await Effect.runPromise(driver.launchApp("com.example.app", { clearState: true }));
 
     expect(calls[0]?.url).toContain("/appium/device/terminate_app");
-    expect(calls[1]?.url).toContain("/appium/device/remove_app");
+    expect(calls[1]?.url).toContain("/appium/execute_mobile/clearApp");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ appId: "com.example.app" });
     expect(calls[2]?.url).toContain("/appium/device/activate_app");
   });
 
@@ -268,18 +269,19 @@ describe("Appium Android driver", () => {
     expect(calls[1]?.url).toContain("/appium/device/terminate_app");
   });
 
-  test("clearAppState terminates then removes app", async () => {
+  test("clearAppState terminates then clears app data without uninstalling", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([
       { body: { value: null } }, // terminate
-      { body: { value: null } }, // remove
+      { body: { value: null } }, // clearApp
     ]);
 
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
     await Effect.runPromise(driver.clearAppState("com.example.app"));
 
     expect(calls[0]?.url).toContain("/appium/device/terminate_app");
-    expect(calls[1]?.url).toContain("/appium/device/remove_app");
+    expect(calls[1]?.url).toContain("/appium/execute_mobile/clearApp");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ appId: "com.example.app" });
   });
 
   test("openLink sends URL to /url endpoint", async () => {
