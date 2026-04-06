@@ -12,6 +12,7 @@ import { orchestrate, type PlatformConfig } from "../core/orchestrator.js";
 import type { ProvConfig } from "../schemas/config.js";
 import type { Platform } from "../schemas/selector.js";
 import type { RuntimeHandle } from "../runtime/types.js";
+import { resolveCapabilities } from "../runtime/capabilities.js";
 import { loadConfig } from "./config-loader.js";
 import {
   buildWebRuntime,
@@ -19,6 +20,7 @@ import {
   buildLocalIOSRuntime,
 } from "../runtime/local.js";
 import { buildAppiumAndroidRuntime, buildAppiumIOSRuntime } from "../runtime/appium.js";
+import { createCloudProviderHelper } from "../cloud/provider.js";
 
 export interface TestCommandOptions {
   platforms: Platform[];
@@ -94,7 +96,8 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   }
 
   // Determine execution mode: CLI --driver flag overrides config
-  const executionMode = opts.driver ?? config.execution?.mode ?? "local";
+  const executionMode =
+    opts.driver ?? (opts.appiumUrl ? "appium" : undefined) ?? config.execution?.mode ?? "local";
 
   // Validate --caps-json early
   if (opts.capsJson) {
@@ -231,12 +234,20 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   // 4. Setup platform drivers via runtime builders
   const runtimes: RuntimeHandle[] = [];
   const platformConfigs: PlatformConfig[] = [];
+  const runCleanups: Array<() => Promise<void>> = [];
 
   // Signal handling for graceful cleanup
   const handleSignal = () => {
+    for (const cleanup of runCleanups) {
+      try {
+        void cleanup();
+      } catch {
+        /* ignore */
+      }
+    }
     for (const rt of runtimes) {
       try {
-        rt.cleanup();
+        void rt.cleanup();
       } catch {
         /* ignore */
       }
@@ -248,16 +259,35 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
 
   try {
     const appiumUrl = opts.appiumUrl ?? config.execution?.appium?.serverUrl;
-    const appiumConfig = config.execution?.appium;
+    const appiumConfig = config.execution?.appium ?? {};
+    const shouldReportToProvider =
+      !opts.noProviderReporting && appiumConfig.reportToProvider !== false;
+    const cloudHelper =
+      executionMode === "appium" && appiumUrl
+        ? createCloudProviderHelper(appiumUrl, appiumConfig)
+        : undefined;
+    const baseAppiumCaps =
+      executionMode === "appium" && appiumUrl
+        ? await resolveCapabilities(appiumConfig, {
+            capsPath: opts.capsPath,
+            capsJson: opts.capsJson,
+          })
+        : undefined;
+
+    if (cloudHelper) {
+      runCleanups.push(() => cloudHelper.cleanup());
+    }
 
     for (const platform of platforms) {
       if (executionMode === "appium" && (platform === "android" || platform === "ios")) {
         // Appium cloud mode
         const builder = platform === "android" ? buildAppiumAndroidRuntime : buildAppiumIOSRuntime;
-        const result = await builder(config, appiumConfig!, {
-          capsPath: opts.capsPath,
-          capsJson: opts.capsJson,
-        });
+        const preparedCaps = await cloudHelper!.prepareCapabilities(
+          platform,
+          { ...baseAppiumCaps },
+          platform === "android" ? config.apps?.android : config.apps?.ios,
+        );
+        const result = await builder(config, appiumUrl!, preparedCaps);
         runtimes.push(result.runtime);
         platformConfigs.push({
           platform,
@@ -323,7 +353,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     for (const r of result.results) {
       const flowResult = {
         ...r,
-        error: r.error ? { message: r.error.message, stack: r.error.stack } : undefined,
+        error: r.error,
       };
       for (const reporter of reporters) {
         if (r.status === "passed") {
@@ -344,7 +374,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         durationMs: result.totalDurationMs,
         results: result.results.map((r) => ({
           ...r,
-          error: r.error ? { message: r.error.message, stack: r.error.stack } : undefined,
+          error: r.error,
         })),
         platforms,
         bailedOut: result.bailedOut,
@@ -353,7 +383,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     }
 
     // Report to cloud provider if applicable
-    if (!opts.noProviderReporting && appiumUrl) {
+    if (shouldReportToProvider && appiumUrl) {
       const { detectProvider } = await import("../cloud/provider.js");
       for (const rt of runtimes) {
         if (rt.metadata.mode === "appium" && rt.metadata.provider) {
@@ -382,6 +412,13 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     for (const rt of runtimes) {
       try {
         await rt.cleanup();
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+    for (const cleanup of runCleanups) {
+      try {
+        await cleanup();
       } catch {
         // ignore cleanup errors
       }
