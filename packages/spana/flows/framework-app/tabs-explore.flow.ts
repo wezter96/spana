@@ -1,21 +1,5 @@
 import { flow } from "../../src/api/flow.js";
-import type { Platform } from "../../src/schemas/selector.js";
-
-const WEB_BASE_URL = "http://127.0.0.1:8081";
-
-function homePath(_platform: Platform): string {
-  return "/";
-}
-
-function homeHref(platform: Platform): string {
-  const path = homePath(platform);
-  if (platform === "web") {
-    return `${WEB_BASE_URL}${path}`;
-  }
-
-  const normalizedPath = path === "/" ? "" : path.replace(/^\/+/, "");
-  return `spana://${normalizedPath}`;
-}
+import { navigateToTabsScreen } from "./support/navigation.js";
 
 export default flow(
   "Framework app - navigate to tabs explore through the UI",
@@ -28,27 +12,10 @@ export default flow(
       captureSteps: true,
     },
   },
-  async ({ app, expect, platform }) => {
-    await app.launch({ clearState: platform === "android", deepLink: homeHref(platform) });
-    if (platform === "android") {
-      try {
-        await expect({ testID: "home-title" }).toBeVisible({ timeout: 15_000 });
-      } catch {
-        await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({
-          timeout: 15_000,
-        });
-        await app.tap({ accessibilityLabel: "Show navigation menu" });
-        await app.tap({ testID: "drawer-home-item" });
-        await expect({ testID: "home-title" }).toBeVisible({ timeout: 15_000 });
-      }
-    } else {
-      await expect({ testID: "home-title" }).toBeVisible({ timeout: 10_000 });
-    }
-    await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
-    await app.tap({ accessibilityLabel: "Show navigation menu" });
-    await expect({ testID: "drawer-tabs-item" }).toBeVisible({ timeout: 10_000 });
-    await app.tap({ testID: "drawer-tabs-item" });
-    await expect({ testID: "tab-one-title" }).toBeVisible({ timeout: 15_000 });
+  async (ctx) => {
+    const { app, expect, platform } = ctx;
+
+    await navigateToTabsScreen(ctx);
     if (platform === "android") {
       await app.tap({ text: "Explore" });
     } else {

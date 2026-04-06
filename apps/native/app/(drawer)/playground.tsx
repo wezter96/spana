@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet, Keyboard } from "react-native";
 
 import { Container } from "@/components/container";
@@ -10,12 +10,21 @@ export default function Playground() {
   const theme = colorScheme === "dark" ? NAV_THEME.dark : NAV_THEME.light;
 
   const [inputValue, setInputValue] = useState("");
-  const [doubleTapCount, setDoubleTapCount] = useState(0);
+  const [doubleTapStatus, setDoubleTapStatus] = useState("Ready");
   const [longPressActive, setLongPressActive] = useState(false);
   const [sectionExpanded, setSectionExpanded] = useState(false);
+  const lastTapAtRef = useRef(0);
 
   const handleDoubleTap = useCallback(() => {
-    setDoubleTapCount((prev) => prev + 1);
+    const now = Date.now();
+    if (now - lastTapAtRef.current < 400) {
+      setDoubleTapStatus("Detected");
+      lastTapAtRef.current = 0;
+      return;
+    }
+
+    setDoubleTapStatus("Waiting");
+    lastTapAtRef.current = now;
   }, []);
 
   const handleLongPress = useCallback(() => {
@@ -75,10 +84,10 @@ export default function Playground() {
           >
             <Text style={[styles.cardTitle, { color: theme.text }]}>Double Tap Target</Text>
             <Text
-              testID="playground-double-tap-count"
+              testID="playground-double-tap-status"
               style={[styles.countText, { color: theme.primary }]}
             >
-              Taps: {doubleTapCount}
+              {doubleTapStatus}
             </Text>
           </Pressable>
 

@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
-import { discoverFlows } from "./runner.js";
+import { stat } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { discoverFlows, discoverStepFiles, loadStepFiles, loadTestSource } from "./runner.js";
 
 export interface ValidationError {
   file: string;
@@ -54,39 +55,62 @@ export async function validateProject(flowDir: string): Promise<ValidationError[
     return errors;
   }
 
-  // Validate individual flow files (structure check)
-  errors.push(...(await validateFlows(paths)));
+  const hasFeatureFiles = paths.some((path) => path.endsWith(".feature"));
+  if (hasFeatureFiles) {
+    const flowDirStats = await stat(resolve(flowDir)).catch(() => null);
+    const stepSearchDir = flowDirStats?.isDirectory() ? flowDir : dirname(flowDir);
+    const stepPaths = await discoverStepFiles(stepSearchDir);
+    if (stepPaths.length > 0) {
+      try {
+        await loadStepFiles(stepPaths);
+      } catch (e) {
+        errors.push({
+          file: flowDir,
+          error: `Failed to load step definitions: ${e instanceof Error ? e.message : String(e)}`,
+        });
+        return errors;
+      }
+    }
+  }
 
   // Load flows and check for duplicates + invalid platforms
   const flowNames = new Map<string, string>(); // name -> file
 
   for (const p of paths) {
     try {
-      const mod = await import(resolve(p));
-      const def = mod.default;
-      if (!def?.name) continue;
+      const defs = await loadTestSource(p);
+      for (const def of defs) {
+        if (!def?.name || typeof def.fn !== "function") {
+          errors.push({ file: p, error: "Invalid flow definition: missing name or fn" });
+          continue;
+        }
 
-      // Duplicate name check
-      const existing = flowNames.get(def.name);
-      if (existing) {
-        errors.push({ file: p, error: `Duplicate flow name "${def.name}" (also in ${existing})` });
-      } else {
-        flowNames.set(def.name, p);
-      }
+        const existing = flowNames.get(def.name);
+        if (existing) {
+          errors.push({
+            file: p,
+            error: `Duplicate flow name "${def.name}" (also in ${existing})`,
+          });
+        } else {
+          flowNames.set(def.name, p);
+        }
 
-      // Platform validation
-      if (def.config?.platforms) {
-        for (const plat of def.config.platforms) {
-          if (!VALID_PLATFORMS.has(plat)) {
-            errors.push({
-              file: p,
-              error: `Invalid platform "${plat}" — must be web, android, or ios`,
-            });
+        if (def.config?.platforms) {
+          for (const plat of def.config.platforms) {
+            if (!VALID_PLATFORMS.has(plat)) {
+              errors.push({
+                file: p,
+                error: `Invalid platform "${plat}" - must be web, android, or ios`,
+              });
+            }
           }
         }
       }
-    } catch {
-      // Already caught by validateFlows
+    } catch (e) {
+      errors.push({
+        file: p,
+        error: `Failed to load: ${e instanceof Error ? e.message : String(e)}`,
+      });
     }
   }
 

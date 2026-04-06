@@ -1,44 +1,15 @@
-import { Given, When, Then } from "spana-test/steps";
-import type { Platform } from "spana-test";
-
-const WEB_BASE_URL = "http://127.0.0.1:8081";
-
-function buildHref(platform: Platform, path: string): string {
-  if (platform === "web") {
-    return `${WEB_BASE_URL}${path}`;
-  }
-
-  const normalizedPath = path === "/" ? "" : path.replace(/^\/+/, "");
-  return `spana://${normalizedPath}`;
-}
+import { Given, When, Then } from "../../../src/gherkin/steps.js";
+import { buildFrameworkHref, navigateToHomeScreen } from "../support/navigation.js";
 
 // --- Navigation steps ---
 
-Given("I navigate to the home screen", async ({ app, expect, platform }) => {
-  if (platform === "ios") {
-    await app.openLink(buildHref(platform, "/"));
-    return;
-  }
-
-  // Launch app with root deeplink
-  await app.launch({ deepLink: buildHref(platform, "/") });
-
-  // On Android, "/" may resolve to (tabs) instead of home.
-  // If home-title isn't visible, navigate via drawer.
-  if (platform === "android") {
-    try {
-      await expect({ testID: "home-title" }).toBeVisible({ timeout: 3000 });
-    } catch {
-      // Landed on tabs — navigate to home via drawer
-      await app.tap({ accessibilityLabel: "Show navigation menu" });
-      await app.tap({ testID: "drawer-home-item" });
-    }
-  }
-});
+Given("I navigate to the home screen", navigateToHomeScreen);
 
 Given("I navigate to {string}", async ({ app, platform }, path) => {
-  // Use launch with deepLink to ensure clean navigation state on native
-  await app.launch({ deepLink: buildHref(platform, path as string) });
+  await app.launch({
+    clearState: platform === "android",
+    deepLink: buildFrameworkHref(platform, path as string),
+  });
 });
 
 When("I open the navigation menu", async ({ app }) => {
@@ -76,6 +47,18 @@ When("I tap the {string} element", async ({ app }, testID) => {
   await app.tap({ testID: testID as string });
 });
 
+When("I double tap the {string} element", async ({ app }, testID) => {
+  await app.doubleTap({ testID: testID as string });
+});
+
+When("I long press the {string} element", async ({ app }, testID) => {
+  await app.longPress({ testID: testID as string });
+});
+
+When("I scroll down", async ({ app }) => {
+  await app.scroll("up");
+});
+
 // --- Assertion steps ---
 
 Then("I should see the element {string}", async ({ expect }, testID) => {
@@ -92,6 +75,10 @@ Then("I should see the text {string}", async ({ expect }, text) => {
 
 Then("the element {string} should have text {string}", async ({ expect }, testID, text) => {
   await expect({ testID: testID as string }).toHaveText(text as string);
+});
+
+Then("I should not see the element {string}", async ({ expect }, testID) => {
+  await expect({ testID: testID as string }).toBeHidden();
 });
 
 Then("I should see the navigation menu button", async ({ expect }) => {

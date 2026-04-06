@@ -1,13 +1,18 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { globalRegistry } from "../gherkin/registry.js";
 import { validateFlowFile, validateFlows, validateProject } from "./validator.js";
 
 const tempDir = mkdtempSync(join(tmpdir(), "spana-validator-"));
 
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+afterEach(() => {
+  globalRegistry.clear();
 });
 
 function writeTempModule(fileName: string, content: string) {
@@ -118,6 +123,40 @@ describe("validateProject", () => {
     );
 
     const errors = await validateProject(goodDir);
+
+    expect(errors).toHaveLength(0);
+  });
+
+  test("accepts feature files when matching step definitions are present", async () => {
+    const featureDir = join(tempDir, "feature-flows");
+    const stepsDir = join(featureDir, "steps");
+    mkdirSync(stepsDir, { recursive: true });
+
+    const stepsImportPath = join(process.cwd(), "packages/spana/src/gherkin/steps.js");
+    writeFileSync(
+      join(stepsDir, "demo.steps.ts"),
+      `
+        import { Given, When, Then } from "${stepsImportPath}";
+
+        Given("the demo app is ready", async () => {});
+        When("I open the showcase screen", async () => {});
+        Then("I see the showcase content", async () => {});
+      `,
+    );
+
+    writeFileSync(
+      join(featureDir, "demo.feature"),
+      `
+        Feature: Demo validation
+
+          Scenario: Showcase path compiles
+            Given the demo app is ready
+            When I open the showcase screen
+            Then I see the showcase content
+      `,
+    );
+
+    const errors = await validateProject(featureDir);
 
     expect(errors).toHaveLength(0);
   });

@@ -1,81 +1,126 @@
 # spana Roadmap
 
-## Phase 1 — Stability & Correctness (v0.1.0) ✅
+All items from the original v1 roadmap are complete.
 
-- Fix iOS deep link handling at driver level
-- Node.js runtime support (`npx spana-test` works)
-- Improve error messages (include selector details)
-- Clean up legacy experimental flows
+This roadmap resets around the next set of improvements surfaced by recent comparison work against WebdriverIO and maestro-runner, plus gaps in Spana's own docs and demo coverage.
 
----
+Reference notes:
 
-## Phase 2 — Developer Experience (v0.2.0) ✅
+- `docs/superpowers/plans/2026-04-06-maestro-runner-comparison.md`
+- `demo-roadmap.md`
 
-- ✅ Auto-generate HTML reports
-- ✅ Better config discovery
-- ✅ Spana Studio — Element Inspector
-- ✅ Spana Studio — Test Runner Dashboard
-- ✅ `spana init` scaffolding command
-- ✅ Pre-flight flow validation (duplicate names, platform checks, empty directory)
-- ✅ Conditional flow execution (`when: { platform, env }`)
+## Guardrails
+
+- Stay **TypeScript-native** and **E2E-first**
+- Prefer fixing **real product gaps** over chasing every competitor checkbox
+- Treat **README/demo gaps** as serious product work when they hide shipped features
+- Borrow from WebdriverIO and maestro-runner selectively, without turning Spana into a clone of either
 
 ---
 
-## Phase 3 — Completeness & Reliability (v0.5.0)
+## Phase 5 — Visibility & Showcase (v1.1.0) [complete]
 
-### Already done
+Spana now has more capability than the top-level README and demo suite communicate. Close the gap between what ships and what users immediately understand.
 
-- ✅ Parallel device execution
-- ✅ Retry & flake detection (`--retries N`)
+- [x] Update the top-level README to surface already-shipped features:
+  - Allure reporter
+  - relative selectors
+  - `validate-config`, `init`, Studio, `--device`, `--shard`, `--bail`
+  - app auto-install via `appPath`
+  - WebView / hybrid context APIs
+  - cloud helper services for BrowserStack and Sauce Labs
+- [x] Refresh quick start and configuration examples so the main docs reflect the current product
+- [x] Execute `demo-roadmap.md` so the native demo suite visibly showcases richer interactions and artifacts
+- [x] Add one concise feature matrix showing what is supported locally vs in Appium cloud mode vs on web
 
-### Structural reliability
+### Success criteria
 
-Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). Full comparison: `docs/superpowers/plans/2026-04-06-maestro-runner-comparison.md`.
-
-- ✅ Runtime ownership + cleanup — setup returns `{ driver, cleanup }`, CLI/Studio/agent dispose on exit and signals
-- ✅ Port/resource isolation — deterministic port allocation, per-session cleanup
-- ✅ Unified device discovery + `--device <id>` targeting — consistent across CLI, Studio, and agent
-- ✅ Wire LaunchOptions end-to-end — `clearState`, `launchArguments`, `clearKeychain` implemented in all drivers
-- ✅ Invoke config hooks — `beforeAll`/`beforeEach`/`afterEach`/`afterAll` now invoked in orchestrator and engine
-
-### Features
-
-- ✅ iOS physical device support (WDA re-signing + iproxy)
-- ✅ `./agent` subpath export for programmatic API
-- ✅ Relative selectors (`below`, `above`, `leftOf`, `rightOf`, `childOf`)
-- ✅ Auto-start emulator/simulator for CI (handled by `ensureAndroidDevice`/`ensureIOSSimulator`)
-- ✅ JavaScript scripting — `app.evaluate()` for web; TS flows provide full scripting for all platforms
-
-### Runner & CI ergonomics
-
-Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdriverio`).
-
-- ✅ Config ergonomics — `defineConfig()`, schema validation, relative-path resolution, capability precedence handling, and `--validate-config`
-- ✅ Interactive debugging — pause into a live session / REPL with bound `app` and driver context
-- ✅ CI sharding & fail-fast — `--shard <current>/<total>` and `--bail <N>`
+- A new user can understand Spana's real feature surface from the README alone
+- The demo suite proves more than route checks and simple taps
+- Future comparisons do not misclassify shipped capabilities as missing
 
 ---
 
-## Phase 4 — Ecosystem (v1.0.0)
+## Phase 6 — Parallel Execution & Runner UX (v1.2.0)
 
-### Platform & integration
+maestro-runner is still ahead on end-to-end multi-device execution. Spana already has most of the internal pieces; the next step is wiring them into the real CLI path.
 
-- ✅ GitHub Action integration (reusable composite action)
-- ✅ CI examples (GitHub Actions, GitLab CI)
-- ✅ Cloud provider support — Appium integration for BrowserStack, Sauce Labs, and generic Appium hubs, with provider result reporting and cloud docs. Plan: `docs/superpowers/plans/2026-04-06-phase4-appium-cloud-mode.md`
-- ✅ Provider helper services for cloud mode — managed app upload references, BrowserStack Local / Sauce Connect lifecycle, and provider-specific capability augmentation
+- Wire `packages/spana/src/core/parallel.ts` into `spana test`
+- Add a first-class `--parallel <n>` execution model for multi-device / multi-worker runs
+- Use dynamic work distribution so faster workers naturally pick up more flows
+- Preserve retries, bail, hooks, artifacts, and per-platform filtering under parallel execution
+- Upgrade console output to be worker-aware and device-aware, with better summaries for concurrent runs
+- Add focused E2E coverage for mixed-speed worker scheduling and artifact correctness under concurrency
 
-### Web testing
+### Success criteria
 
-- ✅ WebView / hybrid support — context discovery, targeted switching, and JS execution inside mobile WebViews
-- ✅ Browser runtime config (headed mode, browser selection, proper disposal)
-- ✅ Network mocking/control (`mockNetwork`, `blockNetwork`, `setNetworkConditions`)
-- ✅ Cookie/auth state management (`saveCookies`, `loadAuthState`)
+- `spana test` can run real device/browser work in parallel, not just serially by platform
+- Output remains readable and trustworthy under concurrency
+- Parallel runs feel like a polished product feature, not an internal experiment
 
-### Reporting & diagnostics
+---
 
-- ✅ Allure reporter support
-- ✅ Typed failure model — categorized errors with suggestions
-- ✅ Driver stability knobs (`waitForIdleTimeout`, `typingDelay` per-flow)
-- ✅ Real-time console reporting — progress updates, `--quiet` mode, and grouped output by platform
-- ✅ Log masking / redaction for secrets in console and artifact logs
+## Phase 7 — Mobile Interaction Ergonomics (v1.3.0)
+
+The next quality frontier is making common mobile flows easier and more reliable to express.
+
+- Add a first-class `scrollUntilVisible()`-style helper for off-screen element discovery
+- Improve text input reliability, especially for Unicode and special characters on Android
+- Improve smart target resolution for nested/clickable container patterns
+- Add clearer gesture ergonomics around long press, double tap, keyboard dismissal, and back navigation
+- Expand failure suggestions and diagnostics for scroll/input/gesture failures
+- Add showcase/demo coverage for these interactions so they stay visible and protected
+
+### Success criteria
+
+- Writing mobile-heavy flows requires fewer ad hoc scroll/retry loops
+- Text input behavior is boringly reliable
+- The smart layer feels meaningfully more helpful than raw-driver automation
+
+---
+
+## Phase 8 — Web Workflow Depth (v1.4.0)
+
+WebdriverIO and maestro-runner both present a broader web workflow story than Spana currently markets or supports.
+
+- Add browser workflow APIs for uploads/downloads, tabs/windows, console log capture, and JS error assertions
+- Expand diagnostics and artifacts for web runs
+- Make existing network/auth/cookie helpers more visible through docs and example flows
+- Add at least one example suite that demonstrates web-only power features without weakening the cross-platform story
+- Clarify which web features are local-Playwright-only vs available through broader execution modes
+
+### Success criteria
+
+- Spana's web story is clearly stronger than "basic browser support"
+- Advanced browser workflows are part of the documented, example-backed product surface
+
+---
+
+## Phase 9 — Ecosystem & Integration Surface (v1.5.0)
+
+WebdriverIO's biggest advantage is breadth: more official extension points, more integrations, and a larger ecosystem surface. Spana should grow selectively here.
+
+- Stabilize and document a public custom reporter API
+- Decide on an extension model for reporters first, then services/integrations if needed
+- Add first-class helper coverage for additional cloud providers such as LambdaTest and TestingBot if demand justifies it
+- Ship more reusable CI examples for cloud, hybrid, and multi-device execution
+- Improve machine-readable output and agent-facing docs so AI-driven automation remains a clear Spana strength
+
+### Success criteria
+
+- Teams can extend reporting and integrations without patching Spana internals
+- Cloud and CI adoption do not depend on reading implementation code
+- Spana grows an ecosystem story without losing focus
+
+---
+
+## Strategic bets — Explore, don't commit yet
+
+These are real areas where WebdriverIO is broader, but they are product-direction decisions rather than obvious next roadmap items.
+
+- Component and unit/browser-runner style test modes
+- Additional framework adapters beyond native TypeScript flows and Gherkin support
+- Broader protocol/runtime coverage closer to WebdriverIO's WebDriver/BiDi ecosystem
+- A larger plugin/service marketplace model
+
+Pursue these only if Spana deliberately expands beyond its current position as a TypeScript-native cross-platform E2E framework.
