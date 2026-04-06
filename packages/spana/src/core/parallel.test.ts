@@ -111,4 +111,149 @@ describe("runParallel", () => {
     expect(workerA?.flowCount).toBeGreaterThan(0);
     expect(workerB?.flowCount).toBeGreaterThan(0);
   });
+
+  test("retries failed flows on the same worker and marks flaky", async () => {
+    let callCount = 0;
+    const flakyFlow: FlowDefinition = {
+      name: "flaky-flow",
+      config: {},
+      fn: async ({ app }) => {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error("transient failure");
+        }
+        await app.inputText("ok");
+      },
+    };
+
+    const result = await runParallel({
+      workers: [
+        {
+          id: "worker-a",
+          name: "Pixel 8",
+          driver: createDriver("worker-a"),
+          engineConfig: {
+            appId: "com.example.app",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      flows: [flakyFlow],
+      retries: 2,
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]!.status).toBe("passed");
+    expect(result.results[0]!.flaky).toBe(true);
+    expect(result.results[0]!.attempts).toBe(2);
+    expect(result.flaky).toBe(1);
+    expect(result.passed).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
+  test("bail stops workers from picking up new flows", async () => {
+    const result = await runParallel({
+      workers: [
+        {
+          id: "worker-a",
+          name: "Pixel 8",
+          driver: createDriver("worker-a"),
+          engineConfig: {
+            appId: "com.example.app",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      flows: [createFlow("fail-1", true), createFlow("should-skip-1"), createFlow("should-skip-2")],
+      bail: 1,
+    });
+
+    expect(result.bailedOut).toBe(true);
+    expect(result.failed).toBe(1);
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
+    // The first flow fails, remaining should be skipped
+    const skippedResults = result.results.filter((r) => r.status === "skipped");
+    expect(skippedResults.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("onFlowStart is called before each flow", async () => {
+    const starts: Array<{ name: string; workerName: string }> = [];
+
+    await runParallel({
+      workers: [
+        {
+          id: "worker-a",
+          name: "Pixel 8",
+          driver: createDriver("worker-a"),
+          engineConfig: {
+            appId: "com.example.app",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      flows: [createFlow("alpha"), createFlow("beta")],
+      onFlowStart: (name, workerName) => {
+        starts.push({ name, workerName });
+      },
+    });
+
+    expect(starts).toEqual([
+      { name: "alpha", workerName: "Pixel 8" },
+      { name: "beta", workerName: "Pixel 8" },
+    ]);
+  });
+
+  test("retryDelay adds delay between retry attempts", async () => {
+    let callCount = 0;
+    const timestamps: number[] = [];
+    const flakyFlow: FlowDefinition = {
+      name: "delayed-retry",
+      config: {},
+      fn: async ({ app }) => {
+        timestamps.push(Date.now());
+        callCount++;
+        if (callCount === 1) {
+          throw new Error("transient failure");
+        }
+        await app.inputText("ok");
+      },
+    };
+
+    await runParallel({
+      workers: [
+        {
+          id: "worker-a",
+          name: "Pixel 8",
+          driver: createDriver("worker-a"),
+          engineConfig: {
+            appId: "com.example.app",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      flows: [flakyFlow],
+      retries: 1,
+      retryDelay: 50,
+    });
+
+    expect(timestamps).toHaveLength(2);
+    const gap = timestamps[1]! - timestamps[0]!;
+    expect(gap).toBeGreaterThanOrEqual(45); // allow small timing variance
+  });
 });
