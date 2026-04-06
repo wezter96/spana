@@ -595,6 +595,17 @@ describe("runTestCommand", () => {
     expect(cliState.logs).toContain('Unknown --driver value "selenium". Use "local" or "appium".');
   });
 
+  test("--parallel + --device returns error", async () => {
+    const result = await (
+      await importFreshTestCommand()
+    ).runTestCommand({
+      platforms: ["android"],
+      parallel: true,
+      device: "emulator-5554",
+    });
+    expect(result).toBe(false);
+  });
+
   test("returns early when the filters remove every discovered flow", async () => {
     const tempDir = createTempDir();
     const configPath = writeConfigFile(tempDir, {
