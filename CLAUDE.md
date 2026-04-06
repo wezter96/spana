@@ -19,3 +19,13 @@ Use this to explore APIs, find usage examples, and understand implementation
 details when the documentation isn't enough.
 
 <!-- effect-solutions:end -->
+
+## Agent Skills
+
+### spana Testing
+
+For writing, debugging, and iterating on spana E2E test flows, see:
+
+`.agents/skills/spana-testing/SKILL.md`
+
+Covers: flow authoring, selectors, CLI commands (`spana selectors`, `spana validate`, `spana test`), the agent workflow loop, platform-specific notes, and config reference.
