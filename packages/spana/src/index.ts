@@ -22,7 +22,14 @@ export {
   defineConfig,
   type ProvConfig,
   type AppConfig,
+  type BrowserName,
+  type WebExecutionConfig,
   type ArtifactConfig,
 } from "./schemas/config.js";
 export { type Element } from "./schemas/element.js";
 export { type DeviceInfo } from "./schemas/device.js";
+export {
+  type BrowserRouteMatcher,
+  type BrowserMockResponse,
+  type BrowserNetworkConditions,
+} from "./drivers/raw-driver.js";

@@ -73,6 +73,11 @@ const cliState = {
   randomValues: [] as number[],
   killCalls: [] as Array<{ label: string; appId: string }>,
   logs: [] as string[],
+  appiumRuntimeCalls: [] as Array<{
+    platform: "android" | "ios";
+    appiumUrl: string;
+    caps: Record<string, unknown>;
+  }>,
 };
 
 const createdTempDirs: string[] = [];
@@ -130,6 +135,7 @@ function resetCliState(): void {
   cliState.randomValues = [];
   cliState.killCalls = [];
   cliState.logs = [];
+  cliState.appiumRuntimeCalls = [];
 }
 
 function registerCliMocks(): void {
@@ -163,6 +169,136 @@ function registerCliMocks(): void {
       cliState.filterCalls.push({ flows, opts });
       return cliState.filteredFlows ?? flows;
     },
+    applyShard: <T>(items: T[], shard?: { current: number; total: number }) => {
+      if (!shard || shard.total === 1 || items.length === 0) {
+        return items;
+      }
+
+      const itemsPerShard = Math.max(Math.ceil(items.length / shard.total), 1);
+      const start = (shard.current - 1) * itemsPerShard;
+      const end =
+        shard.current === shard.total
+          ? items.length
+          : Math.min(start + itemsPerShard, items.length);
+
+      return items.slice(start, end);
+    },
+  }));
+  mock.module("../core/orchestrator.js", () => ({
+    orchestrate: async (
+      flows: FlowDefinition[],
+      platforms: Array<{
+        platform: string;
+        engineConfig: {
+          appId: string;
+          flowTimeout?: number;
+          artifactConfig?: { outputDir?: string };
+        };
+      }>,
+    ) => {
+      cliState.orchestrateCalls.push({ flows, platforms });
+      return cliState.orchestrateResult;
+    },
+  }));
+  mock.module("../runtime/local.js", () => ({
+    buildWebRuntime: async () => ({
+      runtime: {
+        driver: {},
+        cleanup: async () => {},
+        metadata: { platform: "web", mode: "local" },
+      },
+      engineConfig: {
+        appId: "http://localhost:3000",
+        platform: "web",
+        coordinatorConfig: { parse: () => null, defaults: {} },
+        autoLaunch: true,
+        flowTimeout: 60_000,
+      },
+    }),
+    buildLocalAndroidRuntime: async () => ({
+      runtime: {
+        driver: {},
+        cleanup: async () => {},
+        metadata: { platform: "android", mode: "local", deviceId: "SERIAL-1" },
+      },
+      engineConfig: {
+        appId: "com.example.android",
+        platform: "android",
+        coordinatorConfig: { parse: () => null, defaults: {} },
+        autoLaunch: true,
+        flowTimeout: 60_000,
+      },
+    }),
+    buildLocalIOSRuntime: async () => ({
+      runtime: {
+        driver: {},
+        cleanup: async () => {},
+        metadata: { platform: "ios", mode: "local", deviceId: "SIM-1" },
+      },
+      engineConfig: {
+        appId: "com.example.ios",
+        platform: "ios",
+        coordinatorConfig: { parse: () => null, defaults: {} },
+        autoLaunch: true,
+        flowTimeout: 60_000,
+      },
+    }),
+  }));
+  mock.module("../runtime/appium.js", () => ({
+    buildAppiumAndroidRuntime: async (
+      _config: unknown,
+      appiumUrl: string,
+      caps: Record<string, unknown>,
+    ) => {
+      cliState.appiumRuntimeCalls.push({ platform: "android", appiumUrl, caps });
+      return {
+        runtime: {
+          driver: {},
+          cleanup: async () => {},
+          metadata: {
+            platform: "android",
+            mode: "appium",
+            provider: "BrowserStack",
+            sessionId: "bs-android-session",
+            sessionCaps: caps,
+          },
+        },
+        engineConfig: {
+          appId: "com.example.android",
+          platform: "android",
+          coordinatorConfig: { parse: () => null, defaults: {} },
+          autoLaunch: false,
+          flowTimeout: 60_000,
+        },
+      };
+    },
+    buildAppiumIOSRuntime: async (
+      _config: unknown,
+      appiumUrl: string,
+      caps: Record<string, unknown>,
+    ) => {
+      cliState.appiumRuntimeCalls.push({ platform: "ios", appiumUrl, caps });
+      return {
+        runtime: {
+          driver: {},
+          cleanup: async () => {},
+          metadata: {
+            platform: "ios",
+            mode: "appium",
+            provider: "Sauce Labs",
+            sessionId: "sauce-ios-session",
+            sessionCaps: caps,
+          },
+        },
+        engineConfig: {
+          appId: "com.example.ios",
+          platform: "ios",
+          coordinatorConfig: { parse: () => null, defaults: {} },
+          autoLaunch: false,
+          flowTimeout: 60_000,
+        },
+      };
+    },
   }));
 }
 
@@ -192,6 +328,8 @@ describe("runTestCommand", () => {
   afterEach(() => {
     mock.restore();
     console.log = originalConsoleLog;
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
   });
 
   afterAll(() => {
@@ -325,6 +463,24 @@ describe("runTestCommand", () => {
     );
   });
 
+  test("treats --appium-url as appium mode even without --driver", async () => {
+    const tempDir = createTempDir();
+    const configPath = writeConfigFile(tempDir, {});
+    const { runTestCommand } = await importFreshTestCommand();
+
+    const success = await runTestCommand({
+      platforms: ["web"],
+      configPath,
+      appiumUrl: "http://hub.browserstack.com/wd/hub",
+      device: "emulator-5554",
+    });
+
+    expect(success).toBe(false);
+    expect(cliState.logs).toContain(
+      "Cannot use --device with appium mode. Use --caps or --caps-json to set device capabilities.",
+    );
+  });
+
   test("succeeds in appium mode when --appium-url is provided", async () => {
     const tempDir = createTempDir();
     const configPath = writeConfigFile(tempDir, {});
@@ -375,6 +531,56 @@ describe("runTestCommand", () => {
 
     // Passes validation, no flows found -> true
     expect(success).toBe(true);
+  });
+
+  test("respects reportToProvider: false from config", async () => {
+    const tempDir = createTempDir();
+    const configPath = writeConfigFile(tempDir, {
+      flowDir: "./flows",
+      execution: {
+        mode: "appium",
+        appium: {
+          serverUrl: "https://user:key@hub-cloud.browserstack.com/wd/hub",
+          reportToProvider: false,
+        },
+      },
+    });
+    const flowPath = join(tempDir, "flows", "cloud.flow.ts");
+    cliState.flowPaths = [flowPath];
+    cliState.flowFiles.set(flowPath, createFlow("Cloud flow", ["android"]));
+    cliState.orchestrateResult = {
+      results: [
+        {
+          name: "Cloud flow",
+          platform: "android",
+          status: "passed",
+          durationMs: 100,
+        },
+      ],
+      totalDurationMs: 100,
+      passed: 1,
+      failed: 0,
+      skipped: 0,
+    };
+
+    const providerFetchCalls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      providerFetchCalls.push(String(input));
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const { runTestCommand } = await importFreshTestCommand();
+    const success = await runTestCommand({
+      platforms: ["android"],
+      configPath,
+    });
+
+    expect(success).toBe(true);
+    expect(cliState.appiumRuntimeCalls).toHaveLength(1);
+    expect(providerFetchCalls).toHaveLength(0);
   });
 
   test("rejects unknown --driver values", async () => {
@@ -491,6 +697,7 @@ function registerWDAInstallerMocks(): void {
       wdaInstallerState.execCalls.push(command);
       return "";
     },
+    execFileSync: () => "",
     spawn: (
       command: string,
       args: string[],

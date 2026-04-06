@@ -40,6 +40,16 @@ In Appium mode, spana:
 
 The same flow files work in both local and Appium mode -- no changes needed.
 
+## Cloud helper config
+
+For BrowserStack and Sauce Labs, Spana can also manage provider-specific helper behavior on top of raw capabilities:
+
+- upload a local app artifact and inject `appium:app`
+- start and stop BrowserStack Local / Sauce Connect
+- fill missing `bstack:options` / `sauce:options` values from config
+
+Raw capabilities still win. Helper config fills missing provider fields and lifecycle, but it does not override explicit `appium:app`, `bstack:options`, or `sauce:options` values you already provided through config, `--caps`, or `--caps-json`.
+
 ## Capabilities
 
 Appium sessions are configured through W3C capabilities. Spana merges capabilities from three sources (later overrides earlier):
@@ -117,6 +127,26 @@ export default defineConfig({
 
       // Report results to cloud provider (default: true)
       reportToProvider: true,
+
+      // BrowserStack helper config
+      browserstack: {
+        app: { path: "./builds/app.apk", customId: "spana-android" },
+        local: { enabled: true, identifier: "spana-local" },
+        options: {
+          projectName: "my-app",
+          buildName: "ci-42",
+        },
+      },
+
+      // Sauce Labs helper config
+      saucelabs: {
+        app: { path: "./builds/app.apk", name: "app.apk" },
+        connect: { enabled: true, tunnelName: "spana-ci" },
+        options: {
+          build: "ci-42",
+          name: "login-flow",
+        },
+      },
     },
   },
 });

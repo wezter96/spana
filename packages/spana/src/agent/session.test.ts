@@ -44,6 +44,14 @@ function mockDriver(overrides: Partial<RawDriverService> = {}): RawDriverService
     openLink: noop,
     back: noop,
     evaluate: () => Effect.succeed("evaluated" as any),
+    mockNetwork: noop,
+    blockNetwork: noop,
+    clearNetworkMocks: noop,
+    setNetworkConditions: noop,
+    saveCookies: noop,
+    loadCookies: noop,
+    saveAuthState: noop,
+    loadAuthState: noop,
     ...overrides,
   } as RawDriverService;
 }
@@ -172,6 +180,29 @@ describe("Session", () => {
     expect(evFn).toHaveBeenCalled();
   });
 
+  test("browser helpers call through to the web driver", async () => {
+    const saveCookies = mock(() => Effect.void);
+    const loadAuthState = mock(() => Effect.void);
+    const setNetworkConditions = mock(() => Effect.void);
+    const session = new Session(
+      mockDriver({
+        saveCookies: saveCookies as any,
+        loadAuthState: loadAuthState as any,
+        setNetworkConditions: setNetworkConditions as any,
+      }),
+      "web",
+      parseHierarchy,
+    );
+
+    await session.saveCookies("./cookies.json");
+    await session.loadAuthState("./auth.json");
+    await session.setNetworkConditions({ offline: true });
+
+    expect(saveCookies).toHaveBeenCalledWith("./cookies.json");
+    expect(loadAuthState).toHaveBeenCalledWith("./auth.json");
+    expect(setNetworkConditions).toHaveBeenCalledWith({ offline: true });
+  });
+
   test("evaluate throws on mobile", async () => {
     const session = new Session(
       mockDriver({
@@ -185,6 +216,20 @@ describe("Session", () => {
     );
     await expect(session.evaluate(() => "nope")).rejects.toThrow(
       "evaluate() is only supported on the web platform",
+    );
+  });
+
+  test("browser helpers throw on non-web sessions without driver support", async () => {
+    const session = new Session(
+      mockDriver({
+        saveCookies: undefined,
+      }),
+      "android",
+      parseHierarchy,
+    );
+
+    await expect(session.saveCookies("./cookies.json")).rejects.toThrow(
+      "saveCookies() is only supported on the web platform",
     );
   });
 

@@ -154,6 +154,13 @@ export default defineConfig({
     android: { packageName: "com.example.app" },
     ios: { bundleId: "com.example.app" },
   },
+  execution: {
+    web: {
+      browser: "chromium",
+      headless: true,
+      storageState: "./auth/web-user.json",
+    },
+  },
   platforms: ["web", "android", "ios"],
   flowDir: "./flows",
   reporters: ["console", "json", "html"],
@@ -186,6 +193,26 @@ export default defineConfig({
   },
 });
 ```
+
+`execution.web` controls the local Playwright runtime for web flows. Use it to switch browser engines, run headed for debugging, or preload a saved storage state file.
+
+### Browser runtime helpers (web)
+
+```ts
+export default flow("web dashboard", async ({ app, platform }) => {
+  if (platform !== "web") return;
+
+  await app.loadAuthState("./auth/web-user.json");
+  await app.mockNetwork("**/api/dashboard", {
+    json: { widgets: ["revenue", "alerts"] },
+  });
+  await app.blockNetwork("**/analytics/**");
+  await app.setNetworkConditions({ offline: false, latencyMs: 120 });
+  await app.saveCookies("./tmp/cookies.json");
+});
+```
+
+`mockNetwork`, `blockNetwork`, `clearNetworkMocks`, `setNetworkConditions`, `saveCookies`, `loadCookies`, `saveAuthState`, and `loadAuthState` are web-only helpers backed by Playwright. Latency and throughput throttling require the Chromium browser runtime.
 
 ---
 

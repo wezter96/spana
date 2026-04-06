@@ -5,11 +5,14 @@ Spana runs tests against BrowserStack using **Appium cloud mode** -- it connects
 ## Prerequisites
 
 - A BrowserStack App Automate account
-- Your app uploaded to BrowserStack (you handle this step)
+- Your app artifact available locally or already uploaded to BrowserStack
+- BrowserStack Local installed if you want Spana to manage the local tunnel
 
-## 1. Upload your app
+## 1. Choose an app reference
 
-Upload your APK/IPA to BrowserStack. This returns a `bs://` app ID:
+Spana can upload the app for you from config, or you can upload it yourself and reuse the `bs://...` reference.
+
+Manual upload example:
 
 ```bash
 curl -u "USERNAME:ACCESS_KEY" \
@@ -23,7 +26,7 @@ Response:
 { "app_url": "bs://YOUR_APP_ID" }
 ```
 
-Use `bs://YOUR_APP_ID` in your capabilities.
+If you upload manually, use `bs://YOUR_APP_ID` in capabilities or `execution.appium.browserstack.app.id`.
 
 ## 2. Create capabilities
 
@@ -69,19 +72,40 @@ Create or update `spana.config.ts`:
 import { defineConfig } from "spana-test";
 
 export default defineConfig({
+  apps: {
+    android: {
+      packageName: "com.example.myapp",
+      appPath: "./builds/app.apk",
+    },
+  },
   execution: {
     mode: "appium",
     appium: {
       serverUrl: process.env.BROWSERSTACK_URL,
-      capabilitiesFile: "./caps/browserstack-android.json",
+      browserstack: {
+        app: {
+          customId: "spana-android",
+        },
+        local: {
+          enabled: true,
+          identifier: "spana-local",
+        },
+        options: {
+          projectName: "My App",
+          buildName: process.env.CI_BUILD_ID ?? "spana-local",
+        },
+      },
+      capabilities: {
+        "appium:deviceName": "Google Pixel 7",
+        "appium:platformVersion": "13.0",
+      },
       reportToProvider: true,
     },
   },
-  apps: {
-    android: { packageName: "com.example.myapp" },
-  },
 });
 ```
+
+If `browserstack.app.path` is omitted, Spana falls back to `apps.<platform>.appPath` when present. If you already set `appium:app` or `bstack:options` in raw capabilities, those explicit values win.
 
 Set the hub URL as an environment variable:
 
@@ -111,13 +135,25 @@ spana test --platform android --no-provider-reporting
 
 ## BrowserStack Local
 
-When testing against a local dev server (e.g., `localhost:3000`), you must run BrowserStack Local yourself before starting tests:
+When `execution.appium.browserstack.local.enabled` is true, Spana starts BrowserStack Local before the run and stops it during cleanup. The helper also fills `bstack:options.local` and `bstack:options.localIdentifier` when needed.
+
+```ts
+browserstack: {
+  local: {
+    enabled: true,
+    identifier: "spana-local",
+    binary: "/opt/browserstack/BrowserStackLocal",
+  },
+}
+```
+
+If you prefer to manage the tunnel yourself, leave the helper disabled and run BrowserStack Local manually:
 
 ```bash
 BrowserStackLocal --key ACCESS_KEY
 ```
 
-Then add to your capabilities:
+Then add the tunnel flags to your capabilities:
 
 ```json
 {
@@ -127,7 +163,7 @@ Then add to your capabilities:
 }
 ```
 
-This is your responsibility -- Spana does not manage the BrowserStack Local tunnel.
+Both approaches work; the helper is just the convenient default now.
 
 ## Device selection
 

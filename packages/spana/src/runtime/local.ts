@@ -59,7 +59,15 @@ function buildEngineConfig(
 
 export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult> {
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
-  const driver = await Effect.runPromise(makePlaywrightDriver({ headless: true, baseUrl: webUrl }));
+  const webExecution = config.execution?.web;
+  const driver = await Effect.runPromise(
+    makePlaywrightDriver({
+      browser: webExecution?.browser,
+      headless: webExecution?.headless ?? true,
+      baseUrl: webUrl,
+      storageState: webExecution?.storageState,
+    }),
+  );
 
   return {
     runtime: {

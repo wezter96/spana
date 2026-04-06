@@ -1,5 +1,12 @@
 import { Effect } from "effect";
-import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
+import { DriverError } from "../errors.js";
+import type {
+  RawDriverService,
+  LaunchOptions,
+  BrowserMockResponse,
+  BrowserNetworkConditions,
+  BrowserRouteMatcher,
+} from "../drivers/raw-driver.js";
 import type { Platform, Selector, ExtendedSelector } from "../schemas/selector.js";
 import type { Element } from "../schemas/element.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
@@ -15,6 +22,7 @@ import { allocatePort } from "../core/port-allocator.js";
 import { firstAndroidDevice } from "../device/android.js";
 import { firstIOSSimulatorWithApp, bootSimulator } from "../device/ios.js";
 import { findDeviceById } from "../device/discover.js";
+import type { BrowserName } from "../schemas/config.js";
 
 export type Direction = "up" | "down" | "left" | "right";
 
@@ -25,6 +33,8 @@ export interface ConnectOptions {
   packageName?: string; // for android
   bundleId?: string; // for ios
   headless?: boolean; // for web (default true)
+  browser?: BrowserName; // for web (default chromium)
+  storageState?: string; // for web
 }
 
 export interface SuggestedSelector {
@@ -216,6 +226,80 @@ export class Session {
     return Effect.runPromise(this.driver.evaluate(fn as any, ...args)) as Promise<T>;
   }
 
+  async mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void> {
+    const effect =
+      this.driver.mockNetwork?.(matcher, response) ??
+      Effect.fail(
+        new DriverError({ message: "mockNetwork() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async blockNetwork(matcher: BrowserRouteMatcher): Promise<void> {
+    const effect =
+      this.driver.blockNetwork?.(matcher) ??
+      Effect.fail(
+        new DriverError({ message: "blockNetwork() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async clearNetworkMocks(): Promise<void> {
+    const effect =
+      this.driver.clearNetworkMocks?.() ??
+      Effect.fail(
+        new DriverError({ message: "clearNetworkMocks() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async setNetworkConditions(conditions: BrowserNetworkConditions): Promise<void> {
+    const effect =
+      this.driver.setNetworkConditions?.(conditions) ??
+      Effect.fail(
+        new DriverError({
+          message: "setNetworkConditions() is only supported on the web platform",
+        }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async saveCookies(path: string): Promise<void> {
+    const effect =
+      this.driver.saveCookies?.(path) ??
+      Effect.fail(
+        new DriverError({ message: "saveCookies() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async loadCookies(path: string): Promise<void> {
+    const effect =
+      this.driver.loadCookies?.(path) ??
+      Effect.fail(
+        new DriverError({ message: "loadCookies() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async saveAuthState(path: string): Promise<void> {
+    const effect =
+      this.driver.saveAuthState?.(path) ??
+      Effect.fail(
+        new DriverError({ message: "saveAuthState() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
+  async loadAuthState(path: string): Promise<void> {
+    const effect =
+      this.driver.loadAuthState?.(path) ??
+      Effect.fail(
+        new DriverError({ message: "loadAuthState() is only supported on the web platform" }),
+      );
+    await Effect.runPromise(effect);
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
@@ -241,7 +325,12 @@ export async function connect(opts: ConnectOptions): Promise<Session> {
   if (opts.platform === "web") {
     const baseUrl = opts.baseUrl ?? "http://localhost:3000";
     const driver = await Effect.runPromise(
-      makePlaywrightDriver({ headless: opts.headless ?? true, baseUrl }),
+      makePlaywrightDriver({
+        browser: opts.browser,
+        headless: opts.headless ?? true,
+        baseUrl,
+        storageState: opts.storageState,
+      }),
     );
     await Effect.runPromise(driver.launchApp(baseUrl));
     return new Session(driver, "web", parseWebHierarchy, baseUrl);

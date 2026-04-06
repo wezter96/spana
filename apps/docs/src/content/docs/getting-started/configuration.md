@@ -134,16 +134,34 @@ Execution mode and remote Appium settings.
 ```ts
 execution?: {
   mode?: "local" | "appium";
+  web?: {
+    browser?: "chromium" | "firefox" | "webkit";
+    headless?: boolean;
+    storageState?: string;
+  };
   appium?: {
     serverUrl?: string;
     capabilities?: Record<string, unknown>;
     capabilitiesFile?: string;
     reportToProvider?: boolean;
+    browserstack?: {
+      app?: { id?: string; path?: string; name?: string; customId?: string };
+      local?: { enabled?: boolean; binary?: string; identifier?: string; args?: string[] };
+      options?: Record<string, unknown>;
+    };
+    saucelabs?: {
+      app?: { id?: string; path?: string; name?: string };
+      connect?: { enabled?: boolean; binary?: string; tunnelName?: string; args?: string[] };
+      options?: Record<string, unknown>;
+    };
   };
 }
 ```
 
+Use `execution.web` to configure the local Playwright runtime for web flows. `storageState` is resolved relative to `spana.config.ts`, so you can preload a saved auth/session state file without hard-coding absolute paths.
+
 Use `mode: "appium"` when running against BrowserStack, Sauce Labs, or another Appium-compatible grid.
+Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. The provider helper sections above fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled.
 
 ## CLI precedence
 

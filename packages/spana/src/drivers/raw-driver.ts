@@ -11,6 +11,23 @@ export interface LaunchOptions {
   launchArguments?: Record<string, unknown>;
 }
 
+export type BrowserRouteMatcher = string | RegExp;
+
+export interface BrowserMockResponse {
+  status?: number;
+  body?: string;
+  json?: unknown;
+  headers?: Record<string, string>;
+  contentType?: string;
+}
+
+export interface BrowserNetworkConditions {
+  offline?: boolean;
+  latencyMs?: number;
+  downloadThroughputKbps?: number;
+  uploadThroughputKbps?: number;
+}
+
 export interface RawDriverService {
   // Hierarchy
   readonly dumpHierarchy: () => Effect.Effect<RawHierarchy, DriverError>;
@@ -55,6 +72,21 @@ export interface RawDriverService {
     script: string | ((...args: unknown[]) => T),
     ...args: unknown[]
   ) => Effect.Effect<T, DriverError>;
+
+  // Web-only browser state helpers
+  readonly mockNetwork?: (
+    matcher: BrowserRouteMatcher,
+    response: BrowserMockResponse,
+  ) => Effect.Effect<void, DriverError>;
+  readonly blockNetwork?: (matcher: BrowserRouteMatcher) => Effect.Effect<void, DriverError>;
+  readonly clearNetworkMocks?: () => Effect.Effect<void, DriverError>;
+  readonly setNetworkConditions?: (
+    conditions: BrowserNetworkConditions,
+  ) => Effect.Effect<void, DriverError>;
+  readonly saveCookies?: (path: string) => Effect.Effect<void, DriverError>;
+  readonly loadCookies?: (path: string) => Effect.Effect<void, DriverError>;
+  readonly saveAuthState?: (path: string) => Effect.Effect<void, DriverError>;
+  readonly loadAuthState?: (path: string) => Effect.Effect<void, DriverError>;
 }
 
 export class RawDriver extends Context.Tag("RawDriver")<RawDriver, RawDriverService>() {}

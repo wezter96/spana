@@ -54,6 +54,41 @@ function resolveConfigPaths(config: ProvConfig, configPath: string): ProvConfig 
     );
   }
 
+  if (config.execution?.web?.storageState) {
+    config.execution.web.storageState = resolveIfRelative(
+      configDir,
+      config.execution.web.storageState,
+    );
+  }
+
+  if (config.execution?.appium?.browserstack?.app?.path) {
+    config.execution.appium.browserstack.app.path = resolveIfRelative(
+      configDir,
+      config.execution.appium.browserstack.app.path,
+    );
+  }
+
+  if (config.execution?.appium?.browserstack?.local?.binary) {
+    config.execution.appium.browserstack.local.binary = resolveIfRelative(
+      configDir,
+      config.execution.appium.browserstack.local.binary,
+    );
+  }
+
+  if (config.execution?.appium?.saucelabs?.app?.path) {
+    config.execution.appium.saucelabs.app.path = resolveIfRelative(
+      configDir,
+      config.execution.appium.saucelabs.app.path,
+    );
+  }
+
+  if (config.execution?.appium?.saucelabs?.connect?.binary) {
+    config.execution.appium.saucelabs.connect.binary = resolveIfRelative(
+      configDir,
+      config.execution.appium.saucelabs.connect.binary,
+    );
+  }
+
   return config;
 }
 

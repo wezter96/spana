@@ -88,6 +88,38 @@ function createDriver(hierarchy: Element) {
       return Effect.void;
     },
     evaluate: () => Effect.succeed(undefined as any),
+    mockNetwork: (matcher, response) => {
+      events.push(["mockNetwork", matcher, response]);
+      return Effect.void;
+    },
+    blockNetwork: (matcher) => {
+      events.push(["blockNetwork", matcher]);
+      return Effect.void;
+    },
+    clearNetworkMocks: () => {
+      events.push(["clearNetworkMocks"]);
+      return Effect.void;
+    },
+    setNetworkConditions: (conditions) => {
+      events.push(["setNetworkConditions", conditions]);
+      return Effect.void;
+    },
+    saveCookies: (path) => {
+      events.push(["saveCookies", path]);
+      return Effect.void;
+    },
+    loadCookies: (path) => {
+      events.push(["loadCookies", path]);
+      return Effect.void;
+    },
+    saveAuthState: (path) => {
+      events.push(["saveAuthState", path]);
+      return Effect.void;
+    },
+    loadAuthState: (path) => {
+      events.push(["loadAuthState", path]);
+      return Effect.void;
+    },
   };
 
   return { driver, events };
@@ -144,6 +176,14 @@ describe("promise app", () => {
     await app.clearState();
     await app.openLink("https://example.com");
     await app.back();
+    await app.mockNetwork(/\/api\/user$/, { json: { ok: true } });
+    await app.blockNetwork("**/ads");
+    await app.clearNetworkMocks();
+    await app.setNetworkConditions({ offline: true });
+    await app.saveCookies("./cookies.json");
+    await app.loadCookies("./cookies.json");
+    await app.saveAuthState("./auth.json");
+    await app.loadAuthState("./auth.json");
     const screenshot = await app.takeScreenshot("home");
 
     expect(screenshot).toEqual(new Uint8Array([1, 2, 3]));
@@ -164,6 +204,14 @@ describe("promise app", () => {
       "clearState",
       "openLink",
       "back",
+      "mockNetwork",
+      "blockNetwork",
+      "clearNetworkMocks",
+      "setNetworkConditions",
+      "saveCookies",
+      "loadCookies",
+      "saveAuthState",
+      "loadAuthState",
     ]);
     expect(stepCalls[0]?.opts).toEqual({
       selector: { text: "Ready" },
@@ -181,6 +229,21 @@ describe("promise app", () => {
       selector: { url: "https://example.com" },
       captureScreenshot: true,
     });
+    expect(stepCalls[16]?.opts).toEqual({
+      selector: { matcher: "/\\/api\\/user$/", response: { json: { ok: true } } },
+    });
+    expect(stepCalls[17]?.opts).toEqual({
+      selector: { matcher: "**/ads" },
+    });
+    expect(stepCalls[19]?.opts).toEqual({
+      selector: { offline: true },
+    });
+    expect(stepCalls[20]?.opts).toEqual({
+      selector: { path: "./cookies.json" },
+    });
+    expect(stepCalls[23]?.opts).toEqual({
+      selector: { path: "./auth.json" },
+    });
     expect(screenshotCalls).toEqual([
       {
         command: "takeScreenshot(home)",
@@ -197,6 +260,14 @@ describe("promise app", () => {
     expect(events).toContainEqual(["clearAppState", "com.example.app"]);
     expect(events).toContainEqual(["openLink", "https://example.com"]);
     expect(events).toContainEqual(["back"]);
+    expect(events).toContainEqual(["mockNetwork", /\/api\/user$/, { json: { ok: true } }]);
+    expect(events).toContainEqual(["blockNetwork", "**/ads"]);
+    expect(events).toContainEqual(["clearNetworkMocks"]);
+    expect(events).toContainEqual(["setNetworkConditions", { offline: true }]);
+    expect(events).toContainEqual(["saveCookies", "./cookies.json"]);
+    expect(events).toContainEqual(["loadCookies", "./cookies.json"]);
+    expect(events).toContainEqual(["saveAuthState", "./auth.json"]);
+    expect(events).toContainEqual(["loadAuthState", "./auth.json"]);
     expect(events).toContainEqual(["takeScreenshot"]);
   });
 
@@ -209,5 +280,18 @@ describe("promise app", () => {
 
     expect(screenshot).toEqual(new Uint8Array([1, 2, 3]));
     expect(events).toEqual([["back"], ["takeScreenshot"]]);
+  });
+
+  test("web-only browser helpers fail cleanly when the driver does not support them", async () => {
+    const { driver } = createDriver(createElement());
+    const app = createPromiseApp(
+      { ...driver, saveCookies: undefined } as RawDriverService,
+      "com.example.app",
+      { parse },
+    );
+
+    await expect(app.saveCookies("./cookies.json")).rejects.toThrow(
+      "saveCookies() is only supported on the web platform",
+    );
   });
 });

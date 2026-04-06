@@ -5,11 +5,14 @@ Spana runs tests against Sauce Labs using **Appium cloud mode** -- it connects t
 ## Prerequisites
 
 - A Sauce Labs account with Real Devices or Virtual Devices access
-- Your app uploaded to Sauce Labs (you handle this step)
+- Your app artifact available locally or already uploaded to Sauce Labs storage
+- Sauce Connect installed if you want Spana to manage the tunnel
 
-## 1. Upload your app
+## 1. Choose an app reference
 
-Upload your APK/IPA to Sauce Labs app storage:
+Spana can upload the app for you from config, or you can upload it yourself and reuse the storage reference.
+
+Manual upload example:
 
 ```bash
 curl -u "USERNAME:ACCESS_KEY" \
@@ -18,7 +21,7 @@ curl -u "USERNAME:ACCESS_KEY" \
   -F "name=app.apk"
 ```
 
-Note the returned `id` for use in capabilities.
+When you upload manually, use a Sauce storage reference such as `storage:YOUR_APP_ID` in capabilities or `execution.appium.saucelabs.app.id`.
 
 ## 2. Create capabilities
 
@@ -62,19 +65,40 @@ Save as `caps/saucelabs-ios.json`:
 import { defineConfig } from "spana-test";
 
 export default defineConfig({
+  apps: {
+    android: {
+      packageName: "com.example.myapp",
+      appPath: "./builds/app.apk",
+    },
+  },
   execution: {
     mode: "appium",
     appium: {
       serverUrl: process.env.SAUCE_URL,
-      capabilitiesFile: "./caps/saucelabs-android.json",
+      saucelabs: {
+        app: {
+          name: "app.apk",
+        },
+        connect: {
+          enabled: true,
+          tunnelName: "spana-ci",
+        },
+        options: {
+          build: process.env.CI_BUILD_ID ?? "spana-local",
+          name: "spana-run-1",
+        },
+      },
+      capabilities: {
+        "appium:deviceName": "Google Pixel 7",
+        "appium:platformVersion": "13.0",
+      },
       reportToProvider: true,
     },
   },
-  apps: {
-    android: { packageName: "com.example.myapp" },
-  },
 });
 ```
+
+If `saucelabs.app.path` is omitted, Spana falls back to `apps.<platform>.appPath` when present. If you already set `appium:app` or `sauce:options` in raw capabilities, those explicit values win.
 
 Set the hub URL:
 
@@ -115,13 +139,25 @@ spana test --platform android --no-provider-reporting
 
 ## Sauce Connect
 
-When testing against a local dev server, you must run Sauce Connect yourself:
+When `execution.appium.saucelabs.connect.enabled` is true, Spana starts Sauce Connect before the run and stops it during cleanup. The helper detects the Sauce region from your Appium URL and fills `sauce:options.tunnelName` when needed.
 
-```bash
-sc -u USERNAME -k ACCESS_KEY --tunnel-name my-tunnel
+```ts
+saucelabs: {
+  connect: {
+    enabled: true,
+    tunnelName: "spana-ci",
+    binary: "/opt/sauce/sc",
+  },
+}
 ```
 
-Then add to your capabilities:
+If you prefer to manage the tunnel yourself, leave the helper disabled and run Sauce Connect manually:
+
+```bash
+sc run --username USERNAME --access-key ACCESS_KEY --tunnel-name my-tunnel
+```
+
+Then add the tunnel name to your capabilities:
 
 ```json
 {
@@ -131,4 +167,4 @@ Then add to your capabilities:
 }
 ```
 
-This is your responsibility -- Spana does not manage the Sauce Connect tunnel.
+Both approaches work; the helper is just the convenient default now.

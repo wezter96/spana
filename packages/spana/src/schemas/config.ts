@@ -21,6 +21,15 @@ export interface AppConfig {
   signing?: IOSSigningConfig;
 }
 
+export type BrowserName = "chromium" | "firefox" | "webkit";
+
+export interface WebExecutionConfig {
+  browser?: BrowserName;
+  headless?: boolean;
+  /** Optional Playwright storage state JSON file to preload for web runs */
+  storageState?: string;
+}
+
 export interface CloudAppReferenceConfig {
   /** Existing remote app reference, e.g. bs://... or storage:... */
   id?: string;
@@ -72,6 +81,7 @@ export interface AppiumExecutionConfig {
 
 export interface ExecutionConfig {
   mode?: "local" | "appium";
+  web?: WebExecutionConfig;
   appium?: AppiumExecutionConfig;
 }
 
@@ -205,9 +215,18 @@ const appiumExecutionConfigSchema = z
   })
   .strict();
 
+const webExecutionConfigSchema = z
+  .object({
+    browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+    headless: z.boolean().optional(),
+    storageState: z.string().min(1).optional(),
+  })
+  .strict();
+
 const executionConfigSchema = z
   .object({
     mode: z.enum(["local", "appium"]).optional(),
+    web: webExecutionConfigSchema.optional(),
     appium: appiumExecutionConfigSchema.optional(),
   })
   .strict();

@@ -3,15 +3,15 @@ title: Cloud Providers
 description: Run tests on BrowserStack and Sauce Labs device clouds.
 ---
 
-Spana can run mobile tests on cloud device farms through Appium. It auto-detects BrowserStack and Sauce Labs from the server URL and reports test results back to the provider dashboard.
+Spana can run mobile tests on cloud device farms through Appium. It auto-detects BrowserStack and Sauce Labs from the server URL, reports test results back to the provider dashboard, and can manage provider-specific upload/tunnel helpers from config.
 
 ## Supported providers
 
-| Provider     | Auto-detected | Result reporting |
-| ------------ | ------------- | ---------------- |
-| BrowserStack | Yes           | Yes              |
-| Sauce Labs   | Yes           | Yes              |
-| Custom grid  | --            | No               |
+| Provider     | Auto-detected | Result reporting | Managed helpers |
+| ------------ | ------------- | ---------------- | --------------- |
+| BrowserStack | Yes           | Yes              | Yes             |
+| Sauce Labs   | Yes           | Yes              | Yes             |
+| Custom grid  | --            | No               | No              |
 
 ## BrowserStack
 
@@ -36,7 +36,7 @@ Or pass them on the CLI:
 spana test --appium-url "https://USER:KEY@hub-cloud.browserstack.com/wd/hub"
 ```
 
-### 2. Set capabilities
+### 2. Set capabilities or helper config
 
 Create a `caps.json` file with BrowserStack-specific options:
 
@@ -58,25 +58,43 @@ Then reference it:
 spana test --caps caps.json
 ```
 
-Or inline in config:
+Or let Spana manage app upload, BrowserStack Local, and default `bstack:options` values from config:
 
 ```ts title="spana.config.ts"
 export default defineConfig({
+  apps: {
+    android: {
+      packageName: "com.example.myapp",
+      appPath: "./builds/app.apk",
+    },
+  },
   execution: {
     mode: "appium",
     appium: {
       serverUrl: "https://USER:KEY@hub-cloud.browserstack.com/wd/hub",
-      capabilities: {
-        "bstack:options": {
+      browserstack: {
+        app: {
+          customId: "spana-android",
+        },
+        local: {
+          enabled: true,
+          identifier: "spana-local",
+        },
+        options: {
           projectName: "my-app",
           buildName: process.env.CI_BUILD_ID ?? "local",
         },
-        "appium:app": "bs://your-app-id",
+      },
+      capabilities: {
+        "appium:deviceName": "Samsung Galaxy S23",
+        "appium:platformVersion": "13.0",
       },
     },
   },
 });
 ```
+
+Use `browserstack.app.id` when you already have a `bs://...` reference. If `appium:app` or `bstack:options` are already set in raw capabilities, those explicit values win and helper config only fills what is missing.
 
 ### 3. Result reporting
 
@@ -89,6 +107,8 @@ appium: {
   reportToProvider: false,
 }
 ```
+
+When `browserstack.local.enabled` is true, Spana starts and stops BrowserStack Local for the run. Set `browserstack.local.binary` if the `BrowserStackLocal` binary is not on `PATH`, or keep managing the tunnel yourself and pass `bstack:options.local` manually.
 
 ## Sauce Labs
 
@@ -111,7 +131,7 @@ For EU data center:
 spana test --appium-url "https://USER:KEY@ondemand.eu-central-1.saucelabs.com/wd/hub"
 ```
 
-### 2. Set capabilities
+### 2. Set capabilities or helper config
 
 ```json title="caps.json"
 {
@@ -126,9 +146,49 @@ spana test --appium-url "https://USER:KEY@ondemand.eu-central-1.saucelabs.com/wd
 }
 ```
 
+Or let Spana manage Sauce storage uploads, Sauce Connect, and default `sauce:options` values from config:
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  apps: {
+    android: {
+      packageName: "com.example.myapp",
+      appPath: "./builds/app.apk",
+    },
+  },
+  execution: {
+    mode: "appium",
+    appium: {
+      serverUrl: "https://USER:KEY@ondemand.us-west-1.saucelabs.com/wd/hub",
+      saucelabs: {
+        app: {
+          name: "app.apk",
+        },
+        connect: {
+          enabled: true,
+          tunnelName: "spana-ci",
+        },
+        options: {
+          build: process.env.CI_BUILD_ID ?? "local",
+          name: "login-flow",
+        },
+      },
+      capabilities: {
+        "appium:deviceName": "Google Pixel 7",
+        "appium:platformVersion": "13",
+      },
+    },
+  },
+});
+```
+
+Use `saucelabs.app.id` when you already have a Sauce storage reference such as `storage:YOUR_APP_ID`. Explicit `appium:app` and `sauce:options` capability values still override helper-derived defaults.
+
 ### 3. Result reporting
 
 Sauce Labs sessions are automatically updated with pass/fail status after each test. Region (US/EU) is detected from the server URL.
+
+When `saucelabs.connect.enabled` is true, Spana starts and stops Sauce Connect for the run. Set `saucelabs.connect.binary` if the `sc` binary is not on `PATH`, or keep managing the tunnel yourself and pass `sauce:options.tunnelName` manually.
 
 ## Capability resolution
 

@@ -5,6 +5,8 @@ export {
   defineConfig,
   type ProvConfig,
   type AppConfig,
+  type BrowserName,
+  type WebExecutionConfig,
   type LaunchOptions,
   type ArtifactConfig,
 } from "./config.js";

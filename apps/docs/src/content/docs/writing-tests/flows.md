@@ -172,6 +172,35 @@ Direction values: `"up" | "down" | "left" | "right"`
 | `takeScreenshot` | `() => Promise<Uint8Array>`                | Capture a screenshot and return the bytes        |
 | `evaluate`       | `<T>(fn \| string, ...args) => Promise<T>` | Run JavaScript in the browser context (web only) |
 
+### Browser runtime helpers (web platform)
+
+| Method                 | Signature                                                                                     | Description                                         |
+| ---------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`                                                        | Fulfill matching requests with a mocked response    |
+| `blockNetwork`         | `(matcher) => Promise<void>`                                                                  | Abort matching requests                             |
+| `clearNetworkMocks`    | `() => Promise<void>`                                                                         | Remove active route mocks/blocks                    |
+| `setNetworkConditions` | `({ offline?, latencyMs?, downloadThroughputKbps?, uploadThroughputKbps? }) => Promise<void>` | Toggle offline mode and Chromium network throttling |
+| `saveCookies`          | `(path) => Promise<void>`                                                                     | Save Playwright cookies to a JSON file              |
+| `loadCookies`          | `(path) => Promise<void>`                                                                     | Load cookies from a JSON file                       |
+| `saveAuthState`        | `(path) => Promise<void>`                                                                     | Save Playwright storage state to disk               |
+| `loadAuthState`        | `(path) => Promise<void>`                                                                     | Replace the browser context with saved auth state   |
+
+These helpers are only available on the web platform. `setNetworkConditions()` supports offline mode on every browser, but latency/throughput throttling requires the Chromium browser runtime.
+
+```ts
+flow("web app can run with mocked APIs", async ({ app, platform }) => {
+  if (platform !== "web") return;
+
+  await app.loadAuthState("./auth/user.json");
+  await app.mockNetwork("**/api/profile", {
+    json: { id: "demo", name: "Demo User" },
+  });
+  await app.blockNetwork("**/analytics/**");
+  await app.setNetworkConditions({ offline: false, latencyMs: 120 });
+  await app.saveCookies("./tmp/cookies.json");
+});
+```
+
 ### JavaScript execution (web platform)
 
 `app.evaluate()` runs JavaScript inside the browser page context. This is useful for reading DOM state, manipulating localStorage, or interacting with the app's JavaScript runtime.

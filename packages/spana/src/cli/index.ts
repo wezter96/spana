@@ -127,6 +127,9 @@ if (command === "test") {
   const session = await connect({
     platform,
     baseUrl: config.apps?.web?.url,
+    browser: config.execution?.web?.browser,
+    headless: config.execution?.web?.headless,
+    storageState: config.execution?.web?.storageState,
     packageName: config.apps?.android?.packageName,
     bundleId: config.apps?.ios?.bundleId,
   });

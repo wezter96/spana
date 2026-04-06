@@ -1,5 +1,12 @@
 import { Effect } from "effect";
-import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
+import { DriverError } from "../errors.js";
+import type {
+  RawDriverService,
+  LaunchOptions,
+  BrowserMockResponse,
+  BrowserNetworkConditions,
+  BrowserRouteMatcher,
+} from "../drivers/raw-driver.js";
 import type { ExtendedSelector } from "../schemas/selector.js";
 import { createCoordinator, type Direction, type CoordinatorConfig } from "../smart/coordinator.js";
 import type { WaitOptions } from "../smart/auto-wait.js";
@@ -24,6 +31,14 @@ export interface PromiseApp {
   back(): Promise<void>;
   takeScreenshot(name?: string): Promise<Uint8Array>;
   evaluate<T = unknown>(fn: ((...args: any[]) => T) | string, ...args: any[]): Promise<T>;
+  mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void>;
+  blockNetwork(matcher: BrowserRouteMatcher): Promise<void>;
+  clearNetworkMocks(): Promise<void>;
+  setNetworkConditions(conditions: BrowserNetworkConditions): Promise<void>;
+  saveCookies(path: string): Promise<void>;
+  loadCookies(path: string): Promise<void>;
+  saveAuthState(path: string): Promise<void>;
+  loadAuthState(path: string): Promise<void>;
 }
 
 export function createPromiseApp(
@@ -35,6 +50,10 @@ export function createPromiseApp(
   const coord = createCoordinator(driver, config);
 
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
+  const unsupportedWebFeature = (feature: string) =>
+    Effect.fail(new DriverError({ message: `${feature}() is only supported on the web platform` }));
+  const describeMatcher = (matcher: BrowserRouteMatcher) =>
+    typeof matcher === "string" ? matcher : matcher.toString();
 
   const runStep = <A>(
     command: string,
@@ -108,5 +127,72 @@ export function createPromiseApp(
       ),
     evaluate: <T = unknown>(fn: ((...args: any[]) => T) | string, ...args: any[]) =>
       runStep("evaluate", () => run(driver.evaluate(fn as any, ...args)) as Promise<T>),
+    mockNetwork: (matcher, response) =>
+      runStep(
+        "mockNetwork",
+        () =>
+          run(
+            (driver.mockNetwork ?? ((..._args) => unsupportedWebFeature("mockNetwork")))(
+              matcher,
+              response,
+            ),
+          ),
+        {
+          selector: { matcher: describeMatcher(matcher), response },
+        },
+      ),
+    blockNetwork: (matcher) =>
+      runStep(
+        "blockNetwork",
+        () =>
+          run(
+            (driver.blockNetwork ?? ((_matcher) => unsupportedWebFeature("blockNetwork")))(matcher),
+          ),
+        {
+          selector: { matcher: describeMatcher(matcher) },
+        },
+      ),
+    clearNetworkMocks: () =>
+      runStep("clearNetworkMocks", () =>
+        run((driver.clearNetworkMocks ?? (() => unsupportedWebFeature("clearNetworkMocks")))()),
+      ),
+    setNetworkConditions: (conditions) =>
+      runStep(
+        "setNetworkConditions",
+        () =>
+          run(
+            (
+              driver.setNetworkConditions ??
+              ((_conditions) => unsupportedWebFeature("setNetworkConditions"))
+            )(conditions),
+          ),
+        { selector: conditions },
+      ),
+    saveCookies: (path) =>
+      runStep(
+        "saveCookies",
+        () => run((driver.saveCookies ?? ((_path) => unsupportedWebFeature("saveCookies")))(path)),
+        { selector: { path } },
+      ),
+    loadCookies: (path) =>
+      runStep(
+        "loadCookies",
+        () => run((driver.loadCookies ?? ((_path) => unsupportedWebFeature("loadCookies")))(path)),
+        { selector: { path } },
+      ),
+    saveAuthState: (path) =>
+      runStep(
+        "saveAuthState",
+        () =>
+          run((driver.saveAuthState ?? ((_path) => unsupportedWebFeature("saveAuthState")))(path)),
+        { selector: { path } },
+      ),
+    loadAuthState: (path) =>
+      runStep(
+        "loadAuthState",
+        () =>
+          run((driver.loadAuthState ?? ((_path) => unsupportedWebFeature("loadAuthState")))(path)),
+        { selector: { path } },
+      ),
   };
 }

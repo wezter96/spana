@@ -43,7 +43,22 @@ describe("config loader", () => {
         flowDir: "./flows",
         artifacts: { outputDir: "./artifacts" },
         apps: { android: { packageName: "com.example.app", appPath: "./builds/app.apk" } },
-        execution: { appium: { capabilitiesFile: "./caps.json" } }
+        execution: {
+          web: {
+            storageState: "./auth/storage-state.json"
+          },
+          appium: {
+            capabilitiesFile: "./caps.json",
+            browserstack: {
+              app: { path: "./uploads/browserstack.apk" },
+              local: { binary: "./bin/BrowserStackLocal" }
+            },
+            saucelabs: {
+              app: { path: "./uploads/sauce.apk" },
+              connect: { binary: "./bin/sc" }
+            }
+          }
+        }
       };`,
       "utf8",
     );
@@ -59,7 +74,22 @@ describe("config loader", () => {
     expect(result.config.flowDir).toBe(join(tempDir, "flows"));
     expect(result.config.artifacts?.outputDir).toBe(join(tempDir, "artifacts"));
     expect(result.config.apps?.android?.appPath).toBe(join(tempDir, "builds", "app.apk"));
+    expect(result.config.execution?.web?.storageState).toBe(
+      join(tempDir, "auth", "storage-state.json"),
+    );
     expect(result.config.execution?.appium?.capabilitiesFile).toBe(join(tempDir, "caps.json"));
+    expect(result.config.execution?.appium?.browserstack?.app?.path).toBe(
+      join(tempDir, "uploads", "browserstack.apk"),
+    );
+    expect(result.config.execution?.appium?.browserstack?.local?.binary).toBe(
+      join(tempDir, "bin", "BrowserStackLocal"),
+    );
+    expect(result.config.execution?.appium?.saucelabs?.app?.path).toBe(
+      join(tempDir, "uploads", "sauce.apk"),
+    );
+    expect(result.config.execution?.appium?.saucelabs?.connect?.binary).toBe(
+      join(tempDir, "bin", "sc"),
+    );
   });
 
   test("returns an empty config when missing configs are allowed", async () => {
