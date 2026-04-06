@@ -606,4 +606,68 @@ describe("orchestrate", () => {
     const gap = timestamps[1]! - timestamps[0]!;
     expect(gap).toBeLessThan(30);
   });
+
+  test("delegates to runParallel when additionalWorkers provided", async () => {
+    const result = await orchestrate(
+      [createFlow("a"), createFlow("b"), createFlow("c")],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+          additionalWorkers: [
+            {
+              id: "worker-b",
+              name: "Pixel 8",
+              driver: createDriver("android"),
+              engineConfig: {
+                appId: "com.example",
+                platform: "android",
+                autoLaunch: false,
+                coordinatorConfig: {
+                  parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+                },
+              },
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(result.results).toHaveLength(3);
+    expect(result.passed).toBe(3);
+    expect(result.workerStats).toBeDefined();
+    expect(result.workerStats!.size).toBe(2);
+  });
+
+  test("single-worker platform uses serial path (no workerStats)", async () => {
+    const result = await orchestrate(
+      [createFlow("a")],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+    );
+
+    expect(result.results).toHaveLength(1);
+    expect(result.passed).toBe(1);
+    expect(result.workerStats).toBeUndefined();
+  });
 });
