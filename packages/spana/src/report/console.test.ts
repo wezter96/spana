@@ -102,6 +102,68 @@ describe("console reporter", () => {
     expect(logs.some((line) => line.includes("1/3 passed, 2 failed (3.5s)"))).toBe(true);
   });
 
+  test("prefixes output with worker name in parallel mode", () => {
+    const reporter = createConsoleReporter();
+
+    reporter.onFlowStart?.("Login flow", "android", "Pixel 8");
+    reporter.onFlowPass?.({
+      name: "Login flow",
+      platform: "android",
+      status: "passed",
+      durationMs: 1234,
+      workerName: "Pixel 8",
+    });
+
+    expect(logs.some((line) => line.includes("[Pixel 8]") && line.includes("Login flow"))).toBe(
+      true,
+    );
+  });
+
+  test("omits worker prefix when workerName is absent", () => {
+    const reporter = createConsoleReporter();
+
+    reporter.onFlowStart?.("Login flow", "android");
+    reporter.onFlowPass?.({
+      name: "Login flow",
+      platform: "android",
+      status: "passed",
+      durationMs: 1234,
+    });
+
+    const passLine = logs.find((line) => line.includes("Login flow") && line.includes("✓"));
+    expect(passLine).toBeDefined();
+    expect(passLine!.includes("[Pixel 8]")).toBe(false);
+    // Should not have any bracket-prefixed device name between ✓ and flow name
+    expect(passLine!).not.toMatch(/✓.*\[(?!0|1|2|3|4|5|6|7|8|9)\w/);
+  });
+
+  test("prints worker stats in summary when workerStats present", () => {
+    const reporter = createConsoleReporter();
+
+    const workerStats = new Map<string, { flowCount: number; totalMs: number }>();
+    workerStats.set("Pixel 8", { flowCount: 5, totalMs: 12300 });
+    workerStats.set("iPhone 15", { flowCount: 3, totalMs: 8700 });
+
+    reporter.onRunComplete({
+      total: 8,
+      passed: 8,
+      failed: 0,
+      skipped: 0,
+      flaky: 0,
+      durationMs: 12300,
+      platforms: ["android", "ios"],
+      results: [
+        { name: "Flow A", platform: "android", status: "passed", durationMs: 1000 },
+        { name: "Flow B", platform: "ios", status: "passed", durationMs: 2000 },
+      ],
+      workerStats,
+    });
+
+    expect(logs.some((line) => line.includes("Worker Stats"))).toBe(true);
+    expect(logs.some((line) => line.includes("Pixel 8") && line.includes("5 flows"))).toBe(true);
+    expect(logs.some((line) => line.includes("iPhone 15") && line.includes("3 flows"))).toBe(true);
+  });
+
   test("quiet mode suppresses pass output but shows failures", () => {
     const reporter = createConsoleReporter({ quiet: true });
 
