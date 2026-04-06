@@ -28,13 +28,25 @@
 - ✅ Parallel device execution
 - ✅ Retry & flake detection (`--retries N`)
 
-### Structural reliability (from maestro-runner comparison)
+### Structural reliability
+
+Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). Full comparison: `docs/superpowers/plans/2026-04-06-maestro-runner-comparison.md`.
 
 - Runtime ownership + cleanup — drivers return `{ driver, cleanup }`, CLI/Studio/agent dispose on exit and signals
+  - Reference: `maestro-runner/pkg/cli/test.go`, `pkg/cli/web.go`, `pkg/cli/android.go`, `pkg/cli/ios.go`
+  - Spana gap: `src/drivers/raw-driver.ts` has no cleanup contract, `src/cli/test-command.ts` has inline setup
 - Port/resource isolation — deterministic port allocation, per-session cleanup (no `forward --remove-all`)
+  - Reference: `maestro-runner/pkg/driver/wda/runner.go`, `pkg/device/android.go`
+  - Spana gap: `src/cli/test-command.ts` picks random ports, `src/drivers/uiautomator2/installer.ts` clears all forwards
 - Unified device discovery + `--device <id>` targeting — consistent across CLI, Studio, and agent
+  - Reference: `maestro-runner/pkg/cli/cli.go`, `pkg/cli/test.go`
+  - Spana gap: `src/device/discover.ts` vs `src/cli/test-command.ts` vs `src/studio/routers/devices.ts` behave differently
 - Wire LaunchOptions end-to-end — `clearState`, `launchArguments`, `clearKeychain` (documented but not implemented)
+  - Reference: `maestro-runner/pkg/driver/uiautomator2/commands.go`, `pkg/driver/wda/commands.go`
+  - Spana gap: `src/api/app.ts` only exposes `{ deepLink }`, `src/schemas/config.ts` and docs advertise more
 - Invoke config hooks — `beforeAll`/`beforeEach`/`afterEach`/`afterAll` (in schema, not called)
+  - Reference: `maestro-runner/pkg/flow/flow.go`, `pkg/executor/flow_runner.go`
+  - Spana gap: `src/schemas/config.ts` defines hooks, `src/cli/test-command.ts` never invokes them
 
 ### Features
 
