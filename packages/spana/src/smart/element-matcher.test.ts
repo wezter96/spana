@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { Element } from "../schemas/element.js";
-import { centerOf, findElement, flattenElements, matchesSelector } from "./element-matcher.js";
+import {
+  centerOf,
+  findElement,
+  flattenElements,
+  matchesSelector,
+  formatSelector,
+} from "./element-matcher.js";
 
 function makeElement(overrides: Partial<Element> = {}): Element {
   return {
@@ -79,5 +85,39 @@ describe("element-matcher", () => {
         }),
       ),
     ).toEqual({ x: 51, y: 41 });
+  });
+});
+
+describe("formatSelector", () => {
+  test("formats string selector", () => {
+    expect(formatSelector("Login")).toBe('"Login"');
+  });
+
+  test("formats testID selector", () => {
+    expect(formatSelector({ testID: "btn-submit" })).toBe('testID: "btn-submit"');
+  });
+
+  test("formats text selector", () => {
+    expect(formatSelector({ text: "Submit" })).toBe('text: "Submit"');
+  });
+
+  test("formats accessibilityLabel selector", () => {
+    expect(formatSelector({ accessibilityLabel: "Close" })).toBe('accessibilityLabel: "Close"');
+  });
+
+  test("formats point selector", () => {
+    expect(formatSelector({ point: { x: 10, y: 20 } })).toBe("point: (10, 20)");
+  });
+
+  test("formats relative selector", () => {
+    expect(formatSelector({ selector: { text: "Submit" }, below: { text: "Email" } })).toBe(
+      'text: "Submit" below text: "Email"',
+    );
+  });
+
+  test("formats relative selector with multiple constraints", () => {
+    expect(
+      formatSelector({ selector: { testID: "btn" }, below: "Header", rightOf: { text: "Label" } }),
+    ).toBe('testID: "btn" below "Header" rightOf text: "Label"');
   });
 });

@@ -70,6 +70,29 @@ export function centerOf(element: Element): { x: number; y: number } {
   };
 }
 
+/** Format a selector (simple or extended) as a human-readable string for error messages */
+export function formatSelector(sel: ExtendedSelector): string {
+  if (isRelativeSelector(sel)) {
+    const parts = [formatSimpleSelector(sel.selector)];
+    if (sel.below) parts.push(`below ${formatSimpleSelector(sel.below)}`);
+    if (sel.above) parts.push(`above ${formatSimpleSelector(sel.above)}`);
+    if (sel.leftOf) parts.push(`leftOf ${formatSimpleSelector(sel.leftOf)}`);
+    if (sel.rightOf) parts.push(`rightOf ${formatSimpleSelector(sel.rightOf)}`);
+    if (sel.childOf) parts.push(`childOf ${formatSimpleSelector(sel.childOf)}`);
+    return parts.join(" ");
+  }
+  return formatSimpleSelector(sel);
+}
+
+function formatSimpleSelector(sel: Selector): string {
+  if (typeof sel === "string") return `"${sel}"`;
+  if ("testID" in sel) return `testID: "${sel.testID}"`;
+  if ("text" in sel) return `text: "${sel.text}"`;
+  if ("accessibilityLabel" in sel) return `accessibilityLabel: "${sel.accessibilityLabel}"`;
+  if ("point" in sel) return `point: (${sel.point.x}, ${sel.point.y})`;
+  return JSON.stringify(sel);
+}
+
 /** Find an element using an extended selector (simple or relative) */
 export function findElementExtended(
   root: Element,
