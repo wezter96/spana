@@ -46,7 +46,7 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 - `./agent` subpath export for programmatic API
 - ✅ Relative selectors (`below`, `above`, `leftOf`, `rightOf`, `childOf`)
 - ✅ Auto-start emulator/simulator for CI (handled by `ensureAndroidDevice`/`ensureIOSSimulator`)
-- JavaScript scripting in flows (`evalScript`, `runScript` for custom logic)
+- ✅ JavaScript scripting — `app.evaluate()` for web; TS flows provide full scripting for all platforms
 
 ---
 
@@ -56,7 +56,7 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 
 - GitHub Action integration
 - CI examples (GitHub Actions, GitLab CI, CircleCI)
-- Cloud provider support — Appium integration (BrowserStack, Sauce Labs, etc.)
+- Cloud provider support — Appium integration (BrowserStack, Sauce Labs, etc.). Plan: `docs/superpowers/plans/2026-04-06-phase4-appium-cloud-mode.md`
 - MCP server for AI agent integration
 
 ### Web testing

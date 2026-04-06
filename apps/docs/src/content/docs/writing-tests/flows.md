@@ -167,9 +167,36 @@ Direction values: `"up" | "down" | "left" | "right"`
 
 ### Utilities
 
-| Method           | Signature                   | Description                               |
-| ---------------- | --------------------------- | ----------------------------------------- |
-| `takeScreenshot` | `() => Promise<Uint8Array>` | Capture a screenshot and return the bytes |
+| Method           | Signature                                  | Description                                      |
+| ---------------- | ------------------------------------------ | ------------------------------------------------ |
+| `takeScreenshot` | `() => Promise<Uint8Array>`                | Capture a screenshot and return the bytes        |
+| `evaluate`       | `<T>(fn \| string, ...args) => Promise<T>` | Run JavaScript in the browser context (web only) |
+
+### JavaScript execution (web platform)
+
+`app.evaluate()` runs JavaScript inside the browser page context. This is useful for reading DOM state, manipulating localStorage, or interacting with the app's JavaScript runtime.
+
+```ts
+flow("read page state", async ({ app, platform }) => {
+  if (platform !== "web") return;
+
+  // Read a value from the page
+  const title = await app.evaluate(() => document.title);
+
+  // Pass arguments
+  const count = await app.evaluate(
+    (selector: string) => document.querySelectorAll(selector).length,
+    "button",
+  );
+
+  // Manipulate state
+  await app.evaluate(() => {
+    localStorage.setItem("feature-flag", "true");
+  });
+});
+```
+
+`evaluate()` is only supported on the web platform (Playwright). On Android and iOS, it throws an error — native apps don't expose a JavaScript engine. Since flows are TypeScript, you have full access to Node.js/Bun APIs for any test logic that doesn't need to run inside the browser.
 
 ## Settings export
 
