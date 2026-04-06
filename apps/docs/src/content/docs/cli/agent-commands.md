@@ -87,22 +87,29 @@ Use `spana hierarchy` when `spana selectors` does not include the element you ne
 
 ## `spana validate`
 
-Validate flow files for schema correctness without a device connection.
+Validate flow files without a device connection. Catches common mistakes before running tests.
 
 ```bash
 spana validate [path]
 ```
 
-`path` defaults to `flowDir`. Exits `0` if all flows are valid, non-zero if any flow fails schema validation. Does not execute the flows.
+`path` defaults to `flowDir`. Exits `0` if all flows are valid, non-zero if any errors found. Does not execute the flows.
+
+**Checks performed:**
+
+- Flow files have a valid default export with `name` and `fn`
+- No duplicate flow names across files
+- Platform values are valid (`web`, `android`, `ios` only)
+- Flow directory exists and contains flow files
 
 ```bash
-spana validate flows/checkout.ts
-# OK: flows/checkout.ts — 1 flow
-
 spana validate
-# OK: flows/login.ts — 1 flow
-# OK: flows/checkout.ts — 2 flows
-# ERROR: flows/broken.ts — export default is not a FlowDefinition
+# ✓ 5 flow(s) valid
+
+spana validate flows/
+# ✗ flows/login.flow.ts: Duplicate flow name "Login test" (also in flows/auth.flow.ts)
+# ✗ flows/broken.flow.ts: Invalid platform "windows" — must be web, android, or ios
+# ✗ flows/empty.flow.ts: export default is not a FlowDefinition
 ```
 
 Use `spana validate` in CI preflight or as part of an agent loop before committing generated flow files.
