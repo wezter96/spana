@@ -51,6 +51,9 @@ coverage
 tmp
 temp
 
+# Worktrees
+.worktrees/
+
 # Spana
 spana-output/
 .wda-builds/
