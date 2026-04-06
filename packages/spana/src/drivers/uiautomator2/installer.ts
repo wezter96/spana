@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findADB, adbShell, adbInstall, adbForward } from "../../device/android.js";
+import { allocatePort, releasePort } from "../../core/port-allocator.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -95,19 +96,21 @@ export function startUiAutomator2Server(serial: string): void {
 /** Full setup: install if needed, start server, forward port */
 export async function setupUiAutomator2(
   serial: string,
-  hostPort: number = 8200,
-): Promise<{ host: string; port: number }> {
+  hostPort?: number,
+): Promise<{ host: string; port: number; cleanup: () => void }> {
+  const port = hostPort ?? allocatePort(8200);
+
   if (!isUiAutomator2Installed(serial)) {
     installUiAutomator2(serial);
   }
 
-  // Clean up stale port forwards from previous runs
+  // Clean up only our specific port forward (not all)
   const adb = findADB();
   if (adb) {
     try {
-      execSync(`${adb} -s ${serial} forward --remove-all`, { stdio: "ignore" });
+      execSync(`${adb} -s ${serial} forward --remove tcp:${port}`, { stdio: "ignore" });
     } catch {
-      /* ignore */
+      /* ignore — may not exist */
     }
   }
 
@@ -118,16 +121,25 @@ export async function setupUiAutomator2(
 
   // Forward device port to host
   const devicePort = 6790;
-  adbForward(serial, hostPort, devicePort);
+  adbForward(serial, port, devicePort);
 
   // Poll until the server responds
   const maxRetries = 10;
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const res = await fetch(`http://localhost:${hostPort}/status`);
+      const res = await fetch(`http://localhost:${port}/status`);
       if (res.ok) {
-        console.log(`UiAutomator2 server ready on port ${hostPort}`);
-        return { host: "localhost", port: hostPort };
+        console.log(`UiAutomator2 server ready on port ${port}`);
+        const cleanup = () => {
+          try {
+            if (adb)
+              execSync(`${adb} -s ${serial} forward --remove tcp:${port}`, { stdio: "ignore" });
+          } catch {
+            /* ignore */
+          }
+          releasePort(port);
+        };
+        return { host: "localhost", port, cleanup };
       }
     } catch {
       // Not ready yet
@@ -135,5 +147,6 @@ export async function setupUiAutomator2(
     await new Promise((r) => setTimeout(r, 1000));
   }
 
+  releasePort(port);
   throw new Error(`UiAutomator2 server did not start within ${maxRetries} seconds`);
 }
