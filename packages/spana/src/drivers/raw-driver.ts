@@ -73,6 +73,11 @@ export interface RawDriverService {
     ...args: unknown[]
   ) => Effect.Effect<T, DriverError>;
 
+  // WebView / hybrid context switching (mobile only)
+  readonly getContexts?: () => Effect.Effect<string[], DriverError>;
+  readonly getCurrentContext?: () => Effect.Effect<string, DriverError>;
+  readonly setContext?: (contextId: string) => Effect.Effect<void, DriverError>;
+
   // Web-only browser state helpers
   readonly mockNetwork?: (
     matcher: BrowserRouteMatcher,

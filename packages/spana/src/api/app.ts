@@ -39,6 +39,18 @@ export interface PromiseApp {
   loadCookies(path: string): Promise<void>;
   saveAuthState(path: string): Promise<void>;
   loadAuthState(path: string): Promise<void>;
+
+  // WebView / hybrid context switching
+  /** List available contexts (e.g. ["NATIVE_APP", "WEBVIEW_com.example.app"]). */
+  getContexts(): Promise<string[]>;
+  /** Get the current context ID. */
+  getCurrentContext(): Promise<string>;
+  /** Switch to a specific context by ID. */
+  switchToContext(contextId: string): Promise<void>;
+  /** Switch to the first available WebView context. */
+  switchToWebView(): Promise<void>;
+  /** Switch back to the native app context. */
+  switchToNativeApp(): Promise<void>;
 }
 
 export function createPromiseApp(
@@ -193,6 +205,41 @@ export function createPromiseApp(
         () =>
           run((driver.loadAuthState ?? ((_path) => unsupportedWebFeature("loadAuthState")))(path)),
         { selector: { path } },
+      ),
+
+    // WebView / hybrid context switching
+    getContexts: () =>
+      runStep("getContexts", () =>
+        run((driver.getContexts ?? (() => Effect.succeed(["NATIVE_APP"] as string[])))()),
+      ),
+
+    getCurrentContext: () =>
+      runStep("getCurrentContext", () =>
+        run((driver.getCurrentContext ?? (() => Effect.succeed("NATIVE_APP")))()),
+      ),
+
+    switchToContext: (contextId) =>
+      runStep(`switchToContext(${contextId})`, () =>
+        run((driver.setContext ?? ((_id) => Effect.void))(contextId)),
+      ),
+
+    switchToWebView: () =>
+      runStep("switchToWebView", async () => {
+        const contexts = await run(
+          (driver.getContexts ?? (() => Effect.succeed(["NATIVE_APP"] as string[])))(),
+        );
+        const webview = contexts.find((c) => c.startsWith("WEBVIEW_"));
+        if (!webview) {
+          throw new DriverError({
+            message: `No WebView context found. Available contexts: ${contexts.join(", ")}`,
+          });
+        }
+        await run((driver.setContext ?? ((_id) => Effect.void))(webview));
+      }),
+
+    switchToNativeApp: () =>
+      runStep("switchToNativeApp", () =>
+        run((driver.setContext ?? ((_id) => Effect.void))("NATIVE_APP")),
       ),
   };
 }

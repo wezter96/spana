@@ -27,11 +27,7 @@ export class UiAutomator2Client {
   // HTTP helpers
   // ---------------------------------------------------------------------------
 
-  private async request<T = unknown>(
-    method: string,
-    path: string,
-    body?: unknown,
-  ): Promise<T> {
+  private async request<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const init: RequestInit = {
       method,
@@ -64,9 +60,7 @@ export class UiAutomator2Client {
       "error" in (parsed.value as object)
     ) {
       const val = parsed.value as Record<string, unknown>;
-      throw new Error(
-        `UiAutomator2 error: ${val.message ?? val.error}`,
-      );
+      throw new Error(`UiAutomator2 error: ${val.message ?? val.error}`);
     }
 
     return parsed.value as T;
@@ -110,14 +104,14 @@ export class UiAutomator2Client {
 
     if (!res.ok) {
       const val = parsed["value"] as Record<string, unknown> | undefined;
-      throw new Error(
-        `UiAutomator2: failed to create session: ${val?.message ?? text}`,
-      );
+      throw new Error(`UiAutomator2: failed to create session: ${val?.message ?? text}`);
     }
 
     let sessionId =
       (parsed["sessionId"] as string | undefined) ??
-      ((parsed["value"] as Record<string, unknown> | undefined)?.["sessionId"] as string | undefined);
+      ((parsed["value"] as Record<string, unknown> | undefined)?.["sessionId"] as
+        | string
+        | undefined);
 
     if (!sessionId) {
       throw new Error("UiAutomator2: no sessionId in session response");
@@ -258,5 +252,25 @@ export class UiAutomator2Client {
     await this.request("POST", this.sessionPath("/appium/device/terminate_app"), {
       appId: appPackage,
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // WebView / hybrid context switching
+  // ---------------------------------------------------------------------------
+
+  async getContexts(): Promise<string[]> {
+    return this.request<string[]>("GET", this.sessionPath("/contexts"));
+  }
+
+  async getCurrentContext(): Promise<string> {
+    return this.request<string>("GET", this.sessionPath("/context"));
+  }
+
+  async setContext(contextId: string): Promise<void> {
+    await this.request("POST", this.sessionPath("/context"), { name: contextId });
+  }
+
+  async executeScript(script: string, args: unknown[] = []): Promise<unknown> {
+    return this.request("POST", this.sessionPath("/execute/sync"), { script, args });
   }
 }

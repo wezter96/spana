@@ -200,10 +200,33 @@ export function createUiAutomator2Driver(
           catch: (e) => new DriverError({ message: `Back failed: ${e}` }),
         }),
 
-      evaluate: () =>
-        Effect.fail(
-          new DriverError({ message: "evaluate() is only supported on the web platform" }),
-        ),
+      evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
+        Effect.tryPromise({
+          try: () =>
+            client.executeScript(
+              typeof script === "function" ? `return (${script})(...arguments)` : script,
+              args,
+            ) as Promise<T>,
+          catch: (e) => new DriverError({ message: `evaluate() failed: ${e}` }),
+        }),
+
+      getContexts: () =>
+        Effect.tryPromise({
+          try: () => client.getContexts(),
+          catch: (e) => new DriverError({ message: `getContexts failed: ${e}` }),
+        }),
+
+      getCurrentContext: () =>
+        Effect.tryPromise({
+          try: () => client.getCurrentContext(),
+          catch: (e) => new DriverError({ message: `getCurrentContext failed: ${e}` }),
+        }),
+
+      setContext: (contextId: string) =>
+        Effect.tryPromise({
+          try: () => client.setContext(contextId),
+          catch: (e) => new DriverError({ message: `setContext failed: ${e}` }),
+        }),
     };
 
     return service;

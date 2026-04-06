@@ -308,14 +308,38 @@ export function createAppiumIOSDriver(
       ),
 
     // -----------------------------------------------------------------------
-    // Scripting
+    // Scripting (works when switched to a WebView context)
     // -----------------------------------------------------------------------
-    evaluate: () =>
-      Effect.fail(
-        new DriverError({
-          message: "evaluate() is not supported in Appium mode",
-        }),
-      ),
+    evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
+      Effect.tryPromise({
+        try: () =>
+          client.executeScript(
+            typeof script === "function" ? `return (${script})(...arguments)` : script,
+            args,
+          ) as Promise<T>,
+        catch: (e) => new DriverError({ message: `evaluate() failed: ${e}` }),
+      }),
+
+    // -----------------------------------------------------------------------
+    // WebView / hybrid context switching
+    // -----------------------------------------------------------------------
+    getContexts: () =>
+      Effect.tryPromise({
+        try: () => client.getContexts(),
+        catch: (e) => new DriverError({ message: `getContexts failed: ${e}` }),
+      }),
+
+    getCurrentContext: () =>
+      Effect.tryPromise({
+        try: () => client.getCurrentContext(),
+        catch: (e) => new DriverError({ message: `getCurrentContext failed: ${e}` }),
+      }),
+
+    setContext: (contextId: string) =>
+      Effect.tryPromise({
+        try: () => client.setContext(contextId),
+        catch: (e) => new DriverError({ message: `setContext failed: ${e}` }),
+      }),
   };
 
   return Effect.succeed(service);

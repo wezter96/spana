@@ -308,17 +308,47 @@ describe("Appium Android driver", () => {
     expect(calls[0]?.init?.method).toBe("POST");
   });
 
-  test("evaluate fails with DriverError", async () => {
+  test("evaluate delegates to execute/sync endpoint", async () => {
     const { client } = await makeClient();
+    queueFetch([{ body: { value: 42 } }]);
 
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
-    const result = await Effect.runPromise(Effect.either(driver.evaluate("1+1")));
+    const result = await Effect.runPromise(driver.evaluate("return 1+1"));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("not supported in Appium mode");
-    }
+    expect(result).toBe(42);
+  });
+
+  // ---------------------------------------------------------------------------
+  // WebView / hybrid context switching
+  // ---------------------------------------------------------------------------
+
+  test("getContexts returns available contexts", async () => {
+    const { client } = await makeClient();
+    queueFetch([{ body: { value: ["NATIVE_APP", "WEBVIEW_com.example.app"] } }]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    const contexts = await Effect.runPromise(driver.getContexts!());
+
+    expect(contexts).toEqual(["NATIVE_APP", "WEBVIEW_com.example.app"]);
+  });
+
+  test("getCurrentContext returns current context", async () => {
+    const { client } = await makeClient();
+    queueFetch([{ body: { value: "NATIVE_APP" } }]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    const ctx = await Effect.runPromise(driver.getCurrentContext!());
+
+    expect(ctx).toBe("NATIVE_APP");
+  });
+
+  test("setContext switches to WebView", async () => {
+    const { client } = await makeClient();
+    queueFetch([{ body: { value: null } }]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    // Should not throw — successful context switch
+    await Effect.runPromise(driver.setContext!("WEBVIEW_com.example.app"));
   });
 
   test("launchApp with launchArguments fails with DriverError", async () => {

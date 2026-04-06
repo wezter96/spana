@@ -67,7 +67,7 @@ Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdri
 
 ### Web testing
 
-- WebView / hybrid support — context discovery, targeted switching, and JS execution inside mobile WebViews
+- ✅ WebView / hybrid support — context discovery, targeted switching, and JS execution inside mobile WebViews
 - ✅ Browser runtime config (headed mode, browser selection, proper disposal)
 - ✅ Network mocking/control (`mockNetwork`, `blockNetwork`, `setNetworkConditions`)
 - ✅ Cookie/auth state management (`saveCookies`, `loadAuthState`)

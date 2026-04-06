@@ -135,4 +135,28 @@ export class AppiumClient {
   getSessionCaps(): Record<string, unknown> {
     return this.sessionCaps;
   }
+
+  // ---------------------------------------------------------------------------
+  // WebView / hybrid context switching
+  // ---------------------------------------------------------------------------
+
+  async getContexts(): Promise<string[]> {
+    return this.request<string[]>("GET", this.sessionPath("/contexts"));
+  }
+
+  async getCurrentContext(): Promise<string> {
+    return this.request<string>("GET", this.sessionPath("/context"));
+  }
+
+  async setContext(contextId: string): Promise<void> {
+    await this.request("POST", this.sessionPath("/context"), { name: contextId });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scripting (execute in current context — works in WebView contexts)
+  // ---------------------------------------------------------------------------
+
+  async executeScript(script: string, args: unknown[] = []): Promise<unknown> {
+    return this.request("POST", this.sessionPath("/execute/sync"), { script, args });
+  }
 }

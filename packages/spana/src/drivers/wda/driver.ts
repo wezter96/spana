@@ -360,8 +360,31 @@ export function createWDADriver(
 
       evaluate: () =>
         Effect.fail(
-          new DriverError({ message: "evaluate() is only supported on the web platform" }),
+          new DriverError({
+            message:
+              "evaluate() requires a WebView context. Use Appium mode (--driver appium) for iOS WebView support.",
+          }),
         ),
+
+      getContexts: () =>
+        Effect.fail(
+          new DriverError({
+            message:
+              "WebView context switching requires Appium mode. Use --driver appium with an Appium server that supports XCUITest.",
+          }),
+        ),
+
+      getCurrentContext: () => Effect.succeed("NATIVE_APP"),
+
+      setContext: (contextId: string) =>
+        contextId === "NATIVE_APP"
+          ? Effect.void
+          : Effect.fail(
+              new DriverError({
+                message:
+                  "WebView context switching requires Appium mode. Use --driver appium with an Appium server that supports XCUITest.",
+              }),
+            ),
     };
 
     return service;

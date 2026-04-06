@@ -367,17 +367,14 @@ describe("Appium iOS driver", () => {
   // ---------------------------------------------------------------------------
   // Scripting
   // ---------------------------------------------------------------------------
-  test("evaluate fails with DriverError", async () => {
+  test("evaluate delegates to execute/sync endpoint", async () => {
     const { client } = await makeClient();
+    queueFetch([{ body: { value: "hello" } }]);
 
     const driver = await Effect.runPromise(createAppiumIOSDriver(client));
-    const result = await Effect.runPromise(Effect.either(driver.evaluate("1+1")));
+    const result = await Effect.runPromise(driver.evaluate("return document.title"));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("not supported in Appium mode");
-    }
+    expect(result).toBe("hello");
   });
 
   // ---------------------------------------------------------------------------
