@@ -116,6 +116,11 @@ export async function buildLocalAndroidRuntime(
           } catch {
             // ignore cleanup errors
           }
+          try {
+            await conn.cleanup?.();
+          } catch {
+            // ignore cleanup errors
+          }
         },
         metadata: {
           platform: "android",
@@ -162,6 +167,11 @@ export async function buildLocalIOSRuntime(
           cleanup: async () => {
             try {
               await Effect.runPromise(driver.killApp(""));
+            } catch {
+              // ignore cleanup errors
+            }
+            try {
+              await conn.cleanup?.();
             } catch {
               // ignore cleanup errors
             }
@@ -222,6 +232,11 @@ export async function buildLocalIOSRuntime(
             } catch {
               // ignore cleanup errors
             }
+            try {
+              await conn.cleanup?.();
+            } catch {
+              // ignore cleanup errors
+            }
           },
           metadata: {
             platform: "ios",
@@ -265,6 +280,11 @@ export async function buildLocalIOSRuntime(
         cleanup: async () => {
           try {
             await Effect.runPromise(driver.killApp(""));
+          } catch {
+            // ignore cleanup errors
+          }
+          try {
+            await conn.cleanup?.();
           } catch {
             // ignore cleanup errors
           }
