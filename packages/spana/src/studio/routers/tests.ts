@@ -11,6 +11,20 @@ import {
 import type { FlowResult, RunSummary } from "../../report/types.js";
 import type { Platform } from "../../schemas/selector.js";
 import type { FlowDefinition } from "../../api/flow.js";
+import type { ChildProcess } from "node:child_process";
+
+// ---------------------------------------------------------------------------
+// Active child process tracking (for cleanup on shutdown)
+// ---------------------------------------------------------------------------
+
+const activeChildren = new Set<ChildProcess>();
+
+export function killActiveChildren() {
+  for (const child of activeChildren) {
+    child.kill("SIGTERM");
+  }
+  activeChildren.clear();
+}
 
 // ---------------------------------------------------------------------------
 // In-memory run tracking
@@ -162,9 +176,11 @@ export const testsRouter = {
         try {
           const { spawn } = await import("node:child_process");
 
-          // Use the spana CLI via bun to run tests with JSON reporter
+          // Use the same CLI entry point that's currently running
+          const cliPath = resolve(process.argv[1]);
+
           const args = [
-            "packages/spana/dist/cli.js",
+            cliPath,
             "test",
             flowDir,
             "--platform",
@@ -212,6 +228,8 @@ export const testsRouter = {
             cwd: resolve("."),
             stdio: ["ignore", "pipe", "pipe"],
           });
+          activeChildren.add(child);
+          child.on("close", () => activeChildren.delete(child));
 
           child.stderr.on("data", (chunk: Buffer) => {
             const msg = chunk.toString().trim();

@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ManagedRuntime, Layer } from "effect";
 import { studioRouter } from "./api.js";
+import { killActiveChildren } from "./routers/tests.js";
 import type { StudioContext } from "./context.js";
 import type { ProvConfig } from "../schemas/config.js";
 
@@ -135,8 +136,10 @@ export async function startStudio(options: StudioOptions) {
 
   const shutdown = async () => {
     console.log("\n  Shutting down Spana Studio...\n");
+    killActiveChildren();
     server.close();
     await runtime.dispose();
+    process.exit(0);
   };
 
   process.on("SIGTERM", shutdown);

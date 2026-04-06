@@ -1,4 +1,4 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/query";
@@ -11,6 +11,10 @@ type Page = "inspector" | "runner";
 
 function App() {
   const [page, setPage] = useState<Page>("inspector");
+
+  useEffect(() => {
+    console.log("[studio] App mounted, page:", page);
+  }, [page]);
 
   return (
     <QueryClientProvider client={queryClient}>

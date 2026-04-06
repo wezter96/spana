@@ -27,6 +27,7 @@
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "dev:tui": "turbo -F tui dev",
+    "studio": "bun run --cwd packages/spana dist/cli.js studio",
     "test:e2e:framework-app": "bun run --cwd packages/spana test:e2e:framework-app",
     "check": "bun run lint && oxfmt --write"
   },

@@ -50,7 +50,12 @@ export function RunnerPage() {
   });
 
   // Discover flows
-  const { data: flowsData, error: flowsError } = useQuery(
+  console.log("[runner] Starting flow query...");
+  const {
+    data: flowsData,
+    error: flowsError,
+    isLoading,
+  } = useQuery(
     orpc.tests.listFlows.queryOptions({
       input: {},
       onError: (err: unknown) => {
@@ -58,6 +63,7 @@ export function RunnerPage() {
       },
     }),
   );
+  console.log("[runner] Query state:", { isLoading, hasData: !!flowsData, hasError: !!flowsError });
   if (flowsError) {
     console.error("[runner] Flow error:", flowsError);
   }
