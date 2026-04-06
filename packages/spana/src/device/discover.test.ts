@@ -124,4 +124,44 @@ describe("device discovery", () => {
     });
     expect(discover.firstDeviceForPlatform("ios")).toBeNull();
   });
+
+  test("findDeviceById returns matching device", async () => {
+    discoverState.versionCandidates.add("adb");
+    discoverState.androidDevicesOutput = [
+      "List of devices attached",
+      "emulator-5554 device",
+      "",
+    ].join("\n");
+    discoverState.iosDevicesJson = JSON.stringify({
+      devices: {
+        "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+          { udid: "SIM-1", name: "iPhone 15", state: "Booted", isAvailable: true },
+        ],
+      },
+    });
+
+    const androidModule = await importFreshModule<typeof import("./android.js")>("./android.ts");
+    const iosModule = await importFreshModule<typeof import("./ios.js")>("./ios.ts");
+    mock.module("./android.js", () => androidModule);
+    mock.module("./ios.js", () => iosModule);
+    const discover = await importFreshModule<typeof import("./discover.js")>("./discover.ts");
+
+    expect(discover.findDeviceById("emulator-5554")).toEqual({
+      platform: "android",
+      id: "emulator-5554",
+      name: "emulator-5554",
+      type: "emulator",
+      state: "device",
+    });
+
+    expect(discover.findDeviceById("SIM-1")).toEqual({
+      platform: "ios",
+      id: "SIM-1",
+      name: "iPhone 15 (iOS.18.0)",
+      type: "simulator",
+      state: "Booted",
+    });
+
+    expect(discover.findDeviceById("nonexistent")).toBeNull();
+  });
 });

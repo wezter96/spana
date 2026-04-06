@@ -58,3 +58,9 @@ export function firstDeviceForPlatform(platform: Platform): DiscoveredDevice | n
   const devices = discoverDevices([platform]);
   return devices[0] ?? null;
 }
+
+/** Find a specific device by ID across all platforms */
+export function findDeviceById(id: string): DiscoveredDevice | null {
+  const devices = discoverDevices(["web", "android", "ios"]);
+  return devices.find((d) => d.id === id) ?? null;
+}
