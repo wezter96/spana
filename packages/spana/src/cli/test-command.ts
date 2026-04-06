@@ -378,6 +378,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   const { createJsonReporter } = await import("../report/json.js");
   const { createJUnitReporter } = await import("../report/junit.js");
   const { createHtmlReporter } = await import("../report/html.js");
+  const { createAllureReporter } = await import("../report/allure.js");
 
   const resolvedOutputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
   const reporters = reporterNames.split(",").map((r) => {
@@ -388,6 +389,8 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         return createJUnitReporter(resolvedOutputDir);
       case "html":
         return createHtmlReporter(resolvedOutputDir);
+      case "allure":
+        return createAllureReporter();
       default:
         return createConsoleReporter();
     }
