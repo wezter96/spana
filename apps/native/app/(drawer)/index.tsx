@@ -13,7 +13,7 @@ export default function Home() {
       <ScrollView testID="home-scroll" style={styles.scrollView}>
         <View testID="home-content" style={styles.content}>
           <Text testID="home-title" style={[styles.title, { color: theme.text }]}>
-            BETTER T STACK
+            Spana Demo
           </Text>
 
           <View

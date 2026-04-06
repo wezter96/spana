@@ -14,11 +14,11 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
   head: () => ({
     meta: [
       {
-        title: "spana",
+        title: "Spana Demo",
       },
       {
         name: "description",
-        content: "spana is a web application",
+        content: "Cross-platform demo app for Spana",
       },
     ],
     links: [

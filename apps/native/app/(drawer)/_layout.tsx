@@ -46,9 +46,7 @@ function FrameworkDrawerContent({
         activeTintColor={theme.primary}
         inactiveTintColor={theme.text}
         labelStyle={{ color: theme.text }}
-        icon={({ size, color }) => (
-          <Ionicons name="home-outline" size={size} color={color} />
-        )}
+        icon={({ size, color }) => <Ionicons name="home-outline" size={size} color={color} />}
         onPress={() => {
           props.navigation.navigate("index");
           props.navigation.closeDrawer();
@@ -56,15 +54,13 @@ function FrameworkDrawerContent({
       />
       <DrawerItem
         testID="drawer-tabs-item"
-        accessibilityLabel="Navigate to tabs screen"
-        label="Tabs"
+        accessibilityLabel="Navigate to demo tabs screen"
+        label="Demo Tabs"
         focused={activeRouteName === "(tabs)"}
         activeTintColor={theme.primary}
         inactiveTintColor={theme.text}
         labelStyle={{ color: theme.text }}
-        icon={({ size, color }) => (
-          <MaterialIcons name="border-bottom" size={size} color={color} />
-        )}
+        icon={({ size, color }) => <MaterialIcons name="border-bottom" size={size} color={color} />}
         onPress={() => {
           props.navigation.navigate("(tabs)");
           props.navigation.closeDrawer();
@@ -80,9 +76,7 @@ const DrawerLayout = () => {
 
   return (
     <Drawer
-      drawerContent={(props) => (
-        <FrameworkDrawerContent {...props} theme={theme} />
-      )}
+      drawerContent={(props) => <FrameworkDrawerContent {...props} theme={theme} />}
       screenOptions={{
         headerStyle: {
           backgroundColor: theme.background,
@@ -114,8 +108,8 @@ const DrawerLayout = () => {
       <Drawer.Screen
         name="(tabs)"
         options={{
-          headerTitle: "Tabs",
-          drawerLabel: "Tabs",
+          headerTitle: "Demo Tabs",
+          drawerLabel: "Demo Tabs",
           drawerIcon: ({ size, color }) => (
             <MaterialIcons name="border-bottom" size={size} color={color} />
           ),

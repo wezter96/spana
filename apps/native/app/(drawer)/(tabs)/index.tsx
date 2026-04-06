@@ -12,9 +12,14 @@ export default function TabOne() {
     <Container>
       <ScrollView testID="tab-one-scroll" style={styles.scrollView}>
         <View testID="tab-one-content" style={styles.content}>
-          <Text testID="tab-one-title" style={[styles.title, { color: theme.text }]}>Tab One</Text>
-          <Text testID="tab-one-subtitle" style={[styles.subtitle, { color: theme.text, opacity: 0.7 }]}>
-            Explore the first section of your app
+          <Text testID="tab-one-title" style={[styles.title, { color: theme.text }]}>
+            Home
+          </Text>
+          <Text
+            testID="tab-one-subtitle"
+            style={[styles.subtitle, { color: theme.text, opacity: 0.7 }]}
+          >
+            Explore the main screen of the Spana demo
           </Text>
         </View>
       </ScrollView>

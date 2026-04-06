@@ -25,6 +25,6 @@ export default flow(
     await expect({ testID: "home-content" }).toBeVisible();
     await expect({ testID: "home-title" }).toBeVisible();
     await expect({ testID: "home-card" }).toBeVisible();
-    await expect({ text: "BETTER T STACK" }).toBeVisible();
+    await expect({ text: "Spana Demo" }).toBeVisible();
   },
 );
