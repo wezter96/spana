@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
-import type { Platform, Selector } from "../schemas/selector.js";
+import type { Platform, ExtendedSelector } from "../schemas/selector.js";
 import type { Element } from "../schemas/element.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
@@ -8,7 +8,7 @@ import { createWDADriver } from "../drivers/wda/driver.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
 import { parseIOSHierarchy } from "../drivers/wda/pagesource.js";
-import { flattenElements, findElement, centerOf } from "../smart/element-matcher.js";
+import { flattenElements, findElementExtended, centerOf } from "../smart/element-matcher.js";
 import { setupUiAutomator2 } from "../drivers/uiautomator2/installer.js";
 import { setupWDA } from "../drivers/wda/installer.js";
 import { firstAndroidDevice } from "../device/android.js";
@@ -94,9 +94,9 @@ export class Session {
   // Touch actions
   // ---------------------------------------------------------------------------
 
-  async tap(selector: Selector): Promise<void> {
+  async tap(selector: ExtendedSelector): Promise<void> {
     const root = await this.hierarchy();
-    const el = findElement(root, selector);
+    const el = findElementExtended(root, selector);
     if (!el) throw new Error(`Element not found: ${JSON.stringify(selector)}`);
     const { x, y } = centerOf(el);
     await Effect.runPromise(this.driver.tapAtCoordinate(x, y));
@@ -106,17 +106,17 @@ export class Session {
     await Effect.runPromise(this.driver.tapAtCoordinate(x, y));
   }
 
-  async doubleTap(selector: Selector): Promise<void> {
+  async doubleTap(selector: ExtendedSelector): Promise<void> {
     const root = await this.hierarchy();
-    const el = findElement(root, selector);
+    const el = findElementExtended(root, selector);
     if (!el) throw new Error(`Element not found: ${JSON.stringify(selector)}`);
     const { x, y } = centerOf(el);
     await Effect.runPromise(this.driver.doubleTapAtCoordinate(x, y));
   }
 
-  async longPress(selector: Selector, opts?: { duration?: number }): Promise<void> {
+  async longPress(selector: ExtendedSelector, opts?: { duration?: number }): Promise<void> {
     const root = await this.hierarchy();
-    const el = findElement(root, selector);
+    const el = findElementExtended(root, selector);
     if (!el) throw new Error(`Element not found: ${JSON.stringify(selector)}`);
     const { x, y } = centerOf(el);
     await Effect.runPromise(this.driver.longPressAtCoordinate(x, y, opts?.duration ?? 1000));
