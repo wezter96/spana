@@ -149,6 +149,25 @@ export function RunnerPage() {
 
   const hasFailed = results.some((r) => r.status === "failed");
 
+  const handleRemoveResult = useCallback(
+    (index: number) => {
+      const updated = results.filter((_, i) => i !== index);
+      setCachedResults(updated);
+      saveSession({ runId, results: updated, platforms: [...platforms] });
+      if (selectedResult && results[index] === selectedResult) {
+        setSelectedResult(undefined);
+      }
+    },
+    [results, runId, platforms, selectedResult],
+  );
+
+  const handleClearResults = useCallback(() => {
+    setCachedResults([]);
+    setRunId(null);
+    setSelectedResult(undefined);
+    saveSession({ runId: null, results: [], platforms: [...platforms] });
+  }, [platforms]);
+
   return (
     <div className="flex flex-col gap-4 h-[calc(100vh-64px)]">
       {/* Toolbar */}
@@ -214,7 +233,7 @@ export function RunnerPage() {
       </div>
 
       {/* 3-column grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-[250px_1fr_300px] gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)_350px] gap-4 flex-1 min-h-0">
         {/* Left: Flow list */}
         <div className="bg-zinc-900 rounded-lg border border-zinc-800 min-h-0 overflow-hidden">
           <FlowList
@@ -232,6 +251,8 @@ export function RunnerPage() {
             results={results}
             isRunning={isRunning || isStarting}
             onSelectResult={setSelectedResult}
+            onRemoveResult={handleRemoveResult}
+            onClearResults={handleClearResults}
             selectedResult={selectedResult}
           />
         </div>
