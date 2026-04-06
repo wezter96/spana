@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { createAllureReporter } from "./allure.js";
 import type { FlowResult, RunSummary } from "./types.js";
 
@@ -41,7 +40,7 @@ describe("Allure reporter", () => {
   let outputDir: string;
 
   beforeEach(() => {
-    outputDir = mkdtempSync(join(tmpdir(), "allure-test-"));
+    outputDir = mkdtempSync("/tmp/spana-allure-test-");
   });
 
   afterEach(() => {

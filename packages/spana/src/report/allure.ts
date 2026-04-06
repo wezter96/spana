@@ -113,11 +113,11 @@ export function createAllureReporter(outputDir: string = "allure-results"): Repo
   mkdirSync(outputDir, { recursive: true });
 
   return {
-    onFlowPass(result) {
+    onFlowPass(result: FlowResult) {
       writeResult(result, outputDir);
     },
 
-    onFlowFail(result) {
+    onFlowFail(result: FlowResult) {
       writeResult(result, outputDir);
     },
 
