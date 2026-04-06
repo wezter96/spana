@@ -117,6 +117,29 @@ describe("auto wait", () => {
     expect(getDumpCount()).toBe(2);
   });
 
+  test("waitForElement resolves with a relative selector", async () => {
+    const header = createElement({
+      text: "Header",
+      bounds: { x: 0, y: 0, width: 100, height: 50 },
+    });
+    const btn = createElement({
+      text: "Submit",
+      bounds: { x: 0, y: 60, width: 100, height: 40 },
+      clickable: true,
+    });
+    const root = createElement({ children: [header, btn] });
+    const { driver } = createDriver([root]);
+
+    const element = await Effect.runPromise(
+      waitForElement(driver, { selector: { text: "Submit" }, below: { text: "Header" } }, parse, {
+        timeout: 50,
+        pollInterval: 0,
+      }),
+    );
+
+    expect(element.text).toBe("Submit");
+  });
+
   test("waitForNotVisible fails with WaitTimeoutError when the element stays visible", async () => {
     const target = createElement({ text: "Ready" });
     const { driver } = createDriver([createElement({ children: [target] })]);

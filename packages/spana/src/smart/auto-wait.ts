@@ -1,9 +1,9 @@
 import { Duration, Effect } from "effect";
 import { type DriverError, ElementNotFoundError, WaitTimeoutError } from "../errors.js";
 import type { Element } from "../schemas/element.js";
-import type { Selector } from "../schemas/selector.js";
+import type { ExtendedSelector } from "../schemas/selector.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
-import { findElement } from "./element-matcher.js";
+import { findElementExtended, formatSelector } from "./element-matcher.js";
 
 export interface WaitOptions {
   timeout?: number; // default 5000ms
@@ -20,7 +20,7 @@ type HierarchyParser = (raw: string) => Element;
 /** Poll until an element matching selector is found */
 export function waitForElement(
   driver: RawDriverService,
-  selector: Selector,
+  selector: ExtendedSelector,
   parse: HierarchyParser,
   opts?: WaitOptions,
 ): Effect.Effect<Element, ElementNotFoundError | WaitTimeoutError | DriverError> {
@@ -32,12 +32,12 @@ export function waitForElement(
     while (Date.now() - start < timeout) {
       const raw = yield* driver.dumpHierarchy();
       const root = parse(raw);
-      const element = findElement(root, selector);
+      const element = findElementExtended(root, selector);
       if (element) return element;
       yield* Effect.sleep(Duration.millis(pollInterval));
     }
     return yield* new ElementNotFoundError({
-      message: `Element not found within ${timeout}ms — selector: ${JSON.stringify(selector)}`,
+      message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
       selector,
       timeoutMs: timeout,
     });
@@ -47,7 +47,7 @@ export function waitForElement(
 /** Poll until element matching selector is NOT visible */
 export function waitForNotVisible(
   driver: RawDriverService,
-  selector: Selector,
+  selector: ExtendedSelector,
   parse: HierarchyParser,
   opts?: WaitOptions,
 ): Effect.Effect<void, WaitTimeoutError | DriverError> {
@@ -59,12 +59,12 @@ export function waitForNotVisible(
     while (Date.now() - start < timeout) {
       const raw = yield* driver.dumpHierarchy();
       const root = parse(raw);
-      const element = findElement(root, selector);
+      const element = findElementExtended(root, selector);
       if (!element) return;
       yield* Effect.sleep(Duration.millis(pollInterval));
     }
     return yield* new WaitTimeoutError({
-      message: `Element still visible after ${timeout}ms — selector: ${JSON.stringify(selector)}`,
+      message: `Element still visible after ${timeout}ms — selector: ${formatSelector(selector)}`,
       selector,
       timeoutMs: timeout,
     });
