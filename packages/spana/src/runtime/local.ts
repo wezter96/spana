@@ -20,6 +20,16 @@ import { setupUiAutomator2 } from "../drivers/uiautomator2/installer.js";
 import { setupWDA } from "../drivers/wda/installer.js";
 import { allocatePort } from "../core/port-allocator.js";
 
+async function safeCleanup(...fns: Array<() => Promise<unknown>>): Promise<void> {
+  for (const fn of fns) {
+    try {
+      await fn();
+    } catch {
+      /* swallow */
+    }
+  }
+}
+
 function buildEngineConfig(
   appId: string,
   platform: "web" | "android" | "ios",
@@ -51,13 +61,7 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
   return {
     runtime: {
       driver,
-      cleanup: async () => {
-        try {
-          await Effect.runPromise(driver.killApp(""));
-        } catch {
-          // ignore cleanup errors
-        }
-      },
+      cleanup: () => safeCleanup(() => Effect.runPromise(driver.killApp(""))),
       metadata: {
         platform: "web",
         mode: "local",
@@ -110,18 +114,11 @@ export async function buildLocalAndroidRuntime(
     return {
       runtime: {
         driver,
-        cleanup: async () => {
-          try {
-            await Effect.runPromise(driver.killApp(""));
-          } catch {
-            // ignore cleanup errors
-          }
-          try {
-            await conn.cleanup?.();
-          } catch {
-            // ignore cleanup errors
-          }
-        },
+        cleanup: () =>
+          safeCleanup(
+            () => Effect.runPromise(driver.killApp("")),
+            () => conn.cleanup?.() ?? Promise.resolve(),
+          ),
         metadata: {
           platform: "android",
           mode: "local",
@@ -164,18 +161,11 @@ export async function buildLocalIOSRuntime(
       return {
         runtime: {
           driver,
-          cleanup: async () => {
-            try {
-              await Effect.runPromise(driver.killApp(""));
-            } catch {
-              // ignore cleanup errors
-            }
-            try {
-              await conn.cleanup?.();
-            } catch {
-              // ignore cleanup errors
-            }
-          },
+          cleanup: () =>
+            safeCleanup(
+              () => Effect.runPromise(driver.killApp("")),
+              () => conn.cleanup?.() ?? Promise.resolve(),
+            ),
           metadata: {
             platform: "ios",
             mode: "local",
@@ -226,18 +216,11 @@ export async function buildLocalIOSRuntime(
       return {
         runtime: {
           driver,
-          cleanup: async () => {
-            try {
-              await Effect.runPromise(driver.killApp(""));
-            } catch {
-              // ignore cleanup errors
-            }
-            try {
-              await conn.cleanup?.();
-            } catch {
-              // ignore cleanup errors
-            }
-          },
+          cleanup: () =>
+            safeCleanup(
+              () => Effect.runPromise(driver.killApp("")),
+              () => conn.cleanup?.() ?? Promise.resolve(),
+            ),
           metadata: {
             platform: "ios",
             mode: "local",
@@ -277,18 +260,11 @@ export async function buildLocalIOSRuntime(
     return {
       runtime: {
         driver,
-        cleanup: async () => {
-          try {
-            await Effect.runPromise(driver.killApp(""));
-          } catch {
-            // ignore cleanup errors
-          }
-          try {
-            await conn.cleanup?.();
-          } catch {
-            // ignore cleanup errors
-          }
-        },
+        cleanup: () =>
+          safeCleanup(
+            () => Effect.runPromise(driver.killApp("")),
+            () => conn.cleanup?.() ?? Promise.resolve(),
+          ),
         metadata: {
           platform: "ios",
           mode: "local",
