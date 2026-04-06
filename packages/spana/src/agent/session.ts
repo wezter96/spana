@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { RawDriverService } from "../drivers/raw-driver.js";
+import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
 import type { Platform, Selector } from "../schemas/selector.js";
 import type { Element } from "../schemas/element.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
@@ -171,7 +171,7 @@ export class Session {
   // App lifecycle
   // ---------------------------------------------------------------------------
 
-  async launch(opts?: { deepLink?: string }): Promise<void> {
+  async launch(opts?: LaunchOptions): Promise<void> {
     await Effect.runPromise(this.driver.launchApp(this.appId, opts));
   }
 

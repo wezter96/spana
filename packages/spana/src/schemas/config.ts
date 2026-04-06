@@ -1,11 +1,7 @@
 import type { Platform } from "./selector.js";
+import type { LaunchOptions } from "../drivers/raw-driver.js";
 
-export interface LaunchOptions {
-  clearState?: boolean;
-  clearKeychain?: boolean;
-  deepLink?: string;
-  launchArguments?: Record<string, unknown>;
-}
+export type { LaunchOptions };
 
 export interface IOSSigningConfig {
   /** Apple Development Team ID (from developer.apple.com or Xcode) */
@@ -55,6 +51,7 @@ export interface ProvConfig {
   };
   platforms?: Platform[];
   flowDir?: string;
+  launchOptions?: LaunchOptions;
   reporters?: string[];
   hooks?: {
     beforeAll?: (ctx: HookContext) => Promise<void>;
