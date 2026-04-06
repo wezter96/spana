@@ -45,6 +45,11 @@ export interface TestCommandOptions {
 }
 
 export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
+  if (opts.driver && opts.driver !== "local" && opts.driver !== "appium") {
+    console.log(`Unknown --driver value "${opts.driver}". Use "local" or "appium".`);
+    return false;
+  }
+
   // 1. Load config
   let config: ProvConfig = {};
   const configPath = resolve(opts.configPath ?? "spana.config.ts");

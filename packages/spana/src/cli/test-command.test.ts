@@ -338,6 +338,18 @@ describe("runTestCommand", () => {
     expect(success).toBe(true);
   });
 
+  test("rejects unknown --driver values", async () => {
+    const { runTestCommand } = await importFreshTestCommand();
+
+    const success = await runTestCommand({
+      platforms: ["web"],
+      driver: "selenium" as any,
+    });
+
+    expect(success).toBe(false);
+    expect(cliState.logs).toContain('Unknown --driver value "selenium". Use "local" or "appium".');
+  });
+
   test("returns early when the filters remove every discovered flow", async () => {
     const tempDir = createTempDir();
     const configPath = writeConfigFile(tempDir, {
