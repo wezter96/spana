@@ -180,6 +180,117 @@ describe("orchestrate", () => {
     expect(result.flaky).toBe(0);
   });
 
+  test("calls beforeAll and afterAll hooks", async () => {
+    const order: string[] = [];
+
+    const flow: FlowDefinition = {
+      name: "my-flow",
+      config: {},
+      fn: async () => {
+        order.push("flow");
+      },
+    };
+
+    await orchestrate(
+      [flow],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+            hooks: {
+              beforeAll: async () => {
+                order.push("beforeAll");
+              },
+              afterAll: async () => {
+                order.push("afterAll");
+              },
+            },
+          },
+        },
+      ],
+    );
+
+    expect(order).toEqual(["beforeAll", "flow", "afterAll"]);
+  });
+
+  test("beforeAll failure skips all flows on that platform", async () => {
+    let flowCalled = false;
+
+    const flow: FlowDefinition = {
+      name: "should-not-run",
+      config: {},
+      fn: async () => {
+        flowCalled = true;
+      },
+    };
+
+    const result = await orchestrate(
+      [flow, createFlow("also-skipped")],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+            hooks: {
+              beforeAll: async () => {
+                throw new Error("setup failed");
+              },
+            },
+          },
+        },
+      ],
+    );
+
+    expect(flowCalled).toBe(false);
+    expect(result.results).toHaveLength(2);
+    expect(result.results.every((r) => r.status === "failed")).toBe(true);
+    expect(result.results[0]!.error?.message).toBe("setup failed");
+    expect(result.failed).toBe(2);
+  });
+
+  test("afterAll failure does not affect results", async () => {
+    const result = await orchestrate(
+      [createFlow("passing-flow")],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+            hooks: {
+              afterAll: async () => {
+                throw new Error("teardown failed");
+              },
+            },
+          },
+        },
+      ],
+    );
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]!.status).toBe("passed");
+    expect(result.passed).toBe(1);
+    expect(result.failed).toBe(0);
+  });
+
   test("no retries by default", async () => {
     let callCount = 0;
     const failFlow: FlowDefinition = {

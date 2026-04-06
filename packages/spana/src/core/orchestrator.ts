@@ -40,6 +40,25 @@ export async function orchestrate(
         return !fp || fp.includes(platform);
       });
 
+      // beforeAll hook
+      const hooks = engineConfig.hooks;
+      if (hooks?.beforeAll) {
+        try {
+          await hooks.beforeAll({ app: undefined, platform } as any);
+        } catch (error) {
+          for (const flow of platformFlows) {
+            results.push({
+              name: flow.name,
+              platform,
+              status: "failed",
+              durationMs: 0,
+              error: error instanceof Error ? error : new Error(String(error)),
+            });
+          }
+          return results;
+        }
+      }
+
       for (const flow of platformFlows) {
         let result = await executeFlow(flow, driver, engineConfig);
         let attempts = 1;
@@ -65,6 +84,18 @@ export async function orchestrate(
 
         results.push(result);
       }
+
+      // afterAll hook
+      if (hooks?.afterAll) {
+        try {
+          await hooks.afterAll({ app: undefined, platform, summary: { results } } as any);
+        } catch (hookError) {
+          console.warn(
+            `afterAll hook failed: ${hookError instanceof Error ? hookError.message : hookError}`,
+          );
+        }
+      }
+
       return results;
     }),
   );
