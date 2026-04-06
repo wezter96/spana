@@ -177,7 +177,7 @@ export const testsRouter = {
           const { spawn } = await import("node:child_process");
 
           // Use the same CLI entry point that's currently running
-          const cliPath = resolve(process.argv[1]);
+          const cliPath = resolve(process.argv[1]!);
 
           const args = [
             cliPath,
