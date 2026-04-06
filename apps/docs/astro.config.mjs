@@ -44,6 +44,10 @@ export default defineConfig({
           ],
         },
         {
+          label: "Guides",
+          items: [{ label: "CI/CD Integration", slug: "guides/ci-integration" }],
+        },
+        {
           label: "Reference",
           autogenerate: { directory: "reference" },
         },
