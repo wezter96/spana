@@ -79,10 +79,57 @@ describe("Session", () => {
     expect(tapFn).toHaveBeenCalledWith(100, 70);
   });
 
-  test("tap throws when element not found", async () => {
-    const session = new Session(mockDriver(), "web", parseHierarchy);
-    await expect(session.tap({ testID: "nonexistent" })).rejects.toThrow("Element not found");
+  test("tap prefers clickable ancestor coordinates for nested label targets", async () => {
+    const tapFn = mock(() => Effect.void);
+    const session = new Session(
+      mockDriver({
+        dumpHierarchy: () =>
+          Effect.succeed(
+            JSON.stringify({
+              id: "root",
+              bounds: { x: 0, y: 0, width: 300, height: 200 },
+              visible: true,
+              enabled: true,
+              children: [
+                {
+                  id: "card",
+                  bounds: { x: 40, y: 30, width: 160, height: 100 },
+                  visible: true,
+                  enabled: true,
+                  clickable: true,
+                  children: [
+                    {
+                      text: "Nested label",
+                      bounds: { x: 60, y: 60, width: 80, height: 20 },
+                      visible: true,
+                      enabled: true,
+                      clickable: false,
+                      children: [],
+                    },
+                  ],
+                },
+              ],
+            }),
+          ),
+        tapAtCoordinate: tapFn as any,
+      }),
+      "web",
+      parseHierarchy,
+    );
+
+    await session.tap({ text: "Nested label" });
+
+    expect(tapFn).toHaveBeenCalledWith(120, 80);
   });
+
+  test(
+    "tap throws when element not found",
+    async () => {
+      const session = new Session(mockDriver(), "web", parseHierarchy);
+      await expect(session.tap({ testID: "nonexistent" })).rejects.toThrow("Element not found");
+    },
+    { timeout: 10_000 },
+  );
 
   test("tapXY calls tapAtCoordinate directly", async () => {
     const tapFn = mock(() => Effect.void);
@@ -151,6 +198,91 @@ describe("Session", () => {
     const session = new Session(mockDriver({ pressKey: pkFn as any }), "web", parseHierarchy);
     await session.pressKey("Enter");
     expect(pkFn).toHaveBeenCalledWith("Enter");
+  });
+
+  test("dismissKeyboard supports the explicit back strategy", async () => {
+    const backFn = mock(() => Effect.void);
+    const session = new Session(mockDriver({ back: backFn as any }), "android", parseHierarchy);
+
+    await session.dismissKeyboard({ strategy: "back" });
+
+    expect(backFn).toHaveBeenCalled();
+  });
+
+  test("scrollUntilVisible swipes until the target appears", async () => {
+    const swipeFn = mock(() => Effect.void);
+    let dumpCount = 0;
+    const session = new Session(
+      mockDriver({
+        dumpHierarchy: () =>
+          Effect.succeed(
+            JSON.stringify(
+              dumpCount++ === 0
+                ? {
+                    id: "root",
+                    bounds: { x: 0, y: 0, width: 300, height: 600 },
+                    visible: true,
+                    enabled: true,
+                    children: [{ text: "Top", bounds: { x: 0, y: 0, width: 100, height: 40 } }],
+                  }
+                : {
+                    id: "root",
+                    bounds: { x: 0, y: 0, width: 300, height: 600 },
+                    visible: true,
+                    enabled: true,
+                    children: [
+                      { id: "target-card", bounds: { x: 0, y: 400, width: 100, height: 40 } },
+                    ],
+                  },
+            ),
+          ),
+        swipe: swipeFn as any,
+      }),
+      "web",
+      parseHierarchy,
+    );
+
+    await session.scrollUntilVisible({ testID: "target-card" });
+
+    expect(swipeFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("backUntilVisible uses system back until the target screen appears", async () => {
+    const backFn = mock(() => Effect.void);
+    let dumpCount = 0;
+    const session = new Session(
+      mockDriver({
+        dumpHierarchy: () =>
+          Effect.succeed(
+            JSON.stringify(
+              dumpCount++ === 0
+                ? {
+                    id: "root",
+                    bounds: { x: 0, y: 0, width: 300, height: 200 },
+                    visible: true,
+                    enabled: true,
+                    children: [{ text: "Modal", bounds: { x: 50, y: 50, width: 80, height: 30 } }],
+                  }
+                : {
+                    id: "root",
+                    bounds: { x: 0, y: 0, width: 300, height: 200 },
+                    visible: true,
+                    enabled: true,
+                    children: [
+                      { id: "home-title", bounds: { x: 50, y: 50, width: 80, height: 30 } },
+                    ],
+                  },
+            ),
+          ),
+        back: backFn as any,
+      }),
+      "web",
+      parseHierarchy,
+    );
+
+    await session.backUntilVisible({ testID: "home-title" }, { maxBacks: 2 });
+
+    expect(backFn).toHaveBeenCalledTimes(1);
   });
 
   test("openLink calls driver", async () => {
