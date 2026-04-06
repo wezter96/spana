@@ -10,16 +10,18 @@ A selector tells spana which element to interact with or assert on. Selectors ar
 ### testID (recommended)
 
 ```ts
-{ testID: "login-button" }
+{
+  testID: "login-button";
+}
 ```
 
 The preferred selector. Maps to the platform's primary element identifier:
 
-| Platform | Attribute |
-|---|---|
-| Web | `data-testid` attribute |
-| Android | `resource-id` (last segment matched) |
-| iOS | `accessibilityIdentifier` |
+| Platform | Attribute                            |
+| -------- | ------------------------------------ |
+| Web      | `data-testid` attribute              |
+| Android  | `resource-id` (last segment matched) |
+| iOS      | `accessibilityIdentifier`            |
 
 Add `testID` props to your React Native components:
 
@@ -32,7 +34,9 @@ On web, this renders as `data-testid="login-button"`.
 ### text
 
 ```ts
-{ text: "Sign In" }
+{
+  text: "Sign In";
+}
 ```
 
 Matches against the visible label text of an element. Partial matching is supported — the element text only needs to contain the provided string.
@@ -42,7 +46,9 @@ Use this when a `testID` is not available, such as for dynamic or third-party co
 ### accessibilityLabel
 
 ```ts
-{ accessibilityLabel: "Close dialog" }
+{
+  accessibilityLabel: "Close dialog";
+}
 ```
 
 Matches the OS-level accessibility label. Useful for elements that have a label distinct from their visible text (e.g. icon buttons).
@@ -65,15 +71,41 @@ await app.tap("login-button");
 await app.tap({ testID: "login-button" });
 ```
 
-## Combining selectors
+## Relative selectors
 
-Multiple fields can be combined. All specified fields must match the same element:
+When multiple elements match the same selector, use relative positioning to disambiguate. A relative selector wraps a base selector with directional constraints:
 
 ```ts
-await app.tap({ testID: "item", text: "Buy Now" });
+// Tap the "Edit" button below the "Email" label
+await app.tap({ selector: { text: "Edit" }, below: { text: "Email" } });
+
+// Tap the button to the right of the "Username" label
+await app.tap({ selector: { testID: "action-btn" }, rightOf: { text: "Username" } });
+
+// Find an element inside a specific container
+await app.tap({ selector: { text: "Submit" }, childOf: { testID: "login-form" } });
 ```
 
-This narrows the match to an element that has both the correct `testID` and the correct text. Useful when multiple elements share a `testID` but have different labels.
+| Constraint | Description                                         |
+| ---------- | --------------------------------------------------- |
+| `below`    | Element must be below the anchor (closest first)    |
+| `above`    | Element must be above the anchor (closest first)    |
+| `leftOf`   | Element must be left of the anchor (closest first)  |
+| `rightOf`  | Element must be right of the anchor (closest first) |
+| `childOf`  | Element must be a descendant of the anchor          |
+
+Constraints can be combined — all must match:
+
+```ts
+// Button below the header AND to the right of the label
+await app.tap({
+  selector: { testID: "btn" },
+  below: { text: "Header" },
+  rightOf: { text: "Label" },
+});
+```
+
+Relative selectors work with all interaction methods (`tap`, `doubleTap`, `longPress`) and assertions (`expect().toBeVisible()`, etc.).
 
 ## Selector priority
 
@@ -93,8 +125,8 @@ await app.tap({ testID: "slow-element" }, { timeout: 10000 });
 await expect({ testID: "result" }).toBeVisible({ timeout: 15000, pollInterval: 500 });
 ```
 
-| Option | Type | Description |
-|---|---|---|
-| `timeout` | `number` | ms to wait before failing |
-| `pollInterval` | `number` | ms between hierarchy polls |
+| Option          | Type     | Description                                   |
+| --------------- | -------- | --------------------------------------------- |
+| `timeout`       | `number` | ms to wait before failing                     |
+| `pollInterval`  | `number` | ms between hierarchy polls                    |
 | `settleTimeout` | `number` | ms the element must be stable before matching |

@@ -38,12 +38,8 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 - Port/resource isolation — deterministic port allocation, per-session cleanup (no `forward --remove-all`)
   - Reference: `maestro-runner/pkg/driver/wda/runner.go`, `pkg/device/android.go`
   - Spana gap: `src/cli/test-command.ts` picks random ports, `src/drivers/uiautomator2/installer.ts` clears all forwards
-- Unified device discovery + `--device <id>` targeting — consistent across CLI, Studio, and agent
-  - Reference: `maestro-runner/pkg/cli/cli.go`, `pkg/cli/test.go`
-  - Spana gap: `src/device/discover.ts` vs `src/cli/test-command.ts` vs `src/studio/routers/devices.ts` behave differently
-- Wire LaunchOptions end-to-end — `clearState`, `launchArguments`, `clearKeychain` (documented but not implemented)
-  - Reference: `maestro-runner/pkg/driver/uiautomator2/commands.go`, `pkg/driver/wda/commands.go`
-  - Spana gap: `src/api/app.ts` only exposes `{ deepLink }`, `src/schemas/config.ts` and docs advertise more
+- ✅ Unified device discovery + `--device <id>` targeting — consistent across CLI, Studio, and agent
+- ✅ Wire LaunchOptions end-to-end — `clearState`, `launchArguments`, `clearKeychain` implemented in all drivers
 - Invoke config hooks — `beforeAll`/`beforeEach`/`afterEach`/`afterAll` (in schema, not called)
   - Reference: `maestro-runner/pkg/flow/flow.go`, `pkg/executor/flow_runner.go`
   - Spana gap: `src/schemas/config.ts` defines hooks, `src/cli/test-command.ts` never invokes them
@@ -52,7 +48,7 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 
 - iOS physical device support (WDA re-signing + iproxy)
 - `./agent` subpath export for programmatic API
-- Relative selectors (`below`, `above`, `leftOf`, `rightOf`, `childOf`)
+- ✅ Relative selectors (`below`, `above`, `leftOf`, `rightOf`, `childOf`)
 - Auto-start emulator flag for CI
 - JavaScript scripting in flows (`evalScript`, `runScript` for custom logic)
 

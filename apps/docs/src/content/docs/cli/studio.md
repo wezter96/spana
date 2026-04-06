@@ -13,11 +13,11 @@ spana studio [options]
 
 ### Options
 
-| Flag              | Description                                         |
-| ----------------- | --------------------------------------------------- |
-| `--port <number>` | Port to serve on (default: `3000`)                  |
-| `--no-open`       | Don't auto-open the browser                         |
-| `--config <path>` | Path to config file (default: `./spana.config.ts`)  |
+| Flag              | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `--port <number>` | Port to serve on (default: `3000`)                 |
+| `--no-open`       | Don't auto-open the browser                        |
+| `--config <path>` | Path to config file (default: `./spana.config.ts`) |
 
 ```bash
 # Start on the default port and open the browser
@@ -45,6 +45,7 @@ This gives you the same information as `spana selectors` and `spana hierarchy`, 
 Discover and run flow files without leaving the browser.
 
 - **Flow discovery** — automatically lists all flows found under your configured `flowDir`.
+- **Device selector** — pick which device, emulator, or simulator to run tests on from a dropdown in the toolbar.
 - **Run tests** — execute one or many flows with real-time progress updates.
 - **Step details** — expand any step to see its status, duration, and captured screenshot.
 
@@ -52,10 +53,10 @@ Discover and run flow files without leaving the browser.
 
 Two checkboxes control screenshot capture during a run:
 
-| Toggle              | Behavior                                                  |
-| ------------------- | --------------------------------------------------------- |
-| **Screenshots**     | Capture a screenshot on each successful step              |
-| **Step captures**   | Capture per-step screenshots (useful for visual debugging) |
+| Toggle            | Behavior                                                   |
+| ----------------- | ---------------------------------------------------------- |
+| **Screenshots**   | Capture a screenshot on each successful step               |
+| **Step captures** | Capture per-step screenshots (useful for visual debugging) |
 
 ### Session persistence
 

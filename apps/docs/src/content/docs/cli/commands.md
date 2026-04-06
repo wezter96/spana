@@ -24,6 +24,8 @@ spana test [path] [options]
 | `--grep <pattern>`       | Run only flows whose name matches this pattern            |
 | `--reporter <name>`      | Reporter: `console`, `json`, `junit`, `html`              |
 | `--config <path>`        | Path to config file (default: `./spana.config.ts`)        |
+| `--device <id>`          | Target a specific device by ID (see `spana devices`)      |
+| `--retries <n>`          | Retry failed flows n times (enables flake detection)      |
 
 ### Examples
 
@@ -45,6 +47,15 @@ spana test --reporter json
 
 # Use a non-default config
 spana test --config ./config/spana.staging.ts
+
+# Target a specific device (platform is inferred)
+spana test --device emulator-5554
+
+# Target a specific iOS simulator
+spana test --device "SIM-UDID-HERE"
+
+# Retry flaky tests twice
+spana test --retries 2
 ```
 
 ## `spana devices`
