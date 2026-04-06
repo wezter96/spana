@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
-import type { Platform, ExtendedSelector } from "../schemas/selector.js";
+import type { Platform, Selector, ExtendedSelector } from "../schemas/selector.js";
 import type { Element } from "../schemas/element.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
