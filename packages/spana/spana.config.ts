@@ -3,8 +3,8 @@ import { defineConfig } from "./src/schemas/config.js";
 export default defineConfig({
   apps: {
     web: { url: "http://127.0.0.1:8081" },
-    android: { packageName: "com.anonymous.mybettertapp" },
-    ios: { bundleId: "com.anonymous.mybettertapp" },
+    android: { packageName: "com.wezter96.spana.testapp" },
+    ios: { bundleId: "com.wezter96.spana.testapp" },
   },
   defaults: {
     waitTimeout: 5_000,

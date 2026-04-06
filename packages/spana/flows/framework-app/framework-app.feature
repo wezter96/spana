@@ -31,7 +31,7 @@ Feature: Framework app (BDD)
 
     Examples:
       | screen       | path            | selector       |
-      | home         | /(drawer)       | home-title     |
+      | home         | /               | home-title     |
       | tabs-home    | /(drawer)/(tabs)| tab-one-title  |
       | tabs-explore | /two            | tab-two-title  |
       | modal        | /modal          | modal-title    |

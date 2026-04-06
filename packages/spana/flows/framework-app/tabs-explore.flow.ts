@@ -4,7 +4,7 @@ import type { Platform } from "../../src/schemas/selector.js";
 const WEB_BASE_URL = "http://127.0.0.1:8081";
 
 function homePath(_platform: Platform): string {
-  return "/(drawer)";
+  return "/";
 }
 
 function homeHref(platform: Platform): string {
@@ -24,7 +24,12 @@ export default flow(
     },
   },
   async ({ app, expect, platform }) => {
-    await app.openLink(homeHref(platform));
+    try {
+      await app.stop();
+    } catch {
+      /* may not be running */
+    }
+    await app.launch({ deepLink: homeHref(platform) });
     await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
     await app.tap({ accessibilityLabel: "Show navigation menu" });
     await expect({ testID: "drawer-tabs-item" }).toBeVisible({ timeout: 10_000 });

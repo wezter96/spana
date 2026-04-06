@@ -10,7 +10,14 @@ function buildHref(platform: Platform, path: string): string {
 // --- Navigation steps ---
 
 Given("I navigate to the home screen", async ({ app, platform }) => {
-  await app.openLink(buildHref(platform, "/(drawer)"));
+  // Stop and relaunch via deeplink to reset navigation state.
+  // On physical devices, openLink alone doesn't reset the navigation stack.
+  try {
+    await app.stop();
+  } catch {
+    /* may not be running */
+  }
+  await app.launch({ deepLink: buildHref(platform, "/") });
 });
 
 Given("I navigate to {string}", async ({ app, platform }, path) => {
