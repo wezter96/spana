@@ -1,22 +1,22 @@
 import { Effect } from "effect";
-import type { RawDriverService } from "../drivers/raw-driver.js";
-import type { Selector } from "../schemas/selector.js";
+import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
+import type { ExtendedSelector } from "../schemas/selector.js";
 import { createCoordinator, type Direction, type CoordinatorConfig } from "../smart/coordinator.js";
 import type { WaitOptions } from "../smart/auto-wait.js";
 import type { StepRecorder } from "../core/step-recorder.js";
 
 export interface PromiseApp {
-  tap(selector: Selector, opts?: WaitOptions): Promise<void>;
+  tap(selector: ExtendedSelector, opts?: WaitOptions): Promise<void>;
   tapXY(x: number, y: number): Promise<void>;
-  doubleTap(selector: Selector, opts?: WaitOptions): Promise<void>;
-  longPress(selector: Selector, opts?: { duration?: number } & WaitOptions): Promise<void>;
+  doubleTap(selector: ExtendedSelector, opts?: WaitOptions): Promise<void>;
+  longPress(selector: ExtendedSelector, opts?: { duration?: number } & WaitOptions): Promise<void>;
   longPressXY(x: number, y: number, opts?: { duration?: number }): Promise<void>;
   inputText(text: string): Promise<void>;
   pressKey(key: string): Promise<void>;
   hideKeyboard(): Promise<void>;
   swipe(direction: Direction, opts?: { duration?: number }): Promise<void>;
   scroll(direction: Direction): Promise<void>;
-  launch(opts?: { deepLink?: string }): Promise<void>;
+  launch(opts?: LaunchOptions): Promise<void>;
   stop(): Promise<void>;
   kill(): Promise<void>;
   clearState(): Promise<void>;
