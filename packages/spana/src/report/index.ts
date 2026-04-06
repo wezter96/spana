@@ -10,6 +10,12 @@ export {
   type FailureCategory,
 } from "./types.js";
 export { classifyError } from "./classify-error.js";
+export {
+  createRedactor,
+  registerUrlSecrets,
+  type Redactor,
+  type RedactorConfig,
+} from "./redact.js";
 export { createConsoleReporter } from "./console.js";
 export { createJsonReporter } from "./json.js";
 export { createJUnitReporter } from "./junit.js";

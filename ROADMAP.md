@@ -68,9 +68,9 @@ Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdri
 ### Web testing
 
 - WebView / hybrid support — context discovery, targeted switching, and JS execution inside mobile WebViews
-- Browser runtime config (headed mode, browser selection, proper disposal)
-- Network mocking/control (`mockNetwork`, `blockNetwork`, `setNetworkConditions`)
-- Cookie/auth state management (`saveCookies`, `loadAuthState`)
+- ✅ Browser runtime config (headed mode, browser selection, proper disposal)
+- ✅ Network mocking/control (`mockNetwork`, `blockNetwork`, `setNetworkConditions`)
+- ✅ Cookie/auth state management (`saveCookies`, `loadAuthState`)
 
 ### Reporting & diagnostics
 
@@ -78,4 +78,4 @@ Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdri
 - ✅ Typed failure model — categorized errors with suggestions
 - ✅ Driver stability knobs (`waitForIdleTimeout`, `typingDelay` per-flow)
 - ✅ Real-time console reporting — progress updates, `--quiet` mode, and grouped output by platform
-- Log masking / redaction for secrets in console and artifact logs
+- ✅ Log masking / redaction for secrets in console and artifact logs

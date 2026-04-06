@@ -324,7 +324,11 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       }
     }
 
-    // 5. Set up reporters (before run for real-time streaming)
+    // 5. Set up redactor and reporters (before run for real-time streaming)
+    const { createRedactor, registerUrlSecrets } = await import("../report/redact.js");
+    const redactor = createRedactor();
+    if (appiumUrl) registerUrlSecrets(redactor, appiumUrl);
+
     const { createConsoleReporter } = await import("../report/console.js");
     const { createJsonReporter } = await import("../report/json.js");
     const { createJUnitReporter } = await import("../report/junit.js");
@@ -355,6 +359,23 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       }
     }
 
+    // Redact sensitive data from a result before it reaches reporters
+    type ResultLike = (typeof platformConfigs)[number]["engineConfig"] extends unknown
+      ? import("../core/engine.js").TestResult
+      : never;
+    const redactResult = <T extends ResultLike>(r: T): T => {
+      if (!r.error) return r;
+      return {
+        ...r,
+        error: {
+          ...r.error,
+          message: redactor.redact(r.error.message),
+          stack: r.error.stack ? redactor.redact(r.error.stack) : undefined,
+          suggestion: r.error.suggestion ? redactor.redact(r.error.suggestion) : undefined,
+        },
+      };
+    };
+
     // 6. Run with real-time reporter callbacks
     const retries = opts.retries ?? config.defaults?.retries ?? 0;
     const result = await orchestrate(selectedFlows, platformConfigs, {
@@ -366,17 +387,19 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         }
       },
       onResult(r) {
+        const redacted = redactResult(r);
         for (const reporter of reporters) {
-          if (r.status === "passed") {
-            reporter.onFlowPass?.(r);
-          } else if (r.status === "failed") {
-            reporter.onFlowFail?.(r);
+          if (redacted.status === "passed") {
+            reporter.onFlowPass?.(redacted);
+          } else if (redacted.status === "failed") {
+            reporter.onFlowFail?.(redacted);
           }
         }
       },
     });
 
     // 7. Final summary
+    const redactedResults = result.results.map(redactResult);
     for (const reporter of reporters) {
       reporter.onRunComplete({
         total: result.results.length,
@@ -385,7 +408,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         skipped: result.skipped,
         flaky: result.flaky,
         durationMs: result.totalDurationMs,
-        results: result.results,
+        results: redactedResults,
         platforms,
         bailedOut: result.bailedOut,
         bailLimit: result.bailLimit,
