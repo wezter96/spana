@@ -4,11 +4,12 @@ import type { Platform } from "../schemas/selector.js";
 import { createPromiseApp } from "../api/app.js";
 import { createPromiseExpect } from "../api/expect.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
-import type { Attachment, StepResult, ScenarioStepResult } from "../report/types.js";
+import type { Attachment, StepResult, ScenarioStepResult, FlowError } from "../report/types.js";
 import type { ArtifactConfig, ProvConfig } from "../schemas/config.js";
 import { captureArtifacts, resolveArtifactConfig } from "./artifacts.js";
 import { runDebugReplOnce } from "./debug-repl.js";
 import { createStepRecorder } from "./step-recorder.js";
+import { classifyError } from "../report/classify-error.js";
 
 export interface TestResult {
   name: string;
@@ -17,7 +18,7 @@ export interface TestResult {
   flaky?: boolean;
   attempts?: number;
   durationMs: number;
-  error?: Error;
+  error?: FlowError;
   attachments?: Attachment[];
   steps?: StepResult[];
   scenarioSteps?: ScenarioStepResult[];
@@ -61,7 +62,7 @@ export async function executeFlow(
         platform,
         status: "failed",
         durationMs: Date.now() - start,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: classifyError(error instanceof Error ? error : new Error(String(error))),
       };
     }
   }
@@ -109,12 +110,13 @@ export async function executeFlow(
       "failed",
     );
 
+    const flowError = error instanceof Error ? error : new Error(String(error));
     result = {
       name: flow.name,
       platform,
       status: "failed",
       durationMs: Date.now() - start,
-      error: error instanceof Error ? error : new Error(String(error)),
+      error: classifyError(flowError),
       attachments,
       steps: stepRecorder.getSteps(),
       scenarioSteps: flowCtx.__scenarioSteps,
@@ -125,7 +127,7 @@ export async function executeFlow(
         app,
         expect,
         driver,
-        error: result.error ?? new Error(`Flow "${flow.name}" failed`),
+        error: flowError,
         flowName: flow.name,
         platform,
         parseHierarchy: coordinatorConfig.parse,

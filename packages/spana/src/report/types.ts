@@ -26,6 +26,24 @@ export interface ScenarioStepResult {
   steps?: StepResult[];
 }
 
+export type FailureCategory =
+  | "element-not-found"
+  | "text-mismatch"
+  | "timeout"
+  | "device-disconnected"
+  | "app-crashed"
+  | "app-not-installed"
+  | "driver-error"
+  | "config-error"
+  | "unknown";
+
+export interface FlowError {
+  message: string;
+  stack?: string;
+  category: FailureCategory;
+  suggestion?: string;
+}
+
 export interface FlowResult {
   name: string;
   platform: Platform;
@@ -33,7 +51,7 @@ export interface FlowResult {
   flaky?: boolean;
   attempts?: number;
   durationMs: number;
-  error?: { message: string; stack?: string };
+  error?: FlowError;
   attachments?: Attachment[];
   steps?: StepResult[];
   scenarioSteps?: ScenarioStepResult[];

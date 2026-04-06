@@ -53,7 +53,7 @@ describe("createHtmlReporter", () => {
           platform: "web",
           status: "failed",
           durationMs: 321,
-          error: { message: 'boom <bad> & "worse"' },
+          error: { message: 'boom <bad> & "worse"', category: "unknown" },
           attachments: [
             { name: "failed-screenshot", contentType: "image/png", path: finalScreenshot },
           ],

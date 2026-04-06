@@ -77,14 +77,14 @@ describe("console reporter", () => {
           platform: "android",
           status: "failed",
           durationMs: 900,
-          error: { message: "android boom" },
+          error: { message: "android boom", category: "unknown" },
         },
         {
           name: "iOS fail",
           platform: "ios",
           status: "failed",
           durationMs: 2100,
-          error: { message: "ios boom" },
+          error: { message: "ios boom", category: "unknown" },
         },
       ],
     });

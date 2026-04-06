@@ -38,7 +38,7 @@ describe("junit reporter", () => {
           platform: "web",
           status: "failed",
           durationMs: 1000,
-          error: { message: 'boom & "bust"', stack: "line <1>" },
+          error: { message: 'boom & "bust"', stack: "line <1>", category: "unknown" },
           attachments: [{ name: "shot", contentType: "image/png", path: "/tmp/shot.png" }],
           steps: [
             {

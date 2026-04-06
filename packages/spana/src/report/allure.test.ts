@@ -105,7 +105,11 @@ describe("Allure reporter", () => {
     const reporter = createAllureReporter(outputDir);
     const result = makeFlowResult({
       status: "failed",
-      error: { message: "Element not found", stack: "Error: Element not found\n    at test.ts:10" },
+      error: {
+        message: "Element not found",
+        stack: "Error: Element not found\n    at test.ts:10",
+        category: "element-not-found",
+      },
     });
     reporter.onFlowFail!(result);
 

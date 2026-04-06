@@ -27,7 +27,7 @@ describe("json reporter", () => {
       platform: "ios",
       status: "failed",
       durationMs: 34,
-      error: { message: "boom" },
+      error: { message: "boom", category: "unknown" },
     });
     reporter.onRunComplete({
       total: 2,
@@ -48,7 +48,7 @@ describe("json reporter", () => {
         platform: "ios",
         status: "failed",
         durationMs: 34,
-        error: { message: "boom" },
+        error: { message: "boom", category: "unknown" },
       },
       {
         event: "runComplete",

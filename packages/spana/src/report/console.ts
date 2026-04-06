@@ -86,6 +86,11 @@ export function createConsoleReporter(): Reporter {
           console.log(`✗ [${f.platform}] ${f.name}`);
           if (f.error) {
             console.log(`  ${f.error.message}`);
+            if (f.error.suggestion) {
+              for (const line of f.error.suggestion.split("\n")) {
+                console.log(`  💡 ${line}`);
+              }
+            }
           }
         }
       }

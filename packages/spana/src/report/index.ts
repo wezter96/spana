@@ -6,7 +6,10 @@ export {
   type ScenarioStepResult,
   type ScenarioStepKeyword,
   type Attachment,
+  type FlowError,
+  type FailureCategory,
 } from "./types.js";
+export { classifyError } from "./classify-error.js";
 export { createConsoleReporter } from "./console.js";
 export { createJsonReporter } from "./json.js";
 export { createJUnitReporter } from "./junit.js";

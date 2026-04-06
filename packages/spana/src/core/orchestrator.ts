@@ -2,6 +2,7 @@ import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { FlowDefinition } from "../api/flow.js";
 import type { Platform } from "../schemas/selector.js";
 import { executeFlow, type TestResult, type EngineConfig } from "./engine.js";
+import { classifyError } from "../report/classify-error.js";
 
 export interface PlatformConfig {
   platform: Platform;
@@ -82,7 +83,7 @@ export async function orchestrate(
             platform,
             status: "failed",
             durationMs: 0,
-            error: error instanceof Error ? error : new Error(String(error)),
+            error: classifyError(error instanceof Error ? error : new Error(String(error))),
           });
         }
         noteFailure(platformFlows.length);
