@@ -34,9 +34,91 @@ spana test --reporter console,junit,html
 
 ## GitHub Actions
 
-### Web tests
+### Using the reusable action
 
-Web tests only need Node.js. Playwright runs headless by default, so no display server is required.
+Spana provides a composite GitHub Action that handles installation, test execution, and artifact upload:
+
+```yaml
+name: E2E Tests
+
+on: [push, pull_request]
+
+jobs:
+  e2e-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run dev &
+      - run: npx wait-on http://localhost:3000
+
+      - name: Run E2E tests
+        uses: ./.github/actions/spana-test
+        with:
+          platform: web
+          reporters: console,junit,html
+
+  e2e-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+
+      - name: Set up Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          script: echo "Emulator ready"
+
+      - name: Run E2E tests
+        uses: ./.github/actions/spana-test
+        with:
+          platform: android
+          retries: 1
+
+  e2e-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+
+      - name: Boot iOS Simulator
+        run: |
+          xcrun simctl boot "iPhone 15"
+          xcrun simctl bootstatus "iPhone 15" -b
+
+      - name: Run E2E tests
+        uses: ./.github/actions/spana-test
+        with:
+          platform: ios
+```
+
+#### Action inputs
+
+| Input              | Default              | Description                             |
+| ------------------ | -------------------- | --------------------------------------- |
+| `platform`         | `web`                | Platform to test (web, android, ios)    |
+| `reporters`        | `console,junit,html` | Comma-separated reporter names          |
+| `config`           | —                    | Path to spana.config.ts                 |
+| `flow-path`        | —                    | Path to flow files or directory         |
+| `device`           | —                    | Target a specific device by ID          |
+| `retries`          | —                    | Number of retries for failed flows      |
+| `tags`             | —                    | Filter by tags                          |
+| `grep`             | —                    | Filter by name pattern                  |
+| `upload-artifacts` | `true`               | Upload spana-output/ as build artifacts |
+
+### Manual workflow setup
+
+If you prefer full control over the workflow steps:
 
 ```yaml
 name: E2E Tests (Web)
@@ -95,32 +177,32 @@ jobs:
 Android tests need the Android SDK. GitHub's `ubuntu-latest` runners include the SDK, but you need to boot an emulator.
 
 ```yaml
-  e2e-android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+e2e-android:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
 
-      - name: Install spana
-        run: npm install -g spana-test
+    - name: Install spana
+      run: npm install -g spana-test
 
-      - name: Set up Android emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33
-          script: |
-            adb wait-for-device
-            spana test --platform android --reporter console,junit,html
+    - name: Set up Android emulator
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 33
+        script: |
+          adb wait-for-device
+          spana test --platform android --reporter console,junit,html
 
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-results
-          path: spana-output/
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-results
+        path: spana-output/
 ```
 
 ### iOS tests
@@ -128,32 +210,32 @@ Android tests need the Android SDK. GitHub's `ubuntu-latest` runners include the
 iOS tests require a macOS runner with Xcode installed.
 
 ```yaml
-  e2e-ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
+e2e-ios:
+  runs-on: macos-latest
+  steps:
+    - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
 
-      - name: Install spana
-        run: npm install -g spana-test
+    - name: Install spana
+      run: npm install -g spana-test
 
-      - name: Boot iOS Simulator
-        run: |
-          xcrun simctl boot "iPhone 15"
-          xcrun simctl bootstatus "iPhone 15" -b
+    - name: Boot iOS Simulator
+      run: |
+        xcrun simctl boot "iPhone 15"
+        xcrun simctl bootstatus "iPhone 15" -b
 
-      - name: Install app and run tests
-        run: spana test --platform ios --reporter console,junit,html
+    - name: Install app and run tests
+      run: spana test --platform ios --reporter console,junit,html
 
-      - name: Upload test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-results
-          path: spana-output/
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-results
+        path: spana-output/
 ```
 
 ## GitLab CI

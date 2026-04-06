@@ -1,0 +1,113 @@
+name: "Spana Test"
+description: "Run spana E2E tests with automatic reporting and artifact upload"
+
+inputs:
+  platform:
+    description: "Platform to test on (web, android, ios)"
+    required: false
+    default: "web"
+  reporters:
+    description: "Comma-separated reporters (console, json, junit, html, allure)"
+    required: false
+    default: "console,junit,html"
+  config:
+    description: "Path to spana.config.ts"
+    required: false
+  flow-path:
+    description: "Path to flow files or directory"
+    required: false
+  device:
+    description: "Target a specific device by ID"
+    required: false
+  retries:
+    description: "Number of retries for failed flows"
+    required: false
+  tags:
+    description: "Run only flows matching these tags"
+    required: false
+  grep:
+    description: "Run only flows matching this name pattern"
+    required: false
+  working-directory:
+    description: "Working directory for running tests"
+    required: false
+    default: "."
+  version:
+    description: "spana-test version to install (default: latest)"
+    required: false
+    default: "latest"
+  upload-artifacts:
+    description: "Upload test artifacts (default: true)"
+    required: false
+    default: "true"
+
+outputs:
+  passed:
+    description: "Number of passed flows"
+    value: ${{ steps.run.outputs.passed }}
+  failed:
+    description: "Number of failed flows"
+    value: ${{ steps.run.outputs.failed }}
+  result:
+    description: "'pass' or 'fail'"
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install spana-test
+      shell: bash
+      run: npm install -g spana-test@${{ inputs.version }}
+
+    - name: Run spana tests
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        args="test"
+
+        if [ -n "${{ inputs.flow-path }}" ]; then
+          args="$args ${{ inputs.flow-path }}"
+        fi
+
+        args="$args --platform ${{ inputs.platform }}"
+        args="$args --reporter ${{ inputs.reporters }}"
+
+        if [ -n "${{ inputs.config }}" ]; then
+          args="$args --config ${{ inputs.config }}"
+        fi
+
+        if [ -n "${{ inputs.device }}" ]; then
+          args="$args --device ${{ inputs.device }}"
+        fi
+
+        if [ -n "${{ inputs.retries }}" ]; then
+          args="$args --retries ${{ inputs.retries }}"
+        fi
+
+        if [ -n "${{ inputs.tags }}" ]; then
+          args="$args --tag ${{ inputs.tags }}"
+        fi
+
+        if [ -n "${{ inputs.grep }}" ]; then
+          args="$args --grep ${{ inputs.grep }}"
+        fi
+
+        echo "Running: spana $args"
+
+        if spana $args; then
+          echo "result=pass" >> $GITHUB_OUTPUT
+        else
+          echo "result=fail" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+    - name: Upload test artifacts
+      if: always() && inputs.upload-artifacts == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: spana-results-${{ inputs.platform }}
+        path: |
+          ${{ inputs.working-directory }}/spana-output/
+          ${{ inputs.working-directory }}/allure-results/
+        if-no-files-found: ignore

@@ -1,9 +1,9 @@
 ---
 title: Reporters
-description: Built-in reporters for test output — console, JSON, JUnit, and HTML.
+description: Built-in reporters for test output — console, JSON, JUnit, HTML, and Allure.
 ---
 
-Spana ships four reporters. Use one or combine several to get both human-readable output and machine-readable artifacts from the same run.
+Spana ships five reporters. Use one or combine several to get both human-readable output and machine-readable artifacts from the same run.
 
 ## Enabling reporters
 
@@ -63,10 +63,10 @@ Streams newline-delimited JSON events to stdout. Each line is a self-contained J
 
 Events emitted:
 
-| Event | When |
-|---|---|
-| `flowPass` | A flow finishes successfully |
-| `flowFail` | A flow fails |
+| Event         | When                                           |
+| ------------- | ---------------------------------------------- |
+| `flowPass`    | A flow finishes successfully                   |
+| `flowFail`    | A flow fails                                   |
 | `runComplete` | All flows have finished; includes full summary |
 
 ```json
@@ -124,6 +124,35 @@ The report includes:
 - **Failure details** -- error messages displayed inline.
 
 **When to use:** sharing results with teammates, reviewing visual state after a run, or archiving test evidence.
+
+---
+
+## Allure
+
+Generates [Allure](https://allurereport.org/) result files for rich CI dashboards with history, trends, and categorized failures.
+
+**Enable:** `--reporter allure`
+
+**Output:** `allure-results/` directory (default), containing `*-result.json` files and an `environment.properties` file.
+
+```bash
+# Run tests with Allure reporter
+spana test --reporter console,allure
+
+# Generate and open the Allure report
+npx allure generate allure-results --clean -o allure-report
+npx allure open allure-report
+```
+
+The reporter produces:
+
+- **Result files** — one JSON file per flow with UUID, history ID, labels, steps, and timing
+- **Attachments** — screenshots and hierarchy dumps copied into the output directory
+- **Environment properties** — platform, framework name, pass/fail counts
+- **Flaky detection** — tests that pass on retry are tagged as `flaky` with attempt count
+- **Step mapping** — spana steps (tap, assertVisible, etc.) map to Allure test steps with status and duration
+
+**When to use:** CI dashboards that support Allure (Jenkins Allure Plugin, GitHub Actions with `allure-report` action, GitLab with Allure integration).
 
 ---
 

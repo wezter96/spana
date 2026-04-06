@@ -41,10 +41,19 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 ### Features
 
 - iOS physical device support (WDA re-signing + iproxy)
-- `./agent` subpath export for programmatic API
+- ✅ `./agent` subpath export for programmatic API
 - ✅ Relative selectors (`below`, `above`, `leftOf`, `rightOf`, `childOf`)
 - ✅ Auto-start emulator/simulator for CI (handled by `ensureAndroidDevice`/`ensureIOSSimulator`)
 - ✅ JavaScript scripting — `app.evaluate()` for web; TS flows provide full scripting for all platforms
+
+### Runner & CI ergonomics
+
+Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdriverio`).
+
+- Config ergonomics — `defineConfig()`, schema validation, documented precedence, and `--validate-config`
+- Watch mode — `--watch` plus `filesToWatch` patterns for rerunning changed flows or full reruns after shared helper/config edits
+- Interactive debugging — pause into a live session / REPL with bound `app` and driver context
+- CI sharding & fail-fast — `--shard <current>/<total>` and `--bail <N>`
 
 ---
 
@@ -52,20 +61,23 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 
 ### Platform & integration
 
-- GitHub Action integration
-- CI examples (GitHub Actions, GitLab CI, CircleCI)
+- ✅ GitHub Action integration (reusable composite action)
+- ✅ CI examples (GitHub Actions, GitLab CI)
 - Cloud provider support — Appium integration (BrowserStack, Sauce Labs, etc.). Plan: `docs/superpowers/plans/2026-04-06-phase4-appium-cloud-mode.md`
+- Provider helper services for cloud mode — app upload references, tunnel/local relay lifecycle, and provider-specific capability augmentation
 - MCP server for AI agent integration
 
 ### Web testing
 
-- WebView CDP support (JS execution inside mobile WebViews)
+- WebView / hybrid support — context discovery, targeted switching, and JS execution inside mobile WebViews
 - Browser runtime config (headed mode, browser selection, proper disposal)
 - Network mocking/control (`mockNetwork`, `blockNetwork`, `setNetworkConditions`)
 - Cookie/auth state management (`saveCookies`, `loadAuthState`)
 
 ### Reporting & diagnostics
 
-- Allure reporter support
+- ✅ Allure reporter support
 - Typed failure model — categorized errors with suggestions
 - Driver stability knobs (`waitForIdleTimeout`, `typingFrequency` per-flow)
+- Real-time console reporting — progress updates, failure-only mode, and grouped logs by flow/device
+- Log masking / redaction for secrets in console and artifact logs
