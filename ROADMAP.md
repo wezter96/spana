@@ -45,18 +45,37 @@ Spana now has more capability than the top-level README and demo suite communica
 
 maestro-runner is still ahead on end-to-end multi-device execution. Spana already has most of the internal pieces; the next step is wiring them into the real CLI path.
 
-- Wire `packages/spana/src/core/parallel.ts` into `spana test`
-- Add a first-class `--parallel <n>` execution model for multi-device / multi-worker runs
-- Use dynamic work distribution so faster workers naturally pick up more flows
+- Wire `packages/spana/src/core/parallel.ts` into `spana test` via a `--parallel` flag
+- Auto-discover all available devices per platform and distribute flows via work-stealing queue
+- Run platforms concurrently (web + android + ios in parallel)
 - Preserve retries, bail, hooks, artifacts, and per-platform filtering under parallel execution
-- Upgrade console output to be worker-aware and device-aware, with better summaries for concurrent runs
-- Add focused E2E coverage for mixed-speed worker scheduling and artifact correctness under concurrency
+- Upgrade console output to be worker-aware and device-aware with device-prefixed lines and worker stats summary
+- Add focused unit and integration test coverage for parallel scheduling, bail propagation, and retry behavior
+
+Design spec: `docs/superpowers/specs/2026-04-06-parallel-execution-design.md`
 
 ### Success criteria
 
-- `spana test` can run real device/browser work in parallel, not just serially by platform
+- `spana test --parallel` auto-discovers devices and runs flows across them concurrently
 - Output remains readable and trustworthy under concurrency
 - Parallel runs feel like a polished product feature, not an internal experiment
+
+---
+
+## Phase 6.5 — Advanced Parallel Configuration (v1.2.1)
+
+Follow-up to Phase 6. Adds explicit control knobs for users who need more than auto-discovery defaults.
+
+- `--workers <n>` to cap the number of concurrent workers per platform
+- `--devices <id1>,<id2>` to select a specific subset of devices instead of auto-discovery
+- Web multi-context parallelism (multiple browser contexts as workers for Playwright)
+- Per-platform worker count configuration in `spana.config.ts` (e.g., `defaults.workers.android: 2`)
+
+### Success criteria
+
+- Users with many devices can limit resource usage via `--workers`
+- Users can target specific devices without disabling parallelism
+- Web-heavy suites can benefit from multi-context parallelism
 
 ---
 
