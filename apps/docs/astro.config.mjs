@@ -24,6 +24,7 @@ export default defineConfig({
           label: "Writing Tests",
           items: [
             { label: "Flows", slug: "writing-tests/flows" },
+            { label: "Gherkin / BDD", slug: "writing-tests/gherkin" },
             { label: "Selectors", slug: "writing-tests/selectors" },
             { label: "Assertions", slug: "writing-tests/assertions" },
             { label: "Platform-Specific", slug: "writing-tests/platform-specific" },
@@ -33,6 +34,8 @@ export default defineConfig({
           label: "CLI",
           items: [
             { label: "Commands", slug: "cli/commands" },
+            { label: "Init", slug: "cli/init" },
+            { label: "Studio", slug: "cli/studio" },
             { label: "Agent Commands", slug: "cli/agent-commands" },
           ],
         },
@@ -45,7 +48,13 @@ export default defineConfig({
         },
         {
           label: "Guides",
-          items: [{ label: "CI/CD Integration", slug: "guides/ci-integration" }],
+          items: [
+            { label: "Device Setup", slug: "guides/device-setup" },
+            { label: "Cloud Providers", slug: "guides/cloud-providers" },
+            { label: "Remote Execution", slug: "guides/remote-execution" },
+            { label: "Debugging", slug: "guides/debugging" },
+            { label: "CI/CD Integration", slug: "guides/ci-integration" },
+          ],
         },
         {
           label: "Reference",
