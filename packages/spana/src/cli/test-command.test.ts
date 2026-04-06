@@ -202,7 +202,7 @@ describe("runTestCommand", () => {
 
   test("returns early when no flow files are discovered", async () => {
     const tempDir = createTempDir();
-    const configPath = join(tempDir, "missing-config.ts");
+    const configPath = writeConfigFile(tempDir, {});
     const { runTestCommand } = await importFreshTestCommand();
 
     const success = await runTestCommand({
@@ -217,7 +217,7 @@ describe("runTestCommand", () => {
 
   test("accepts new appium-related CLI options in TestCommandOptions", async () => {
     const tempDir = createTempDir();
-    const configPath = join(tempDir, "missing-config.ts");
+    const configPath = writeConfigFile(tempDir, {});
     const { runTestCommand } = await importFreshTestCommand();
 
     // Verify the function accepts all new fields without type errors
@@ -233,6 +233,45 @@ describe("runTestCommand", () => {
 
     // With no flows, returns true (early exit)
     expect(success).toBe(true);
+  });
+
+  test("validates config and exits early when requested", async () => {
+    const tempDir = createTempDir();
+    const configPath = writeConfigFile(tempDir, {
+      platforms: ["web"],
+      reporters: ["console"],
+    });
+    const { runTestCommand } = await importFreshTestCommand();
+
+    const success = await runTestCommand({
+      platforms: [],
+      configPath,
+      validateConfigOnly: true,
+    });
+
+    expect(success).toBe(true);
+    expect(cliState.logs).toContain(`✓ Config valid (${configPath})`);
+  });
+
+  test("returns success when a shard receives no flows", async () => {
+    const tempDir = createTempDir();
+    const configPath = writeConfigFile(tempDir, {
+      flowDir: "./flows",
+      platforms: ["web"],
+    });
+    const flowPath = join(tempDir, "flows", "only.flow.ts");
+    cliState.flowPaths = [flowPath];
+    cliState.flowFiles.set(flowPath, createFlow("Only flow"));
+
+    const { runTestCommand } = await importFreshTestCommand();
+    const success = await runTestCommand({
+      platforms: ["web"],
+      configPath,
+      shard: { current: 2, total: 2 },
+    });
+
+    expect(success).toBe(true);
+    expect(cliState.logs).toContain("No flows assigned to shard 2/2.");
   });
 
   test("fails when appium mode is set but no server URL is provided", async () => {

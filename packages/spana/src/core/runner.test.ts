@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { FlowDefinition } from "../api/flow.js";
-import { filterFlows } from "./runner.js";
+import { applyShard, filterFlows } from "./runner.js";
 
 function makeFlow(name: string, config: FlowDefinition["config"] = {}): FlowDefinition {
   return {
@@ -84,5 +84,21 @@ describe("filterFlows", () => {
     process.env.SPANA_TEST_CI_FLAG = "1";
     expect(filterFlows(envFlows, {}).map((f) => f.name)).toEqual(["ci only", "always"]);
     delete process.env.SPANA_TEST_CI_FLAG;
+  });
+});
+
+describe("applyShard", () => {
+  test("splits items into deterministic contiguous shards", () => {
+    expect(applyShard(["a", "b", "c", "d", "e"], { current: 1, total: 2 })).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(applyShard(["a", "b", "c", "d", "e"], { current: 2, total: 2 })).toEqual(["d", "e"]);
+  });
+
+  test("returns empty shards when there are fewer items than shards", () => {
+    expect(applyShard(["only-flow"], { current: 2, total: 2 })).toEqual([]);
+    expect(applyShard(["a", "b"], { current: 4, total: 4 })).toEqual([]);
   });
 });

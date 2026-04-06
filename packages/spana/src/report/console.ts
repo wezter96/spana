@@ -99,6 +99,14 @@ export function createConsoleReporter(): Reporter {
         }
       }
 
+      if (summary.bailedOut) {
+        console.log(
+          `\nBailed out after ${summary.failed} failure(s)${
+            summary.bailLimit ? ` (limit: ${summary.bailLimit})` : ""
+          }.`,
+        );
+      }
+
       // Final summary
       const flakyStr = summary.flaky > 0 ? `, ${summary.flaky} flaky` : "";
       console.log(

@@ -1,5 +1,6 @@
 import type { Platform } from "./selector.js";
 import type { LaunchOptions } from "../drivers/raw-driver.js";
+import { z, type ZodError } from "zod";
 
 export type { LaunchOptions };
 
@@ -75,6 +76,116 @@ export interface ProvConfig {
   execution?: ExecutionConfig;
 }
 
+const platformSchema = z.enum(["web", "android", "ios"]);
+const reporterSchema = z.enum(["console", "json", "junit", "html", "allure"]);
+const hookSchema = z.custom<(...args: unknown[]) => Promise<void>>(
+  (value) => typeof value === "function",
+  { message: "Expected function" },
+);
+
+const iosSigningConfigSchema = z
+  .object({
+    teamId: z.string().min(1, "teamId is required"),
+    signingIdentity: z.string().min(1).optional(),
+  })
+  .strict();
+
+const appConfigSchema = z
+  .object({
+    url: z.string().url().optional(),
+    packageName: z.string().min(1).optional(),
+    bundleId: z.string().min(1).optional(),
+    appPath: z.string().min(1).optional(),
+    signing: iosSigningConfigSchema.optional(),
+  })
+  .strict();
+
+const appiumExecutionConfigSchema = z
+  .object({
+    serverUrl: z.string().url().optional(),
+    capabilities: z.record(z.string(), z.unknown()).optional(),
+    capabilitiesFile: z.string().min(1).optional(),
+    reportToProvider: z.boolean().optional(),
+  })
+  .strict();
+
+const executionConfigSchema = z
+  .object({
+    mode: z.enum(["local", "appium"]).optional(),
+    appium: appiumExecutionConfigSchema.optional(),
+  })
+  .strict();
+
+const artifactConfigSchema = z
+  .object({
+    outputDir: z.string().min(1).optional(),
+    captureOnFailure: z.boolean().optional(),
+    captureOnSuccess: z.boolean().optional(),
+    captureSteps: z.boolean().optional(),
+    screenshot: z.boolean().optional(),
+    uiHierarchy: z.boolean().optional(),
+  })
+  .strict();
+
+const launchOptionsSchema = z
+  .object({
+    clearState: z.boolean().optional(),
+    clearKeychain: z.boolean().optional(),
+    deepLink: z.string().min(1).optional(),
+    launchArguments: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+export const provConfigSchema = z
+  .object({
+    apps: z
+      .object({
+        web: appConfigSchema.optional(),
+        android: appConfigSchema.optional(),
+        ios: appConfigSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    defaults: z
+      .object({
+        waitTimeout: z.number().positive().optional(),
+        pollInterval: z.number().positive().optional(),
+        settleTimeout: z.number().nonnegative().optional(),
+        retries: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
+    platforms: z.array(platformSchema).optional(),
+    flowDir: z.string().min(1).optional(),
+    launchOptions: launchOptionsSchema.optional(),
+    reporters: z.array(reporterSchema).optional(),
+    hooks: z
+      .object({
+        beforeAll: hookSchema.optional(),
+        beforeEach: hookSchema.optional(),
+        afterEach: hookSchema.optional(),
+        afterAll: hookSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    artifacts: artifactConfigSchema.optional(),
+    execution: executionConfigSchema.optional(),
+  })
+  .strict();
+
 export function defineConfig(config: ProvConfig): ProvConfig {
   return config;
+}
+
+export function validateConfig(config: unknown): ProvConfig {
+  return provConfigSchema.parse(config) as ProvConfig;
+}
+
+export function formatConfigValidationError(error: ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.length > 0 ? issue.path.join(".") : "config";
+      return `- ${path}: ${issue.message}`;
+    })
+    .join("\n");
 }

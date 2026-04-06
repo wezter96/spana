@@ -15,6 +15,8 @@ export default defineConfig({
 
 Use `--config ./path/to/spana.config.ts` to specify a different location.
 
+Run `spana validate-config` to validate the file without starting drivers or discovering flows.
+
 ## Full example
 
 ```ts
@@ -105,6 +107,8 @@ Directory to discover flow files from. Accepts a glob or directory path.
 
 Default: `"./flows"`
 
+Relative paths are resolved from the directory that contains the config file, not from the current shell directory.
+
 ## `reporters`
 
 ```ts
@@ -119,8 +123,44 @@ One or more reporter names. Available reporters:
 | `json`    | Structured JSON events to stdout                     |
 | `junit`   | JUnit XML — compatible with CI artifact ingestion    |
 | `html`    | Self-contained HTML report with embedded screenshots |
+| `allure`  | Allure-compatible result files                       |
 
 Default: `["console"]`
+
+## `execution`
+
+Execution mode and remote Appium settings.
+
+```ts
+execution?: {
+  mode?: "local" | "appium";
+  appium?: {
+    serverUrl?: string;
+    capabilities?: Record<string, unknown>;
+    capabilitiesFile?: string;
+    reportToProvider?: boolean;
+  };
+}
+```
+
+Use `mode: "appium"` when running against BrowserStack, Sauce Labs, or another Appium-compatible grid.
+
+## CLI precedence
+
+For `spana test`, CLI flags win over config values.
+
+| CLI flag             | Config field                 |
+| -------------------- | ---------------------------- |
+| `--platform`         | `platforms`                  |
+| `--reporter`         | `reporters`                  |
+| `--retries`          | `defaults.retries`           |
+| `--driver`           | `execution.mode`             |
+| `--appium-url`       | `execution.appium.serverUrl` |
+| `--validate-config`  | Validates config and exits   |
+| `--shard` / `--bail` | CLI-only execution controls  |
+| `--debug-on-failure` | CLI-only execution control   |
+
+Sharding happens after tag/name/platform filtering so each shard gets a deterministic slice of the already-selected flows.
 
 ## `defaults`
 

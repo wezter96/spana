@@ -17,6 +17,10 @@ if (command === "test") {
   let capsPath: string | undefined;
   let capsJson: string | undefined;
   let noProviderReporting = false;
+  let validateConfigOnly = false;
+  let shard: { current: number; total: number } | undefined;
+  let bail: number | undefined;
+  let debugOnFailure = false;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
@@ -44,6 +48,33 @@ if (command === "test") {
       capsJson = args[++i];
     } else if (arg === "--no-provider-reporting") {
       noProviderReporting = true;
+    } else if (arg === "--validate-config") {
+      validateConfigOnly = true;
+    } else if (arg === "--shard" && args[i + 1]) {
+      const [currentText, totalText] = args[++i]!.split("/");
+      const current = Number(currentText);
+      const total = Number(totalText);
+      if (
+        !Number.isInteger(current) ||
+        !Number.isInteger(total) ||
+        current < 1 ||
+        total < 1 ||
+        current > total
+      ) {
+        console.log(
+          "Invalid --shard format. Use --shard <current>/<total> with 1 <= current <= total.",
+        );
+        process.exit(1);
+      }
+      shard = { current, total };
+    } else if (arg === "--bail" && args[i + 1]) {
+      bail = Number.parseInt(args[++i]!, 10);
+      if (!Number.isInteger(bail) || bail < 1) {
+        console.log("Invalid --bail value. Use --bail <n> with n >= 1.");
+        process.exit(1);
+      }
+    } else if (arg === "--debug-on-failure") {
+      debugOnFailure = true;
     } else if (!arg.startsWith("--")) {
       flowPath = arg;
     }
@@ -64,23 +95,29 @@ if (command === "test") {
     capsPath,
     capsJson,
     noProviderReporting,
+    validateConfigOnly,
+    shard,
+    bail,
+    debugOnFailure,
   });
   process.exit(success ? 0 : 1);
 } else if (command === "hierarchy" || command === "selectors") {
   let platform: Platform = "web";
   let pretty = false;
+  let configPath: string | undefined;
   for (let i = 1; i < args.length; i++) {
     if (args[i] === "--platform" && args[i + 1]) platform = args[++i] as Platform;
     if (args[i] === "--pretty") pretty = true;
+    if (args[i] === "--config" && args[i + 1]) configPath = args[++i];
   }
   // Load config for baseUrl/packageName/bundleId
-  const { resolve } = await import("node:path");
   let config: Record<string, any> = {};
   try {
-    const mod = await import(resolve("spana.config.ts"));
-    config = mod.default ?? {};
-  } catch {
-    /* no config */
+    const { loadConfig } = await import("./config-loader.js");
+    config = (await loadConfig({ configPath, allowMissing: true })).config as Record<string, any>;
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : String(error));
+    process.exit(1);
   }
   const { connect } = await import("../agent/session.js");
   const session = await connect({
@@ -109,6 +146,24 @@ if (command === "test") {
     for (const e of errors) console.log(`✗ ${e.file}: ${e.error}`);
     process.exit(1);
   }
+} else if (command === "validate-config") {
+  let configPath: string | undefined;
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--config" && args[i + 1]) {
+      configPath = args[++i];
+    } else if (!arg.startsWith("--")) {
+      configPath = arg;
+    }
+  }
+  const { loadConfig } = await import("./config-loader.js");
+  try {
+    const result = await loadConfig({ configPath });
+    console.log(`✓ Config valid (${result.configPath})`);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 } else if (command === "studio") {
   let port = 4400;
   let open = true;
@@ -118,42 +173,13 @@ if (command === "test") {
     if (args[i] === "--no-open") open = false;
     if (args[i] === "--config" && args[i + 1]) configPath = args[++i];
   }
-  // Load config — try explicit path, then common locations
-  const { resolve, dirname } = await import("node:path");
-  const { existsSync } = await import("node:fs");
   let config: Record<string, any> = {};
-  const candidates = configPath
-    ? [resolve(configPath)]
-    : [resolve("spana.config.ts"), resolve("packages/spana/spana.config.ts")];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      try {
-        // Try direct import first (works under Bun)
-        const mod = await import(candidate);
-        config = mod.default ?? {};
-      } catch {
-        // Fall back to spawning bun to evaluate the config (Node.js can't import .ts)
-        try {
-          const { execSync } = await import("node:child_process");
-          const json = execSync(
-            `bun -e "import c from '${candidate}'; console.log(JSON.stringify(c))"`,
-            { encoding: "utf-8", timeout: 10_000 },
-          ).trim();
-          config = JSON.parse(json);
-        } catch {
-          continue;
-        }
-      }
-      // Resolve relative paths in config relative to config file location
-      const configDir = dirname(candidate);
-      if (config.flowDir && !config.flowDir.startsWith("/")) {
-        config.flowDir = resolve(configDir, config.flowDir);
-      }
-      if (config.artifacts?.outputDir && !config.artifacts.outputDir.startsWith("/")) {
-        config.artifacts.outputDir = resolve(configDir, config.artifacts.outputDir);
-      }
-      break;
-    }
+  try {
+    const { loadConfig } = await import("./config-loader.js");
+    config = (await loadConfig({ configPath, allowMissing: true })).config as Record<string, any>;
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : String(error));
+    process.exit(1);
   }
   const { runStudioCommand } = await import("./studio-command.js");
   await runStudioCommand({ port, open, config: config as any });
@@ -181,6 +207,7 @@ if (command === "test") {
   console.log("  spana hierarchy --platform <p> Dump element hierarchy as JSON");
   console.log("  spana selectors --platform <p> List actionable elements with suggested selectors");
   console.log("  spana validate [path]          Validate flow files without device connection");
+  console.log("  spana validate-config [path]   Validate spana.config.ts without running flows");
   console.log("  spana studio                   Launch Spana Studio UI");
   console.log("  spana init                     Initialize a new spana project");
   console.log("  spana devices                  List connected devices across platforms");
@@ -194,7 +221,11 @@ if (command === "test") {
     "  --reporter console|json|junit Reporter format (default: spana.config.ts or console)",
   );
   console.log("  --retries <n>              Retry failed flows n times (flake detection)");
+  console.log("  --shard <current>/<total> Distribute flows across CI jobs");
+  console.log("  --bail <n>                 Abort after N failures");
+  console.log("  --debug-on-failure         Open an interactive REPL on the first failed flow");
   console.log("  --device <id>              Target a specific device by ID");
+  console.log("  --validate-config          Validate config and exit");
   console.log("  --config path              Config file path");
   console.log("  --pretty                   Pretty-print JSON output (hierarchy command)");
   console.log("  --port <number>            Studio port (default: 4400)");

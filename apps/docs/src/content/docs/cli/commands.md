@@ -17,15 +17,24 @@ spana test [path] [options]
 
 ### Options
 
-| Flag                     | Description                                               |
-| ------------------------ | --------------------------------------------------------- |
-| `--platform <platforms>` | Comma-separated platform targets: `web`, `android`, `ios` |
-| `--tag <tag>`            | Run only flows with this tag                              |
-| `--grep <pattern>`       | Run only flows whose name matches this pattern            |
-| `--reporter <name>`      | Reporter: `console`, `json`, `junit`, `html`              |
-| `--config <path>`        | Path to config file (default: `./spana.config.ts`)        |
-| `--device <id>`          | Target a specific device by ID (see `spana devices`)      |
-| `--retries <n>`          | Retry failed flows n times (enables flake detection)      |
+| Flag                        | Description                                                          |
+| --------------------------- | -------------------------------------------------------------------- |
+| `--platform <platforms>`    | Comma-separated platform targets: `web`, `android`, `ios`            |
+| `--tag <tag>`               | Run only flows with this tag                                         |
+| `--grep <pattern>`          | Run only flows whose name matches this pattern                       |
+| `--reporter <name>`         | Reporter: `console`, `json`, `junit`, `html`, `allure`               |
+| `--config <path>`           | Path to config file                                                  |
+| `--validate-config`         | Validate config and exit without discovering or running flows        |
+| `--device <id>`             | Target a specific local device by ID (see `spana devices`)           |
+| `--retries <n>`             | Retry failed flows n times (enables flake detection)                 |
+| `--shard <current>/<total>` | Run only one deterministic CI shard of the filtered flow set         |
+| `--bail <n>`                | Stop scheduling new flows after `n` final flow failures              |
+| `--debug-on-failure`        | Drop into an interactive REPL after the first failed flow (TTY only) |
+| `--driver <local\|appium>`  | Override execution mode from config                                  |
+| `--appium-url <url>`        | Appium server URL for cloud or remote execution                      |
+| `--caps <path>`             | Path to Appium capabilities JSON file                                |
+| `--caps-json <json>`        | Inline Appium capabilities JSON                                      |
+| `--no-provider-reporting`   | Skip provider result updates for Appium cloud sessions               |
 
 ### Examples
 
@@ -56,7 +65,38 @@ spana test --device "SIM-UDID-HERE"
 
 # Retry flaky tests twice
 spana test --retries 2
+
+# Validate config only
+spana test --validate-config
+
+# Split flows across two CI jobs
+spana test --shard 1/2
+
+# Stop after the first failed flow
+spana test --bail 1
+
+# Open a REPL on the first failure
+spana test --debug-on-failure
 ```
+
+### Precedence
+
+For `spana test`, CLI flags override `spana.config.ts`.
+
+1. `--driver` overrides `execution.mode`
+2. `--appium-url` overrides `execution.appium.serverUrl`
+3. `--platform`, `--reporter`, and `--retries` override config defaults
+4. Filtering happens before sharding, so each shard sees the already-filtered flow list
+
+## `spana validate-config`
+
+Validate `spana.config.ts` without running flows.
+
+```bash
+spana validate-config [path]
+```
+
+This loads the config module, validates it against Spana's runtime schema, and prints the resolved file path on success.
 
 ## `spana devices`
 

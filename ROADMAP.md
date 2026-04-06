@@ -40,7 +40,7 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 
 ### Features
 
-- iOS physical device support (WDA re-signing + iproxy)
+- ✅ iOS physical device support (WDA re-signing + iproxy)
 - ✅ `./agent` subpath export for programmatic API
 - ✅ Relative selectors (`below`, `above`, `leftOf`, `rightOf`, `childOf`)
 - ✅ Auto-start emulator/simulator for CI (handled by `ensureAndroidDevice`/`ensureIOSSimulator`)
@@ -51,7 +51,6 @@ Inspired by maestro-runner (`/Users/anton/.superset/projects/maestro-runner`). F
 Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdriverio`).
 
 - Config ergonomics — `defineConfig()`, schema validation, documented precedence, and `--validate-config`
-- Watch mode — `--watch` plus `filesToWatch` patterns for rerunning changed flows or full reruns after shared helper/config edits
 - Interactive debugging — pause into a live session / REPL with bound `app` and driver context
 - CI sharding & fail-fast — `--shard <current>/<total>` and `--bail <N>`
 
@@ -65,7 +64,6 @@ Additional inspiration from WebdriverIO (`/Users/anton/.superset/projects/webdri
 - ✅ CI examples (GitHub Actions, GitLab CI)
 - Cloud provider support — Appium integration (BrowserStack, Sauce Labs, etc.). Plan: `docs/superpowers/plans/2026-04-06-phase4-appium-cloud-mode.md`
 - Provider helper services for cloud mode — app upload references, tunnel/local relay lifecycle, and provider-specific capability augmentation
-- MCP server for AI agent integration
 
 ### Web testing
 

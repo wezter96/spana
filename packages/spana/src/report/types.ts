@@ -48,6 +48,8 @@ export interface RunSummary {
   durationMs: number;
   results: FlowResult[];
   platforms: Platform[];
+  bailedOut?: boolean;
+  bailLimit?: number;
 }
 
 export interface Reporter {

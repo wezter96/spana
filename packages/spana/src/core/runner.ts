@@ -11,6 +11,11 @@ export interface DiscoverOptions {
   stepFiles?: string[];
 }
 
+export interface ShardOptions {
+  current: number;
+  total: number;
+}
+
 export async function loadFlowFile(filePath: string): Promise<FlowDefinition> {
   const absolutePath = resolve(filePath);
   const mod = await import(absolutePath);
@@ -161,4 +166,17 @@ export function filterFlows(flows: FlowDefinition[], opts: DiscoverOptions): Flo
     }
     return true;
   });
+}
+
+export function applyShard<T>(items: T[], shard?: ShardOptions): T[] {
+  if (!shard || shard.total === 1 || items.length === 0) {
+    return items;
+  }
+
+  const itemsPerShard = Math.max(Math.ceil(items.length / shard.total), 1);
+  const start = (shard.current - 1) * itemsPerShard;
+  const end =
+    shard.current === shard.total ? items.length : Math.min(start + itemsPerShard, items.length);
+
+  return items.slice(start, end);
 }

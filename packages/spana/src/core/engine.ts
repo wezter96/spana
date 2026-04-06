@@ -7,6 +7,7 @@ import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { Attachment, StepResult, ScenarioStepResult } from "../report/types.js";
 import type { ArtifactConfig, ProvConfig } from "../schemas/config.js";
 import { captureArtifacts, resolveArtifactConfig } from "./artifacts.js";
+import { runDebugReplOnce } from "./debug-repl.js";
 import { createStepRecorder } from "./step-recorder.js";
 
 export interface TestResult {
@@ -31,6 +32,7 @@ export interface EngineConfig {
   artifactConfig?: ArtifactConfig;
   launchOptions?: LaunchOptions;
   hooks?: ProvConfig["hooks"];
+  debugOnFailure?: boolean;
 }
 
 export async function executeFlow(
@@ -117,6 +119,18 @@ export async function executeFlow(
       steps: stepRecorder.getSteps(),
       scenarioSteps: flowCtx.__scenarioSteps,
     };
+
+    if (config.debugOnFailure) {
+      await runDebugReplOnce({
+        app,
+        expect,
+        driver,
+        error: result.error ?? new Error(`Flow "${flow.name}" failed`),
+        flowName: flow.name,
+        platform,
+        parseHierarchy: coordinatorConfig.parse,
+      });
+    }
   }
 
   // afterEach hook — always runs, errors are warnings only

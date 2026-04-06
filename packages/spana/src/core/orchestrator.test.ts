@@ -180,6 +180,67 @@ describe("orchestrate", () => {
     expect(result.flaky).toBe(0);
   });
 
+  test("bails after the configured number of failed flows and skips the rest", async () => {
+    const result = await orchestrate(
+      [createFlow("first-fail", undefined, true), createFlow("second"), createFlow("third")],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      { bail: 1 },
+    );
+
+    expect(result.results.map((entry) => entry.status)).toEqual(["failed", "skipped", "skipped"]);
+    expect(result.failed).toBe(1);
+    expect(result.skipped).toBe(2);
+    expect(result.bailedOut).toBe(true);
+    expect(result.bailLimit).toBe(1);
+  });
+
+  test("applies bail after retries are exhausted", async () => {
+    const alwaysFails: FlowDefinition = {
+      name: "retry-then-bail",
+      config: {},
+      fn: async () => {
+        throw new Error("still failing");
+      },
+    };
+
+    const result = await orchestrate(
+      [alwaysFails, createFlow("never-runs")],
+      [
+        {
+          platform: "android",
+          driver: createDriver("android"),
+          engineConfig: {
+            appId: "com.example",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      { retries: 1, bail: 1 },
+    );
+
+    expect(result.results[0]!.status).toBe("failed");
+    expect(result.results[0]!.attempts).toBe(2);
+    expect(result.results[1]!.status).toBe("skipped");
+    expect(result.bailedOut).toBe(true);
+  });
+
   test("calls beforeAll and afterAll hooks", async () => {
     const order: string[] = [];
 

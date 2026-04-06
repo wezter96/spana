@@ -11,6 +11,7 @@ export interface PlatformConfig {
 
 export interface OrchestrateOptions {
   retries?: number;
+  bail?: number;
 }
 
 export interface OrchestratorResult {
@@ -20,6 +21,8 @@ export interface OrchestratorResult {
   failed: number;
   skipped: number;
   flaky: number;
+  bailedOut?: boolean;
+  bailLimit?: number;
 }
 
 export async function orchestrate(
@@ -29,6 +32,18 @@ export async function orchestrate(
 ): Promise<OrchestratorResult> {
   const start = Date.now();
   const retries = options?.retries ?? 0;
+  const bail = options?.bail;
+  let failureCount = 0;
+  let bailedOut = false;
+
+  const shouldBail = () => bail !== undefined && failureCount >= bail;
+
+  const noteFailure = (count = 1) => {
+    failureCount += count;
+    if (shouldBail()) {
+      bailedOut = true;
+    }
+  };
 
   // Run all platforms in parallel, flows serial within each
   const platformResults = await Promise.all(
@@ -55,17 +70,36 @@ export async function orchestrate(
               error: error instanceof Error ? error : new Error(String(error)),
             });
           }
+          noteFailure(platformFlows.length);
           return results;
         }
       }
 
-      for (const flow of platformFlows) {
+      for (let index = 0; index < platformFlows.length; index++) {
+        const flow = platformFlows[index]!;
+        if (shouldBail()) {
+          bailedOut = true;
+          for (const skippedFlow of platformFlows.slice(index)) {
+            results.push({
+              name: skippedFlow.name,
+              platform,
+              status: "skipped",
+              durationMs: 0,
+            });
+          }
+          break;
+        }
+
         let result = await executeFlow(flow, driver, engineConfig);
         let attempts = 1;
 
         // Retry failed flows
         if (result.status === "failed" && retries > 0) {
           for (let retry = 0; retry < retries; retry++) {
+            if (shouldBail()) {
+              bailedOut = true;
+              break;
+            }
             const retryResult = await executeFlow(flow, driver, engineConfig);
             attempts++;
             if (retryResult.status === "passed") {
@@ -83,6 +117,9 @@ export async function orchestrate(
         }
 
         results.push(result);
+        if (result.status === "failed") {
+          noteFailure();
+        }
       }
 
       // afterAll hook
@@ -109,5 +146,7 @@ export async function orchestrate(
     failed: allResults.filter((r) => r.status === "failed").length,
     skipped: allResults.filter((r) => r.status === "skipped").length,
     flaky: allResults.filter((r) => r.flaky).length,
+    bailedOut,
+    bailLimit: bail,
   };
 }

@@ -5,11 +5,14 @@ import {
   loadStepFiles,
   discoverStepFiles,
   filterFlows,
+  applyShard,
+  type ShardOptions,
 } from "../core/runner.js";
 import { orchestrate, type PlatformConfig } from "../core/orchestrator.js";
 import type { ProvConfig } from "../schemas/config.js";
 import type { Platform } from "../schemas/selector.js";
 import type { RuntimeHandle } from "../runtime/types.js";
+import { loadConfig } from "./config-loader.js";
 import {
   buildWebRuntime,
   buildLocalAndroidRuntime,
@@ -31,6 +34,10 @@ export interface TestCommandOptions {
   capsPath?: string;
   capsJson?: string;
   noProviderReporting?: boolean;
+  validateConfigOnly?: boolean;
+  shard?: ShardOptions;
+  bail?: number;
+  debugOnFailure?: boolean;
 }
 
 export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
@@ -39,15 +46,45 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     return false;
   }
 
+  if (opts.shard) {
+    const { current, total } = opts.shard;
+    if (
+      !Number.isInteger(current) ||
+      !Number.isInteger(total) ||
+      current < 1 ||
+      total < 1 ||
+      current > total
+    ) {
+      console.log("Invalid shard config. Use { current, total } with 1 <= current <= total.");
+      return false;
+    }
+  }
+
+  if (opts.bail !== undefined && (!Number.isInteger(opts.bail) || opts.bail < 1)) {
+    console.log("Invalid bail config. Use a positive integer.");
+    return false;
+  }
+
   // 1. Load config
   let config: ProvConfig = {};
-  const configPath = resolve(opts.configPath ?? "spana.config.ts");
-  const configDir = dirname(configPath);
+  let loadedConfigPath: string | undefined;
   try {
-    const mod = await import(configPath);
-    config = mod.default ?? {};
-  } catch {
-    // No config file, use defaults
+    const loaded = await loadConfig({ configPath: opts.configPath, allowMissing: true });
+    config = loaded.config;
+    loadedConfigPath = loaded.configPath;
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+  const configDir = dirname(loadedConfigPath ?? resolve("spana.config.ts"));
+
+  if (opts.validateConfigOnly) {
+    if (!loadedConfigPath) {
+      console.log("No config file found to validate.");
+      return false;
+    }
+    console.log(`✓ Config valid (${loadedConfigPath})`);
+    return true;
   }
 
   // Resolve paths relative to config file location
@@ -127,6 +164,16 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     : config.reporters && config.reporters.length > 0
       ? config.reporters.join(",")
       : "console";
+  const reporterList = reporterNames.split(",").map((name) => name.trim());
+  const validReporters = new Set(["console", "json", "junit", "html", "allure"]);
+  for (const reporterName of reporterList) {
+    if (!validReporters.has(reporterName)) {
+      console.log(
+        `Unknown reporter "${reporterName}". Use one of: ${Array.from(validReporters).join(", ")}.`,
+      );
+      return false;
+    }
+  }
 
   // 2. Discover flows and step definitions
   const flowDir = opts.flowPath ?? resolveFromConfig(config.flowDir ?? "./flows");
@@ -162,13 +209,24 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     grep: opts.grep,
     platforms,
   });
+  const selectedFlows = applyShard(filtered, opts.shard);
 
   if (filtered.length === 0) {
     console.log("No flows match the given filters.");
     return true;
   }
 
-  console.log(`Running ${filtered.length} flow(s) on ${platforms.join(", ")}...\n`);
+  if (selectedFlows.length === 0) {
+    console.log(`No flows assigned to shard ${opts.shard!.current}/${opts.shard!.total}.`);
+    return true;
+  }
+
+  if (opts.shard) {
+    console.log(
+      `Running shard ${opts.shard.current}/${opts.shard.total} (${selectedFlows.length}/${filtered.length} flow(s))...`,
+    );
+  }
+  console.log(`Running ${selectedFlows.length} flow(s) on ${platforms.join(", ")}...\n`);
 
   // 4. Setup platform drivers via runtime builders
   const runtimes: RuntimeHandle[] = [];
@@ -204,7 +262,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         platformConfigs.push({
           platform,
           driver: result.runtime.driver,
-          engineConfig: result.engineConfig,
+          engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
         });
       } else if (platform === "web") {
         const result = await buildWebRuntime(config);
@@ -212,7 +270,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         platformConfigs.push({
           platform,
           driver: result.runtime.driver,
-          engineConfig: result.engineConfig,
+          engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
         });
       } else if (platform === "android") {
         const result = await buildLocalAndroidRuntime(config, targetDevice, resolveFromConfig);
@@ -221,7 +279,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         platformConfigs.push({
           platform,
           driver: result.runtime.driver,
-          engineConfig: result.engineConfig,
+          engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
         });
       } else if (platform === "ios") {
         const result = await buildLocalIOSRuntime(config, targetDevice, resolveFromConfig);
@@ -230,14 +288,14 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
         platformConfigs.push({
           platform,
           driver: result.runtime.driver,
-          engineConfig: result.engineConfig,
+          engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
         });
       }
     }
 
     // 5. Run
     const retries = opts.retries ?? config.defaults?.retries ?? 0;
-    const result = await orchestrate(filtered, platformConfigs, { retries });
+    const result = await orchestrate(selectedFlows, platformConfigs, { retries, bail: opts.bail });
 
     // 6. Report
     const { createConsoleReporter } = await import("../report/console.js");
@@ -289,6 +347,8 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
           error: r.error ? { message: r.error.message, stack: r.error.stack } : undefined,
         })),
         platforms,
+        bailedOut: result.bailedOut,
+        bailLimit: result.bailLimit,
       });
     }
 
