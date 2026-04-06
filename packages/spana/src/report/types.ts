@@ -55,6 +55,7 @@ export interface FlowResult {
   attachments?: Attachment[];
   steps?: StepResult[];
   scenarioSteps?: ScenarioStepResult[];
+  workerName?: string;
 }
 
 export interface RunSummary {
@@ -68,10 +69,11 @@ export interface RunSummary {
   platforms: Platform[];
   bailedOut?: boolean;
   bailLimit?: number;
+  workerStats?: Map<string, { flowCount: number; totalMs: number }>;
 }
 
 export interface Reporter {
-  onFlowStart?(name: string, platform: Platform): void;
+  onFlowStart?(name: string, platform: Platform, workerName?: string): void;
   onFlowPass?(result: FlowResult): void;
   onFlowFail?(result: FlowResult): void;
   onRunComplete(summary: RunSummary): void;
