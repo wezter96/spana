@@ -4,6 +4,7 @@ import { orpc, client } from "@/lib/client";
 import { FlowList } from "@/components/flow-list";
 import { RunProgress, type FlowResult } from "@/components/run-progress";
 import { FailureDetails } from "@/components/failure-details";
+import { DeviceSelector } from "../components/device-selector.js";
 import { Play, RotateCcw } from "lucide-react";
 
 type Platform = "web" | "android" | "ios";
@@ -40,6 +41,7 @@ export function RunnerPage() {
   const [cachedResults, setCachedResults] = useState<FlowResult[]>(session.current.results);
   const [captureScreenshots, setCaptureScreenshots] = useState(false);
   const [captureSteps, setCaptureSteps] = useState(false);
+  const [deviceId, setDeviceId] = useState<string | undefined>();
 
   // Discover flows
   const { data: flowsData } = useQuery(
@@ -80,6 +82,16 @@ export function RunnerPage() {
       setSelectedFlows(new Set(flows.map((f) => f.name)));
     }
   }, [flows.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDeviceSelect = useCallback(
+    (platform: Platform, id: string | undefined) => {
+      platforms.clear();
+      platforms.add(platform);
+      setPlatforms(new Set(platforms));
+      setDeviceId(id);
+    },
+    [platforms],
+  );
 
   const togglePlatform = useCallback((p: Platform) => {
     setPlatforms((prev) => {
@@ -122,6 +134,7 @@ export function RunnerPage() {
         grep: allSelected ? undefined : [...selectedFlows][0],
         captureScreenshots: captureScreenshots || undefined,
         captureSteps: captureSteps || undefined,
+        device: deviceId,
       });
       setRunId(result.runId);
       saveSession({ runId: result.runId, results: [], platforms: [...platforms] });
@@ -187,6 +200,14 @@ export function RunnerPage() {
               {p}
             </button>
           ))}
+        </div>
+
+        <div className="flex items-center gap-2 border-l border-zinc-800 pl-4 ml-2">
+          <DeviceSelector
+            platform={[...platforms][0] ?? "web"}
+            deviceId={deviceId}
+            onSelect={handleDeviceSelect}
+          />
         </div>
 
         <div className="flex items-center gap-3 border-l border-zinc-800 pl-4 ml-2">
