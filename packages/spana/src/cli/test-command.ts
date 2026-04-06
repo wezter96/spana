@@ -77,8 +77,8 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       }
       return false;
     }
-    // If --platform wasn't explicitly set, infer from device
-    if (opts.platforms.length === 0 && (!config.platforms || config.platforms.length === 0)) {
+    // If --platform wasn't explicitly passed on CLI, infer from device
+    if (opts.platforms.length === 0) {
       platforms.length = 0;
       platforms.push(targetDevice.platform);
     }
