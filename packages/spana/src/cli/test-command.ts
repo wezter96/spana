@@ -15,6 +15,7 @@ import {
   buildLocalAndroidRuntime,
   buildLocalIOSRuntime,
 } from "../runtime/local.js";
+import { buildAppiumAndroidRuntime, buildAppiumIOSRuntime } from "../runtime/appium.js";
 
 export interface TestCommandOptions {
   platforms: Platform[];
@@ -174,8 +175,24 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   const platformConfigs: PlatformConfig[] = [];
 
   try {
+    const appiumUrl = opts.appiumUrl ?? config.execution?.appium?.serverUrl;
+    const appiumConfig = config.execution?.appium;
+
     for (const platform of platforms) {
-      if (platform === "web") {
+      if (executionMode === "appium" && (platform === "android" || platform === "ios")) {
+        // Appium cloud mode
+        const builder = platform === "android" ? buildAppiumAndroidRuntime : buildAppiumIOSRuntime;
+        const result = await builder(config, appiumConfig!, {
+          capsPath: opts.capsPath,
+          capsJson: opts.capsJson,
+        });
+        runtimes.push(result.runtime);
+        platformConfigs.push({
+          platform,
+          driver: result.runtime.driver,
+          engineConfig: result.engineConfig,
+        });
+      } else if (platform === "web") {
         const result = await buildWebRuntime(config);
         runtimes.push(result.runtime);
         platformConfigs.push({
@@ -183,8 +200,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
           driver: result.runtime.driver,
           engineConfig: result.engineConfig,
         });
-      }
-      if (platform === "android") {
+      } else if (platform === "android") {
         const result = await buildLocalAndroidRuntime(config, targetDevice, resolveFromConfig);
         if (!result) continue;
         runtimes.push(result.runtime);
@@ -193,8 +209,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
           driver: result.runtime.driver,
           engineConfig: result.engineConfig,
         });
-      }
-      if (platform === "ios") {
+      } else if (platform === "ios") {
         const result = await buildLocalIOSRuntime(config, targetDevice, resolveFromConfig);
         if (!result) continue;
         runtimes.push(result.runtime);
@@ -264,26 +279,23 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     }
 
     // Report to cloud provider if applicable
-    if (!opts.noProviderReporting) {
-      const appiumUrl = opts.appiumUrl ?? config.execution?.appium?.serverUrl;
-      if (appiumUrl) {
-        const { detectProvider } = await import("../cloud/provider.js");
-        for (const rt of runtimes) {
-          if (rt.metadata.mode === "appium" && rt.metadata.provider) {
-            const provider = detectProvider(appiumUrl);
-            if (provider) {
-              try {
-                const meta: Record<string, string> = {};
-                provider.extractMeta(rt.metadata.sessionId!, rt.metadata.sessionCaps ?? {}, meta);
-                await provider.reportResult(appiumUrl, meta, {
-                  passed: result.failed === 0,
-                  name: `spana ${platforms.join(",")}`,
-                });
-              } catch (e) {
-                console.log(
-                  `Warning: Failed to report to ${rt.metadata.provider}: ${e instanceof Error ? e.message : e}`,
-                );
-              }
+    if (!opts.noProviderReporting && appiumUrl) {
+      const { detectProvider } = await import("../cloud/provider.js");
+      for (const rt of runtimes) {
+        if (rt.metadata.mode === "appium" && rt.metadata.provider) {
+          const provider = detectProvider(appiumUrl);
+          if (provider) {
+            try {
+              const meta: Record<string, string> = {};
+              provider.extractMeta(rt.metadata.sessionId!, rt.metadata.sessionCaps ?? {}, meta);
+              await provider.reportResult(appiumUrl, meta, {
+                passed: result.failed === 0,
+                name: `spana ${platforms.join(",")}`,
+              });
+            } catch (e) {
+              console.log(
+                `Warning: Failed to report to ${rt.metadata.provider}: ${e instanceof Error ? e.message : e}`,
+              );
             }
           }
         }
