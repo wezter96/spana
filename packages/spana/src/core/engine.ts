@@ -5,7 +5,7 @@ import { createPromiseApp } from "../api/app.js";
 import { createPromiseExpect } from "../api/expect.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { Attachment, StepResult, ScenarioStepResult } from "../report/types.js";
-import type { ArtifactConfig } from "../schemas/config.js";
+import type { ArtifactConfig, ProvConfig } from "../schemas/config.js";
 import { captureArtifacts, resolveArtifactConfig } from "./artifacts.js";
 import { createStepRecorder } from "./step-recorder.js";
 
@@ -30,6 +30,7 @@ export interface EngineConfig {
   flowTimeout?: number;
   artifactConfig?: ArtifactConfig;
   launchOptions?: LaunchOptions;
+  hooks?: ProvConfig["hooks"];
 }
 
 export async function executeFlow(
