@@ -28,7 +28,7 @@ export function listIOSSimulators(): IOSSimulator[] {
       // runtime looks like "com.apple.CoreSimulator.SimRuntime.iOS-17-5"
       const runtimeName = runtime
         .replace("com.apple.CoreSimulator.SimRuntime.", "")
-        .replace(/-/g, ".");
+        .replaceAll("-", ".");
 
       for (const device of devices as any[]) {
         simulators.push({
@@ -241,7 +241,7 @@ export function listIOSPhysicalDevices(): IOSPhysicalDevice[] {
         // iOS devices have serial_num and contain "iPhone" or "iPad" in name
         if (item.serial_num && /iPhone|iPad|iPod/i.test(item._name ?? "")) {
           devices.push({
-            udid: item.serial_num.replace(/-/g, ""),
+            udid: item.serial_num.replaceAll("-", ""),
             name: item._name ?? "iOS Device",
             connectionType: "USB",
           });

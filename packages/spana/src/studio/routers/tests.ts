@@ -87,7 +87,7 @@ async function discoverAndLoad(flowDir: string): Promise<FlowDefinition[]> {
       }
       console.log(JSON.stringify(flows));
     `;
-    const json = execSync(`bun -e "${script.replace(/"/g, '\\"')}"`, {
+    const json = execSync(`bun -e "${script.replaceAll('"', '\\"')}"`, {
       encoding: "utf-8",
       timeout: 15_000,
       cwd: dir,

@@ -5,7 +5,7 @@ import type { Element } from "../../schemas/element.js";
  */
 function parseBounds(s: string): Element["bounds"] {
   // "[x1,y1][x2,y2]" → "x1,y1,x2,y2"
-  const normalized = s.replace("][", ",").replace(/[[\]]/g, "");
+  const normalized = s.replace("][", ",").replaceAll(/[[\]]/g, "");
   const parts = normalized.split(",");
   if (parts.length !== 4) {
     return { x: 0, y: 0, width: 0, height: 0 };

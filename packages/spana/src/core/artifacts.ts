@@ -14,6 +14,7 @@ export interface ResolvedArtifactConfig {
   uiHierarchy: boolean;
   consoleLogs: boolean;
   jsErrors: boolean;
+  har: boolean;
 }
 
 export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
@@ -25,14 +26,15 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   uiHierarchy: true,
   consoleLogs: true,
   jsErrors: true,
+  har: true,
 };
 
 function safeName(value: string): string {
   return (
     value
-      .replace(/[^a-zA-Z0-9-_]/g, "_")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "")
+      .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
+      .replaceAll(/_+/g, "_")
+      .replaceAll(/^_+|_+$/g, "")
       .slice(0, 80) || "artifact"
   );
 }
@@ -60,6 +62,17 @@ function writeJsonAttachment(
   const path = join(dir, fileName);
   writeFileSync(path, JSON.stringify(value, null, 2), "utf-8");
   return createAttachment(attachmentName, "application/json", path);
+}
+
+function writeTextAttachment(
+  dir: string,
+  fileName: string,
+  attachmentName: string,
+  value: string,
+): Attachment {
+  const path = join(dir, fileName);
+  writeFileSync(path, value, "utf-8");
+  return createAttachment(attachmentName, "text/plain", path);
 }
 
 export function resolveArtifactConfig(
@@ -130,10 +143,41 @@ export async function captureArtifacts(
     try {
       const jsErrors = await Effect.runPromise(Effect.orDie(driver.getJSErrors()));
       if (jsErrors.length > 0) {
-        attachments.push(writeJsonAttachment(dir, "js-errors.json", `${status}-js-errors`, jsErrors));
+        attachments.push(
+          writeJsonAttachment(dir, "js-errors.json", `${status}-js-errors`, jsErrors),
+        );
       }
     } catch {
       // JS error capture failed — don't block test execution
+    }
+  }
+
+  if (config.har && driver.getHAR) {
+    try {
+      const har = await Effect.runPromise(Effect.orDie(driver.getHAR()));
+      if (har.log.entries.length > 0) {
+        attachments.push(writeJsonAttachment(dir, "network.har", `${status}-network-har`, har));
+      }
+    } catch {
+      // HAR capture failed — don't block test execution
+    }
+  }
+
+  if (status === "failed" && driver.getDriverLogs) {
+    try {
+      const driverLogs = await Effect.runPromise(Effect.orDie(driver.getDriverLogs()));
+      if (driverLogs.length > 0) {
+        attachments.push(
+          writeTextAttachment(
+            dir,
+            "driver-logs.txt",
+            `${status}-driver-logs`,
+            driverLogs.join("\n"),
+          ),
+        );
+      }
+    } catch {
+      // Driver log capture failed — don't block test execution
     }
   }
 

@@ -302,7 +302,7 @@ function normalizeKeyword(keyword: string): ScenarioStepKeyword {
 }
 
 function replaceOutlinePlaceholders(text: string, replacements: Record<string, string>): string {
-  return text.replace(/<([^>]+)>/g, (_, key) => replacements[key] ?? `<${key}>`);
+  return text.replaceAll(/<([^>]+)>/g, (_, key) => replacements[key] ?? `<${key}>`);
 }
 
 function buildStepArgs(match: MatchResult, step: GherkinStep): unknown[] {

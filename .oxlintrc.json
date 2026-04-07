@@ -5,7 +5,9 @@
     "correctness": "error",
     "suspicious": "error"
   },
-  "rules": {},
+  "rules": {
+    "unicorn/prefer-string-replace-all": "error"
+  },
   "env": {
     "builtin": true
   }

@@ -1,27 +1,20 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Reporter, FlowResult, RunSummary, StepResult, ScenarioStepResult } from "./types.js";
+import { collectDiagnosticSections } from "./failure-diagnostics.js";
 
 function escapeHtml(str: string): string {
   return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function toBase64DataUri(filePath: string): string | null {
   try {
     const data = readFileSync(filePath);
     return `data:image/png;base64,${data.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
-
-function readTextFile(filePath: string): string | null {
-  try {
-    return readFileSync(filePath, "utf8");
   } catch {
     return null;
   }
@@ -82,35 +75,17 @@ function renderFinalScreenshot(result: FlowResult): string {
   return `<div class="final-card"><img src="${dataUri}" alt="${escapeHtml(result.platform)} final"><div class="label">${escapeHtml(result.platform)} (${driverName(result.platform)}) &bull; ${formatDuration(result.durationMs)}</div></div>`;
 }
 
-function renderWebDiagnostics(result: FlowResult): string {
-  const diagnostics = (result.attachments ?? [])
-    .map((attachment) => {
-      const title =
-        attachment.name.endsWith("console-logs")
-          ? "Console logs"
-          : attachment.name.endsWith("js-errors")
-            ? "JavaScript errors"
-            : null;
-      if (!title) return "";
-
-      const raw = readTextFile(attachment.path);
-      if (!raw) return "";
-
-      let content = raw;
-      try {
-        content = JSON.stringify(JSON.parse(raw), null, 2);
-      } catch {
-        // Keep the original text when it is not valid JSON.
-      }
-
-      return `<div class="diagnostic-card"><h3>${escapeHtml(title)}</h3><pre>${escapeHtml(content)}</pre></div>`;
-    })
-    .filter(Boolean)
+function renderDiagnosticSections(result: FlowResult): string {
+  const diagnostics = collectDiagnosticSections(result.attachments)
+    .map(
+      (section) =>
+        `<div class="diagnostic-card"><h3>${escapeHtml(section.title)}</h3><pre>${escapeHtml(section.body)}</pre></div>`,
+    )
     .join("\n");
 
   if (!diagnostics) return "";
 
-  return `<div class="diagnostics"><h3>Web diagnostics</h3><div class="diagnostic-grid">${diagnostics}</div></div>`;
+  return `<div class="diagnostics"><h3>Failure diagnostics</h3><div class="diagnostic-grid">${diagnostics}</div></div>`;
 }
 
 function renderScenarioStep(step: ScenarioStepResult): string {
@@ -133,6 +108,14 @@ function renderPlatform(result: FlowResult): string {
     (result.steps ?? []).length > 0
       ? `<div class="steps">${(result.steps ?? []).map(renderStep).join("\n")}</div>`
       : "";
+  const errorHtml =
+    result.status === "failed" && result.error
+      ? `<div class="error-msg"><strong>${escapeHtml(result.error.category)}</strong>: ${escapeHtml(result.error.message)}${
+          result.error.suggestion
+            ? `<pre class="error-suggestion">${escapeHtml(result.error.suggestion)}</pre>`
+            : ""
+        }</div>`
+      : "";
 
   return `
 <div class="platform">
@@ -146,8 +129,8 @@ function renderPlatform(result: FlowResult): string {
   ${scenarioStepsHtml}
   ${driverStepsHtml}
   ${renderScreenshots(result.steps ?? [])}
-  ${renderWebDiagnostics(result)}
-  ${result.status === "failed" && result.error ? `<div class="error-msg"><strong>Error:</strong> ${escapeHtml(result.error.message)}</div>` : ""}
+  ${renderDiagnosticSections(result)}
+  ${errorHtml}
 </div>`;
 }
 
@@ -210,6 +193,7 @@ h1{font-size:1.5rem;font-weight:600;margin-bottom:.25rem}
 .final-card img{height:320px;max-width:100%;object-fit:contain;border-radius:.5rem;border:1px solid #262626}
 .final-card .label{font-size:.8rem;color:#737373;margin-top:.5rem;font-weight:500}
 .error-msg{padding:1rem 1.5rem;color:#fca5a5;font-family:'SF Mono',Menlo,monospace;font-size:.8rem;border-top:1px solid #262626;overflow-wrap:break-word;word-break:break-word}
+.error-suggestion{margin-top:.75rem;padding-top:.75rem;border-top:1px solid #262626;white-space:pre-wrap;font-family:'SF Mono',Menlo,monospace;color:#fecaca}
 .flow-name{font-size:.95rem;color:#a3a3a3;margin-bottom:1.5rem;padding:.75rem 1rem;background:#171717;border:1px solid #262626;border-radius:.5rem;font-family:'SF Mono',Menlo,monospace;overflow-wrap:break-word;word-break:break-word}
 @media(max-width:768px){
   body{padding:.75rem}
