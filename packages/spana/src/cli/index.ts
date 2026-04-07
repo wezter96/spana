@@ -470,7 +470,7 @@ if (command === "test") {
     }
   }
 } else if (command === "version" || args.includes("--version") || args.includes("-v")) {
-  console.log("spana v0.3.0");
+  console.log("spana v0.2.0");
 } else {
   console.log("spana — TypeScript-native E2E testing for React Native + Web");
   console.log("");

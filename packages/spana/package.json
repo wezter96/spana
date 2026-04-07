@@ -1,6 +1,6 @@
 {
   "name": "spana-test",
-  "version": "0.3.0",
+  "version": "0.2.0",
   "description": "TypeScript-native E2E testing for React Native + Web",
   "keywords": [
     "android",
