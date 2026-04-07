@@ -44,6 +44,9 @@ export {
   type TouchSequence,
 } from "./drivers/raw-driver.js";
 
+// Cloud provider API — for custom cloud provider authors
+export { type CloudProvider, type CloudProviderHelper } from "./cloud/provider.js";
+
 // Reporter API — for custom reporter authors
 export {
   type Reporter,

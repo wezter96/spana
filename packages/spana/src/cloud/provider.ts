@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { AppConfig, AppiumExecutionConfig } from "../schemas/config.js";
 import type { Platform } from "../schemas/selector.js";
 import { BrowserStackProvider } from "./browserstack.js";
@@ -54,10 +55,27 @@ const noopHelper: CloudProviderHelper = {
   cleanup: async () => {},
 };
 
-export function createCloudProviderHelper(
+export async function loadCustomProvider(modulePath: string): Promise<CloudProvider> {
+  const resolved = resolve(process.cwd(), modulePath);
+  const mod = await import(resolved);
+  const provider: CloudProvider = mod.default;
+  if (!provider || typeof provider.name !== "function") {
+    throw new Error(
+      `Custom cloud provider module "${modulePath}" must have a default export conforming to the CloudProvider interface.`,
+    );
+  }
+  return provider;
+}
+
+export async function createCloudProviderHelper(
   appiumUrl: string,
   config: AppiumExecutionConfig,
-): CloudProviderHelper {
+): Promise<CloudProviderHelper> {
+  if (config.cloudProvider) {
+    const provider = await loadCustomProvider(config.cloudProvider);
+    return provider.createHelper(appiumUrl, config);
+  }
+
   const provider = detectProvider(appiumUrl);
   const hasBrowserStackConfig = hasConfig(config.browserstack);
   const hasSauceLabsConfig = hasConfig(config.saucelabs);

@@ -102,7 +102,7 @@ beforeEach(() => {
 describe("createCloudProviderHelper", () => {
   test("returns a no-op helper for generic Appium URLs without provider config", async () => {
     const { createCloudProviderHelper } = await importFreshProviderModule();
-    const helper = createCloudProviderHelper("http://localhost:4723", {});
+    const helper = await createCloudProviderHelper("http://localhost:4723", {});
     const caps = await helper.prepareCapabilities("android", { platformName: "Android" });
     expect(caps).toEqual({ platformName: "Android" });
     await helper.cleanup();
@@ -110,20 +110,20 @@ describe("createCloudProviderHelper", () => {
 
   test("rejects helper config for unknown Appium providers", async () => {
     const { createCloudProviderHelper } = await importFreshProviderModule();
-    expect(() =>
+    expect(
       createCloudProviderHelper("http://localhost:4723", {
         browserstack: { local: { enabled: true } },
       }),
-    ).toThrow("Provider helper config requires a BrowserStack or Sauce Labs Appium URL.");
+    ).rejects.toThrow("Provider helper config requires a BrowserStack or Sauce Labs Appium URL.");
   });
 
   test("rejects BrowserStack helper config for Sauce Labs URLs", async () => {
     const { createCloudProviderHelper } = await importFreshProviderModule();
-    expect(() =>
+    expect(
       createCloudProviderHelper("https://user:key@ondemand.us-west-1.saucelabs.com/wd/hub", {
         browserstack: { local: { enabled: true } },
       }),
-    ).toThrow("BrowserStack helper config requires a BrowserStack Appium URL.");
+    ).rejects.toThrow("BrowserStack helper config requires a BrowserStack Appium URL.");
   });
 });
 
@@ -133,13 +133,16 @@ describe("BrowserStack cloud helper", () => {
     helperState.uploadResponses = [{ app_url: "bs://uploaded-app" }];
     const { createCloudProviderHelper } = await importFreshProviderModule();
 
-    const helper = createCloudProviderHelper("https://user:key@hub-cloud.browserstack.com/wd/hub", {
-      browserstack: {
-        app: { path: appPath, name: "managed.apk", customId: "spana-app" },
-        local: { enabled: true, identifier: "local-1", binary: "/tmp/BrowserStackLocal" },
-        options: { projectName: "spana", buildName: "config-build" },
+    const helper = await createCloudProviderHelper(
+      "https://user:key@hub-cloud.browserstack.com/wd/hub",
+      {
+        browserstack: {
+          app: { path: appPath, name: "managed.apk", customId: "spana-app" },
+          local: { enabled: true, identifier: "local-1", binary: "/tmp/BrowserStackLocal" },
+          options: { projectName: "spana", buildName: "config-build" },
+        },
       },
-    });
+    );
 
     const caps = await helper.prepareCapabilities("android", {
       "bstack:options": { buildName: "caps-build" },
@@ -176,13 +179,16 @@ describe("BrowserStack cloud helper", () => {
 
   test("prefers explicit capabilities over helper defaults and skips upload when app is already set", async () => {
     const { createCloudProviderHelper } = await importFreshProviderModule();
-    const helper = createCloudProviderHelper("https://user:key@hub-cloud.browserstack.com/wd/hub", {
-      browserstack: {
-        app: { path: "/tmp/unused.apk" },
-        local: { enabled: true, identifier: "config-id", binary: "/tmp/BrowserStackLocal" },
-        options: { projectName: "config-project" },
+    const helper = await createCloudProviderHelper(
+      "https://user:key@hub-cloud.browserstack.com/wd/hub",
+      {
+        browserstack: {
+          app: { path: "/tmp/unused.apk" },
+          local: { enabled: true, identifier: "config-id", binary: "/tmp/BrowserStackLocal" },
+          options: { projectName: "config-project" },
+        },
       },
-    });
+    );
 
     const caps = await helper.prepareCapabilities("android", {
       "appium:app": "bs://from-caps",
@@ -216,7 +222,7 @@ describe("Sauce Labs cloud helper", () => {
     helperState.uploadResponses = [{ item: { id: "storage-id-1" } }];
     const { createCloudProviderHelper } = await importFreshProviderModule();
 
-    const helper = createCloudProviderHelper(
+    const helper = await createCloudProviderHelper(
       "https://user:key@ondemand.us-west-1.saucelabs.com/wd/hub",
       {
         saucelabs: {

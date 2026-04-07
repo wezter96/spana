@@ -567,7 +567,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       !opts.noProviderReporting && appiumConfig.reportToProvider !== false;
     const cloudHelper =
       executionMode === "appium" && appiumUrl
-        ? createCloudProviderHelper(appiumUrl, appiumConfig)
+        ? await createCloudProviderHelper(appiumUrl, appiumConfig)
         : undefined;
     const baseAppiumCaps =
       executionMode === "appium" && appiumUrl
