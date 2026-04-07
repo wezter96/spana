@@ -219,22 +219,21 @@ export function createWDADriver(
 
       swipe: (sx, sy, ex, ey, dur) =>
         Effect.tryPromise({
-          // dur arrives in ms → convert to seconds for WDA
-          // Clamp Y coordinates to avoid iOS system gesture zones (home indicator
-          // at bottom, notification center at top). Safe zone: 15–85% of screen.
+          // dur arrives in ms → convert to seconds for WDA.
+          // Clamp Y to avoid iOS system gesture zones (home indicator / App Switcher).
           try: async () => {
-            let clampedSy = sy;
-            let clampedEy = ey;
+            let csy = sy;
+            let cey = ey;
             try {
               const size = await client.getWindowSize();
               const minY = size.height * 0.15;
               const maxY = size.height * 0.85;
-              clampedSy = Math.max(minY, Math.min(maxY, sy));
-              clampedEy = Math.max(minY, Math.min(maxY, ey));
+              csy = Math.max(minY, Math.min(maxY, sy));
+              cey = Math.max(minY, Math.min(maxY, ey));
             } catch {
               /* use original coordinates if getWindowSize fails */
             }
-            await client.swipe(sx, clampedSy, ex, clampedEy, msToSec(dur));
+            await client.swipe(sx, csy, ex, cey, msToSec(dur));
           },
           catch: (e) => new DriverError({ message: `Swipe failed: ${e}` }),
         }),
@@ -269,12 +268,10 @@ export function createWDADriver(
 
       hideKeyboard: () =>
         Effect.tryPromise({
-          // Dismiss keyboard by tapping a neutral area above where the keyboard
-          // sits. The previous approach (pressHome) backgrounds the app on iOS.
+          // Dismiss keyboard by tapping above the keyboard area.
+          // The previous approach (pressHome) backgrounds the app on iOS.
           try: async () => {
             const size = await client.getWindowSize();
-            // Tap at ~20% from the top, horizontally centered — safely below the
-            // nav bar but above the keyboard
             await client.tap(size.width / 2, Math.round(size.height * 0.2));
             await sleep(300);
           },

@@ -79,6 +79,13 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
       yield* idleWait();
     });
 
+  // Clamp Y to avoid iOS system gesture zones (home indicator, notification center).
+  // Uses screen dimensions from coordinator config (fetched once at init).
+  const screenH = config.screenHeight ?? 1920;
+  const safeMinY = screenH * 0.15;
+  const safeMaxY = screenH * 0.85;
+  const clampY = (y: number): number => Math.max(safeMinY, Math.min(safeMaxY, y));
+
   const swipeEffect = (
     direction: Direction,
     opts?: { duration?: number },
@@ -98,7 +105,13 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
         right: { startX: cx - dist / 2, startY: cy, endX: cx + dist / 2, endY: cy },
       }[direction];
 
-      yield* driver.swipe(coords.startX, coords.startY, coords.endX, coords.endY, dur);
+      yield* driver.swipe(
+        coords.startX,
+        clampY(coords.startY),
+        coords.endX,
+        clampY(coords.endY),
+        dur,
+      );
       yield* afterMutation();
     });
 
@@ -117,7 +130,13 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
         right: { startX: cx - dist, startY: cy, endX: cx + dist, endY: cy },
       }[direction];
 
-      yield* driver.swipe(coords.startX, coords.startY, coords.endX, coords.endY, 500);
+      yield* driver.swipe(
+        coords.startX,
+        clampY(coords.startY),
+        coords.endX,
+        clampY(coords.endY),
+        500,
+      );
       // Wait for scroll animation to settle before probing hierarchy
       yield* Effect.promise(() => new Promise((r) => setTimeout(r, 300)));
       yield* afterMutation();

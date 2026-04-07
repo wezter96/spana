@@ -179,7 +179,8 @@ describe("WDA driver adapter", () => {
     expect(wdaState.events).toContainEqual(["swipe", 1, 844 * 0.15, 3, 844 * 0.15, 0.25]);
     expect(wdaState.events).toContainEqual(["pressButton", "volumeUp"]);
     expect(wdaState.events.filter(([type]) => type === "pressButton")).toHaveLength(1);
-    // hideKeyboard taps at a neutral coordinate instead of pressing Home
+    // hideKeyboard taps a neutral coordinate instead of pressing Home
+    expect(wdaState.events).toContainEqual(["getWindowSize"]);
     expect(wdaState.events).toContainEqual(["tap", 390 / 2, Math.round(844 * 0.2)]);
     expect(info).toEqual({
       platform: "ios",
