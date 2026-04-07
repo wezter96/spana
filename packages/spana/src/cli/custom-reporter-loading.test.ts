@@ -40,7 +40,7 @@ describe("custom reporter loading", () => {
   });
 
   test("throws on missing module", async () => {
-    expect(loadCustomReporter("./nonexistent-reporter.ts", "/tmp")).rejects.toThrow();
+    await expect(loadCustomReporter("./nonexistent-reporter.ts", "/tmp")).rejects.toThrow();
   });
 
   test("throws on module with no default export", async () => {
@@ -48,7 +48,7 @@ describe("custom reporter loading", () => {
     const reporterPath = resolve(tmpDir, "bad-reporter.ts");
     writeFileSync(reporterPath, `export const foo = 42;`);
 
-    expect(loadCustomReporter(reporterPath, tmpDir)).rejects.toThrow(/default export/);
+    await expect(loadCustomReporter(reporterPath, tmpDir)).rejects.toThrow(/default export/);
     cleanup();
   });
 });

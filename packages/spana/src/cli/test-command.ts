@@ -283,9 +283,7 @@ const BUILTIN_REPORTERS = new Set(["console", "json", "junit", "html", "allure"]
  * or a factory function (options: { outputDir: string }) => Reporter.
  */
 export async function loadCustomReporter(modulePath: string, configDir: string): Promise<Reporter> {
-  const resolvedPath = modulePath.startsWith(".")
-    ? resolve(configDir, modulePath)
-    : resolve(modulePath);
+  const resolvedPath = modulePath.startsWith(".") ? resolve(configDir, modulePath) : modulePath;
 
   let mod: Record<string, unknown>;
   try {
