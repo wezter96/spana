@@ -42,7 +42,11 @@ export default flow(
 
     for (const route of routeSpecs) {
       try {
-        await app.openLink(routeHref(platform, route));
+        if (platform === "ios") {
+          await app.openLink(routeHref(platform, route));
+        } else {
+          await app.launch({ deepLink: routeHref(platform, route), clearState: false });
+        }
         await expect(route.selector).toBeVisible({ timeout: 15_000 });
         await app.takeScreenshot(route.name);
       } catch (error) {

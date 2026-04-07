@@ -6,10 +6,15 @@ import { buildFrameworkHref, navigateToHomeScreen } from "../support/navigation.
 Given("I navigate to the home screen", navigateToHomeScreen);
 
 Given("I navigate to {string}", async ({ app, platform }, path) => {
-  await app.launch({
-    clearState: platform === "android",
-    deepLink: buildFrameworkHref(platform, path as string),
-  });
+  if (platform === "ios") {
+    // iOS: use openLink for deep links — more reliable than launch with deepLink
+    await app.openLink(buildFrameworkHref(platform, path as string));
+  } else {
+    await app.launch({
+      clearState: platform === "android",
+      deepLink: buildFrameworkHref(platform, path as string),
+    });
+  }
 });
 
 When("I open the navigation menu", async ({ app }) => {

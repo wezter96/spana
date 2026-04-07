@@ -174,7 +174,13 @@ export function createWDADriver(
 
       doubleTapAtCoordinate: (x, y) =>
         Effect.tryPromise({
-          try: () => client.doubleTap(x, y),
+          try: async () => {
+            // Two quick taps instead of native doubleTap — React Native Pressable
+            // interprets onPress calls within a window, not native double-tap gestures.
+            await client.tap(x, y);
+            await new Promise((r) => setTimeout(r, 100));
+            await client.tap(x, y);
+          },
           catch: (e) => new DriverError({ message: `Double tap failed: ${e}` }),
         }),
 

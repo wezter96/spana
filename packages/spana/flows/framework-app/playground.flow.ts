@@ -10,10 +10,14 @@ export default flow(
     artifacts: { captureOnSuccess: true, captureSteps: true },
   },
   async ({ app, expect, platform }) => {
-    await app.launch({
-      clearState: platform === "android",
-      deepLink: buildFrameworkHref(platform, "/playground"),
-    });
+    if (platform === "ios") {
+      await app.openLink(buildFrameworkHref(platform, "/playground"));
+    } else {
+      await app.launch({
+        clearState: platform === "android",
+        deepLink: buildFrameworkHref(platform, "/playground"),
+      });
+    }
     await expect({ testID: "playground-title" }).toBeVisible({ timeout: 10_000 });
 
     await app.tap({ testID: "playground-input" });
