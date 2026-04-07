@@ -27,6 +27,17 @@ function replaceUrlScheme(url: string, scheme: string): string | null {
   return `${scheme}:${match[2]}`;
 }
 
+function isSessionError(error: unknown): boolean {
+  const msg = String(error).toLowerCase();
+  return (
+    msg.includes("session does not exist") ||
+    msg.includes("unable to connect") ||
+    msg.includes("no active session") ||
+    msg.includes("invalid session") ||
+    /status[:\s]*404/.test(msg)
+  );
+}
+
 export function createWDADriver(
   host: string,
   port: number,
@@ -52,17 +63,6 @@ export function createWDADriver(
       }
 
       throw lastError ?? new Error("Failed to create WDA session");
-    };
-
-    const isSessionError = (error: unknown): boolean => {
-      const msg = String(error).toLowerCase();
-      return (
-        msg.includes("session does not exist") ||
-        msg.includes("unable to connect") ||
-        msg.includes("no active session") ||
-        msg.includes("invalid session") ||
-        /status[:\s]*404/.test(msg)
-      );
     };
 
     const withSessionRecovery = async <T>(fn: () => Promise<T>): Promise<T> => {

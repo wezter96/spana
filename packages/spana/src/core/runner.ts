@@ -104,7 +104,7 @@ export async function discoverFlows(pathOrDir: string): Promise<string[]> {
   }
 
   await walk(absolute);
-  return results.sort();
+  return results.toSorted();
 }
 
 /**
@@ -133,7 +133,7 @@ export async function discoverStepFiles(pathOrDir: string): Promise<string[]> {
   }
 
   await walk(absolute);
-  return results.sort();
+  return results.toSorted();
 }
 
 export function filterFlows(flows: FlowDefinition[], opts: DiscoverOptions): FlowDefinition[] {

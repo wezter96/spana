@@ -35,7 +35,7 @@ export function elementsAtPoint(root: Element, x: number, y: number): FlatElemen
       const { x: bx, y: by, width, height } = el.bounds;
       return x >= bx && x <= bx + width && y >= by && y <= by + height;
     })
-    .reverse(); // deepest first
+    .toReversed(); // deepest first
 }
 
 /** Search elements by text, resourceId, accessibilityLabel, or elementType (case-insensitive substring). */

@@ -100,7 +100,7 @@ function resolveActionTarget(root: Element, element: Element): Element {
     return element;
   }
 
-  const candidates = [path.element, ...path.ancestors.slice().reverse()];
+  const candidates = [path.element, ...path.ancestors.toReversed()];
   return candidates.find(isActionable) ?? element;
 }
 

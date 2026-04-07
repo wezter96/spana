@@ -95,7 +95,7 @@ describe("orchestrate", () => {
     expect(result.passed).toBe(4);
     expect(result.failed).toBe(2);
     expect(result.skipped).toBe(0);
-    expect(result.results.map((entry) => `${entry.platform}:${entry.name}`).sort()).toEqual([
+    expect(result.results.map((entry) => `${entry.platform}:${entry.name}`).toSorted()).toEqual([
       "android:android-only",
       "android:fail-both",
       "android:shared",

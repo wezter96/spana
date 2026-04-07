@@ -1,9 +1,12 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { globalRegistry } from "../gherkin/registry.js";
 import { validateFlowFile, validateFlows, validateProject } from "./validator.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const tempDir = mkdtempSync(join(tmpdir(), "spana-validator-"));
 
@@ -132,7 +135,7 @@ describe("validateProject", () => {
     const stepsDir = join(featureDir, "steps");
     mkdirSync(stepsDir, { recursive: true });
 
-    const stepsImportPath = join(process.cwd(), "src/gherkin/steps.js");
+    const stepsImportPath = join(__dirname, "../gherkin/steps.js");
     writeFileSync(
       join(stepsDir, "demo.steps.ts"),
       `

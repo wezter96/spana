@@ -115,7 +115,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Loade
     moduleValue = (await import(pathToFileURL(foundPath).href)) as Record<string, unknown>;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to load config at ${foundPath}: ${message}`);
+    throw new Error(`Failed to load config at ${foundPath}: ${message}`, { cause: error });
   }
 
   const rawConfig = ("default" in moduleValue ? moduleValue.default : moduleValue) as unknown;
@@ -130,6 +130,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Loade
     if (error instanceof ZodError) {
       throw new Error(
         `Config validation failed for ${foundPath}:\n${formatConfigValidationError(error)}`,
+        { cause: error },
       );
     }
     throw error;

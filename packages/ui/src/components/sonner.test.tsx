@@ -8,10 +8,12 @@ mock.module("next-themes", () => ({
   useTheme: () => themeState,
 }));
 
+function MockSonner() {
+  return null;
+}
+
 mock.module("sonner", () => ({
-  Toaster: function MockSonner() {
-    return null;
-  },
+  Toaster: MockSonner,
 }));
 
 let importCounter = 0;

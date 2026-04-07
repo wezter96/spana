@@ -72,7 +72,7 @@ export function createRedactor(config?: RedactorConfig): Redactor {
     let result = input;
 
     // Redact literal secrets (longest first to avoid partial matches)
-    const sorted = [...literalSecrets].sort((a, b) => b.length - a.length);
+    const sorted = [...literalSecrets].toSorted((a, b) => b.length - a.length);
     for (const secret of sorted) {
       if (result.includes(secret)) {
         result = result.replaceAll(secret, REDACTED);

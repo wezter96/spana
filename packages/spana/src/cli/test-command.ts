@@ -22,6 +22,7 @@ import {
 import { buildAppiumAndroidRuntime, buildAppiumIOSRuntime } from "../runtime/appium.js";
 import { createCloudProviderHelper } from "../cloud/provider.js";
 import type { DeviceWorkerConfig } from "../core/parallel.js";
+import { collectDiagnosticSections } from "../report/failure-diagnostics.js";
 
 export interface TestCommandOptions {
   platforms: Platform[];
@@ -215,9 +216,9 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   if (hasFeatureFiles) {
     // When flowDir is a file, search for steps in its parent directory
     const { stat: statPath } = await import("node:fs/promises");
-    const { dirname } = await import("node:path");
+    const { dirname: dirnameDyn } = await import("node:path");
     const flowDirStats = await statPath(flowDir).catch(() => null);
-    const stepSearchDir = flowDirStats?.isDirectory() ? flowDir : dirname(flowDir);
+    const stepSearchDir = flowDirStats?.isDirectory() ? flowDir : dirnameDyn(flowDir);
     const stepPaths = await discoverStepFiles(stepSearchDir);
     if (stepPaths.length > 0) {
       await loadStepFiles(stepPaths);
@@ -537,10 +538,24 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
           } else if (redacted.status === "failed") {
             reporter.onFlowFail?.(redacted);
             if (opts.verbose && redacted.error) {
-              console.log(`\n[verbose] Full error for "${redacted.name}" on ${redacted.platform}:`);
+              console.log(
+                `\n[verbose] Failure details for "${redacted.name}" on ${redacted.platform}:`,
+              );
+              console.log(`  Category: ${redacted.error.category}`);
               console.log(`  Message: ${redacted.error.message}`);
               if (redacted.error.suggestion) {
                 console.log(`  Suggestion: ${redacted.error.suggestion}`);
+              }
+              for (const section of collectDiagnosticSections(redacted.attachments, {
+                verbose: true,
+              })) {
+                console.log(`  ${section.title}: ${redactor.redact(section.path)}`);
+                console.log(
+                  section.body
+                    .split("\n")
+                    .map((line) => `    ${redactor.redact(line)}`)
+                    .join("\n"),
+                );
               }
               if (redacted.error.stack) {
                 console.log(

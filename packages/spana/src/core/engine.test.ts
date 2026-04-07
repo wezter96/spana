@@ -1,8 +1,9 @@
 import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
+import { DriverError } from "../errors.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { DeviceInfo } from "../schemas/device.js";
 import type { Element } from "../schemas/element.js";
@@ -30,7 +31,7 @@ function createElement(overrides: Partial<Element> = {}): Element {
   };
 }
 
-function createDriver(hierarchy: Element) {
+function createDriver(hierarchy: Element, overrides: Partial<RawDriverService> = {}) {
   const events: Array<[string, ...unknown[]]> = [];
   const deviceInfo: DeviceInfo = {
     platform: "web",
@@ -99,6 +100,7 @@ function createDriver(hierarchy: Element) {
       return Effect.void;
     },
     evaluate: () => Effect.void as any,
+    ...overrides,
   };
 
   return { driver, events };
@@ -138,9 +140,9 @@ describe("engine", () => {
     const flow: FlowDefinition = {
       name: "Happy path",
       config: {},
-      fn: async ({ app, expect }) => {
+      fn: async ({ app, expect: flowExpect }) => {
         await app.inputText("hello");
-        await expect({ text: "Ready" }).toHaveText("Ready");
+        await flowExpect({ text: "Ready" }).toHaveText("Ready");
       },
     };
 
@@ -175,6 +177,82 @@ describe("engine", () => {
     expect(result.status).toBe("passed");
     expect(events).toEqual([]);
     expect(result.steps).toEqual([]);
+  });
+
+  test("executeFlow prepares flow-scoped driver state before hooks and launch", async () => {
+    const events: Array<[string, ...unknown[]]> = [];
+    const { driver } = createDriver(createElement(), {
+      beginFlow: (flowName: string) => {
+        events.push(["beginFlow", flowName]);
+        return Effect.void;
+      },
+      launchApp: (appId, opts) => {
+        events.push(["launchApp", appId, opts]);
+        return Effect.void;
+      },
+    });
+    const calls: string[] = [];
+
+    const flow: FlowDefinition = {
+      name: "Scoped web flow",
+      config: {},
+      fn: async () => {
+        calls.push("flow");
+      },
+    };
+
+    const result = await executeFlow(flow, driver, {
+      ...createConfig(join(tempDir, "begin-flow")),
+      hooks: {
+        beforeEach: async () => {
+          calls.push("beforeEach");
+        },
+      },
+    });
+
+    expect(result.status).toBe("passed");
+    expect(events).toEqual([
+      ["beginFlow", "Scoped web flow"],
+      ["launchApp", "com.example.app", undefined],
+    ]);
+    expect(calls).toEqual(["beforeEach", "flow"]);
+  });
+
+  test("executeFlow captures diagnostics when beginFlow fails before launch", async () => {
+    const { driver } = createDriver(createElement({ id: "checkout-screen" }), {
+      beginFlow: () => Effect.fail(new DriverError({ message: "session bootstrap failed" })),
+      getDriverLogs: () =>
+        Effect.succeed([
+          "[2026-04-07T00:00:00.000Z] beginFlow Broken setup",
+          "[2026-04-07T00:00:00.050Z] beginFlow failed (50ms): session bootstrap failed",
+        ]),
+    });
+
+    const result = await executeFlow(
+      {
+        name: "Broken setup",
+        config: { autoLaunch: false },
+        fn: async () => {},
+      },
+      driver,
+      {
+        ...createConfig(join(tempDir, "begin-flow-failure")),
+        artifactConfig: {
+          ...createConfig(join(tempDir, "begin-flow-failure")).artifactConfig,
+          captureOnFailure: true,
+        },
+      },
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.attachments?.map((attachment) => attachment.name)).toEqual([
+      "failed-screenshot",
+      "failed-hierarchy",
+      "failed-driver-logs",
+    ]);
+    expect(readFileSync(result.attachments?.[2]?.path ?? "", "utf8")).toContain(
+      "session bootstrap failed",
+    );
   });
 
   test("executeFlow reports flow timeouts as failures", async () => {

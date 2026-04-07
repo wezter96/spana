@@ -102,6 +102,9 @@ export interface PromiseApp {
   switchToNativeApp(): Promise<void>;
 }
 
+const describeMatcher = (matcher: BrowserRouteMatcher) =>
+  typeof matcher === "string" ? matcher : matcher.toString();
+
 export function createPromiseApp(
   driver: RawDriverService,
   appId: string,
@@ -113,8 +116,6 @@ export function createPromiseApp(
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
   const unsupportedWebFeature = (feature: string) =>
     Effect.fail(new DriverError({ message: `${feature}() is only supported on the web platform` }));
-  const describeMatcher = (matcher: BrowserRouteMatcher) =>
-    typeof matcher === "string" ? matcher : matcher.toString();
 
   const runStep = <A>(
     command: string,
