@@ -1,0 +1,51 @@
+# spana docs
+
+> spana is a TypeScript-native end-to-end testing framework for React Native and web applications. A single test file can run on web, Android, and iOS without modifying the app under test.
+>
+> For full inlined documentation (all content in one file), see: llms-full.txt
+
+spana favors TypeScript flows over YAML, exposes agent-oriented CLI commands like `selectors`, `hierarchy`, and `validate`, and includes a programmatic `spana-test/agent` API for custom automation.
+
+The rendered documentation lives at https://wezter96.github.io/spana/.
+The links below intentionally point to the canonical Markdown sources in GitHub because they are cleaner for LLM and agent ingestion than the rendered HTML pages.
+
+## Start here
+
+- [Introduction](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/introduction.md): Product overview, philosophy, platform support, and package layout.
+- [Quick Start](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/quick-start.md): Install spana, add config, and run the first flow.
+- [Configuration](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/configuration.md): `defineConfig()` reference and core runtime settings.
+
+## Writing tests
+
+- [Flows](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/flows.md): `flow()` API, `FlowConfig`, and the `app` helper surface.
+- [Selectors](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/selectors.md): Selector types and cross-platform matching rules.
+- [Assertions](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/assertions.md): `expect()` API and auto-wait behavior.
+- [Platform-Specific Tests](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/platform-specific.md): Platform-aware flow patterns and config.
+- [Gherkin / BDD](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/gherkin.md): `.feature` files and step-definition workflow.
+
+## Agent workflows
+
+- [Agent Commands](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/cli/agent-commands.md): `spana selectors`, `spana hierarchy`, `spana validate`, and the agent authoring loop.
+- [Agent API](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/reference/agent-api.md): `connect()` and `validateFlows()` for programmatic automation.
+- [Studio](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/cli/studio.md): Local inspector UI for exploring screens and managing test runs.
+- [spana testing skill](https://raw.githubusercontent.com/wezter96/spana/main/.agents/skills/spana-testing/SKILL.md): Repo-shipped agent skill for selectors, flow writing, validation, and iteration loops.
+
+## CLI and reporting
+
+- [CLI Commands](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/cli/commands.md): Command reference for running tests, listing devices, validation, and reporting.
+- [Init](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/cli/init.md): Project scaffolding and generated starter files.
+- [Reporters](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/reference/reporters.md): Console, JSON, JUnit, HTML, and Allure output formats.
+
+## Architecture and operations
+
+- [Architecture Overview](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/architecture/overview.md): High-level layers, execution flow, and smart-driver split.
+- [Drivers](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/architecture/drivers.md): Playwright, UiAutomator2, and WebDriverAgent details.
+- [Device Setup](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/guides/device-setup.md): Local emulator, simulator, and device setup.
+- [Remote Execution](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/guides/remote-execution.md): Running against remote Appium servers and device farms.
+- [Cloud Providers](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/guides/cloud-providers.md): BrowserStack and Sauce Labs guidance.
+- [CI/CD Integration](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/guides/ci-integration.md): CI patterns, artifacts, and structured output.
+- [Debugging](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/guides/debugging.md): Interactive debugging and failure investigation.
+
+## Optional
+
+- [API Reference](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/reference/example.md): Condensed API reference for app methods, expectations, and config.

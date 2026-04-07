@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
-    "build": "astro build",
+    "build": "bun scripts/generate-llms-full.ts && astro build",
     "preview": "astro preview",
     "astro": "astro"
   },

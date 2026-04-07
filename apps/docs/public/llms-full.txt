@@ -1,0 +1,3953 @@
+# spana — TypeScript-native E2E testing for React Native + Web
+
+> Full documentation for AI/LLM consumption.
+> For links-only version, see llms.txt
+>
+> Generated from source docs — do not edit manually.
+
+
+---
+
+## Introduction
+
+spana is a TypeScript-native end-to-end testing framework for React Native and web applications. It lets you write a single test file that runs against a browser, an Android device or emulator, and an iOS simulator or device — without modifying the app under test.
+
+## Why spana
+
+Existing E2E tools fall into two camps:
+
+- **YAML-based runners** (Maestro, Detox scripts) — readable but limited. No real TypeScript, no imports, no abstractions.
+- **Platform-native tools** (Espresso, XCUITest) — powerful but siloed. You write Android tests in Kotlin and iOS tests in Swift.
+
+spana occupies the gap: full TypeScript with real imports, types, and async/await, running across all three platforms from one file.
+
+It replaces Maestro's JVM/YAML stack with a pure-TypeScript engine. No companion JVM process. No YAML parsing. No patching the app binary.
+
+## Key principles
+
+**Pure TypeScript.** Tests are `.ts` files. You get autocomplete, type errors, imports, and the full JS ecosystem. The test runner works with both Node.js 20+ and Bun.
+
+**No app modification.** spana never requires adding a test server, special build flag, or SDK to your app. Interaction happens through the platform's accessibility layer (UiAutomator2, WebDriverAgent, Playwright CDP).
+
+**Agent-first.** The CLI exposes `hierarchy`, `selectors`, and `validate` commands designed for AI agent workflows. `--reporter json` produces structured output suitable for piping to an agent.
+
+**Thin drivers.** Raw platform drivers are HTTP clients with no logic. All selector matching, auto-wait, and retry runs in the TypeScript smart layer on the host machine.
+
+## Platform support
+
+| Platform      | Driver                     | Notes                                                             |
+| ------------- | -------------------------- | ----------------------------------------------------------------- |
+| Web / RN Web  | Playwright (CDP)           | No companion binary — Playwright is a dev dependency              |
+| Android       | UiAutomator2 HTTP client   | Bundled APK server (~2–3 MB), ADB-forwarded                       |
+| iOS Simulator | WebDriverAgent HTTP client | Bundled unsigned XCTest bundle (~5 MB)                            |
+| iOS Device    | WebDriverAgent HTTP client | Re-signed with user certificate via `codesign`; requires `iproxy` |
+
+## Monorepo structure
+
+The `spana` package (`packages/spana`) is the core library and CLI. Source is organized into:
+
+- `src/api/` — `flow()`, `app`, `expect` — the public test-writing API
+- `src/core/` — engine, orchestrator, parallel runner
+- `src/smart/` — coordinator, auto-wait, element-matcher (all TypeScript, no native code)
+- `src/drivers/` — thin HTTP clients for each platform
+- `src/agent/` — `session.ts` backing `spana hierarchy` and `spana selectors`
+- `src/cli/` — CLI entry point
+- `src/schemas/` — shared types: `Element`, `Selector`, `Platform`, `SpanaConfig`
+
+---
+
+## Quick Start
+
+## 1. Install
+
+```bash
+npm install spana-test
+# or
+bun add spana-test
+```
+
+spana works with Node.js 20+ and [Bun](https://bun.sh).
+
+## 2. Create a config file
+
+Create `spana.config.ts` at the root of your project:
+
+```ts
+import { defineConfig } from "spana-test";
+
+export default defineConfig({
+  apps: {
+    web: { url: "http://localhost:3000" },
+    android: { packageName: "com.example.app" },
+    ios: { bundleId: "com.example.app" },
+  },
+  platforms: ["web"],
+});
+```
+
+Start with `platforms: ["web"]` while getting familiar with the framework, then add `"android"` and `"ios"` once your device targets are set up.
+
+## 3. Write a flow
+
+Create `flows/login.ts`:
+
+```ts
+import { flow } from "spana-test";
+
+export default flow("user can log in", async ({ app, expect }) => {
+  await app.tap({ testID: "email-input" });
+  await app.inputText("user@example.com");
+  await app.tap({ testID: "password-input" });
+  await app.inputText("secret");
+  await app.tap({ testID: "login-button" });
+  await expect({ testID: "home-screen" }).toBeVisible();
+});
+```
+
+The `testID` selector maps to `data-testid` on web, `accessibilityIdentifier` on iOS, and `resource-id` on Android. It is the preferred selector type.
+
+## 4. Run
+
+```bash
+spana test
+```
+
+This discovers all `*.ts` files under `./flows` (or the `flowDir` in your config) and runs them against the configured platforms.
+
+### Run a single file
+
+```bash
+spana test flows/login.ts
+```
+
+### Target a specific platform
+
+```bash
+spana test --platform android
+```
+
+### Filter by tag
+
+```bash
+spana test --tag smoke
+```
+
+## 5. View results
+
+By default, results print to the console. To get structured JSON output:
+
+```bash
+spana test --reporter json
+```
+
+On failure, spana captures a screenshot and UI hierarchy dump under `.spana/artifacts/` (configurable via `artifacts.outputDir`).
+
+## Next steps
+
+- [Configuration](/spana/getting-started/configuration/) — all `defineConfig` options
+- [Flows](/spana/writing-tests/flows/) — `flow()` API, tags, timeouts
+- [Selectors](/spana/writing-tests/selectors/) — all selector types
+- [CLI Commands](/spana/cli/commands/) — all flags
+
+---
+
+## Configuration
+
+Configuration lives in `spana.config.ts` at the project root. Pass the config object to `defineConfig` for type safety.
+
+```ts
+import { defineConfig } from "spana-test";
+
+export default defineConfig({
+  // ...
+});
+```
+
+Use `--config ./path/to/spana.config.ts` to specify a different location.
+
+Run `spana validate-config` to validate the file without starting drivers or discovering flows.
+
+## Full example
+
+```ts
+import { defineConfig } from "spana-test";
+
+export default defineConfig({
+  apps: {
+    web: { url: "http://localhost:3000" },
+    android: { packageName: "com.example.app", appPath: "./builds/app.apk" },
+    ios: {
+      bundleId: "com.example.app",
+      appPath: "./builds/App.app",
+      signing: { teamId: "ABCDE12345" },
+    },
+  },
+  platforms: ["web", "android", "ios"],
+  flowDir: "./flows",
+  reporters: ["console", "json", "html"],
+  defaults: {
+    waitTimeout: 5000,
+    pollInterval: 200,
+    settleTimeout: 300,
+    retries: 2,
+  },
+  artifacts: {
+    outputDir: ".spana/artifacts",
+    captureOnFailure: true,
+    captureOnSuccess: false,
+    captureSteps: false,
+    screenshot: true,
+    uiHierarchy: true,
+  },
+  hooks: {
+    beforeAll: async ({ app }) => {
+      /* global setup */
+    },
+    beforeEach: async ({ app }) => {
+      /* reset state */
+    },
+    afterEach: async ({ app, result }) => {
+      /* teardown */
+    },
+    afterAll: async ({ app, summary }) => {
+      /* cleanup */
+    },
+  },
+});
+```
+
+## `apps`
+
+Defines the app targets for each platform.
+
+```ts
+apps: {
+  web?:     { url: string; appPath?: string };
+  android?: { packageName: string; appPath?: string };
+  ios?:     { bundleId: string; appPath?: string; signing?: IOSSigningConfig };
+}
+```
+
+| Field                     | Platform    | Description                                               |
+| ------------------------- | ----------- | --------------------------------------------------------- |
+| `web.url`                 | Web         | Base URL Playwright navigates to on launch                |
+| `android.packageName`     | Android     | Android application ID (e.g. `com.example.app`)           |
+| `ios.bundleId`            | iOS         | iOS bundle identifier (e.g. `com.example.app`)            |
+| `appPath`                 | Android/iOS | Path to `.app`, `.ipa`, or `.apk` for auto-install        |
+| `signing.teamId`          | iOS         | Apple Development Team ID (required for physical devices) |
+| `signing.signingIdentity` | iOS         | Code signing identity (default: `"Apple Development"`)    |
+
+## `platforms`
+
+```ts
+platforms?: Array<"web" | "android" | "ios">
+```
+
+Which platforms to run tests on by default. Can be overridden per-flow with `FlowConfig.platforms` and at the CLI with `--platform`.
+
+Default: `["web"]`
+
+## `flowDir`
+
+```ts
+flowDir?: string
+```
+
+Directory to discover flow files from. Accepts a glob or directory path.
+
+Default: `"./flows"`
+
+Relative paths are resolved from the directory that contains the config file, not from the current shell directory.
+
+## `reporters`
+
+```ts
+reporters?: string[]
+```
+
+One or more reporter names. Available reporters:
+
+| Name      | Output                                               |
+| --------- | ---------------------------------------------------- |
+| `console` | Human-readable terminal output (default)             |
+| `json`    | Structured JSON events to stdout                     |
+| `junit`   | JUnit XML — compatible with CI artifact ingestion    |
+| `html`    | Self-contained HTML report with embedded screenshots |
+| `allure`  | Allure-compatible result files                       |
+
+Default: `["console"]`
+
+## `execution`
+
+Execution mode and remote Appium settings.
+
+```ts
+execution?: {
+  mode?: "local" | "appium";
+  web?: {
+    browser?: "chromium" | "firefox" | "webkit";
+    headless?: boolean;
+    storageState?: string;
+    verboseLogging?: boolean;
+  };
+  appium?: {
+    serverUrl?: string;
+    capabilities?: Record<string, unknown>;
+    capabilitiesFile?: string;
+    reportToProvider?: boolean;
+    browserstack?: {
+      app?: { id?: string; path?: string; name?: string; customId?: string };
+      local?: { enabled?: boolean; binary?: string; identifier?: string; args?: string[] };
+      options?: Record<string, unknown>;
+    };
+    saucelabs?: {
+      app?: { id?: string; path?: string; name?: string };
+      connect?: { enabled?: boolean; binary?: string; tunnelName?: string; args?: string[] };
+      options?: Record<string, unknown>;
+    };
+  };
+}
+```
+
+Use `execution.web` to configure the local Playwright runtime for web flows. `storageState` is resolved relative to `spana.config.ts`, so you can preload a saved auth/session state file without hard-coding absolute paths. Set `verboseLogging: true` to print Playwright runtime events (tabs, downloads, mocked routes, HAR-worthy requests) directly to stdout while debugging a local web flow.
+
+Use `mode: "appium"` when running against BrowserStack, Sauce Labs, or another Appium-compatible grid.
+Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. The provider helper sections above fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled.
+
+## CLI precedence
+
+For `spana test`, CLI flags win over config values.
+
+| CLI flag             | Config field                 |
+| -------------------- | ---------------------------- |
+| `--platform`         | `platforms`                  |
+| `--reporter`         | `reporters`                  |
+| `--retries`          | `defaults.retries`           |
+| `--driver`           | `execution.mode`             |
+| `--appium-url`       | `execution.appium.serverUrl` |
+| `--validate-config`  | Validates config and exits   |
+| `--shard` / `--bail` | CLI-only execution controls  |
+| `--debug-on-failure` | CLI-only execution control   |
+
+Sharding happens after tag/name/platform filtering so each shard gets a deterministic slice of the already-selected flows.
+
+## `defaults`
+
+Timing and retry defaults applied to all auto-wait operations. Individual operations can override these with `WaitOptions`.
+
+```ts
+defaults?: {
+  waitTimeout?:   number;  // ms
+  pollInterval?:  number;  // ms
+  settleTimeout?: number;  // ms
+  retries?:       number;
+}
+```
+
+| Option          | Default | Description                                                     |
+| --------------- | ------- | --------------------------------------------------------------- |
+| `waitTimeout`   | `5000`  | Maximum ms to wait for an element to appear                     |
+| `pollInterval`  | `200`   | ms between hierarchy polls                                      |
+| `settleTimeout` | `300`   | ms the element must remain stable before matching               |
+| `retries`       | `2`     | Number of retries on action failure (e.g. tap on stale element) |
+
+## `artifacts`
+
+Controls screenshot and hierarchy capture on test completion.
+
+```ts
+artifacts?: {
+  outputDir?:        string;
+  captureOnFailure?: boolean;
+  captureOnSuccess?: boolean;
+  captureSteps?:     boolean;
+  screenshot?:       boolean;
+  uiHierarchy?:      boolean;
+  consoleLogs?:      boolean;
+  jsErrors?:         boolean;
+  har?:              boolean;
+}
+```
+
+| Option             | Default              | Description                                       |
+| ------------------ | -------------------- | ------------------------------------------------- |
+| `outputDir`        | `".spana/artifacts"` | Directory to write captured artifacts             |
+| `captureOnFailure` | `true`               | Capture on failed flows                           |
+| `captureOnSuccess` | `false`              | Capture on passed flows                           |
+| `captureSteps`     | `false`              | Capture a screenshot after every step in the flow |
+| `screenshot`       | `true`               | Include screenshot in capture                     |
+| `uiHierarchy`      | `true`               | Include UI hierarchy dump in capture              |
+| `consoleLogs`      | `true`               | Include captured browser console logs             |
+| `jsErrors`         | `true`               | Include uncaught browser JavaScript errors        |
+| `har`              | `true`               | Include the current flow's web HAR output         |
+
+## `hooks`
+
+Lifecycle hooks that run around flow execution. Each hook receives a `HookContext`.
+
+```ts
+hooks?: {
+  beforeAll?:  (ctx: HookContext) => Promise<void>;
+  beforeEach?: (ctx: HookContext) => Promise<void>;
+  afterEach?:  (ctx: HookContext) => Promise<void>;
+  afterAll?:   (ctx: HookContext) => Promise<void>;
+}
+```
+
+| Hook         | When it runs                                              |
+| ------------ | --------------------------------------------------------- |
+| `beforeAll`  | Once before all flows on a platform                       |
+| `beforeEach` | Before each individual flow                               |
+| `afterEach`  | After each individual flow (always runs, even on failure) |
+| `afterAll`   | Once after all flows on a platform                        |
+
+`HookContext` provides `app`, `expect`, `platform`, `result` (in `afterEach`), and `summary` (in `afterAll`).
+
+### Error handling
+
+| Hook         | On failure                                                  |
+| ------------ | ----------------------------------------------------------- |
+| `beforeAll`  | All flows on that platform are skipped and marked as failed |
+| `beforeEach` | That flow is skipped and marked as failed                   |
+| `afterEach`  | Warning logged, test result is not affected                 |
+| `afterAll`   | Warning logged, test results are not affected               |
+
+### Example
+
+```ts
+export default defineConfig({
+  hooks: {
+    beforeEach: async ({ app }) => {
+      await app.launch({ clearState: true });
+    },
+    afterEach: async ({ app, result }) => {
+      if (result?.status === "failed") {
+        console.log(`Flow failed: ${result.name}`);
+      }
+    },
+  },
+});
+```
+
+## Per-flow configuration
+
+The `flow()` function accepts an optional config object as its second argument, letting you override global settings for a single flow.
+
+```ts
+import { flow } from "spana-test";
+
+flow(
+  "checkout",
+  { timeout: 30000, tags: ["smoke"], artifacts: { captureSteps: true } },
+  async ({ app }) => {
+    // ...
+  },
+);
+```
+
+```ts
+interface FlowConfig {
+  tags?: string[];
+  platforms?: Array<"web" | "android" | "ios">;
+  timeout?: number;
+  autoLaunch?: boolean;
+  artifacts?: ArtifactConfig;
+}
+```
+
+| Option       | Default | Description                                                      |
+| ------------ | ------- | ---------------------------------------------------------------- |
+| `tags`       | `[]`    | Tags for filtering flows with `--tag` on the CLI                 |
+| `platforms`  | —       | Override which platforms this flow runs on                       |
+| `timeout`    | —       | Per-flow timeout in ms (overrides global `defaults.waitTimeout`) |
+| `autoLaunch` | `true`  | Automatically launch the app before the flow starts              |
+| `artifacts`  | —       | Per-flow artifact overrides (same shape as global `artifacts`)   |
+
+The per-flow `artifacts` object is merged with the global `artifacts` config, so you only need to specify the fields you want to override. For example, enabling `captureSteps` on a single flow:
+
+```ts
+flow(
+  "visual regression",
+  { artifacts: { captureSteps: true, captureOnSuccess: true } },
+  async ({ app }) => {
+    // Every step is captured, and the final state is saved even on success
+  },
+);
+```
+
+## `launchOptions`
+
+Default launch options applied to every flow. Individual flows can override these via `app.launch()`.
+
+```ts
+launchOptions?: LaunchOptions
+```
+
+```ts
+export default defineConfig({
+  launchOptions: {
+    clearState: true, // fresh state every run
+  },
+});
+```
+
+### `LaunchOptions` reference
+
+```ts
+interface LaunchOptions {
+  clearState?: boolean;
+  clearKeychain?: boolean;
+  deepLink?: string;
+  launchArguments?: Record<string, unknown>;
+}
+```
+
+| Option            | Default | Description                                           |
+| ----------------- | ------- | ----------------------------------------------------- |
+| `clearState`      | `false` | Clear app data/storage before launch                  |
+| `clearKeychain`   | `false` | Clear the iOS keychain before launch (simulator only) |
+| `deepLink`        | —       | Open the app via a deep link URL                      |
+| `launchArguments` | —       | Key-value pairs passed as launch arguments to the app |
+
+#### Platform behavior
+
+| Option            | Web                          | Android                                | iOS                           |
+| ----------------- | ---------------------------- | -------------------------------------- | ----------------------------- |
+| `clearState`      | Clears cookies, localStorage | `adb shell pm clear`                   | Resets app permissions        |
+| `clearKeychain`   | No-op                        | No-op (warns)                          | `xcrun simctl keychain reset` |
+| `launchArguments` | No-op                        | Passed as `--es` extras via `am start` | Not yet supported (planned)   |
+| `deepLink`        | Navigates to URL             | `adb shell am start -d <url>`          | `xcrun simctl openurl` / WDA  |
+
+#### Per-flow usage
+
+When `autoLaunch` is `false`, call `app.launch()` manually with options:
+
+```ts
+flow("onboarding", { autoLaunch: false }, async ({ app }) => {
+  await app.launch({ clearState: true, deepLink: "myapp://welcome" });
+  // ...
+});
+```
+
+---
+
+## Flows
+
+A flow is the basic unit of a spana test. Each flow file exports a single `FlowDefinition` as its default export.
+
+## Defining a flow
+
+`flow()` has two overloads:
+
+```ts
+// Without config
+flow(name: string, fn: FlowFn): FlowDefinition
+
+// With config
+flow(name: string, config: FlowConfig, fn: FlowFn): FlowDefinition
+```
+
+### Basic flow
+
+```ts
+import { flow } from "spana-test";
+
+export default flow("user can log in", async ({ app, expect }) => {
+  await app.tap({ testID: "email-input" });
+  await app.inputText("user@example.com");
+  await app.tap({ testID: "login-button" });
+  await expect({ testID: "home-screen" }).toBeVisible();
+});
+```
+
+### Flow with config
+
+```ts
+export default flow(
+  "checkout flow",
+  {
+    tags: ["smoke", "payments"],
+    platforms: ["android", "ios"],
+    timeout: 60000,
+    autoLaunch: true,
+  },
+  async ({ app, expect, platform }) => {
+    // ...
+  },
+);
+```
+
+## FlowContext
+
+The function receives a `FlowContext` object:
+
+```ts
+interface FlowContext {
+  app: PromiseApp;
+  expect: (selector: Selector) => PromiseExpectation;
+  platform: Platform;
+}
+```
+
+| Property   | Type                               | Description                                               |
+| ---------- | ---------------------------------- | --------------------------------------------------------- |
+| `app`      | `PromiseApp`                       | App interaction API — tap, type, scroll, launch, etc.     |
+| `expect`   | `(selector) => PromiseExpectation` | Assertion API — `toBeVisible`, `toBeHidden`, `toHaveText` |
+| `platform` | `"web" \| "android" \| "ios"`      | The platform this run is executing on                     |
+
+## FlowConfig
+
+```ts
+interface FlowConfig {
+  tags?: string[];
+  platforms?: Platform[];
+  timeout?: number;
+  autoLaunch?: boolean;
+  when?: WhenCondition;
+}
+
+interface WhenCondition {
+  platform?: Platform | Platform[];
+  env?: string;
+}
+```
+
+| Option       | Type            | Default        | Description                                           |
+| ------------ | --------------- | -------------- | ----------------------------------------------------- |
+| `tags`       | `string[]`      | —              | Tag strings for `--tag` filtering at the CLI          |
+| `platforms`  | `Platform[]`    | all configured | Restrict this flow to specific platforms only         |
+| `timeout`    | `number`        | config default | Flow-level timeout in milliseconds                    |
+| `autoLaunch` | `boolean`       | `true`         | Automatically launch the app before the flow starts   |
+| `when`       | `WhenCondition` | —              | Runtime conditions that control whether the flow runs |
+
+### Conditional execution with `when`
+
+The `when` field lets you skip flows based on runtime conditions.
+
+#### Platform condition
+
+`when.platform` works like `platforms` but within the `when` block, keeping conditional logic grouped:
+
+```ts
+export default flow("iOS-specific test", { when: { platform: "ios" } }, async ({ app, expect }) => {
+  // only runs on iOS
+});
+```
+
+You can also pass an array:
+
+```ts
+export default flow(
+  "mobile-only test",
+  { when: { platform: ["ios", "android"] } },
+  async ({ app, expect }) => {
+    // runs on iOS and Android, skipped on web
+  },
+);
+```
+
+#### Environment variable condition
+
+`when.env` skips the flow unless the specified environment variable is set:
+
+```ts
+export default flow(
+  "CI smoke test",
+  {
+    when: { env: "CI" },
+    tags: ["smoke"],
+  },
+  async ({ app, expect }) => {
+    // only runs when CI=1 (or any truthy value)
+  },
+);
+```
+
+## The `app` API
+
+All methods return `Promise<void>` unless noted.
+
+### Interaction
+
+| Method               | Signature                             | Description                                      |
+| -------------------- | ------------------------------------- | ------------------------------------------------ |
+| `tap`                | `(selector, opts?) => Promise<void>`  | Tap an element                                   |
+| `tapXY`              | `(x, y) => Promise<void>`             | Tap at absolute coordinates                      |
+| `doubleTap`          | `(selector, opts?) => Promise<void>`  | Double-tap an element                            |
+| `longPress`          | `(selector, opts?) => Promise<void>`  | Long-press an element                            |
+| `longPressXY`        | `(x, y, opts?) => Promise<void>`      | Long-press at coordinates                        |
+| `inputText`          | `(text) => Promise<void>`             | Type text into the focused element               |
+| `pressKey`           | `(key) => Promise<void>`              | Press a named key                                |
+| `hideKeyboard`       | `() => Promise<void>`                 | Dismiss the software keyboard                    |
+| `dismissKeyboard`    | `(opts?) => Promise<void>`            | Use a platform-aware keyboard dismissal strategy |
+| `swipe`              | `(direction, opts?) => Promise<void>` | Swipe in a direction                             |
+| `scroll`             | `(direction) => Promise<void>`        | Scroll in a direction                            |
+| `scrollUntilVisible` | `(selector, opts?) => Promise<void>`  | Scroll until a target becomes visible            |
+| `backUntilVisible`   | `(selector, opts?) => Promise<void>`  | Use system back until a target becomes visible   |
+
+Direction values: `"up" | "down" | "left" | "right"`
+
+`dismissKeyboard()` defaults to an auto strategy that uses the driver-specific keyboard dismissal path and falls back to Android system back when needed. `scrollUntilVisible()` and `backUntilVisible()` are useful for replacing ad hoc retry loops in mobile-heavy flows.
+
+### App lifecycle
+
+| Method       | Signature                  | Description                                  |
+| ------------ | -------------------------- | -------------------------------------------- |
+| `launch`     | `(opts?) => Promise<void>` | Launch the app (optionally with a deep link) |
+| `stop`       | `() => Promise<void>`      | Stop the app                                 |
+| `kill`       | `() => Promise<void>`      | Force-kill the app                           |
+| `clearState` | `() => Promise<void>`      | Clear app data/state                         |
+| `openLink`   | `(url) => Promise<void>`   | Open a URL or deep link                      |
+| `back`       | `() => Promise<void>`      | Press the back button (Android)              |
+
+### Utilities
+
+| Method           | Signature                                  | Description                                      |
+| ---------------- | ------------------------------------------ | ------------------------------------------------ |
+| `takeScreenshot` | `() => Promise<Uint8Array>`                | Capture a screenshot and return the bytes        |
+| `evaluate`       | `<T>(fn \| string, ...args) => Promise<T>` | Run JavaScript in the browser context (web only) |
+
+### Browser runtime helpers (web platform)
+
+| Method                 | Signature                                                                                     | Description                                         |
+| ---------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`                                                        | Fulfill matching requests with a mocked response    |
+| `blockNetwork`         | `(matcher) => Promise<void>`                                                                  | Abort matching requests                             |
+| `clearNetworkMocks`    | `() => Promise<void>`                                                                         | Remove active route mocks/blocks                    |
+| `setNetworkConditions` | `({ offline?, latencyMs?, downloadThroughputKbps?, uploadThroughputKbps? }) => Promise<void>` | Toggle offline mode and Chromium network throttling |
+| `saveCookies`          | `(path) => Promise<void>`                                                                     | Save Playwright cookies to a JSON file              |
+| `loadCookies`          | `(path) => Promise<void>`                                                                     | Load cookies from a JSON file                       |
+| `saveAuthState`        | `(path) => Promise<void>`                                                                     | Save Playwright storage state to disk               |
+| `loadAuthState`        | `(path) => Promise<void>`                                                                     | Replace the browser context with saved auth state   |
+| `downloadFile`         | `(path) => Promise<void>`                                                                     | Wait for the next browser download and save it      |
+| `uploadFile`           | `(selector, path) => Promise<void>`                                                           | Set files on a web file input                       |
+| `newTab`               | `(url?) => Promise<string>`                                                                   | Open a new browser tab and return its tab ID        |
+| `switchToTab`          | `(index) => Promise<void>`                                                                    | Focus an open browser tab by zero-based index       |
+| `closeTab`             | `() => Promise<void>`                                                                         | Close the current tab (or reset the last tab blank) |
+| `getTabIds`            | `() => Promise<string[]>`                                                                     | List open tab IDs in browser order                  |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`                                             | Read captured browser console messages              |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`                                            | Read captured uncaught JavaScript errors            |
+| `getHAR`               | `() => Promise<BrowserHAR>`                                                                   | Read the current flow's captured HAR data           |
+
+These helpers are only available on local Playwright web runs. `setNetworkConditions()` supports offline mode on every browser, but latency/throughput throttling requires the Chromium browser runtime. `uploadFile()` supports simple `testID`, `text`, and `accessibilityLabel` selectors. When artifact capture is enabled, web failures also include console logs, JavaScript errors, and HAR output in `spana-output/` and the HTML report.
+
+```ts
+flow("web app can run with mocked APIs", async ({ app, platform }) => {
+  if (platform !== "web") return;
+
+  await app.loadAuthState("./auth/user.json");
+  await app.mockNetwork("**/api/profile", {
+    json: { id: "demo", name: "Demo User" },
+  });
+  await app.blockNetwork("**/analytics/**");
+  await app.setNetworkConditions({ offline: false, latencyMs: 120 });
+  await app.evaluate(() => console.info("profile hydrated"));
+  const download = app.downloadFile("./tmp/profile-report.json");
+  await app.tap({ testID: "download-report-button" });
+  await download;
+  await app.uploadFile({ testID: "avatar-upload-input" }, "./fixtures/avatar.png");
+  const tabId = await app.newTab("http://localhost:3000/profile");
+  await app.switchToTab(1);
+  console.log(await app.getTabIds(), tabId);
+  const logs = await app.getConsoleLogs();
+  const jsErrors = await app.getJSErrors();
+  const har = await app.getHAR();
+
+  if (!logs.some((entry) => entry.text.includes("profile hydrated"))) {
+    throw new Error("Expected the profile hydration log to be captured.");
+  }
+
+  if (jsErrors.length > 0) {
+    throw new Error(`Unexpected JS errors: ${jsErrors.map((entry) => entry.message).join(", ")}`);
+  }
+
+  await app.saveCookies("./tmp/cookies.json");
+  console.log(har.log.entries.length);
+});
+```
+
+### JavaScript execution (web platform)
+
+`app.evaluate()` runs JavaScript inside the browser page context. This is useful for reading DOM state, manipulating localStorage, or interacting with the app's JavaScript runtime.
+
+```ts
+flow("read page state", async ({ app, platform }) => {
+  if (platform !== "web") return;
+
+  // Read a value from the page
+  const title = await app.evaluate(() => document.title);
+
+  // Pass arguments
+  const count = await app.evaluate(
+    (selector: string) => document.querySelectorAll(selector).length,
+    "button",
+  );
+
+  // Manipulate state
+  await app.evaluate(() => {
+    localStorage.setItem("feature-flag", "true");
+  });
+});
+```
+
+`evaluate()` is only supported on the web platform (Playwright). On Android and iOS, it throws an error — native apps don't expose a JavaScript engine. Since flows are TypeScript, you have full access to Node.js/Bun APIs for any test logic that doesn't need to run inside the browser.
+
+## Settings export
+
+You can export named `settings` from a flow file to apply shared config to all flows in that file:
+
+```ts
+export const settings = {
+  tags: ["smoke"],
+  timeout: 30000,
+};
+
+export default flow("my flow", async ({ app }) => {
+  // ...
+});
+```
+
+Per-flow `FlowConfig` values take precedence over `settings`.
+
+---
+
+## Selectors
+
+A selector tells spana which element to interact with or assert on. Selectors are used by all `app` interaction methods and `expect()`.
+
+## Selector types
+
+### testID (recommended)
+
+```ts
+{
+  testID: "login-button";
+}
+```
+
+The preferred selector. Maps to the platform's primary element identifier:
+
+| Platform | Attribute                            |
+| -------- | ------------------------------------ |
+| Web      | `data-testid` attribute              |
+| Android  | `resource-id` (last segment matched) |
+| iOS      | `accessibilityIdentifier`            |
+
+Add `testID` props to your React Native components:
+
+```tsx
+<Pressable testID="login-button">Sign In</Pressable>
+```
+
+On web, this renders as `data-testid="login-button"`.
+
+### text
+
+```ts
+{
+  text: "Sign In";
+}
+```
+
+Matches against the visible label text of an element. Partial matching is supported — the element text only needs to contain the provided string.
+
+Use this when a `testID` is not available, such as for dynamic or third-party content.
+
+### accessibilityLabel
+
+```ts
+{
+  accessibilityLabel: "Close dialog";
+}
+```
+
+Matches the OS-level accessibility label. Useful for elements that have a label distinct from their visible text (e.g. icon buttons).
+
+### point
+
+```ts
+{ point: { x: 150, y: 340 } }
+```
+
+Taps at absolute screen coordinates. Use as a last resort — coordinates are device-specific and break across screen sizes.
+
+### String shorthand
+
+A plain string is treated as a `testID`:
+
+```ts
+await app.tap("login-button");
+// equivalent to:
+await app.tap({ testID: "login-button" });
+```
+
+## Relative selectors
+
+When multiple elements match the same selector, use relative positioning to disambiguate. A relative selector wraps a base selector with directional constraints:
+
+```ts
+// Tap the "Edit" button below the "Email" label
+await app.tap({ selector: { text: "Edit" }, below: { text: "Email" } });
+
+// Tap the button to the right of the "Username" label
+await app.tap({ selector: { testID: "action-btn" }, rightOf: { text: "Username" } });
+
+// Find an element inside a specific container
+await app.tap({ selector: { text: "Submit" }, childOf: { testID: "login-form" } });
+```
+
+| Constraint | Description                                         |
+| ---------- | --------------------------------------------------- |
+| `below`    | Element must be below the anchor (closest first)    |
+| `above`    | Element must be above the anchor (closest first)    |
+| `leftOf`   | Element must be left of the anchor (closest first)  |
+| `rightOf`  | Element must be right of the anchor (closest first) |
+| `childOf`  | Element must be a descendant of the anchor          |
+
+Constraints can be combined — all must match:
+
+```ts
+// Button below the header AND to the right of the label
+await app.tap({
+  selector: { testID: "btn" },
+  below: { text: "Header" },
+  rightOf: { text: "Label" },
+});
+```
+
+Relative selectors work with all interaction methods (`tap`, `doubleTap`, `longPress`) and assertions (`expect().toBeVisible()`, etc.).
+
+## Selector priority
+
+When spana builds a suggested selector (e.g. in `spana selectors` output), it uses this priority:
+
+1. `testID` — most stable, preferred
+2. `accessibilityLabel`
+3. `text`
+4. `point` — last resort
+
+## WaitOptions
+
+All selector-based methods accept an optional `WaitOptions` object to override the global defaults for that specific call:
+
+```ts
+await app.tap({ testID: "slow-element" }, { timeout: 10000 });
+await expect({ testID: "result" }).toBeVisible({ timeout: 15000, pollInterval: 500 });
+```
+
+| Option          | Type     | Description                                   |
+| --------------- | -------- | --------------------------------------------- |
+| `timeout`       | `number` | ms to wait before failing                     |
+| `pollInterval`  | `number` | ms between hierarchy polls                    |
+| `settleTimeout` | `number` | ms the element must be stable before matching |
+
+---
+
+## Assertions
+
+Assertions are made with the `expect` function from `FlowContext`. It takes a selector and returns a `PromiseExpectation` with chainable assertion methods.
+
+```ts
+const { expect } = ctx;
+
+await expect({ testID: "welcome-banner" }).toBeVisible();
+```
+
+## API
+
+### `expect(selector)`
+
+```ts
+expect: (selector: Selector) => PromiseExpectation
+```
+
+Returns a `PromiseExpectation` bound to the given selector.
+
+### `toBeVisible(opts?)`
+
+```ts
+toBeVisible(opts?: WaitOptions): Promise<void>
+```
+
+Asserts that the element matching the selector is present in the hierarchy and visible. Polls until the element appears or `timeout` is reached.
+
+```ts
+await expect({ testID: "success-message" }).toBeVisible();
+await expect({ text: "Welcome" }).toBeVisible({ timeout: 8000 });
+```
+
+### `toBeHidden(opts?)`
+
+```ts
+toBeHidden(opts?: WaitOptions): Promise<void>
+```
+
+Asserts that the element is not present or not visible. Polls until the element disappears or `timeout` is reached.
+
+```ts
+await expect({ testID: "loading-spinner" }).toBeHidden();
+```
+
+### `toHaveText(expected, opts?)`
+
+```ts
+toHaveText(expected: string, opts?: WaitOptions): Promise<void>
+```
+
+Asserts that the element's text content matches `expected`. Supports partial matching.
+
+```ts
+await expect({ testID: "user-greeting" }).toHaveText("Hello, Alice");
+```
+
+## Auto-wait behavior
+
+All assertions auto-wait. spana does not require manual `sleep()` calls. The assertion loop works as follows:
+
+1. Dump the element hierarchy from the platform driver.
+2. Search the tree for the selector.
+3. Check the assertion condition (visible / hidden / text match).
+4. If the condition is not met, wait `pollInterval` ms and retry.
+5. If `timeout` is exceeded, fail with a descriptive error including the selector and last known state.
+
+The element must remain in the matched state for `settleTimeout` ms before the assertion resolves. This prevents flaky passes on transitioning UI.
+
+## Timeout configuration
+
+Timeouts are resolved in this order (highest priority first):
+
+1. `opts.timeout` passed directly to the assertion method
+2. `FlowConfig.timeout` on the containing flow
+3. `defaults.waitTimeout` in `spana.config.ts`
+4. Built-in default: 5000 ms
+
+```ts
+// Global default in config
+export default defineConfig({
+  defaults: { waitTimeout: 8000 },
+});
+
+// Per-flow override
+export default flow(
+  "slow screen test",
+  { timeout: 20000 },
+  async ({ expect }) => {
+    // Per-assertion override
+    await expect({ testID: "result" }).toBeVisible({ timeout: 15000 });
+  }
+);
+```
+
+---
+
+## Platform-Specific Tests
+
+spana runs a single flow file against multiple platforms. There are two mechanisms for platform-specific behavior: branching inside a flow, and restricting a flow to specific platforms entirely.
+
+## Branching inside a flow
+
+The `platform` value in `FlowContext` is `"web" | "android" | "ios"`. Use it for conditional logic within a flow that is mostly shared across platforms.
+
+```ts
+import { flow } from "spana-test";
+
+export default flow("user can share content", async ({ app, expect, platform }) => {
+  await app.tap({ testID: "share-button" });
+
+  if (platform === "ios") {
+    // iOS share sheet uses a native action sheet
+    await expect({ text: "Copy Link" }).toBeVisible();
+    await app.tap({ text: "Copy Link" });
+  } else if (platform === "android") {
+    // Android uses the system share dialog
+    await expect({ text: "Copy to clipboard" }).toBeVisible();
+    await app.tap({ text: "Copy to clipboard" });
+  } else {
+    // Web uses a custom share modal
+    await expect({ testID: "share-modal" }).toBeVisible();
+    await app.tap({ testID: "copy-link" });
+  }
+
+  await expect({ testID: "share-confirmation" }).toBeVisible();
+});
+```
+
+## Restricting a flow to specific platforms
+
+Use `FlowConfig.platforms` to prevent a flow from running on platforms where it does not apply.
+
+```ts
+import { flow } from "spana-test";
+
+export default flow(
+  "push notification permissions",
+  { platforms: ["android", "ios"] },
+  async ({ app, expect }) => {
+    await app.tap({ testID: "enable-notifications" });
+    await expect({ testID: "permission-granted" }).toBeVisible();
+  },
+);
+```
+
+This flow is skipped entirely when the runner targets `web`.
+
+## CLI platform filtering
+
+Regardless of per-flow `platforms` config, you can also filter at the CLI:
+
+```bash
+# Run only on web
+spana test --platform web
+
+# Run on android and ios only
+spana test --platform android,ios
+```
+
+CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["android"]` will not run if you pass `--platform web`, even if both are in your config.
+
+## Common patterns
+
+### Platform-specific selectors
+
+Some elements have the same semantic purpose but different identifiers across platforms. Assign the selector based on platform:
+
+```ts
+export default flow("open menu", async ({ app, platform }) => {
+  const menuSelector =
+    platform === "ios" ? { accessibilityLabel: "Main menu" } : { testID: "menu-button" };
+
+  await app.tap(menuSelector);
+});
+```
+
+### Skip web for native-only features
+
+```ts
+export default flow(
+  "biometric authentication",
+  { platforms: ["ios", "android"] },
+  async ({ app, expect }) => {
+    await app.tap({ testID: "use-biometrics" });
+    await expect({ testID: "biometric-success" }).toBeVisible({ timeout: 10000 });
+  },
+);
+```
+
+### Deep link only on mobile
+
+```ts
+export default flow("deep link navigation", async ({ app, platform }) => {
+  if (platform !== "web") {
+    await app.openLink("myapp://profile/settings");
+  } else {
+    await app.tap({ testID: "settings-nav" });
+  }
+  await expect({ testID: "settings-screen" }).toBeVisible();
+});
+```
+
+---
+
+## Gherkin / BDD
+
+Spana supports Gherkin-style BDD tests alongside the standard flow API. Write human-readable `.feature` files, then implement step definitions in TypeScript.
+
+## Project structure
+
+```
+flows/
+  login/
+    login.feature          # Gherkin scenarios
+    steps/
+      login.steps.ts       # Step definitions
+  dashboard.flow.ts        # Standard flow (both styles coexist)
+```
+
+Step files must live in a `steps/` subdirectory next to the `.feature` file. Spana auto-discovers and loads them.
+
+## Writing a feature file
+
+```gherkin title="flows/login/login.feature"
+@e2e @auth
+Feature: User login
+
+  Background:
+    Given I am on the login screen
+
+  @smoke @web @android @ios
+  Scenario: Successful login
+    When I enter "user@example.com" in the email field
+    And I enter "password123" in the password field
+    And I tap the login button
+    Then I should see the text "Welcome"
+
+  @web @android
+  Scenario Outline: Navigate to <page>
+    When I navigate to "<path>"
+    Then I should see the element "<selector>"
+
+    Examples:
+      | page      | path      | selector      |
+      | dashboard | /dash     | dash-title    |
+      | settings  | /settings | settings-title|
+```
+
+### Tags as platform filters
+
+Tags like `@web`, `@android`, and `@ios` on a scenario control which platforms it runs on. Other tags (like `@smoke`, `@e2e`) can be used with `--tag` to filter runs.
+
+### Background
+
+`Background` steps run before every scenario in the feature, similar to a `beforeEach` hook.
+
+### Scenario Outline
+
+Use `Scenario Outline` with an `Examples` table to run the same scenario with different data. Placeholders like `<path>` are replaced with values from each row.
+
+## Writing step definitions
+
+Step definitions map Gherkin steps to TypeScript functions. Import them from `spana-test/steps`:
+
+```ts title="flows/login/steps/login.steps.ts"
+import { Given, When, Then } from "spana-test/steps";
+
+Given("I am on the login screen", async ({ app }) => {
+  await app.launch({ deepLink: "myapp://login" });
+});
+
+When("I enter {string} in the email field", async ({ app }, email) => {
+  await app.tap({ testID: "email-input" });
+  await app.inputText(email as string);
+});
+
+When("I enter {string} in the password field", async ({ app }, password) => {
+  await app.tap({ testID: "password-input" });
+  await app.inputText(password as string);
+});
+
+When("I tap the login button", async ({ app }) => {
+  await app.tap({ testID: "login-button" });
+});
+
+Then("I should see the text {string}", async ({ expect }, text) => {
+  await expect({ text: text as string }).toBeVisible();
+});
+
+Then("I should see the element {string}", async ({ expect }, testID) => {
+  await expect({ testID: testID as string }).toBeVisible();
+});
+```
+
+### Step keywords
+
+| Function | Purpose                       |
+| -------- | ----------------------------- |
+| `Given`  | Set up preconditions          |
+| `When`   | Perform actions               |
+| `Then`   | Assert outcomes               |
+| `And`    | Continue the previous keyword |
+| `But`    | Negative continuation         |
+
+All five register steps the same way -- the keyword is for readability. `And` and `But` inherit the type of the preceding step.
+
+### Pattern matching
+
+Step patterns support two forms:
+
+**String patterns** with `{string}`, `{int}`, and `{float}` placeholders:
+
+```ts
+Then("I should see the element {string} within {int}ms", async ({ expect }, testID, timeout) => {
+  await expect({ testID: testID as string }).toBeVisible({ timeout: timeout as number });
+});
+```
+
+**Regular expressions** for complex matching:
+
+```ts
+When(/^I swipe (left|right|up|down)$/, async ({ app }, direction) => {
+  await app.swipe(direction as string);
+});
+```
+
+Captured groups are passed as additional arguments after the context.
+
+### Step context
+
+Every step function receives the same context available in standard flows:
+
+| Property   | Description                                          |
+| ---------- | ---------------------------------------------------- |
+| `app`      | Full `PromiseApp` API (tap, inputText, scroll, etc.) |
+| `expect`   | Assertion helper                                     |
+| `platform` | Current platform (`"web"`, `"android"`, `"ios"`)     |
+| `config`   | Resolved config object                               |
+
+## Hooks
+
+Run setup/teardown code before or after each scenario:
+
+```ts
+import { Before, After } from "spana-test/steps";
+
+// Runs before every scenario
+Before(async ({ app }) => {
+  await app.launch();
+});
+
+// Runs after every scenario
+After(async ({ app }) => {
+  await app.takeScreenshot("after-scenario");
+});
+```
+
+### Tag-filtered hooks
+
+Restrict hooks to scenarios with specific tags:
+
+```ts
+// Only runs before scenarios tagged @auth
+Before("@auth", async ({ app }) => {
+  await app.launch({ deepLink: "myapp://login" });
+});
+```
+
+## World (shared state)
+
+Use `defineWorld` to share state and helper methods across steps within a scenario:
+
+```ts title="flows/login/steps/world.ts"
+import { defineWorld } from "spana-test/steps";
+
+export default defineWorld({
+  // Fresh state for each scenario
+  create: () => ({
+    currentUser: "",
+    authToken: "",
+  }),
+
+  // Helper methods available in step context
+  methods: (ctx) => ({
+    async loginAs(email: string, password: string) {
+      await ctx.app.tap({ testID: "email-input" });
+      await ctx.app.inputText(email);
+      await ctx.app.tap({ testID: "password-input" });
+      await ctx.app.inputText(password);
+      await ctx.app.tap({ testID: "login-button" });
+      ctx.currentUser = email;
+    },
+  }),
+});
+```
+
+World state is created fresh for each scenario. The `state` map is also available for arbitrary key-value storage across steps.
+
+## Running Gherkin tests
+
+Gherkin tests run with the same CLI as standard flows:
+
+```bash
+# Run all tests (flows + features)
+spana test
+
+# Filter by tag
+spana test --tag @smoke
+
+# Filter by name
+spana test --grep "login"
+
+# Run only on specific platforms
+spana test --platform web,android
+```
+
+## Mixing flows and features
+
+Both `.flow.ts` and `.feature` files can live in the same `flowDir`. Spana discovers and runs both. Use whichever style fits the test -- Gherkin for behavior specs, flows for lower-level or exploratory tests.
+
+---
+
+## CLI Commands
+
+The `spana` binary is the entry point for running tests, checking readiness, listing devices, and introspecting the platform state.
+
+## `spana test`
+
+Run test flows.
+
+```bash
+spana test [path] [options]
+```
+
+`path` is optional. If omitted, spana discovers all `.ts` files under `flowDir` (default: `./flows`).
+
+### Options
+
+| Flag                        | Description                                                          |
+| --------------------------- | -------------------------------------------------------------------- |
+| `--platform <platforms>`    | Comma-separated platform targets: `web`, `android`, `ios`            |
+| `--tag <tag>`               | Run only flows with this tag                                         |
+| `--grep <pattern>`          | Run only flows whose name matches this pattern                       |
+| `--reporter <name>`         | Reporter: `console`, `json`, `junit`, `html`, `allure`               |
+| `--config <path>`           | Path to config file                                                  |
+| `--validate-config`         | Validate config and exit without discovering or running flows        |
+| `--device <id>`             | Target a specific local device by ID (see `spana devices`)           |
+| `--retries <n>`             | Retry failed flows n times (enables flake detection)                 |
+| `--shard <current>/<total>` | Run only one deterministic CI shard of the filtered flow set         |
+| `--bail <n>`                | Stop scheduling new flows after `n` final flow failures              |
+| `--debug-on-failure`        | Drop into an interactive REPL after the first failed flow (TTY only) |
+| `--last-failed`            | Rerun only flows that failed in the last Spana run                   |
+| `--changed`                | Run only changed flow files from git                                 |
+| `--watch`                  | Rerun automatically when watched files change                        |
+| `--verbose`                 | Dump detailed failure diagnostics, hierarchy, and driver logs        |
+| `--driver <local\|appium>`  | Override execution mode from config                                  |
+| `--appium-url <url>`        | Appium server URL for cloud or remote execution                      |
+| `--caps <path>`             | Path to Appium capabilities JSON file                                |
+| `--caps-json <json>`        | Inline Appium capabilities JSON                                      |
+| `--no-provider-reporting`   | Skip provider result updates for Appium cloud sessions               |
+| `--json`                    | Versioned machine-readable output for supported non-test commands     |
+
+### Examples
+
+```bash
+# Run all flows against web (config default)
+spana test
+
+# Run a single flow file
+spana test flows/login.ts
+
+# Run all smoke-tagged flows on Android and iOS
+spana test --tag smoke --platform android,ios
+
+# Filter by name pattern
+spana test --grep "log in"
+
+# Emit JSON to stdout for downstream processing
+spana test --reporter json
+
+# Use a non-default config
+spana test --config ./config/spana.staging.ts
+
+# Target a specific device (platform is inferred)
+spana test --device emulator-5554
+
+# Target a specific iOS simulator
+spana test --device "SIM-UDID-HERE"
+
+# Retry flaky tests twice
+spana test --retries 2
+
+# Validate config only
+spana test --validate-config
+
+# Split flows across two CI jobs
+spana test --shard 1/2
+
+# Stop after the first failed flow
+spana test --bail 1
+
+# Open a REPL on the first failure
+spana test --debug-on-failure
+
+# Rerun only the flows that failed last time
+spana test --last-failed
+
+# Run only changed flow files from git
+spana test --changed
+
+# Stay in a fast edit-save-rerun loop
+spana test --changed --watch
+
+# Print detailed failure diagnostics for a failing flow
+spana test flows/login.flow.ts --verbose
+```
+
+### Precedence
+
+For `spana test`, CLI flags override `spana.config.ts`.
+
+1. `--driver` overrides `execution.mode`
+2. `--appium-url` overrides `execution.appium.serverUrl`
+3. `--platform`, `--reporter`, and `--retries` override config defaults
+4. Filtering happens before sharding, so each shard sees the already-filtered flow list
+
+### Faster rerun modes
+
+- `--last-failed` reads the last run state from `spana-output/.spana/last-run.json` (or your configured output dir) and reruns only the flows that previously failed.
+- `--changed` uses git to find changed files. Directly changed `.flow.ts`, `.test.ts`, and `.feature` files are selected; changed step definition files rerun discovered `.feature` files; changed config files fall back to the full filtered set.
+- `--watch` reruns the same command whenever the config file or flow roots change. Combine it with `--changed`, `--tag`, `--grep`, or `--last-failed` to keep the loop tight.
+
+## `spana validate`
+
+Validate flow files without a device connection.
+
+```bash
+spana validate [path] [--json]
+```
+
+`path` defaults to `flowDir`. Exits `0` if all flows are valid, non-zero if any errors are found. Warnings still exit `0`.
+
+Use `--json` for a stable machine-readable envelope with `schemaVersion`, `valid`, flow counts, and structured issues that include `code`, `suggestedFix`, and `docsUrl`.
+
+```bash
+spana validate flows/checkout --json
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "validate",
+  "ok": true,
+  "data": {
+    "path": "flows/checkout",
+    "valid": false,
+    "flowCount": 3,
+    "errorCount": 1,
+    "warningCount": 1,
+    "issues": [
+      {
+        "file": "flows/checkout/login.flow.ts",
+        "severity": "error",
+        "code": "DUPLICATE_FLOW_NAME",
+        "error": "Duplicate flow name \"login\" (also in flows/auth.flow.ts)",
+        "suggestedFix": "Give each flow a unique name so reports and CLI filtering stay deterministic.",
+        "docsUrl": "https://wezter96.github.io/spana/writing-tests/flows/"
+      }
+    ]
+  }
+}
+```
+
+## `spana validate-config`
+
+Validate `spana.config.ts` without running flows.
+
+```bash
+spana validate-config [path] [--json]
+```
+
+This loads the config module, validates it against Spana's runtime schema, and prints the resolved file path on success.
+
+Use `--json` for a versioned success/error envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "validate-config",
+  "ok": false,
+  "error": {
+    "errorCode": "CONFIG_NOT_FOUND",
+    "message": "No config file found. Looked in: /repo/spana.config.ts",
+    "suggestedFix": "Create `spana.config.ts` or pass an explicit `--config <path>` value.",
+    "docsUrl": "https://wezter96.github.io/spana/getting-started/configuration/"
+  }
+}
+```
+
+## `spana devices`
+
+List connected devices and simulators across all platforms.
+
+```bash
+spana devices [--json]
+```
+
+Output includes device name, platform, OS version, and connection status. Useful for confirming your device targets before running tests.
+
+```bash
+spana devices
+# android  Pixel 7          API 33   connected
+# ios      iPhone 15        17.2     booted (simulator)
+```
+
+Use `--json` to get a versioned device listing for agent workflows and editor tooling:
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "devices",
+  "ok": true,
+  "data": {
+    "count": 2,
+    "devices": [
+      {
+        "platform": "web",
+        "id": "playwright-chromium",
+        "name": "Chromium (Playwright)",
+        "type": "browser",
+        "state": "available"
+      }
+    ]
+  }
+}
+```
+
+## `spana doctor`
+
+Check whether the current config and environment are ready before you spend time on a test run.
+
+```bash
+spana doctor [--platform <platforms>] [--driver <local|appium>] [--json]
+```
+
+`spana doctor` loads your config, resolves the effective platforms / execution mode, and then performs static readiness checks for the relevant surfaces:
+
+- web URL and storage state files
+- Android `adb`, connected devices / emulators, and UiAutomator2 artifacts
+- iOS simulators / devices, signing / `iproxy`, and WebDriverAgent discovery
+- Appium server URLs, capabilities, provider helper config, managed app paths, and tunnel binaries
+
+It exits `0` when only passing checks or warnings remain, and exits non-zero when blocking failures are present.
+
+```bash
+# Check the default config
+spana doctor
+
+# Verify an Appium Android setup
+spana doctor --platform android --driver appium --json
+```
+
+Use `--json` when you want a versioned machine-readable readiness report:
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "doctor",
+  "ok": true,
+  "data": {
+    "ready": false,
+    "executionMode": "appium",
+    "platforms": ["android"],
+    "summary": {
+      "passCount": 4,
+      "warningCount": 1,
+      "failCount": 1
+    },
+    "checks": [
+      {
+        "id": "appium-provider-url",
+        "category": "appium",
+        "status": "fail",
+        "summary": "BrowserStack helper config requires a BrowserStack Appium URL.",
+        "suggestedFix": "Switch `execution.appium.serverUrl` to BrowserStack or remove `execution.appium.browserstack`.",
+        "docsUrl": "https://wezter96.github.io/spana/guides/cloud-providers/"
+      }
+    ]
+  }
+}
+```
+
+## `spana init-flow`
+
+Generate a starter `.flow.ts` file without reopening the interactive project wizard.
+
+```bash
+spana init-flow <name> [--platform <platforms>] [--tag <tags>] [--preset <preset>] [--output <path>]
+```
+
+Use `init-flow` when you want a quick authoring stub for a new scenario:
+
+```bash
+spana init-flow "Login smoke" --platform web,android --tag auth --preset smoke
+```
+
+Supported flow stub presets:
+
+- `smoke` — visible assertion starter with a default `smoke` tag
+- `auth` — login-shaped placeholder steps
+- `blank` — minimal shell with a TODO body
+
+By default Spana writes the file to `flows/<slug>.flow.ts`.
+
+## `spana version`
+
+Print the installed spana version and exit.
+
+```bash
+spana version
+# spana 0.1.0
+```
+
+## Exit codes
+
+| Code | Meaning                      |
+| ---- | ---------------------------- |
+| `0`  | All flows passed             |
+| `1`  | One or more flows failed     |
+| `2`  | Configuration or setup error |
+
+---
+
+## Agent Commands
+
+spana includes machine-friendly commands for AI agent-driven test authoring. They let an agent verify readiness, inspect the current UI state, generate flows, and validate them without guessing about the environment first.
+
+## `spana doctor`
+
+Check whether the current environment is ready before an agent starts generating or running flows.
+
+```bash
+spana doctor [--platform <platforms>] [--driver <local|appium>] [--json]
+```
+
+When an agent is about to run flows, `spana doctor --json` is the fastest way to answer questions like:
+
+- Is the config loadable?
+- Which platforms will Spana actually target?
+- Is `adb` available?
+- Is WebDriverAgent discoverable?
+- Do the Appium URL and provider helper config match?
+- Are required app bundles or storage-state files missing?
+
+The JSON response is versioned and includes per-check `id`, `status`, `summary`, `suggestedFix`, and `docsUrl` fields:
+
+```bash
+spana doctor --platform android --driver appium --json
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "doctor",
+  "ok": true,
+  "data": {
+    "ready": false,
+    "summary": {
+      "failCount": 1
+    },
+    "checks": [
+      {
+        "id": "appium-provider-url",
+        "status": "fail",
+        "summary": "BrowserStack helper config requires a BrowserStack Appium URL."
+      }
+    ]
+  }
+}
+```
+
+Use `doctor` first in agent loops so the model can fix environment or config issues before spending time on selectors, hierarchy dumps, or failed test runs.
+
+## `spana selectors`
+
+List all actionable elements on screen with suggested selectors.
+
+```bash
+spana selectors --platform <platform> [--pretty] [--json]
+```
+
+Output is a JSON array. Each entry describes a visible, interactable element and includes the best-priority selector to use in a flow file.
+
+```bash
+spana selectors --platform android
+```
+
+```json
+[
+  {
+    "testID": "login-button",
+    "text": "Sign In",
+    "accessibilityLabel": null,
+    "bounds": { "x": 24, "y": 480, "width": 328, "height": 48 },
+    "suggestedSelector": { "testID": "login-button" }
+  },
+  {
+    "testID": null,
+    "text": "Forgot password?",
+    "accessibilityLabel": null,
+    "bounds": { "x": 120, "y": 544, "width": 136, "height": 20 },
+    "suggestedSelector": { "text": "Forgot password?" }
+  }
+]
+```
+
+`suggestedSelector` follows priority: `testID` > `accessibilityLabel` > `text`. Feed this output directly to an agent to choose which element to interact with.
+
+For a versioned machine envelope, add `--json`. This keeps the legacy raw-array output unchanged by default while giving agents a stable top-level contract:
+
+```bash
+spana selectors --platform android --json
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "selectors",
+  "ok": true,
+  "data": {
+    "platform": "android",
+    "elements": [
+      {
+        "testID": "login-button",
+        "text": "Sign In",
+        "suggestedSelector": { "testID": "login-button" }
+      }
+    ]
+  }
+}
+```
+
+### Filtering with `jq`
+
+```bash
+# Elements that have a testID
+spana selectors --platform web | jq '.[] | select(.testID != null)'
+
+# Just the suggested selectors
+spana selectors --platform ios | jq '[.[].suggestedSelector]'
+```
+
+## `spana hierarchy`
+
+Dump the full UI element tree as structured JSON.
+
+```bash
+spana hierarchy --platform <platform> [--pretty] [--json]
+```
+
+Returns the complete accessibility tree for the current screen state — every element, including non-interactable ones.
+
+```bash
+spana hierarchy --platform web --pretty
+```
+
+```json
+{
+  "role": "application",
+  "children": [
+    {
+      "role": "main",
+      "children": [
+        {
+          "role": "textbox",
+          "testID": "email-input",
+          "text": "",
+          "bounds": { "x": 24, "y": 200, "width": 328, "height": 44 }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Use `spana hierarchy` when `spana selectors` does not include the element you need, or to understand the structural relationship between elements.
+
+Add `--json` when you want a stable versioned envelope around the hierarchy root instead of the legacy raw tree payload.
+
+## `spana validate`
+
+Validate flow files without a device connection. Catches common mistakes before running tests.
+
+```bash
+spana validate [path] [--json]
+```
+
+`path` defaults to `flowDir`. Exits `0` if all flows are valid, non-zero if any errors found. Does not execute the flows.
+
+**Checks performed:**
+
+- Flow files have a valid default export with `name` and `fn`
+- No duplicate flow names across files
+- Platform values are valid (`web`, `android`, `ios` only)
+- Flow directory exists and contains flow files
+
+```bash
+spana validate
+# ✓ 5 flow(s) valid
+
+spana validate flows/
+# ✗ flows/login.flow.ts: Duplicate flow name "Login test" (also in flows/auth.flow.ts)
+# ✗ flows/broken.flow.ts: Invalid platform "windows" — must be web, android, or ios
+# ✗ flows/empty.flow.ts: export default is not a FlowDefinition
+```
+
+Use `spana validate` in CI preflight or as part of an agent loop before committing generated flow files.
+
+When an agent is consuming validation output directly, prefer `--json` so it can key off `schemaVersion`, `valid`, issue `code`s, and structured `suggestedFix` / `docsUrl` metadata instead of parsing human lines.
+
+## Agent workflow
+
+The typical agent-driven authoring loop:
+
+```bash
+# 0. Check that the target environment is actually ready
+spana doctor --platform android --json
+
+# 1. Navigate the app to the screen you want to test, then discover elements
+spana selectors --platform android | jq '.[] | select(.testID != null)'
+
+# 2. Generate a starter flow file
+spana init-flow "Login smoke" --platform android --preset auth
+
+# 3. Fill in selectors/assertions (done by the agent)
+
+# 4. Validate the flow without a device
+spana validate flows/my-new-flow.ts
+
+# 5. Run the flow and capture JSON results
+spana test flows/my-new-flow.ts --reporter json 2>&1
+
+# 6. Read errors from JSON output and iterate
+spana test --last-failed --watch --reporter json 2>&1 | jq '.results[] | select(.status == "failed")'
+```
+
+This loop requires no manual interaction. `spana init-flow` gives the agent a scaffold instead of starting from a blank file, `spana validate` catches structural errors before device time is spent, and `--last-failed` / `--watch` keep the rerun loop tight after the first failure. `--reporter json` gives the agent machine-readable pass/fail data with error messages.
+
+```mermaid
+graph LR
+    A[Agent] -->|spana selectors| B[Discover elements]
+    B -->|generate code| C[Write flow.ts]
+    C -->|spana validate| D[Validate schema]
+    D -->|spana test --reporter json| E[Execute on device]
+    E -->|read JSON errors| F[Fix and retry]
+    F --> C
+```
+
+## Agent skill file
+
+spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spana-testing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
+
+**To use it with your AI agent:**
+
+1. Copy the skill file into your project:
+
+   ```bash
+   mkdir -p .agents/skills/spana-testing
+   cp node_modules/spana-test/.agents/skills/spana-testing/SKILL.md .agents/skills/spana-testing/
+   ```
+
+2. Or reference it in your `CLAUDE.md` / `AGENTS.md`:
+
+   ```markdown
+   ## Testing
+
+   For writing E2E tests, follow the spana testing skill at:
+   .agents/skills/spana-testing/SKILL.md
+   ```
+
+3. Or point your agent to it directly:
+   ```
+   Read .agents/skills/spana-testing/SKILL.md and use it to write a test for the login flow.
+   ```
+
+The skill file is self-contained — it includes the full API reference, workflow loop, and common patterns so the agent can start writing tests immediately.
+
+---
+
+## Init
+
+The `spana init` command generates a starter config file and example flow through an interactive wizard. When you already know the target shape, you can skip the prompts with a preset.
+
+## Usage
+
+```bash
+spana init
+```
+
+```bash
+spana init --preset browserstack
+```
+
+### Options
+
+| Flag               | Description                                                           |
+| ------------------ | --------------------------------------------------------------------- |
+| `--force`          | Overwrite existing `spana.config.ts` if present                       |
+| `--preset <name>`  | Use a non-interactive preset: `local-web`, `local-react-native`, `browserstack`, `saucelabs` |
+
+## Presets
+
+Presets generate a config and example flow immediately:
+
+- `local-web`
+- `local-react-native`
+- `browserstack`
+- `saucelabs`
+
+Use them when you want a clean starting point for a common setup without answering the interactive questions.
+
+## What it does
+
+The wizard asks:
+
+1. **Which platforms to test** -- web (Playwright), Android (UiAutomator2), iOS (WebDriverAgent)
+2. **App details** per platform:
+   - Web: app URL (default `http://localhost:3000`)
+   - Android: package name (default `com.example.myapp`)
+   - iOS: bundle ID (default `com.example.myapp`)
+
+Then it creates:
+
+| File                    | Description                                      |
+| ----------------------- | ------------------------------------------------ |
+| `spana.config.ts`       | Config file with your platform and app settings  |
+| `flows/example.flow.ts` | Starter flow with a smoke test you can customize |
+
+## `spana init-flow`
+
+To generate an additional starter flow later, use:
+
+```bash
+spana init-flow "Checkout smoke" --platform web --preset smoke
+```
+
+This writes a new `.flow.ts` file under `flows/` with a preset body (`smoke`, `auth`, or `blank`) and optional platform/tag config.
+
+## Generated config
+
+```ts title="spana.config.ts"
+import { defineConfig } from "spana-test";
+
+export default defineConfig({
+  apps: {
+    web: { url: "http://localhost:3000" },
+    android: { packageName: "com.example.myapp" },
+  },
+  platforms: ["web", "android"],
+  flowDir: "./flows",
+  reporters: ["console"],
+  defaults: {
+    waitTimeout: 5_000,
+  },
+});
+```
+
+## Generated flow
+
+```ts title="flows/example.flow.ts"
+import { flow } from "spana-test";
+
+export default flow(
+  "Example - app loads successfully",
+  { tags: ["smoke"], platforms: ["web", "android"] },
+  async ({ app, expect }) => {
+    await expect({ text: "Hello" }).toBeVisible();
+  },
+);
+```
+
+## Next steps
+
+After running `spana init`:
+
+1. Install spana: `npm install -D spana-test`
+2. Add `spana-output` to your `.gitignore`
+3. Edit `flows/example.flow.ts` with selectors from your app
+4. Discover selectors: `spana selectors`
+5. Run tests: `spana test`
+
+---
+
+## Studio
+
+Spana Studio is a local web interface that bundles an **Element Inspector** and a **Test Runner Dashboard** into a single tool. It lets you visually inspect device screens, explore element trees, and run test flows with real-time feedback — all from your browser.
+
+## Launching Studio
+
+```bash
+spana studio [options]
+```
+
+### Options
+
+| Flag              | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `--port <number>` | Port to serve on (default: `4400`)                 |
+| `--no-open`       | Don't auto-open the browser                        |
+| `--config <path>` | Path to config file (default: `./spana.config.ts`) |
+
+```bash
+# Start on the default port and open the browser
+spana studio
+
+# Use a custom port, skip auto-open
+spana studio --port 4000 --no-open
+
+# Point at a non-default config
+spana studio --config ./config/spana.staging.ts
+```
+
+## Element Inspector
+
+![Studio Inspector](../../../assets/studio-inspector.png)
+
+Connect to a running device or simulator, then interact with a live screenshot of the current screen.
+
+- **Tap to inspect** — click any element in the screenshot to see its properties (testID, text, accessibility label, bounds).
+- **Element tree** — browse the full hierarchy in a sidebar tree view.
+- **Copy selectors** — one-click copy of the best selector for any element, ready to paste into a flow file.
+
+This gives you the same information as `spana selectors` and `spana hierarchy`, but in a visual, point-and-click workflow.
+
+## Test Runner Dashboard
+
+![Studio Test Runner](../../../assets/studio-runner.png)
+
+Discover and run flow files without leaving the browser.
+
+- **Flow discovery** — automatically lists all flows found under your configured `flowDir`.
+- **Device selector** — pick which device, emulator, or simulator to run tests on from a dropdown in the toolbar.
+- **Run tests** — execute one or many flows with real-time progress updates.
+- **Step details** — expand any step to see its status, duration, and captured screenshot.
+
+### Capture toggles
+
+Two checkboxes control screenshot capture during a run:
+
+| Toggle            | Behavior                                                   |
+| ----------------- | ---------------------------------------------------------- |
+| **Screenshots**   | Capture a screenshot on each successful step               |
+| **Step captures** | Capture per-step screenshots (useful for visual debugging) |
+
+### Session persistence
+
+Test results persist across tab switches within the same Studio session. You can jump between the Inspector and the Runner without losing run history or step details.
+
+## How it works
+
+Studio is an embedded React frontend served directly from the CLI binary — no separate install required. The frontend communicates with the CLI backend through an oRPC API layer, giving you type-safe requests between the browser and device connections.
+
+## Development
+
+If you're working on Studio itself, run the Vite dev server with hot reload:
+
+```bash
+cd apps/studio
+bun run dev
+```
+
+The dev frontend connects directly to the CLI backend at `http://localhost:4400`.
+
+---
+
+## Reporters
+
+Spana ships five reporters. Use one or combine several to get both human-readable output and machine-readable artifacts from the same run.
+
+## Enabling reporters
+
+**CLI flag** (one or more):
+
+```bash
+spana test --reporter console --reporter html
+```
+
+**Config file** (`spana.config.ts`):
+
+```ts
+export default defineConfig({
+  reporters: ["console", "html"],
+});
+```
+
+Multiple reporters run simultaneously. Each receives the same flow results as they complete.
+
+---
+
+## Console (default)
+
+Human-readable terminal output with pass/fail symbols, per-platform summaries, and failure details.
+
+**Enable:** active by default. Explicitly: `--reporter console`.
+
+**Output:** stdout.
+
+```
+  ✓ [web] login flow (1243ms)
+  ✗ [android] login flow (3891ms)
+
+web (Playwright)              ✓  1/1 passed (1.2s)
+android (UiAutomator2)        ✗  0/1 passed (3.9s)
+
+--- Failures ---
+✗ [android] login flow
+  Timed out waiting for selector "welcome-text"
+
+1/2 passed, 1 failed (3.9s)
+```
+
+Flaky tests (passed on retry) are marked with `~` and show the attempt number. Scenario steps (Given/When/Then) are printed inline when using Gherkin-style flows.
+
+**When to use:** local development and quick CI feedback.
+
+---
+
+## JSON
+
+Streams newline-delimited JSON events to stdout. Each line is a self-contained JSON object with a versioned machine-readable schema.
+
+**Enable:** `--reporter json`
+
+**Output:** stdout (one JSON object per line).
+
+Every event includes `schemaVersion: 1`.
+
+Events emitted:
+
+| Event         | When                                           |
+| ------------- | ---------------------------------------------- |
+| `flowPass`    | A flow finishes successfully                   |
+| `flowFail`    | A flow fails                                   |
+| `runComplete` | All flows have finished; includes full summary |
+
+```json
+{"schemaVersion":1,"event":"flowPass","name":"login flow","platform":"web","status":"passed","durationMs":1243}
+{"schemaVersion":1,"event":"flowFail","name":"login flow","platform":"android","status":"failed","durationMs":3891,"error":{"message":"Timed out","category":"timeout","errorCode":"TIMEOUT","suggestedFix":"Increase defaults.waitTimeout or flow timeout.","docsUrl":"https://wezter96.github.io/spana/writing-tests/assertions/"}}
+{"schemaVersion":1,"event":"runComplete","total":2,"passed":1,"failed":1,"skipped":0,"flaky":0,"durationMs":3891}
+```
+
+Failure events include structured error metadata (`category`, `errorCode`, `suggestedFix`, `docsUrl`) so agents and external tools can branch on stable fields instead of scraping free-form suggestion text. `runComplete.workerStats`, when present, is serialized as an array of `{ workerName, flowCount, totalMs }` objects.
+
+**When to use:** piping results into other tools, custom dashboards, agents, or CI scripts that parse structured output.
+
+---
+
+## JUnit
+
+Generates a JUnit XML file compatible with Jenkins, GitHub Actions, GitLab CI, and most CI systems that consume test reports.
+
+**Enable:** `--reporter junit`
+
+**Output:** `<outputDir>/junit-report.xml` (default `./spana-output/junit-report.xml`).
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="spana" tests="2" failures="1" time="3.891">
+  <testsuite name="web" tests="1" failures="0" skipped="0" time="1.243">
+    <testcase name="login flow" classname="spana.web" time="1.243"/>
+  </testsuite>
+  <testsuite name="android" tests="1" failures="1" skipped="0" time="3.891">
+    <testcase name="login flow" classname="spana.android" time="3.891">
+      <failure message="Timed out waiting for selector">...</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
+```
+
+Results are grouped by platform into `<testsuite>` elements. Scenario steps, driver steps, and attachments are included in `<system-out>` when present.
+
+**When to use:** CI pipelines that display JUnit test results (GitHub Actions `test-reporter`, Jenkins JUnit plugin, GitLab test reports).
+
+---
+
+## HTML
+
+![HTML Report](../../../assets/html-report.png)
+
+Self-contained HTML report with a dark theme, responsive layout, and embedded screenshots (base64-inlined so no external files are needed).
+
+**Enable:** `--reporter html`
+
+**Output:** `<outputDir>/report.html` (default `./spana-output/report.html`).
+
+The report includes:
+
+- **Summary cards** -- passed/total, total time, platform count.
+- **Per-platform sections** -- status badge, duration, driver and scenario steps.
+- **Step screenshots** -- inline images from each step that captured a screenshot.
+- **Final-state screenshots** -- side-by-side comparison of the final screen on each platform.
+- **Failure details** -- error messages displayed inline.
+
+**When to use:** sharing results with teammates, reviewing visual state after a run, or archiving test evidence.
+
+---
+
+## Allure
+
+Generates [Allure](https://allurereport.org/) result files for rich CI dashboards with history, trends, and categorized failures.
+
+**Enable:** `--reporter allure`
+
+**Output:** `allure-results/` directory (default), containing `*-result.json` files and an `environment.properties` file.
+
+```bash
+# Run tests with Allure reporter
+spana test --reporter console,allure
+
+# Generate and open the Allure report
+npx allure generate allure-results --clean -o allure-report
+npx allure open allure-report
+```
+
+The reporter produces:
+
+- **Result files** — one JSON file per flow with UUID, history ID, labels, steps, and timing
+- **Attachments** — screenshots and hierarchy dumps copied into the output directory
+- **Environment properties** — platform, framework name, pass/fail counts
+- **Flaky detection** — tests that pass on retry are tagged as `flaky` with attempt count
+- **Step mapping** — spana steps (tap, assertVisible, etc.) map to Allure test steps with status and duration
+
+**When to use:** CI dashboards that support Allure (Jenkins Allure Plugin, GitHub Actions with `allure-report` action, GitLab with Allure integration).
+
+---
+
+## Combining reporters
+
+A common setup for CI:
+
+```ts
+export default defineConfig({
+  reporters: ["console", "junit", "html"],
+});
+```
+
+This gives you live terminal feedback, a JUnit file for CI test-result ingestion, and an HTML report to upload as a build artifact.
+
+---
+
+## Custom reporters
+
+Need a reporter that isn't built in? See [Custom Reporters](/reference/custom-reporters/) to learn how to write your own using spana's `Reporter` interface.
+
+---
+
+## Custom Reporters
+
+spana's reporter API lets you hook into the test lifecycle and process results however you need — post to Slack, push metrics to Datadog, write custom file formats, or integrate with internal dashboards.
+
+## The Reporter interface
+
+A reporter is an object with optional lifecycle hooks:
+
+```ts
+import type { Reporter, FlowResult, RunSummary } from "spana";
+
+const myReporter: Reporter = {
+  onFlowStart(name, platform, workerName) {
+    // Called when a flow begins execution
+  },
+
+  onFlowPass(result: FlowResult) {
+    // Called when a flow passes
+  },
+
+  onFlowFail(result: FlowResult) {
+    // Called when a flow fails (after all retries)
+  },
+
+  onRunComplete(summary: RunSummary) {
+    // Called once after all flows finish
+  },
+};
+
+export default myReporter;
+```
+
+All hooks except `onRunComplete` are optional.
+
+## Registering a custom reporter
+
+Add the module path to your `reporters` array in `spana.config.ts`:
+
+```ts
+import { defineConfig } from "spana";
+
+export default defineConfig({
+  reporters: [
+    "console", // built-in
+    "./reporters/slack.ts", // your custom reporter
+  ],
+});
+```
+
+Paths are resolved relative to your config file. Absolute paths also work.
+
+## Factory pattern
+
+If your reporter needs configuration, export a factory function instead of a plain object:
+
+```ts
+import type { Reporter } from "spana";
+
+export default function createSlackReporter(options: { outputDir: string }): Reporter {
+  return {
+    onFlowFail(result) {
+      // Post to Slack webhook
+    },
+    onRunComplete(summary) {
+      console.log(`Results saved to ${options.outputDir}`);
+    },
+  };
+}
+```
+
+spana calls factory functions with `{ outputDir }` automatically.
+
+## Available types
+
+Import these from `"spana"` for full type safety:
+
+| Type              | Description                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `Reporter`        | The reporter interface                                                                |
+| `FlowResult`      | Result of a single flow (name, platform, status, duration, error, steps, attachments) |
+| `RunSummary`      | Aggregate summary (total, passed, failed, skipped, flaky, duration, all results)      |
+| `StepResult`      | Individual step within a flow (command, selector, status, duration)                   |
+| `FlowError`       | Error details with category and suggestion                                            |
+| `FailureCategory` | Error classification (element-not-found, timeout, etc.)                               |
+| `Attachment`      | Screenshot or artifact reference (name, contentType, path)                            |
+| `Platform`        | `"web" \| "android" \| "ios"`                                                         |
+
+## Example: Webhook reporter
+
+A minimal reporter that posts failures to an HTTP webhook:
+
+```ts
+import type { Reporter, FlowResult } from "spana";
+
+const webhookReporter: Reporter = {
+  async onFlowFail(result: FlowResult) {
+    await fetch("https://hooks.example.com/test-failures", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: result.name,
+        platform: result.platform,
+        error: result.error?.message,
+        duration: result.durationMs,
+      }),
+    });
+  },
+
+  onRunComplete(summary) {
+    // Optional: post summary
+  },
+};
+
+export default webhookReporter;
+```
+
+## Example: CSV reporter
+
+```ts
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Reporter } from "spana";
+
+export default function createCsvReporter(options: { outputDir: string }): Reporter {
+  return {
+    onRunComplete(summary) {
+      const header = "name,platform,status,durationMs,error\n";
+      const rows = summary.results
+        .map((r) => `${r.name},${r.platform},${r.status},${r.durationMs},${r.error?.message ?? ""}`)
+        .join("\n");
+      writeFileSync(join(options.outputDir, "results.csv"), header + rows);
+    },
+  };
+}
+```
+
+---
+
+## Agent API
+
+The `spana-test/agent` subpath export provides a programmatic API for connecting to devices and controlling apps outside of the flow runner. Use it to build custom automation scripts, AI agents, or integrations.
+
+## Installation
+
+The agent API is included in the `spana-test` package — no extra install needed.
+
+```ts
+import { connect } from "spana-test/agent";
+```
+
+## Connecting to a device
+
+```ts
+import { connect } from "spana-test/agent";
+
+const session = await connect({
+  platform: "web",
+  baseUrl: "http://localhost:3000",
+});
+
+// Interact with the app
+await session.tap({ testID: "login-button" });
+await session.inputText("user@example.com");
+
+// Read the UI hierarchy
+const root = await session.hierarchy();
+
+// Get suggested selectors for visible elements
+const selectors = await session.selectors();
+
+// Disconnect when done
+await session.disconnect();
+```
+
+## `ConnectOptions`
+
+```ts
+interface ConnectOptions {
+  platform: "web" | "android" | "ios";
+  device?: string; // device ID (from `spana devices`)
+  baseUrl?: string; // web: URL to navigate to
+  packageName?: string; // android: app package name
+  bundleId?: string; // ios: app bundle identifier
+  headless?: boolean; // web: run headless (default: true)
+}
+```
+
+| Option        | Platform | Description                                    |
+| ------------- | -------- | ---------------------------------------------- |
+| `platform`    | all      | Target platform (required)                     |
+| `device`      | all      | Target a specific device by ID                 |
+| `baseUrl`     | web      | URL to navigate to on launch                   |
+| `packageName` | android  | Android package name (e.g. `com.example.app`)  |
+| `bundleId`    | ios      | iOS bundle identifier (e.g. `com.example.app`) |
+| `headless`    | web      | Run browser in headless mode (default: `true`) |
+
+## Session methods
+
+### Touch actions
+
+| Method        | Signature                                              | Description          |
+| ------------- | ------------------------------------------------------ | -------------------- |
+| `tap`         | `(selector: ExtendedSelector) => Promise<void>`        | Tap an element       |
+| `tapXY`       | `(x: number, y: number) => Promise<void>`              | Tap at coordinates   |
+| `doubleTap`   | `(selector: ExtendedSelector) => Promise<void>`        | Double-tap           |
+| `longPress`   | `(selector: ExtendedSelector, opts?) => Promise<void>` | Long-press           |
+| `longPressXY` | `(x, y, opts?) => Promise<void>`                       | Long-press at coords |
+
+### Text input
+
+| Method            | Signature                         | Description                                      |
+| ----------------- | --------------------------------- | ------------------------------------------------ |
+| `inputText`       | `(text: string) => Promise<void>` | Type text                                        |
+| `pressKey`        | `(key: string) => Promise<void>`  | Press a key                                      |
+| `hideKeyboard`    | `() => Promise<void>`             | Dismiss keyboard                                 |
+| `dismissKeyboard` | `(opts?) => Promise<void>`        | Use a platform-aware keyboard dismissal strategy |
+
+### Gestures
+
+| Method               | Signature                             | Description                                    |
+| -------------------- | ------------------------------------- | ---------------------------------------------- |
+| `swipe`              | `(direction, opts?) => Promise<void>` | Swipe gesture                                  |
+| `scroll`             | `(direction) => Promise<void>`        | Scroll gesture                                 |
+| `scrollUntilVisible` | `(selector, opts?) => Promise<void>`  | Scroll until a target becomes visible          |
+| `backUntilVisible`   | `(selector, opts?) => Promise<void>`  | Use system back until a target becomes visible |
+
+### App lifecycle
+
+| Method       | Signature                                 | Description        |
+| ------------ | ----------------------------------------- | ------------------ |
+| `launch`     | `(opts?: LaunchOptions) => Promise<void>` | Launch the app     |
+| `stop`       | `() => Promise<void>`                     | Stop the app       |
+| `kill`       | `() => Promise<void>`                     | Force-kill the app |
+| `clearState` | `() => Promise<void>`                     | Clear app data     |
+| `openLink`   | `(url: string) => Promise<void>`          | Open a URL         |
+| `back`       | `() => Promise<void>`                     | Press back         |
+
+### Queries
+
+| Method       | Signature                            | Description                                      |
+| ------------ | ------------------------------------ | ------------------------------------------------ |
+| `hierarchy`  | `() => Promise<Element>`             | Get the full UI element tree                     |
+| `selectors`  | `() => Promise<SuggestedSelector[]>` | Get suggested selectors for all visible elements |
+| `screenshot` | `() => Promise<Uint8Array>`          | Capture a screenshot                             |
+| `evaluate`   | `<T>(fn, ...args) => Promise<T>`     | Run JS in browser context (web only)             |
+
+### Browser helpers (web)
+
+| Method                 | Signature                                              | Description                                 |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`                 | Fulfill matching requests with mocked data  |
+| `blockNetwork`         | `(matcher) => Promise<void>`                           | Abort matching requests                     |
+| `clearNetworkMocks`    | `() => Promise<void>`                                  | Remove active route mocks/blocks            |
+| `setNetworkConditions` | `(conditions) => Promise<void>`                        | Toggle offline mode / Chromium throttling   |
+| `saveCookies`          | `(path) => Promise<void>`                              | Save cookies to a JSON file                 |
+| `loadCookies`          | `(path) => Promise<void>`                              | Load cookies from a JSON file               |
+| `saveAuthState`        | `(path) => Promise<void>`                              | Save Playwright storage state               |
+| `loadAuthState`        | `(path) => Promise<void>`                              | Replace the browser context with auth state |
+| `downloadFile`         | `(path) => Promise<void>`                              | Wait for the next browser download          |
+| `uploadFile`           | `(selector, path) => Promise<void>`                    | Set files on a file input                   |
+| `newTab`               | `(url?) => Promise<string>`                            | Open a new browser tab                      |
+| `switchToTab`          | `(index) => Promise<void>`                             | Focus a tab by index                        |
+| `closeTab`             | `() => Promise<void>`                                  | Close the current tab                       |
+| `getTabIds`            | `() => Promise<string[]>`                              | List open tab IDs                           |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`      | Read captured browser console logs          |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`     | Read uncaught JavaScript errors             |
+| `getHAR`               | `() => Promise<BrowserHAR>`                            | Read the current flow's HAR data            |
+
+These helpers are only available on local Playwright web sessions. `uploadFile()` supports simple `testID`, `text`, and `accessibilityLabel` selectors. When artifact capture is enabled, failed web flows also include console logs, JavaScript errors, and HAR attachments.
+
+### Lifecycle
+
+| Method       | Signature             | Description                           |
+| ------------ | --------------------- | ------------------------------------- |
+| `disconnect` | `() => Promise<void>` | Clean up driver and release resources |
+
+## Flow validation
+
+The agent export also includes `validateFlows` for programmatic flow validation:
+
+```ts
+import { validateFlows } from "spana-test/agent";
+
+const errors = await validateFlows("./flows");
+if (errors.length > 0) {
+  console.error("Invalid flows:", errors);
+}
+```
+
+## Platform examples
+
+### Web
+
+```ts
+const session = await connect({
+  platform: "web",
+  baseUrl: "http://localhost:3000",
+  headless: false, // show the browser
+});
+```
+
+### Android
+
+```ts
+const session = await connect({
+  platform: "android",
+  packageName: "com.example.app",
+  device: "emulator-5554", // optional: target specific device
+});
+```
+
+### iOS
+
+```ts
+const session = await connect({
+  platform: "ios",
+  bundleId: "com.example.app",
+});
+```
+
+---
+
+## API Reference
+
+## app methods
+
+All methods return `Promise<void>` unless noted.
+
+### Interaction
+
+| Method | Signature | Description |
+|---|---|---|
+| `tap` | `(selector, opts?)` | Tap an element matching the selector |
+| `tapXY` | `(x, y)` | Tap at absolute screen coordinates |
+| `doubleTap` | `(selector, opts?)` | Double-tap an element |
+| `longPress` | `(selector, opts?)` | Long-press an element |
+| `longPressXY` | `(x, y, opts?)` | Long-press at coordinates |
+| `inputText` | `(text)` | Type text into the focused element |
+| `pressKey` | `(key)` | Press a named key |
+| `hideKeyboard` | `()` | Dismiss the software keyboard |
+| `swipe` | `(direction, opts?)` | Swipe in a direction |
+| `scroll` | `(direction)` | Scroll in a direction |
+
+Direction: `"up" | "down" | "left" | "right"`
+
+### App lifecycle
+
+| Method | Signature | Description |
+|---|---|---|
+| `launch` | `(opts?)` | Launch the app |
+| `stop` | `()` | Stop the app |
+| `kill` | `()` | Force-kill the app |
+| `clearState` | `()` | Clear app data/state |
+| `openLink` | `(url)` | Open a URL or deep link |
+| `back` | `()` | Press the back button (Android) |
+
+### Utilities
+
+| Method | Signature | Description |
+|---|---|---|
+| `takeScreenshot` | `()` | `Promise<Uint8Array>` — capture the current screen |
+
+## expect methods
+
+```ts
+expect(selector: Selector): PromiseExpectation
+```
+
+| Method | Signature | Description |
+|---|---|---|
+| `toBeVisible` | `(opts?)` | Assert element is present and visible |
+| `toBeHidden` | `(opts?)` | Assert element is absent or not visible |
+| `toHaveText` | `(expected, opts?)` | Assert element text contains `expected` |
+
+## Selectors
+
+| Type | Example | Notes |
+|---|---|---|
+| `string` | `"login-btn"` | Shorthand for `{ testID: "login-btn" }` |
+| `testID` | `{ testID: "login-btn" }` | `data-testid` / `accessibilityIdentifier` / `resource-id` |
+| `text` | `{ text: "Sign In" }` | Visible label, partial match |
+| `accessibilityLabel` | `{ accessibilityLabel: "Close" }` | OS accessibility label |
+| `point` | `{ point: { x: 100, y: 200 } }` | Absolute coordinates, last resort |
+
+## WaitOptions
+
+Accepted by all selector-based `app` methods and all `expect` methods.
+
+```ts
+interface WaitOptions {
+  timeout?:       number;  // ms
+  pollInterval?:  number;  // ms
+  settleTimeout?: number;  // ms
+}
+```
+
+## FlowConfig
+
+```ts
+interface FlowConfig {
+  tags?:       string[];
+  platforms?:  Array<"web" | "android" | "ios">;
+  timeout?:    number;
+  autoLaunch?: boolean;
+}
+```
+
+## defineConfig options
+
+```ts
+interface SpanaConfig {
+  apps?: {
+    web?:     { url: string };
+    android?: { packageName: string };
+    ios?:     { bundleId: string };
+  };
+  platforms?:  Array<"web" | "android" | "ios">;
+  flowDir?:    string;
+  reporters?:  string[];
+  defaults?: {
+    waitTimeout?:   number;
+    pollInterval?:  number;
+    settleTimeout?: number;
+    retries?:       number;
+  };
+  artifacts?: {
+    outputDir?:        string;
+    captureOnFailure?: boolean;
+    captureOnSuccess?: boolean;
+    screenshot?:       boolean;
+    uiHierarchy?:      boolean;
+  };
+  hooks?: {
+    beforeAll?:  (ctx: HookContext) => Promise<void>;
+    beforeEach?: (ctx: HookContext) => Promise<void>;
+    afterEach?:  (ctx: HookContext) => Promise<void>;
+    afterAll?:   (ctx: HookContext) => Promise<void>;
+  };
+}
+```
+
+## CLI flags
+
+| Command | Key flags |
+|---|---|
+| `spana test [path]` | `--platform`, `--tag`, `--grep`, `--reporter`, `--config` |
+| `spana hierarchy` | `--platform`, `--pretty` |
+| `spana selectors` | `--platform`, `--pretty` |
+| `spana validate [path]` | — |
+| `spana devices` | — |
+| `spana version` | — |
+
+---
+
+## Architecture Overview
+
+spana uses a layered architecture where all logic lives in TypeScript on the host machine. Platform drivers are thin HTTP clients with no embedded intelligence.
+
+## High-level architecture
+
+```mermaid
+graph TD
+    A[flow files .flow.ts] --> B[CLI: spana test]
+    B --> C[TestRunner / runner.ts]
+    C --> D[PlatformOrchestrator]
+    D -->|parallel platforms| E1[Web: Playwright CDP]
+    D -->|parallel platforms| E2[Android: UiAutomator2]
+    D -->|parallel platforms| E3[iOS: WebDriverAgent]
+    E1 --> F[Reporter]
+    E2 --> F
+    E3 --> F
+    F --> G1[console]
+    F --> G2[json]
+    F --> G3[junit]
+    F --> G4[html]
+```
+
+Platforms run in parallel. Within each platform, flows run serially. Results are collected and passed to the configured reporter(s).
+
+## Layered architecture
+
+```mermaid
+graph TD
+    subgraph User API
+        A1["flow() — define test"]
+        A2["app — launch, tap, swipe, type"]
+        A3["expect — toBeVisible, toHaveText, toBeHidden"]
+    end
+
+    subgraph Smart Layer [Smart Layer — src/smart/]
+        B1[coordinator.ts — action dispatch]
+        B2[auto-wait.ts — poll until element appears]
+        B3[element-matcher.ts — client-side tree search + centerOf]
+    end
+
+    subgraph Raw Driver [Raw Driver — src/drivers/raw-driver.ts]
+        C[RawDriverService interface]
+        C1[tapAtCoordinate / swipe / inputText]
+        C2[dumpHierarchy — returns raw XML or JSON]
+        C3[launchApp / stopApp / takeScreenshot]
+    end
+
+    subgraph Companion Drivers
+        D1[playwright.ts — CDP via Playwright]
+        D2[uiautomator2/driver.ts — HTTP to APK server]
+        D3[wda/driver.ts — HTTP to XCTest runner]
+    end
+
+    subgraph Devices
+        E1[Browser / Chromium]
+        E2[Android emulator or device]
+        E3[iOS simulator or device]
+    end
+
+    A2 --> B1
+    A3 --> B1
+    B1 --> B2
+    B2 --> C2
+    B2 --> B3
+    B3 --> B1
+    B1 --> C1
+    C --> D1
+    C --> D2
+    C --> D3
+    D1 --> E1
+    D2 --> E2
+    D3 --> E3
+```
+
+The Smart Layer never sees raw coordinates. It resolves selectors to elements, derives center coordinates, then calls the thin `RawDriver` interface. The `RawDriver` knows nothing about selectors.
+
+## Element resolution flow
+
+How `app.tap({ testID: "login" })` executes end-to-end:
+
+```mermaid
+sequenceDiagram
+    participant Flow as flow.ts
+    participant Coord as coordinator.ts
+    participant Wait as auto-wait.ts
+    participant Driver as RawDriverService
+    participant Parser as platform parser
+    participant Companion as companion server
+
+    Flow->>Coord: tap({ testID: "login" })
+    Coord->>Wait: waitForElement(selector)
+    loop poll until found or timeout
+        Wait->>Driver: dumpHierarchy()
+        Driver->>Companion: HTTP GET /source
+        Companion-->>Driver: raw XML / JSON string
+        Driver-->>Wait: RawHierarchy
+        Wait->>Parser: parse(raw) -> Element tree
+        Wait->>Wait: findElement(tree, { testID: "login" })
+    end
+    Wait-->>Coord: Element (with bounds)
+    Coord->>Coord: centerOf(element) -> {x, y}
+    Coord->>Driver: tapAtCoordinate(x, y)
+    Driver->>Companion: HTTP POST /touch/perform
+```
+
+The parser is platform-specific (XML for Android/iOS, JSON for web) but always produces the same unified `Element` tree shape. All matching logic runs client-side in TypeScript.
+
+## Parallel execution
+
+```mermaid
+graph TD
+    subgraph Flow Queue [Shared flow queue]
+        Q1[flow 1]
+        Q2[flow 2]
+        Q3[flow 3]
+        Q4[flow 4]
+        Q5[flow 5]
+    end
+
+    subgraph Workers
+        W1[Worker A — Pixel 7]
+        W2[Worker B — Galaxy S23]
+        W3[Worker C — iPhone 15 sim]
+    end
+
+    Q1 --> W1
+    Q2 --> W2
+    Q3 --> W3
+    Q4 --> W1
+    Q5 --> W2
+
+    W1 --> R[Aggregated Results]
+    W2 --> R
+    W3 --> R
+```
+
+Workers share a single atomic index into the flow array. Because Bun is single-threaded, the increment is naturally safe with no mutex. A faster device finishes sooner and picks up the next flow immediately, draining the queue at the speed of the fastest workers.
+
+- `parallel.ts` — `runParallel()` launches all workers with `Promise.all`, each looping over the queue until exhausted.
+- `orchestrator.ts` — `orchestrate()` runs one worker per platform with all flows for that platform in series, platforms in parallel.
+
+## Agent workflow
+
+```mermaid
+graph LR
+    A[Agent] -->|spana selectors --platform android| B[Discover elements\nJSON list with suggestedSelector]
+    B -->|generate flow code| C[Write flow.ts]
+    C -->|spana validate| D[Validate schema\nno device needed]
+    D -->|spana test --reporter json| E[Execute on device]
+    E -->|read JSON errors| F[Fix and retry]
+    F --> C
+```
+
+`session.ts` backs `spana hierarchy` and `spana selectors`. `Session.selectors()` dumps the element tree, flattens it, and returns only visible elements with a `testID`, `accessibilityLabel`, or `text` — each annotated with the best-priority selector to use in a flow file.
+
+## Monorepo structure
+
+```mermaid
+graph TD
+    Root[spana/]
+
+    Root --> Packages[packages/]
+    Root --> Apps[apps/]
+
+    Packages --> PProvPkg[spana/ — core library and CLI]
+    Packages --> Config[config/ — shared TS/lint config]
+    Packages --> Env[env/ — environment helpers]
+    Packages --> UI[ui/ — shared UI components]
+
+    Apps --> Web[web/ — web app under test]
+    Apps --> Native[native/ — React Native app under test]
+    Apps --> TUI[tui/ — terminal UI]
+    Apps --> Docs[docs/]
+
+    PProvPkg --> Src[src/]
+    Src --> API[api/ — flow, app, expect user API]
+    Src --> Core[core/ — engine, orchestrator, parallel, runner]
+    Src --> Smart[smart/ — coordinator, auto-wait, element-matcher]
+    Src --> Drivers[drivers/ — raw-driver interface + platform impls]
+    Src --> Agent[agent/ — session.ts for agent/CLI inspection]
+    Src --> CLI2[cli/ — CLI entry point]
+    Src --> Device[device/ — ADB, simctl device discovery]
+    Src --> Report[report/ — console, json, junit, html reporters]
+    Src --> Schemas[schemas/ — Element, Selector, DeviceInfo types]
+```
+
+---
+
+## Drivers
+
+All platform interaction in spana flows through the `RawDriverService` interface. Platform-specific drivers implement this interface as thin HTTP clients. No selection logic, no auto-wait, no retry — just raw platform calls.
+
+## RawDriverService interface
+
+```ts
+interface RawDriverService {
+  tapAtCoordinate(x: number, y: number): Effect.Effect<void>;
+  swipe(direction: Direction, opts?: { duration?: number }): Effect.Effect<void>;
+  inputText(text: string): Effect.Effect<void>;
+  pressKey(key: string): Effect.Effect<void>;
+  hideKeyboard(): Effect.Effect<void>;
+  dumpHierarchy(): Effect.Effect<RawHierarchy>;
+  launchApp(appId: string, opts?: LaunchOptions): Effect.Effect<void>;
+  stopApp(appId: string): Effect.Effect<void>;
+  killApp(appId: string): Effect.Effect<void>;
+  clearAppState(appId: string): Effect.Effect<void>;
+  openLink(url: string): Effect.Effect<void>;
+  back(): Effect.Effect<void>;
+  takeScreenshot(): Effect.Effect<Uint8Array>;
+}
+```
+
+The Smart Layer (`coordinator.ts`, `auto-wait.ts`, `element-matcher.ts`) is the only consumer of this interface. Flow authors never interact with it directly.
+
+## Driver architecture
+
+```mermaid
+graph LR
+    subgraph CLI process [CLI process — Bun/TS]
+        RD[RawDriverService]
+    end
+
+    subgraph Android
+        UA2[UiAutomator2 APK server\nport 6790 on device\nADB-forwarded to host]
+    end
+
+    subgraph iOS
+        WDA[WebDriverAgent XCTest\nport 8100+ on simulator\niproxy-forwarded to host]
+    end
+
+    subgraph Web
+        PW[Playwright / Chromium\nCDP in-process]
+    end
+
+    RD -- HTTP --> UA2
+    RD -- HTTP --> WDA
+    RD -. CDP .-> PW
+```
+
+## Web driver (Playwright)
+
+The web driver uses [Playwright](https://playwright.dev)'s CDP API in-process. No separate server is involved.
+
+- Playwright is a dev dependency — no companion binary to install or manage.
+- The driver launches a Chromium instance, navigates to `apps.web.url`, and exposes the page via the `RawDriverService` interface.
+- `dumpHierarchy()` uses Playwright's accessibility tree snapshot and returns it as structured JSON.
+- Coordinate taps are issued via `page.mouse.click(x, y)`.
+
+## Android driver (UiAutomator2)
+
+The Android driver is a pure HTTP client that talks to the UiAutomator2 APK server running on the device.
+
+**Setup sequence:**
+
+1. spana pushes the bundled UiAutomator2 APK to the device via ADB if not already installed.
+2. It starts the server on the device (port 6790).
+3. ADB port-forwarding maps device port 6790 to a local port.
+4. The driver sends HTTP requests to `http://localhost:<forwarded-port>`.
+
+**Key endpoints:**
+
+- `GET /source` — returns the full UI hierarchy as XML
+- `POST /touch/perform` — performs a touch action at coordinates
+- `POST /appium/app/launch` — launches the app by package name
+
+The driver parses the XML hierarchy in TypeScript and produces the unified `Element` tree. No XML parsing happens in the APK.
+
+## iOS driver (WebDriverAgent)
+
+The iOS driver is a pure HTTP client that talks to the WebDriverAgent (WDA) XCTest bundle running on the simulator or device.
+
+**Simulator setup:**
+
+1. spana installs the bundled unsigned WDA bundle into the simulator.
+2. It launches WDA (which starts an HTTP server on port 8100+).
+3. The driver sends HTTP requests to `http://localhost:8100`.
+
+**Device setup:**
+
+1. The WDA bundle must be re-signed with a user development certificate via `codesign`.
+2. `iproxy` forwards the device port to a local port.
+3. The driver connects to the forwarded port.
+
+**Key endpoints:**
+
+- `GET /source` — returns the full accessibility tree as JSON or XML
+- `POST /session/:id/element/:id/click` — taps an element
+- `POST /wda/touch/perform` — performs a touch at coordinates
+
+## Hierarchy parsing
+
+Each platform returns a different hierarchy format:
+
+| Platform | Format                               | Parser location                      |
+| -------- | ------------------------------------ | ------------------------------------ |
+| Android  | XML (UiAutomator ViewHierarchy)      | `src/drivers/uiautomator2/parser.ts` |
+| iOS      | JSON (WDA accessibility tree)        | `src/drivers/wda/parser.ts`          |
+| Web      | JSON (Playwright accessibility tree) | `src/drivers/playwright/parser.ts`   |
+
+All parsers output the same unified `Element` type:
+
+```ts
+interface Element {
+  role?: string;
+  testID?: string;
+  text?: string;
+  accessibilityLabel?: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  children: Element[];
+}
+```
+
+`element-matcher.ts` in the Smart Layer searches this tree for the selector — no platform-specific code required.
+
+## Inspiration
+
+The thin HTTP client approach used by the WDA and UiAutomator2 drivers was inspired by [maestro-runner](https://github.com/nicklassuperset/maestro-runner), a Go project that demonstrated how minimal HTTP clients can effectively drive device interaction without heavy abstractions. The web driver follows a similar philosophy, using Playwright's CDP API directly rather than wrapping it in additional layers.
+
+---
+
+## Device Setup
+
+Spana auto-discovers available devices for each platform. This guide covers how to set up and verify your devices before running tests.
+
+## Checking available devices
+
+```bash
+spana devices
+```
+
+This lists all discovered devices across your configured platforms:
+
+```
+Platform   ID                                     Name                        Type
+web        playwright-chromium                     Chromium (Playwright)       browser
+android    emulator-5554                           emulator-5554               emulator
+ios        7338EC82-D2BD-4722-B148-D009FDA64F6E    iPhone 16 (iOS 18.4)        simulator
+```
+
+To check readiness instead of raw discovery, run:
+
+```bash
+spana doctor
+```
+
+`spana doctor` goes further than `spana devices`: it also checks config loading, missing app bundles, `adb`, WebDriverAgent, `iproxy`, Appium URLs, capabilities files, and cloud helper prerequisites.
+
+## Web (Playwright)
+
+Web testing works out of the box -- Playwright manages its own Chromium browser. No setup required.
+
+Spana always shows `playwright-chromium` as an available web device.
+
+## Android
+
+Spana discovers Android devices through `adb` (Android Debug Bridge).
+
+### Prerequisites
+
+- **Android SDK** -- install via [Android Studio](https://developer.android.com/studio) or the command-line tools
+- **ADB** -- included in the Android SDK platform tools
+- **Java 17+** -- required by UiAutomator2
+
+### Using an emulator
+
+```bash
+# List available AVDs
+emulator -list-avds
+
+# Start an emulator
+emulator -avd Pixel_7_API_34 &
+
+# Verify it appears
+adb devices
+# emulator-5554   device
+```
+
+### Using a physical device
+
+1. Enable **Developer Options** on the device
+2. Enable **USB Debugging** in Developer Options
+3. Connect via USB and accept the debugging prompt
+4. Verify: `adb devices` should show your device serial
+
+### Targeting a specific device
+
+When multiple Android devices are connected:
+
+```bash
+# Use the --device flag with the serial from `spana devices`
+spana test --platform android --device emulator-5554
+```
+
+## iOS
+
+Spana discovers booted iOS simulators through Xcode's `simctl`.
+
+### Prerequisites
+
+- **Xcode** -- install from the Mac App Store
+- **Xcode Command Line Tools** -- `xcode-select --install`
+- **A booted simulator** -- spana only discovers simulators that are already running
+
+### Booting a simulator
+
+```bash
+# List all available simulators
+xcrun simctl list devices available
+
+# Boot a simulator
+xcrun simctl boot "iPhone 16"
+
+# Or open the Simulator app
+open -a Simulator
+```
+
+### Targeting a specific simulator
+
+```bash
+# Use the UDID from `spana devices`
+spana test --platform ios --device 7338EC82-D2BD-4722-B148-D009FDA64F6E
+```
+
+### Physical iOS devices
+
+Physical iOS device testing requires additional signing configuration in your config:
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  apps: {
+    ios: {
+      bundleId: "com.example.myapp",
+      signing: {
+        teamId: "YOUR_TEAM_ID",
+        signingId: "Apple Development",
+        provisioningProfile: "path/to/profile.mobileprovision",
+      },
+    },
+  },
+});
+```
+
+## Multi-device testing
+
+Run the same flows on multiple devices simultaneously:
+
+```bash
+# Run on a specific Android and iOS device
+spana test \
+  --platform android,ios \
+  --device emulator-5554 \
+  --device 7338EC82-D2BD-4722-B148-D009FDA64F6E
+```
+
+When no `--device` flag is provided, spana uses the first available device for each platform.
+
+## Troubleshooting
+
+### Android: "no devices found"
+
+- Check `adb devices` shows your device with state `device` (not `offline` or `unauthorized`)
+- Restart ADB: `adb kill-server && adb start-server`
+- For emulators, ensure the emulator is fully booted (wait for the home screen)
+
+### iOS: "no simulators found"
+
+- Spana only discovers **booted** simulators -- make sure one is running
+- Check: `xcrun simctl list devices booted`
+- If empty, boot one: `xcrun simctl boot "iPhone 16"`
+
+### iOS: WebDriverAgent build fails
+
+- Open `WebDriverAgent.xcodeproj` in Xcode and resolve signing issues
+- Ensure your Xcode version matches the simulator runtime
+- Try: `xcodebuild -showsdks` to verify available SDKs
+
+---
+
+## Remote Execution
+
+By default, spana runs tests locally using built-in drivers (Playwright for web, UiAutomator2 for Android, WebDriverAgent for iOS). Switch to **Appium mode** to run against a remote Appium server — useful for cloud device farms, shared test infrastructure, or devices on another machine.
+
+## Enabling Appium mode
+
+### Config file
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  execution: {
+    mode: "appium",
+    appium: {
+      serverUrl: "http://localhost:4723",
+    },
+  },
+});
+```
+
+### CLI flags
+
+```bash
+spana test --appium-url http://localhost:4723
+```
+
+The `--appium-url` flag automatically enables Appium mode.
+
+## How it works
+
+In Appium mode, spana:
+
+1. Connects to the Appium server at the given URL
+2. Creates a session with the resolved [capabilities](#capabilities)
+3. Runs your flows using the Appium WebDriver protocol instead of local drivers
+4. Deletes the session when the run completes
+5. Reports results to the [cloud provider](/spana/guides/cloud-providers) if detected
+
+The same flow files work in both local and Appium mode -- no changes needed.
+
+## Cloud helper config
+
+For BrowserStack and Sauce Labs, Spana can also manage provider-specific helper behavior on top of raw capabilities:
+
+- upload a local app artifact and inject `appium:app`
+- start and stop BrowserStack Local / Sauce Connect
+- fill missing `bstack:options` / `sauce:options` values from config
+
+Raw capabilities still win. Helper config fills missing provider fields and lifecycle, but it does not override explicit `appium:app`, `bstack:options`, or `sauce:options` values you already provided through config, `--caps`, or `--caps-json`.
+
+## Capabilities
+
+Appium sessions are configured through W3C capabilities. Spana merges capabilities from three sources (later overrides earlier):
+
+| Source      | How to set                                      | Example                              |
+| ----------- | ----------------------------------------------- | ------------------------------------ |
+| Config file | `execution.appium.capabilities`                 | `{ "appium:app": "/path/to/app" }`   |
+| JSON file   | `--caps <path>` or `capabilitiesFile` in config | `caps.json`                          |
+| Inline CLI  | `--caps-json '<json>'`                          | `'{"appium:deviceName": "Pixel 7"}'` |
+
+### Android capabilities
+
+```json title="caps-android.json"
+{
+  "appium:automationName": "UiAutomator2",
+  "appium:deviceName": "emulator-5554",
+  "appium:app": "/path/to/app.apk",
+  "appium:appPackage": "com.example.myapp",
+  "appium:appActivity": "com.example.myapp.MainActivity"
+}
+```
+
+Spana automatically sets `platformName: "Android"`.
+
+### iOS capabilities
+
+```json title="caps-ios.json"
+{
+  "appium:automationName": "XCUITest",
+  "appium:deviceName": "iPhone 15",
+  "appium:platformVersion": "18.0",
+  "appium:app": "/path/to/app.ipa",
+  "appium:bundleId": "com.example.myapp"
+}
+```
+
+Spana automatically sets `platformName: "iOS"` and `appium:automationName: "XCUITest"`.
+
+## Local Appium server
+
+To test against a local Appium server:
+
+```bash
+# Install Appium
+npm install -g appium
+
+# Install drivers
+appium driver install uiautomator2
+appium driver install xcuitest
+
+# Start the server
+appium
+
+# Run tests against it
+spana test --appium-url http://localhost:4723
+```
+
+## Config reference
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  execution: {
+    mode: "appium",
+    appium: {
+      // Appium server URL (required in appium mode)
+      serverUrl: "http://localhost:4723",
+
+      // Inline capabilities (lowest priority)
+      capabilities: {
+        "appium:app": "/path/to/app.apk",
+      },
+
+      // Path to a JSON capabilities file (medium priority)
+      capabilitiesFile: "./caps.json",
+
+      // Report results to cloud provider (default: true)
+      reportToProvider: true,
+
+      // BrowserStack helper config
+      browserstack: {
+        app: { path: "./builds/app.apk", customId: "spana-android" },
+        local: { enabled: true, identifier: "spana-local" },
+        options: {
+          projectName: "my-app",
+          buildName: "ci-42",
+        },
+      },
+
+      // Sauce Labs helper config
+      saucelabs: {
+        app: { path: "./builds/app.apk", name: "app.apk" },
+        connect: { enabled: true, tunnelName: "spana-ci" },
+        options: {
+          build: "ci-42",
+          name: "login-flow",
+        },
+      },
+    },
+  },
+});
+```
+
+## CLI flags
+
+| Flag                      | Description                             |
+| ------------------------- | --------------------------------------- |
+| `--appium-url <url>`      | Appium server URL (enables appium mode) |
+| `--caps <path>`           | Path to capabilities JSON file          |
+| `--caps-json <json>`      | Inline capabilities JSON string         |
+| `--no-provider-reporting` | Disable cloud provider result reporting |
+
+## Cloud providers
+
+When the Appium URL points to BrowserStack or Sauce Labs, spana auto-detects the provider and reports test results. See the [Cloud Providers](/spana/guides/cloud-providers) guide for setup details.
+
+---
+
+## Cloud Providers
+
+Spana can run mobile tests on cloud device farms through Appium. It auto-detects BrowserStack and Sauce Labs from the server URL, reports test results back to the provider dashboard, and can manage provider-specific upload/tunnel helpers from config.
+
+## Supported providers
+
+| Provider     | Auto-detected | Result reporting | Managed helpers |
+| ------------ | ------------- | ---------------- | --------------- |
+| BrowserStack | Yes           | Yes              | Yes             |
+| Sauce Labs   | Yes           | Yes              | Yes             |
+| Custom grid  | --            | No               | No              |
+
+## BrowserStack
+
+### 1. Set your credentials
+
+Embed credentials in the Appium server URL:
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  execution: {
+    mode: "appium",
+    appium: {
+      serverUrl: "https://USER:KEY@hub-cloud.browserstack.com/wd/hub",
+    },
+  },
+});
+```
+
+Or pass them on the CLI:
+
+```bash
+spana test --appium-url "https://USER:KEY@hub-cloud.browserstack.com/wd/hub"
+```
+
+### 2. Set capabilities or helper config
+
+Create a `caps.json` file with BrowserStack-specific options:
+
+```json title="caps.json"
+{
+  "bstack:options": {
+    "projectName": "my-app",
+    "buildName": "ci-42",
+    "deviceName": "Samsung Galaxy S23",
+    "os_version": "13.0"
+  },
+  "appium:app": "bs://app-id-from-upload"
+}
+```
+
+Then reference it:
+
+```bash
+spana test --caps caps.json
+```
+
+Or let Spana manage app upload, BrowserStack Local, and default `bstack:options` values from config:
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  apps: {
+    android: {
+      packageName: "com.example.myapp",
+      appPath: "./builds/app.apk",
+    },
+  },
+  execution: {
+    mode: "appium",
+    appium: {
+      serverUrl: "https://USER:KEY@hub-cloud.browserstack.com/wd/hub",
+      browserstack: {
+        app: {
+          customId: "spana-android",
+        },
+        local: {
+          enabled: true,
+          identifier: "spana-local",
+        },
+        options: {
+          projectName: "my-app",
+          buildName: process.env.CI_BUILD_ID ?? "local",
+        },
+      },
+      capabilities: {
+        "appium:deviceName": "Samsung Galaxy S23",
+        "appium:platformVersion": "13.0",
+      },
+    },
+  },
+});
+```
+
+Use `browserstack.app.id` when you already have a `bs://...` reference. If `appium:app` or `bstack:options` are already set in raw capabilities, those explicit values win and helper config only fills what is missing.
+
+### 3. Result reporting
+
+Spana automatically reports pass/fail status to BrowserStack when a test run completes. This updates the session in the BrowserStack dashboard with the test name, status, and failure reason.
+
+Disable reporting with `--no-provider-reporting` or in config:
+
+```ts
+appium: {
+  reportToProvider: false,
+}
+```
+
+When `browserstack.local.enabled` is true, Spana starts and stops BrowserStack Local for the run. Set `browserstack.local.binary` if the `BrowserStackLocal` binary is not on `PATH`, or keep managing the tunnel yourself and pass `bstack:options.local` manually.
+
+## Sauce Labs
+
+### 1. Set your credentials
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  execution: {
+    mode: "appium",
+    appium: {
+      serverUrl: "https://USER:KEY@ondemand.us-west-1.saucelabs.com/wd/hub",
+    },
+  },
+});
+```
+
+For EU data center:
+
+```bash
+spana test --appium-url "https://USER:KEY@ondemand.eu-central-1.saucelabs.com/wd/hub"
+```
+
+### 2. Set capabilities or helper config
+
+```json title="caps.json"
+{
+  "sauce:options": {
+    "name": "login-flow",
+    "build": "ci-42",
+    "appiumVersion": "2.0"
+  },
+  "appium:deviceName": "Google Pixel 7",
+  "appium:platformVersion": "13",
+  "appium:app": "storage:filename=app.apk"
+}
+```
+
+Or let Spana manage Sauce storage uploads, Sauce Connect, and default `sauce:options` values from config:
+
+```ts title="spana.config.ts"
+export default defineConfig({
+  apps: {
+    android: {
+      packageName: "com.example.myapp",
+      appPath: "./builds/app.apk",
+    },
+  },
+  execution: {
+    mode: "appium",
+    appium: {
+      serverUrl: "https://USER:KEY@ondemand.us-west-1.saucelabs.com/wd/hub",
+      saucelabs: {
+        app: {
+          name: "app.apk",
+        },
+        connect: {
+          enabled: true,
+          tunnelName: "spana-ci",
+        },
+        options: {
+          build: process.env.CI_BUILD_ID ?? "local",
+          name: "login-flow",
+        },
+      },
+      capabilities: {
+        "appium:deviceName": "Google Pixel 7",
+        "appium:platformVersion": "13",
+      },
+    },
+  },
+});
+```
+
+Use `saucelabs.app.id` when you already have a Sauce storage reference such as `storage:YOUR_APP_ID`. Explicit `appium:app` and `sauce:options` capability values still override helper-derived defaults.
+
+### 3. Result reporting
+
+Sauce Labs sessions are automatically updated with pass/fail status after each test. Region (US/EU) is detected from the server URL.
+
+When `saucelabs.connect.enabled` is true, Spana starts and stops Sauce Connect for the run. Set `saucelabs.connect.binary` if the `sc` binary is not on `PATH`, or keep managing the tunnel yourself and pass `sauce:options.tunnelName` manually.
+
+## Capability resolution
+
+Capabilities merge from three sources, with later sources overriding earlier ones:
+
+1. **Config file** -- `execution.appium.capabilities` in `spana.config.ts`
+2. **Capabilities file** -- `--caps <path>` flag or `execution.appium.capabilitiesFile` in config
+3. **Inline CLI JSON** -- `--caps-json '{"key": "value"}'`
+
+This lets you keep shared capabilities in config, environment-specific ones in a file, and override individual values from the CLI.
+
+## CI example
+
+```yaml title=".github/workflows/test.yml"
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: |
+          spana test \
+            --platform android \
+            --appium-url "https://${{ secrets.BS_USER }}:${{ secrets.BS_KEY }}@hub-cloud.browserstack.com/wd/hub" \
+            --caps caps.json \
+            --caps-json '{"bstack:options": {"buildName": "${{ github.run_id }}"}}'
+```
+
+---
+
+## CI/CD Integration
+
+spana is designed for CI from the ground up. It ships as a single npm package (`spana-test`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
+
+## Exit codes
+
+| Code | Meaning                      |
+| ---- | ---------------------------- |
+| `0`  | All flows passed             |
+| `1`  | One or more flows failed     |
+| `2`  | Configuration or setup error |
+
+## Reporters for CI
+
+Use the `--reporter` flag to control output format. Multiple reporters can be combined with commas.
+
+```bash
+# Machine-readable results for CI dashboards
+spana test --reporter json,junit
+
+# Human-readable HTML report for review
+spana test --reporter html
+
+# Combined: console output + JUnit + HTML
+spana test --reporter console,junit,html
+```
+
+- **`junit`** — writes a JUnit XML file to `spana-output/junit.xml`, understood by most CI systems.
+- **`json`** — writes structured JSON to stdout, useful for piping to other tools.
+- **`html`** — writes an HTML report to `spana-output/report.html` with screenshots and step details.
+
+## GitHub Actions
+
+### Using the reusable action
+
+Spana provides a composite GitHub Action that handles installation, test execution, and artifact upload:
+
+```yaml
+name: E2E Tests
+
+on: [push, pull_request]
+
+jobs:
+  e2e-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run dev &
+      - run: npx wait-on http://localhost:3000
+
+      - name: Run E2E tests
+        uses: ./.github/actions/spana-test
+        with:
+          platform: web
+          reporters: console,junit,html
+
+  e2e-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+
+      - name: Set up Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          script: echo "Emulator ready"
+
+      - name: Run E2E tests
+        uses: ./.github/actions/spana-test
+        with:
+          platform: android
+          retries: 1
+
+  e2e-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+
+      - name: Boot iOS Simulator
+        run: |
+          xcrun simctl boot "iPhone 15"
+          xcrun simctl bootstatus "iPhone 15" -b
+
+      - name: Run E2E tests
+        uses: ./.github/actions/spana-test
+        with:
+          platform: ios
+```
+
+#### Action inputs
+
+| Input              | Default              | Description                             |
+| ------------------ | -------------------- | --------------------------------------- |
+| `platform`         | `web`                | Platform to test (web, android, ios)    |
+| `reporters`        | `console,junit,html` | Comma-separated reporter names          |
+| `config`           | —                    | Path to spana.config.ts                 |
+| `flow-path`        | —                    | Path to flow files or directory         |
+| `device`           | —                    | Target a specific device by ID          |
+| `retries`          | —                    | Number of retries for failed flows      |
+| `tags`             | —                    | Filter by tags                          |
+| `grep`             | —                    | Filter by name pattern                  |
+| `upload-artifacts` | `true`               | Upload spana-output/ as build artifacts |
+
+### Manual workflow setup
+
+If you prefer full control over the workflow steps:
+
+```yaml
+name: E2E Tests (Web)
+
+on: [push, pull_request]
+
+jobs:
+  e2e-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install spana
+        run: npm install -g spana-test
+
+      - name: Start app
+        run: npm run dev &
+
+      - name: Wait for app
+        run: npx wait-on http://localhost:3000
+
+      - name: Run tests
+        run: spana test --platform web --reporter console,junit,html
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-results
+          path: spana-output/junit.xml
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-report
+          path: spana-output/report.html
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: spana-output/screenshots/
+```
+
+### Android tests
+
+Android tests need the Android SDK. GitHub's `ubuntu-latest` runners include the SDK, but you need to boot an emulator.
+
+```yaml
+e2e-android:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - name: Install spana
+      run: npm install -g spana-test
+
+    - name: Set up Android emulator
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: 33
+        script: |
+          adb wait-for-device
+          spana test --platform android --reporter console,junit,html
+
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-results
+        path: spana-output/
+```
+
+### iOS tests
+
+iOS tests require a macOS runner with Xcode installed.
+
+```yaml
+e2e-ios:
+  runs-on: macos-latest
+  steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - name: Install spana
+      run: npm install -g spana-test
+
+    - name: Boot iOS Simulator
+      run: |
+        xcrun simctl boot "iPhone 15"
+        xcrun simctl bootstatus "iPhone 15" -b
+
+    - name: Install app and run tests
+      run: spana test --platform ios --reporter console,junit,html
+
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ios-results
+        path: spana-output/
+```
+
+## GitLab CI
+
+```yaml
+e2e-web:
+  image: node:20
+  stage: test
+  script:
+    - npm ci
+    - npm install -g spana-test
+    - npm run dev &
+    - npx wait-on http://localhost:3000
+    - spana test --platform web --reporter console,junit,html
+  artifacts:
+    when: always
+    paths:
+      - spana-output/
+    reports:
+      junit: spana-output/junit.xml
+```
+
+GitLab natively parses JUnit XML when declared under `artifacts.reports.junit`, so test results appear directly in merge request widgets.
+
+## Tips
+
+- **Combine reporters.** Use `--reporter console,junit,html` to get terminal output for logs, JUnit for CI dashboards, and HTML for manual review — all in one run.
+- **Upload `spana-output/` as artifacts.** This directory contains JUnit XML, HTML reports, and screenshots from failed steps. Always upload with `if: always()` (GitHub Actions) or `when: always` (GitLab) so artifacts are available even when tests fail.
+- **Headless web works out of the box.** Playwright runs headless by default. No `xvfb` or display server setup needed.
+- **Use tags to split pipelines.** Run `spana test --tag smoke` on every push and `spana test --tag regression` on a nightly schedule to balance speed and coverage.
+- **Pin spana version.** Use `npm install -g spana-test@0.1.0` in CI to avoid unexpected breakage from new releases.
+
+---
+
+## Debugging
+
+When a test fails, spana can drop you into an interactive REPL connected to the live device session. This lets you inspect the screen, try selectors, and experiment with actions before the session is torn down.
+
+## Enabling the debug REPL
+
+```bash
+spana test --debug-on-failure
+```
+
+When a flow fails, instead of moving to the next flow, spana pauses and opens a REPL:
+
+```
+Entering debug REPL for failed flow "login flow" on android.
+Available bindings: app, expect, driver, platform, flowName, error, hierarchy(), selectors(), help()
+Use top-level await for async calls, for example: await app.tap({ text: "Login" })
+
+spana:android>
+```
+
+## Available bindings
+
+| Binding       | Type     | Description                                          |
+| ------------- | -------- | ---------------------------------------------------- |
+| `app`         | object   | Full `PromiseApp` API -- tap, inputText, scroll, etc |
+| `expect`      | function | Assertion helper, same as in flows                   |
+| `driver`      | object   | Raw driver service for low-level access              |
+| `platform`    | string   | Current platform (`"web"`, `"android"`, `"ios"`)     |
+| `flowName`    | string   | Name of the failed flow                              |
+| `error`       | Error    | The error that caused the failure                    |
+| `hierarchy()` | async    | Returns the parsed UI element tree                   |
+| `selectors()` | async    | Returns suggested selectors for visible elements     |
+| `help()`      | function | Print all available bindings                         |
+
+## Example session
+
+```
+spana:android> error.message
+'Timed out waiting for selector { testID: "welcome-text" }'
+
+spana:android> await selectors()
+[
+  { suggestedSelector: { testID: 'login-button' }, elementType: 'Button', text: 'Sign In' },
+  { suggestedSelector: { text: 'Welcome' }, elementType: 'Text', text: 'Welcome' },
+  ...
+]
+
+spana:android> await app.tap({ text: "Sign In" })
+undefined
+
+spana:android> await expect({ testID: "welcome-text" }).toBeVisible()
+undefined
+
+spana:android> .exit
+```
+
+## Tips
+
+- Use `await selectors()` to discover what's on screen -- this is the fastest way to find the right selector
+- Use `await hierarchy()` for the full element tree with bounds, visibility, and nesting
+- All `app` methods use auto-wait, so `await app.tap(...)` will retry until the element appears
+- The REPL only activates once per test run (the first failure) to avoid blocking CI
+- The REPL requires an interactive terminal (TTY) -- it's skipped automatically in CI environments
+- Type `.exit` or press `Ctrl+D` to leave the REPL and continue the test run
