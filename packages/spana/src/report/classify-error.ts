@@ -25,10 +25,69 @@ function selectorHint(selector: unknown): string {
   return JSON.stringify(selector);
 }
 
-function categorize(error: TaggedLike): { category: FailureCategory; suggestion?: string } {
-  const tag = error[TAG_KEY];
-  const msg = error.message ?? "";
+function categorizeElementFailure(message: string): FailureCategory {
+  const lower = message.toLowerCase();
+  if (lower.includes("not visible") || lower.includes("visible=false")) {
+    return "element-not-visible";
+  }
+  if (lower.includes("off-screen") || lower.includes("zero size")) {
+    return "element-off-screen";
+  }
+  if (lower.includes("disabled") || lower.includes("not interactive")) {
+    return "element-not-interactive";
+  }
+  return "element-not-found";
+}
 
+function elementSuggestion(
+  category: FailureCategory,
+  selector: string,
+  timeoutMs: unknown,
+): string {
+  switch (category) {
+    case "element-not-visible":
+      return [
+        `Selector ${selector} matched an element, but it is currently hidden.`,
+        "Check whether an animation, modal, or loading state is covering it before retrying.",
+        "Consider increasing waitTimeout if the element becomes visible after a delay.",
+      ].join("\n");
+    case "element-off-screen":
+      return [
+        `Selector ${selector} matched an element that is off-screen.`,
+        "Use scrollUntilVisible() or scroll to the element before interacting with it.",
+        "If the target is above the current viewport, reverse the search direction.",
+      ].join("\n");
+    case "element-not-interactive":
+      return [
+        `Selector ${selector} matched an element that is disabled or not interactive.`,
+        "Wait for the app to enable it, or verify the prerequisite app state first.",
+        "Consider increasing waitTimeout if the control becomes enabled after async work completes.",
+      ].join("\n");
+    default:
+      return [
+        `Selector ${selector} was not found within ${timeoutMs ?? "?"}ms.`,
+        "Run `spana selectors` to inspect the current screen and confirm the best selector.",
+        "Consider increasing waitTimeout if the element appears after a delay.",
+      ].join("\n");
+  }
+}
+
+interface PatternRule {
+  tag?: string | readonly string[];
+  pattern?: string | RegExp;
+  category: FailureCategory | ((msg: string) => FailureCategory);
+  suggestion: string | ((error: TaggedLike, msg: string) => string);
+}
+
+/**
+ * Dynamic rules that depend on runtime error properties (selector, deviceId, etc.)
+ * and must be checked before the static lookup table.
+ */
+function categorizeDynamic(
+  error: TaggedLike,
+  tag: string | undefined,
+  msg: string,
+): { category: FailureCategory; suggestion?: string } | undefined {
   if (tag === "ElementNotFoundError" || tag === "WaitTimeoutError") {
     const sel = selectorHint((error as any).selector);
     if (msg.includes("scroll(s) toward")) {
@@ -53,18 +112,10 @@ function categorize(error: TaggedLike): { category: FailureCategory; suggestion?
       };
     }
 
+    const category = categorizeElementFailure(msg);
     return {
-      category: "element-not-found",
-      suggestion: [
-        msg.includes("not visible")
-          ? "The element exists but is hidden. Check if a loading state or animation is blocking it."
-          : msg.includes("off-screen")
-            ? "The element is off-screen. Use scrollUntilVisible() or scroll to the element first."
-            : msg.includes("disabled")
-              ? "The element is disabled. Wait for the app to enable it or check app state."
-              : `Selector ${sel} was not found within ${(error as any).timeoutMs ?? "?"}ms. Run \`spana selectors\` to see available selectors on the current screen.`,
-        "Consider increasing waitTimeout if the element appears after a delay.",
-      ].join("\n"),
+      category,
+      suggestion: elementSuggestion(category, sel, (error as any).timeoutMs),
     };
   }
 
@@ -76,17 +127,6 @@ function categorize(error: TaggedLike): { category: FailureCategory; suggestion?
         `Expected text "${e.expected}" but found "${e.actual ?? "(empty)"}".`,
         "The element exists but its content differs. Check for whitespace, truncation,",
         "or platform-specific text rendering differences.",
-      ].join("\n"),
-    };
-  }
-
-  if (tag === "TimeoutError") {
-    return {
-      category: "timeout",
-      suggestion: [
-        "The operation took longer than the allowed timeout.",
-        "Try increasing `defaults.waitTimeout` in spana.config.ts,",
-        "or set a per-flow timeout: `flow('name', { timeout: 30000 }, ...)`.",
       ].join("\n"),
     };
   }
@@ -128,93 +168,153 @@ function categorize(error: TaggedLike): { category: FailureCategory; suggestion?
   }
 
   if (tag === "DriverError") {
-    if (msg.includes("dismissKeyboard()")) {
-      return {
-        category: "driver-error",
-        suggestion: [
-          "Keyboard dismissal failed.",
-          'On Android, try `app.dismissKeyboard({ strategy: "back" })`.',
-          "On iOS, prefer tapping a visible Done / Close control or a non-input element.",
-        ].join("\n"),
-      };
-    }
-
-    if (msg.includes("backUntilVisible()")) {
-      return {
-        category: "driver-error",
-        suggestion: [
-          "System back navigation failed before the target screen became visible.",
-          "If this route uses app-level navigation, tap the visible back / close control instead.",
-          "This is especially common on iOS where a system back button may not exist.",
-        ].join("\n"),
-      };
-    }
-
-    if (msg.includes("Input text failed")) {
-      return {
-        category: "driver-error",
-        suggestion: [
-          "Text input failed at the driver layer.",
-          "Make sure the field is focused first, and retry with shorter input chunks if needed.",
-          "If the keyboard is in the way, dismiss it before continuing the flow.",
-        ].join("\n"),
-      };
-    }
-
-    return {
-      category: "driver-error",
-      suggestion: error.command
-        ? `Driver command "${error.command}" failed. Check the device connection and driver logs.`
-        : "A low-level driver operation failed. Check the device connection and driver logs.",
-    };
+    return categorizeDynamicDriver(error, msg);
   }
 
-  if (tag === "ConfigError" || tag === "FlowSyntaxError") {
-    return {
-      category: "config-error",
-      suggestion: "Run `spana validate-config` to check your configuration.",
-    };
-  }
+  return undefined;
+}
 
-  // Heuristic fallbacks for errors that aren't Effect TaggedErrors
-  if (msg.includes("timed out") || msg.includes("Timed out")) {
-    return {
-      category: "timeout",
-      suggestion:
-        "The operation timed out. Try increasing `defaults.waitTimeout` in spana.config.ts.",
-    };
-  }
-
-  if (msg.includes("not found") || msg.includes("not visible")) {
-    if (msg.includes("scroll(s) toward")) {
+function categorizeDynamicDriver(
+  error: TaggedLike,
+  msg: string,
+): { category: FailureCategory; suggestion: string } {
+  for (const rule of driverRules) {
+    if (rule.pattern && matchesPattern(msg, rule.pattern)) {
       return {
-        category: "element-not-found",
+        category: typeof rule.category === "function" ? rule.category(msg) : rule.category,
         suggestion:
-          "The target stayed off-screen while scrolling. Increase `maxScrolls` / `timeout`, or reverse the scroll search direction.",
+          typeof rule.suggestion === "function" ? rule.suggestion(error, msg) : rule.suggestion,
       };
     }
-
-    return {
-      category: "element-not-found",
-      suggestion:
-        "An element was not found. Run `spana selectors` to check available selectors on the current screen.",
-    };
   }
 
-  if (msg.includes("dismissKeyboard()")) {
-    return {
-      category: "driver-error",
-      suggestion:
-        'Keyboard dismissal failed. On Android try `app.dismissKeyboard({ strategy: "back" })`; on iOS prefer an explicit Done / Close control.',
-    };
+  return {
+    category: "driver-error",
+    suggestion: error.command
+      ? `Driver command "${error.command}" failed. Check the device connection and driver logs.`
+      : "A low-level driver operation failed. Check the device connection and driver logs.",
+  };
+}
+
+/** Pattern rules for DriverError sub-classification. */
+const driverRules: readonly PatternRule[] = [
+  {
+    pattern: "dismissKeyboard()",
+    category: "driver-error",
+    suggestion: [
+      "Keyboard dismissal failed.",
+      'On Android, try `app.dismissKeyboard({ strategy: "back" })`.',
+      "On iOS, prefer tapping a visible Done / Close control or a non-input element.",
+    ].join("\n"),
+  },
+  {
+    pattern: "backUntilVisible()",
+    category: "driver-error",
+    suggestion: [
+      "System back navigation failed before the target screen became visible.",
+      "If this route uses app-level navigation, tap the visible back / close control instead.",
+      "This is especially common on iOS where a system back button may not exist.",
+    ].join("\n"),
+  },
+  {
+    pattern: "Input text failed",
+    category: "driver-error",
+    suggestion: [
+      "Text input failed at the driver layer.",
+      "Make sure the field is focused first, and retry with shorter input chunks if needed.",
+      "If the keyboard is in the way, dismiss it before continuing the flow.",
+    ].join("\n"),
+  },
+] as const;
+
+/** Tag-only rules (no message pattern needed). */
+const tagOnlyRules: readonly PatternRule[] = [
+  {
+    tag: "TimeoutError",
+    category: "timeout",
+    suggestion: [
+      "The operation took longer than the allowed timeout.",
+      "Try increasing `defaults.waitTimeout` in spana.config.ts,",
+      "or set a per-flow timeout: `flow('name', { timeout: 30000 }, ...)`.",
+    ].join("\n"),
+  },
+  {
+    tag: ["ConfigError", "FlowSyntaxError"],
+    category: "config-error",
+    suggestion: "Run `spana validate-config` to check your configuration.",
+  },
+] as const;
+
+/** Heuristic fallback rules for errors that aren't Effect TaggedErrors. */
+const heuristicRules: readonly PatternRule[] = [
+  {
+    pattern: /[Tt]imed out/,
+    category: "timeout",
+    suggestion:
+      "The operation timed out. Try increasing `defaults.waitTimeout` in spana.config.ts.",
+  },
+  {
+    pattern: /not found|not visible/,
+    category: (msg: string) => categorizeElementFailure(msg),
+    suggestion: (_error, msg) => {
+      if (msg.includes("scroll(s) toward")) {
+        return "The target stayed off-screen while scrolling. Increase `maxScrolls` / `timeout`, or reverse the scroll search direction.";
+      }
+      const category = categorizeElementFailure(msg);
+      return elementSuggestion(category, "the target selector", undefined);
+    },
+  },
+  {
+    pattern: "dismissKeyboard()",
+    category: "driver-error",
+    suggestion:
+      'Keyboard dismissal failed. On Android try `app.dismissKeyboard({ strategy: "back" })`; on iOS prefer an explicit Done / Close control.',
+  },
+  {
+    pattern: /ECONNREFUSED|ECONNRESET|disconnected/,
+    category: "device-disconnected",
+    suggestion: "The connection was lost. Check the device or emulator/simulator is still running.",
+  },
+] as const;
+
+function matchesPattern(msg: string, pattern: string | RegExp): boolean {
+  return typeof pattern === "string" ? msg.includes(pattern) : pattern.test(msg);
+}
+
+function matchesTag(tag: string | undefined, rule: PatternRule): boolean {
+  if (!rule.tag) return true;
+  if (Array.isArray(rule.tag)) return tag != null && (rule.tag as readonly string[]).includes(tag);
+  return tag === rule.tag;
+}
+
+function categorize(error: TaggedLike): { category: FailureCategory; suggestion?: string } {
+  const tag = error[TAG_KEY];
+  const msg = error.message ?? "";
+
+  // 1. Dynamic rules that depend on runtime error properties
+  const dynamic = categorizeDynamic(error, tag, msg);
+  if (dynamic) return dynamic;
+
+  // 2. Tag-only rules (no message pattern)
+  for (const rule of tagOnlyRules) {
+    if (matchesTag(tag, rule)) {
+      return {
+        category: typeof rule.category === "function" ? rule.category(msg) : rule.category,
+        suggestion:
+          typeof rule.suggestion === "function" ? rule.suggestion(error, msg) : rule.suggestion,
+      };
+    }
   }
 
-  if (msg.includes("ECONNREFUSED") || msg.includes("ECONNRESET") || msg.includes("disconnected")) {
-    return {
-      category: "device-disconnected",
-      suggestion:
-        "The connection was lost. Check the device or emulator/simulator is still running.",
-    };
+  // 3. Heuristic fallbacks for untagged errors
+  for (const rule of heuristicRules) {
+    if (rule.pattern && matchesPattern(msg, rule.pattern)) {
+      return {
+        category: typeof rule.category === "function" ? rule.category(msg) : rule.category,
+        suggestion:
+          typeof rule.suggestion === "function" ? rule.suggestion(error, msg) : rule.suggestion,
+      };
+    }
   }
 
   return { category: "unknown" };

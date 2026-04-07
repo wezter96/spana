@@ -49,10 +49,9 @@ export interface TestCommandOptions {
   verbose?: boolean;
 }
 
-export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
+function validateOptions(opts: TestCommandOptions): string | null {
   if (opts.driver && opts.driver !== "local" && opts.driver !== "appium") {
-    console.log(`Unknown --driver value "${opts.driver}". Use "local" or "appium".`);
-    return false;
+    return `Unknown --driver value "${opts.driver}". Use "local" or "appium".`;
   }
 
   if (opts.shard) {
@@ -64,30 +63,257 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
       total < 1 ||
       current > total
     ) {
-      console.log("Invalid shard config. Use { current, total } with 1 <= current <= total.");
-      return false;
+      return "Invalid shard config. Use { current, total } with 1 <= current <= total.";
     }
   }
 
   if (opts.bail !== undefined && (!Number.isInteger(opts.bail) || opts.bail < 1)) {
-    console.log("Invalid bail config. Use a positive integer.");
-    return false;
+    return "Invalid bail config. Use a positive integer.";
   }
 
   if (opts.parallel && opts.device) {
-    console.log(
-      "Cannot use --parallel with --device. Remove --device to auto-discover all devices.",
-    );
-    return false;
+    return "Cannot use --parallel with --device. Remove --device to auto-discover all devices.";
   }
 
   if (opts.devices && opts.device) {
-    console.log("Cannot use --devices with --device. Use --devices for multi-device selection.");
-    return false;
+    return "Cannot use --devices with --device. Use --devices for multi-device selection.";
   }
 
   if (opts.device && opts.workers) {
-    console.log("Cannot use --workers with --device. --device targets a single device.");
+    return "Cannot use --workers with --device. --device targets a single device.";
+  }
+
+  return null;
+}
+
+async function buildParallelPlatformConfigs(
+  platforms: Platform[],
+  opts: Pick<TestCommandOptions, "devices" | "platforms" | "workers" | "debugOnFailure">,
+  config: ProvConfig,
+  runtimes: RuntimeHandle[],
+  resolveFromConfig: (p: string) => string,
+): Promise<PlatformConfig[]> {
+  const { discoverDevices, findDeviceById } = await import("../device/discover.js");
+
+  let allDevices;
+  if (opts.devices) {
+    // Use explicitly specified devices
+    allDevices = [];
+    for (const id of opts.devices) {
+      const found = findDeviceById(id);
+      if (found) {
+        allDevices.push(found);
+      } else {
+        console.log(`Warning: Device "${id}" not found, skipping.`);
+      }
+    }
+    // Infer platforms from selected devices if not explicitly set
+    if (opts.platforms.length === 0) {
+      const inferredPlatforms = [...new Set(allDevices.map((d) => d.platform))];
+      platforms.length = 0;
+      platforms.push(...inferredPlatforms);
+    }
+  } else {
+    allDevices = discoverDevices(platforms);
+  }
+
+  const maxWorkers = opts.workers ?? config.defaults?.workers;
+  const platformConfigs: PlatformConfig[] = [];
+
+  for (const platform of platforms) {
+    let platformDevices = allDevices.filter((d) => d.platform === platform);
+
+    // Cap to maxWorkers if set
+    if (maxWorkers && platformDevices.length > maxWorkers) {
+      platformDevices = platformDevices.slice(0, maxWorkers);
+    }
+
+    if (platform === "web") {
+      const webWorkers = maxWorkers ?? 1;
+      if (webWorkers > 1) {
+        // Build primary web runtime
+        const primaryResult = await buildWebRuntime(config);
+        runtimes.push(primaryResult.runtime);
+
+        // Build additional web contexts
+        const additionalWorkers: DeviceWorkerConfig[] = [];
+        for (let i = 1; i < webWorkers; i++) {
+          const result = await buildWebRuntime(config);
+          runtimes.push(result.runtime);
+          additionalWorkers.push({
+            id: `web-context-${i + 1}`,
+            name: `Chromium #${i + 1}`,
+            driver: result.runtime.driver,
+            engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+          });
+        }
+
+        platformConfigs.push({
+          platform,
+          driver: primaryResult.runtime.driver,
+          engineConfig: { ...primaryResult.engineConfig, debugOnFailure: opts.debugOnFailure },
+          additionalWorkers: additionalWorkers.length > 0 ? additionalWorkers : undefined,
+        });
+      } else {
+        // Single web runtime (existing behavior)
+        const result = await buildWebRuntime(config);
+        runtimes.push(result.runtime);
+        platformConfigs.push({
+          platform,
+          driver: result.runtime.driver,
+          engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+        });
+      }
+    } else if (platformDevices.length === 0) {
+      console.log(`No ${platform} devices found. Skipping ${platform} platform.`);
+    } else {
+      if (platformDevices.length === 1) {
+        console.log(
+          `ℹ Only 1 ${platform} device found — connect more devices for parallel execution.`,
+        );
+      }
+
+      // Build runtime for first device (primary worker)
+      const builder = platform === "android" ? buildLocalAndroidRuntime : buildLocalIOSRuntime;
+      const primaryResult = await builder(config, platformDevices[0]!, resolveFromConfig);
+      if (!primaryResult) continue;
+      runtimes.push(primaryResult.runtime);
+
+      // Build runtimes for additional devices (additional workers)
+      const additionalWorkers: DeviceWorkerConfig[] = [];
+      for (const device of platformDevices.slice(1)) {
+        try {
+          const result = await builder(config, device, resolveFromConfig);
+          if (result) {
+            runtimes.push(result.runtime);
+            additionalWorkers.push({
+              id: device.id,
+              name: device.name,
+              driver: result.runtime.driver,
+              engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+            });
+          }
+        } catch (err) {
+          console.log(
+            `Warning: Failed to set up ${platform} device ${device.name}: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+
+      platformConfigs.push({
+        platform,
+        driver: primaryResult.runtime.driver,
+        engineConfig: { ...primaryResult.engineConfig, debugOnFailure: opts.debugOnFailure },
+        additionalWorkers: additionalWorkers.length > 0 ? additionalWorkers : undefined,
+      });
+    }
+  }
+
+  return platformConfigs;
+}
+
+async function buildSerialPlatformConfigs(
+  platforms: Platform[],
+  opts: Pick<TestCommandOptions, "capsPath" | "capsJson" | "debugOnFailure">,
+  config: ProvConfig,
+  runtimes: RuntimeHandle[],
+  executionMode: string,
+  appiumUrl: string | undefined,
+  baseAppiumCaps: Record<string, unknown> | undefined,
+  cloudHelper: Awaited<ReturnType<typeof createCloudProviderHelper>> | undefined,
+  targetDevice: import("../device/discover.js").DiscoveredDevice | null,
+  resolveFromConfig: (p: string) => string,
+): Promise<PlatformConfig[]> {
+  const platformConfigs: PlatformConfig[] = [];
+
+  for (const platform of platforms) {
+    if (executionMode === "appium" && (platform === "android" || platform === "ios")) {
+      // Appium cloud mode
+      const builder = platform === "android" ? buildAppiumAndroidRuntime : buildAppiumIOSRuntime;
+      const preparedCaps = await cloudHelper!.prepareCapabilities(
+        platform,
+        { ...baseAppiumCaps },
+        platform === "android" ? config.apps?.android : config.apps?.ios,
+      );
+      const result = await builder(config, appiumUrl!, preparedCaps);
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+      });
+    } else if (platform === "web") {
+      const result = await buildWebRuntime(config);
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+      });
+    } else if (platform === "android") {
+      const result = await buildLocalAndroidRuntime(config, targetDevice, resolveFromConfig);
+      if (!result) continue;
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+      });
+    } else if (platform === "ios") {
+      const result = await buildLocalIOSRuntime(config, targetDevice, resolveFromConfig);
+      if (!result) continue;
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+      });
+    }
+  }
+
+  return platformConfigs;
+}
+
+async function setupReporters(
+  reporterNames: string,
+  config: ProvConfig,
+  resolveFromConfig: (p: string) => string,
+  appiumUrl: string | undefined,
+  opts: Pick<TestCommandOptions, "quiet">,
+) {
+  const { createRedactor, registerUrlSecrets } = await import("../report/redact.js");
+  const redactor = createRedactor();
+  if (appiumUrl) registerUrlSecrets(redactor, appiumUrl);
+
+  const { createConsoleReporter } = await import("../report/console.js");
+  const { createJsonReporter } = await import("../report/json.js");
+  const { createJUnitReporter } = await import("../report/junit.js");
+  const { createHtmlReporter } = await import("../report/html.js");
+  const { createAllureReporter } = await import("../report/allure.js");
+
+  const resolvedOutputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
+  const reporters = reporterNames.split(",").map((r) => {
+    switch (r.trim()) {
+      case "json":
+        return createJsonReporter();
+      case "junit":
+        return createJUnitReporter(resolvedOutputDir);
+      case "html":
+        return createHtmlReporter(resolvedOutputDir);
+      case "allure":
+        return createAllureReporter();
+      default:
+        return createConsoleReporter({ quiet: opts.quiet });
+    }
+  });
+
+  return { redactor, reporters };
+}
+
+export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
+  const validationError = validateOptions(opts);
+  if (validationError) {
+    console.log(validationError);
     return false;
   }
 
@@ -303,194 +529,40 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     }
 
     if (opts.parallel || opts.workers || opts.devices) {
-      const { discoverDevices, findDeviceById } = await import("../device/discover.js");
-
-      let allDevices;
-      if (opts.devices) {
-        // Use explicitly specified devices
-        allDevices = [];
-        for (const id of opts.devices) {
-          const found = findDeviceById(id);
-          if (found) {
-            allDevices.push(found);
-          } else {
-            console.log(`Warning: Device "${id}" not found, skipping.`);
-          }
-        }
-        // Infer platforms from selected devices if not explicitly set
-        if (opts.platforms.length === 0) {
-          const inferredPlatforms = [...new Set(allDevices.map((d) => d.platform))];
-          platforms.length = 0;
-          platforms.push(...inferredPlatforms);
-        }
-      } else {
-        allDevices = discoverDevices(platforms);
-      }
-
-      const maxWorkers = opts.workers ?? config.defaults?.workers;
-
-      for (const platform of platforms) {
-        let platformDevices = allDevices.filter((d) => d.platform === platform);
-
-        // Cap to maxWorkers if set
-        if (maxWorkers && platformDevices.length > maxWorkers) {
-          platformDevices = platformDevices.slice(0, maxWorkers);
-        }
-
-        if (platform === "web") {
-          const webWorkers = maxWorkers ?? 1;
-          if (webWorkers > 1) {
-            // Build primary web runtime
-            const primaryResult = await buildWebRuntime(config);
-            runtimes.push(primaryResult.runtime);
-
-            // Build additional web contexts
-            const additionalWorkers: DeviceWorkerConfig[] = [];
-            for (let i = 1; i < webWorkers; i++) {
-              const result = await buildWebRuntime(config);
-              runtimes.push(result.runtime);
-              additionalWorkers.push({
-                id: `web-context-${i + 1}`,
-                name: `Chromium #${i + 1}`,
-                driver: result.runtime.driver,
-                engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-              });
-            }
-
-            platformConfigs.push({
-              platform,
-              driver: primaryResult.runtime.driver,
-              engineConfig: { ...primaryResult.engineConfig, debugOnFailure: opts.debugOnFailure },
-              additionalWorkers: additionalWorkers.length > 0 ? additionalWorkers : undefined,
-            });
-          } else {
-            // Single web runtime (existing behavior)
-            const result = await buildWebRuntime(config);
-            runtimes.push(result.runtime);
-            platformConfigs.push({
-              platform,
-              driver: result.runtime.driver,
-              engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-            });
-          }
-        } else if (platformDevices.length === 0) {
-          console.log(`No ${platform} devices found. Skipping ${platform} platform.`);
-        } else {
-          if (platformDevices.length === 1) {
-            console.log(
-              `ℹ Only 1 ${platform} device found — connect more devices for parallel execution.`,
-            );
-          }
-
-          // Build runtime for first device (primary worker)
-          const builder = platform === "android" ? buildLocalAndroidRuntime : buildLocalIOSRuntime;
-          const primaryResult = await builder(config, platformDevices[0]!, resolveFromConfig);
-          if (!primaryResult) continue;
-          runtimes.push(primaryResult.runtime);
-
-          // Build runtimes for additional devices (additional workers)
-          const additionalWorkers: DeviceWorkerConfig[] = [];
-          for (const device of platformDevices.slice(1)) {
-            try {
-              const result = await builder(config, device, resolveFromConfig);
-              if (result) {
-                runtimes.push(result.runtime);
-                additionalWorkers.push({
-                  id: device.id,
-                  name: device.name,
-                  driver: result.runtime.driver,
-                  engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-                });
-              }
-            } catch (err) {
-              console.log(
-                `Warning: Failed to set up ${platform} device ${device.name}: ${err instanceof Error ? err.message : err}`,
-              );
-            }
-          }
-
-          platformConfigs.push({
-            platform,
-            driver: primaryResult.runtime.driver,
-            engineConfig: { ...primaryResult.engineConfig, debugOnFailure: opts.debugOnFailure },
-            additionalWorkers: additionalWorkers.length > 0 ? additionalWorkers : undefined,
-          });
-        }
-      }
+      platformConfigs.push(
+        ...(await buildParallelPlatformConfigs(
+          platforms,
+          opts,
+          config,
+          runtimes,
+          resolveFromConfig,
+        )),
+      );
     } else {
-      for (const platform of platforms) {
-        if (executionMode === "appium" && (platform === "android" || platform === "ios")) {
-          // Appium cloud mode
-          const builder =
-            platform === "android" ? buildAppiumAndroidRuntime : buildAppiumIOSRuntime;
-          const preparedCaps = await cloudHelper!.prepareCapabilities(
-            platform,
-            { ...baseAppiumCaps },
-            platform === "android" ? config.apps?.android : config.apps?.ios,
-          );
-          const result = await builder(config, appiumUrl!, preparedCaps);
-          runtimes.push(result.runtime);
-          platformConfigs.push({
-            platform,
-            driver: result.runtime.driver,
-            engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-          });
-        } else if (platform === "web") {
-          const result = await buildWebRuntime(config);
-          runtimes.push(result.runtime);
-          platformConfigs.push({
-            platform,
-            driver: result.runtime.driver,
-            engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-          });
-        } else if (platform === "android") {
-          const result = await buildLocalAndroidRuntime(config, targetDevice, resolveFromConfig);
-          if (!result) continue;
-          runtimes.push(result.runtime);
-          platformConfigs.push({
-            platform,
-            driver: result.runtime.driver,
-            engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-          });
-        } else if (platform === "ios") {
-          const result = await buildLocalIOSRuntime(config, targetDevice, resolveFromConfig);
-          if (!result) continue;
-          runtimes.push(result.runtime);
-          platformConfigs.push({
-            platform,
-            driver: result.runtime.driver,
-            engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
-          });
-        }
-      }
+      platformConfigs.push(
+        ...(await buildSerialPlatformConfigs(
+          platforms,
+          opts,
+          config,
+          runtimes,
+          executionMode,
+          appiumUrl,
+          baseAppiumCaps,
+          cloudHelper,
+          targetDevice,
+          resolveFromConfig,
+        )),
+      );
     }
 
     // 5. Set up redactor and reporters (before run for real-time streaming)
-    const { createRedactor, registerUrlSecrets } = await import("../report/redact.js");
-    const redactor = createRedactor();
-    if (appiumUrl) registerUrlSecrets(redactor, appiumUrl);
-
-    const { createConsoleReporter } = await import("../report/console.js");
-    const { createJsonReporter } = await import("../report/json.js");
-    const { createJUnitReporter } = await import("../report/junit.js");
-    const { createHtmlReporter } = await import("../report/html.js");
-    const { createAllureReporter } = await import("../report/allure.js");
-
-    const resolvedOutputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
-    const reporters = reporterNames.split(",").map((r) => {
-      switch (r.trim()) {
-        case "json":
-          return createJsonReporter();
-        case "junit":
-          return createJUnitReporter(resolvedOutputDir);
-        case "html":
-          return createHtmlReporter(resolvedOutputDir);
-        case "allure":
-          return createAllureReporter();
-        default:
-          return createConsoleReporter({ quiet: opts.quiet });
-      }
-    });
+    const { redactor, reporters } = await setupReporters(
+      reporterNames,
+      config,
+      resolveFromConfig,
+      appiumUrl,
+      opts,
+    );
 
     // Set flow count for progress display
     const totalFlowCount = selectedFlows.length * platforms.length;
