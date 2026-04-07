@@ -6,10 +6,12 @@ import type {
   BrowserMockResponse,
   BrowserNetworkConditions,
   BrowserRouteMatcher,
+  BrowserHAR,
   BrowserConsoleLog,
   BrowserJSError,
+  TouchSequence,
 } from "../drivers/raw-driver.js";
-import type { ExtendedSelector } from "../schemas/selector.js";
+import type { ExtendedSelector, Selector } from "../schemas/selector.js";
 import {
   createCoordinator,
   type BackUntilVisibleOptions,
@@ -26,7 +28,7 @@ export type {
   DismissKeyboardOptions,
   ScrollUntilVisibleOptions,
 } from "../smart/coordinator.js";
-export type { BrowserConsoleLog, BrowserJSError } from "../drivers/raw-driver.js";
+export type { BrowserConsoleLog, BrowserHAR, BrowserJSError } from "../drivers/raw-driver.js";
 
 export interface PromiseApp {
   tap(selector: ExtendedSelector, opts?: WaitOptions): Promise<void>;
@@ -58,10 +60,32 @@ export interface PromiseApp {
   loadCookies(path: string): Promise<void>;
   saveAuthState(path: string): Promise<void>;
   loadAuthState(path: string): Promise<void>;
+  downloadFile(path: string): Promise<void>;
+  uploadFile(selector: Selector, path: string): Promise<void>;
+  newTab(url?: string): Promise<string>;
+  switchToTab(index: number): Promise<void>;
+  closeTab(): Promise<void>;
+  getTabIds(): Promise<string[]>;
   getConsoleLogs(): Promise<BrowserConsoleLog[]>;
   getJSErrors(): Promise<BrowserJSError[]>;
+  getHAR(): Promise<BrowserHAR>;
+
+  pinch(
+    selector: ExtendedSelector,
+    opts?: { scale?: number; duration?: number } & WaitOptions,
+  ): Promise<void>;
+  zoom(
+    selector: ExtendedSelector,
+    opts?: { scale?: number; duration?: number } & WaitOptions,
+  ): Promise<void>;
+  multiTouch(sequences: TouchSequence[]): Promise<void>;
 
   getText(selector: ExtendedSelector, opts?: WaitOptions): Promise<string>;
+  getAttribute(
+    selector: ExtendedSelector,
+    name: string,
+    opts?: WaitOptions,
+  ): Promise<string | undefined>;
   isVisible(selector: ExtendedSelector, opts?: { timeout?: number }): Promise<boolean>;
   isEnabled(selector: ExtendedSelector, opts?: WaitOptions): Promise<boolean>;
 
@@ -267,6 +291,59 @@ export function createPromiseApp(
           run((driver.loadAuthState ?? ((_path) => unsupportedWebFeature("loadAuthState")))(path)),
         { selector: { path } },
       ),
+    downloadFile: (path) =>
+      runStep(
+        "downloadFile",
+        () =>
+          run((driver.downloadFile ?? ((_path) => unsupportedWebFeature("downloadFile")))(path)),
+        { selector: { path } },
+      ),
+    uploadFile: (selector, path) =>
+      runStep(
+        "uploadFile",
+        () =>
+          run(
+            (driver.uploadFile ?? ((_selector, _path) => unsupportedWebFeature("uploadFile")))(
+              selector,
+              path,
+            ),
+          ),
+        {
+          selector: { target: selector, path },
+          captureScreenshot: true,
+        },
+      ),
+    newTab: (url) =>
+      runStep(
+        "newTab",
+        () => run((driver.newTab ?? ((_url) => unsupportedWebFeature("newTab")))(url)),
+        {
+          selector: url ? { url } : undefined,
+          captureScreenshot: true,
+        },
+      ),
+    switchToTab: (index) =>
+      runStep(
+        `switchToTab(${index})`,
+        () =>
+          run((driver.switchToTab ?? ((_index) => unsupportedWebFeature("switchToTab")))(index)),
+        {
+          selector: { index },
+          captureScreenshot: true,
+        },
+      ),
+    closeTab: () =>
+      runStep(
+        "closeTab",
+        () => run((driver.closeTab ?? (() => unsupportedWebFeature("closeTab")))()),
+        {
+          captureScreenshot: true,
+        },
+      ),
+    getTabIds: () =>
+      runStep("getTabIds", () =>
+        run((driver.getTabIds ?? (() => unsupportedWebFeature("getTabIds")))()),
+      ),
     getConsoleLogs: () =>
       runStep("getConsoleLogs", () =>
         run((driver.getConsoleLogs ?? (() => unsupportedWebFeature("getConsoleLogs")))()),
@@ -275,9 +352,28 @@ export function createPromiseApp(
       runStep("getJSErrors", () =>
         run((driver.getJSErrors ?? (() => unsupportedWebFeature("getJSErrors")))()),
       ),
+    getHAR: () =>
+      runStep("getHAR", () => run((driver.getHAR ?? (() => unsupportedWebFeature("getHAR")))())),
+
+    pinch: (selector, opts) =>
+      runStep("pinch", () => run(coord.pinch(selector, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    zoom: (selector, opts) =>
+      runStep("zoom", () => run(coord.zoom(selector, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    multiTouch: (sequences) =>
+      runStep("multiTouch", () => run(coord.multiTouch(sequences)), { captureScreenshot: true }),
 
     getText: (selector, opts) =>
       runStep("getText", () => run(coord.getText(selector, opts)), { selector }),
+    getAttribute: (selector, name, opts) =>
+      runStep(`getAttribute(${name})`, () => run(coord.getAttribute(selector, name, opts)), {
+        selector,
+      }),
     isVisible: (selector, opts) => {
       const timeout = opts?.timeout ?? 1000;
       return run(

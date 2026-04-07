@@ -400,6 +400,67 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
         });
       }),
 
+    pinch: (
+      selector: ExtendedSelector,
+      opts?: { scale?: number; duration?: number } & WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const element = yield* waitForActionElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts },
+          cache,
+        );
+        const { x, y } = centerOf(element);
+        const scale = opts?.scale ?? 0.5;
+        const duration = opts?.duration ?? 1500;
+        if (!driver.pinch) {
+          return yield* new DriverError({
+            message: "pinch() is only supported on mobile platforms (Android/iOS)",
+          });
+        }
+        yield* driver.pinch(x, y, scale, duration);
+        yield* afterMutation();
+      }),
+
+    zoom: (
+      selector: ExtendedSelector,
+      opts?: { scale?: number; duration?: number } & WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const element = yield* waitForActionElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts },
+          cache,
+        );
+        const { x, y } = centerOf(element);
+        const scale = opts?.scale ?? 0.5;
+        const duration = opts?.duration ?? 1500;
+        if (!driver.zoom) {
+          return yield* new DriverError({
+            message: "zoom() is only supported on mobile platforms (Android/iOS)",
+          });
+        }
+        yield* driver.zoom(x, y, scale, duration);
+        yield* afterMutation();
+      }),
+
+    multiTouch: (
+      sequences: import("../drivers/raw-driver.js").TouchSequence[],
+    ): Effect.Effect<void, DriverError> =>
+      Effect.gen(function* () {
+        if (!driver.multiTouch) {
+          return yield* new DriverError({
+            message: "multiTouch() is only supported on mobile platforms (Android/iOS)",
+          });
+        }
+        yield* driver.multiTouch(sequences);
+        yield* afterMutation();
+      }),
+
     assertVisible: (
       selector: ExtendedSelector,
       opts?: WaitOptions,
@@ -559,6 +620,143 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
           cache,
         );
         return element.enabled !== false;
+      }),
+
+    assertValue: (
+      selector: ExtendedSelector,
+      expected: string | number,
+      opts?: WaitOptions,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
+        const start = Date.now();
+        let lastActual: string | undefined;
+        const expectedStr = String(expected);
+
+        while (Date.now() - start < timeout) {
+          if (cache) cache.invalidate();
+          const raw = yield* driver.dumpHierarchy();
+          const root = parse(raw);
+          const element = findElementExtended(root, selector);
+          if (element) {
+            const actual = element.value ?? "";
+            if (actual === expectedStr) return;
+            lastActual = actual;
+          }
+          yield* Effect.sleep(Duration.millis(pollInterval));
+        }
+
+        return yield* new TextMismatchError({
+          message: `Expected value "${expectedStr}" but got "${lastActual ?? "(no value)"}" after ${timeout}ms`,
+          expected: expectedStr,
+          actual: lastActual,
+          selector,
+        });
+      }),
+
+    assertAttribute: (
+      selector: ExtendedSelector,
+      name: string,
+      expectedValue?: string,
+      opts?: WaitOptions,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
+        const start = Date.now();
+        let lastActual: string | undefined;
+
+        while (Date.now() - start < timeout) {
+          if (cache) cache.invalidate();
+          const raw = yield* driver.dumpHierarchy();
+          const root = parse(raw);
+          const element = findElementExtended(root, selector);
+          if (element?.attributes) {
+            const actual = element.attributes[name];
+            if (expectedValue === undefined) {
+              // Just check the attribute exists
+              if (actual !== undefined) return;
+            } else {
+              if (actual === expectedValue) return;
+            }
+            lastActual = actual;
+          }
+          yield* Effect.sleep(Duration.millis(pollInterval));
+        }
+
+        if (expectedValue === undefined) {
+          return yield* new TextMismatchError({
+            message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
+            expected: name,
+            actual: undefined,
+            selector,
+          });
+        }
+
+        return yield* new TextMismatchError({
+          message: `Expected attribute "${name}" to be "${expectedValue}" but got "${lastActual ?? "(not found)"}" after ${timeout}ms`,
+          expected: expectedValue,
+          actual: lastActual,
+          selector,
+        });
+      }),
+
+    assertMatchesText: (
+      selector: ExtendedSelector,
+      pattern: RegExp,
+      opts?: WaitOptions,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
+        const start = Date.now();
+        let lastActual: string | undefined;
+
+        while (Date.now() - start < timeout) {
+          if (cache) cache.invalidate();
+          const raw = yield* driver.dumpHierarchy();
+          const root = parse(raw);
+          const element = findElementExtended(root, selector);
+          if (element) {
+            const actual = element.text ?? "";
+            if (pattern.test(actual)) return;
+            lastActual = actual;
+          }
+          yield* Effect.sleep(Duration.millis(pollInterval));
+        }
+
+        return yield* new TextMismatchError({
+          message: `Expected text to match ${pattern} but got "${lastActual ?? "(no text)"}" after ${timeout}ms`,
+          expected: String(pattern),
+          actual: lastActual,
+          selector,
+        });
+      }),
+
+    getAttribute: (
+      selector: ExtendedSelector,
+      name: string,
+      opts?: WaitOptions,
+    ): Effect.Effect<string | undefined, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const element = yield* waitForElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts },
+          cache,
+        );
+        return element.attributes?.[name];
       }),
   };
 }

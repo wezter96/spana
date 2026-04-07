@@ -196,6 +196,13 @@ function rawNodeToElement(node: RawNode): Element {
   // `value` is the current value (text content for text fields, etc.)
   const text = a["value"] || undefined;
 
+  // For text fields, `value` is the input value
+  const isTextField =
+    elementType === "XCUIElementTypeTextField" ||
+    elementType === "XCUIElementTypeSecureTextField" ||
+    elementType === "XCUIElementTypeTextView";
+  const value = isTextField ? a["value"] || undefined : undefined;
+
   const x = a["x"] !== undefined ? parseInt(a["x"]!, 10) : 0;
   const y = a["y"] !== undefined ? parseInt(a["y"]!, 10) : 0;
   const width = a["width"] !== undefined ? parseInt(a["width"]!, 10) : 0;
@@ -210,11 +217,18 @@ function rawNodeToElement(node: RawNode): Element {
   // iOS doesn't expose a clickable attribute — infer from element type
   const clickable = elementType !== undefined ? CLICKABLE_TYPES.has(elementType) : undefined;
 
+  // Pass through raw attributes for getAttribute() introspection
+  const attributes: Record<string, string> = {};
+  for (const [key, val] of Object.entries(a)) {
+    attributes[key] = val;
+  }
+
   const children = node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
 
   return {
     ...(id !== undefined ? { id } : {}),
     ...(text !== undefined ? { text } : {}),
+    ...(value !== undefined ? { value } : {}),
     ...(accessibilityLabel !== undefined ? { accessibilityLabel } : {}),
     ...(elementType !== undefined ? { elementType } : {}),
     bounds,
@@ -222,6 +236,7 @@ function rawNodeToElement(node: RawNode): Element {
     ...(visible !== undefined ? { visible } : {}),
     ...(focused !== undefined ? { focused } : {}),
     ...(clickable !== undefined ? { clickable } : {}),
+    ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
     ...(children !== undefined ? { children } : {}),
   };
 }

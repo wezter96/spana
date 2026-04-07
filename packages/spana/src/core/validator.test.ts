@@ -132,7 +132,7 @@ describe("validateProject", () => {
     const stepsDir = join(featureDir, "steps");
     mkdirSync(stepsDir, { recursive: true });
 
-    const stepsImportPath = join(process.cwd(), "packages/spana/src/gherkin/steps.js");
+    const stepsImportPath = join(process.cwd(), "src/gherkin/steps.js");
     writeFileSync(
       join(stepsDir, "demo.steps.ts"),
       `

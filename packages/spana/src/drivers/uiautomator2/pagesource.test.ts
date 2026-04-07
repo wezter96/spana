@@ -32,6 +32,15 @@ describe("parseAndroidHierarchy", () => {
       enabled: true,
       focused: false,
       clickable: true,
+      attributes: {
+        class: "android.widget.Button",
+        "resource-id": "com.example:id/login_button",
+        text: "Log In",
+        "content-desc": "Log in",
+        enabled: "true",
+        focused: "false",
+        clickable: "true",
+      },
     });
   });
 });

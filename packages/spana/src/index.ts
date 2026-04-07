@@ -38,5 +38,8 @@ export {
   type BrowserMockResponse,
   type BrowserNetworkConditions,
   type BrowserConsoleLog,
+  type BrowserHAR,
   type BrowserJSError,
+  type TouchAction,
+  type TouchSequence,
 } from "./drivers/raw-driver.js";

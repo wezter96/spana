@@ -212,17 +212,31 @@ function rawNodeToElement(node: RawNode): Element {
   const focused = a["focused"] !== undefined ? a["focused"] === "true" : undefined;
   const clickable = a["clickable"] !== undefined ? a["clickable"] === "true" : undefined;
 
+  // For input elements, text is the current value
+  const isInput =
+    elementType === "android.widget.EditText" ||
+    elementType === "android.widget.AutoCompleteTextView";
+  const value = isInput ? text : undefined;
+
+  // Pass through raw attributes for getAttribute() introspection
+  const attributes: Record<string, string> = {};
+  for (const [key, val] of Object.entries(a)) {
+    if (key !== "bounds") attributes[key] = val;
+  }
+
   const children = node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
 
   return {
     ...(id !== undefined ? { id } : {}),
     ...(text !== undefined ? { text } : {}),
+    ...(value !== undefined ? { value } : {}),
     ...(accessibilityLabel !== undefined ? { accessibilityLabel } : {}),
     ...(elementType !== undefined ? { elementType } : {}),
     bounds,
     ...(enabled !== undefined ? { enabled } : {}),
     ...(focused !== undefined ? { focused } : {}),
     ...(clickable !== undefined ? { clickable } : {}),
+    ...(Object.keys(attributes).length > 0 ? { attributes } : {}),
     ...(children !== undefined ? { children } : {}),
   };
 }

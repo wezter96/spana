@@ -34,6 +34,18 @@ describe("parseIOSHierarchy", () => {
       enabled: true,
       visible: true,
       clickable: true,
+      attributes: {
+        type: "XCUIElementTypeButton",
+        name: "login-button",
+        label: "Log in",
+        value: "Log in",
+        x: "20",
+        y: "100",
+        width: "120",
+        height: "44",
+        enabled: "true",
+        visible: "true",
+      },
     });
   });
 });

@@ -9,6 +9,9 @@ export interface PromiseExpectation {
   toBeVisible(opts?: WaitOptions): Promise<void>;
   toBeHidden(opts?: WaitOptions): Promise<void>;
   toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
+  toMatchText(pattern: RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveValue(expected: string | number, opts?: WaitOptions): Promise<void>;
+  toHaveAttribute(name: string, value?: string, opts?: WaitOptions): Promise<void>;
   toBeEnabled(opts?: WaitOptions): Promise<void>;
   toBeDisabled(opts?: WaitOptions): Promise<void>;
   toContainText(expected: string, opts?: WaitOptions): Promise<void>;
@@ -36,6 +39,18 @@ export function createPromiseExpect(
     toHaveText: (expected, opts) =>
       runStep(`expect.toHaveText(${JSON.stringify(expected)})`, selector, () =>
         run(coord.assertText(selector, expected, opts)),
+      ),
+    toMatchText: (pattern, opts) =>
+      runStep(`expect.toMatchText(${pattern})`, selector, () =>
+        run(coord.assertMatchesText(selector, pattern, opts)),
+      ),
+    toHaveValue: (expected, opts) =>
+      runStep(`expect.toHaveValue(${JSON.stringify(expected)})`, selector, () =>
+        run(coord.assertValue(selector, expected, opts)),
+      ),
+    toHaveAttribute: (name, value, opts) =>
+      runStep(`expect.toHaveAttribute(${JSON.stringify(name)})`, selector, () =>
+        run(coord.assertAttribute(selector, name, value, opts)),
       ),
     toBeEnabled: (opts) =>
       runStep("expect.toBeEnabled", selector, () => run(coord.assertEnabled(selector, opts))),

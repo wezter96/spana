@@ -128,6 +128,30 @@ function createDriver(hierarchy: Element | Element[]) {
       events.push(["loadAuthState", path]);
       return Effect.void;
     },
+    downloadFile: (path) => {
+      events.push(["downloadFile", path]);
+      return Effect.void;
+    },
+    uploadFile: (selector, path) => {
+      events.push(["uploadFile", selector, path]);
+      return Effect.void;
+    },
+    newTab: (url) => {
+      events.push(["newTab", url]);
+      return Effect.succeed("tab-2");
+    },
+    switchToTab: (index) => {
+      events.push(["switchToTab", index]);
+      return Effect.void;
+    },
+    closeTab: () => {
+      events.push(["closeTab"]);
+      return Effect.void;
+    },
+    getTabIds: () => {
+      events.push(["getTabIds"]);
+      return Effect.succeed(["tab-1", "tab-2"]);
+    },
     getConsoleLogs: () => {
       events.push(["getConsoleLogs"]);
       return Effect.succeed(consoleLogs);
@@ -135,6 +159,37 @@ function createDriver(hierarchy: Element | Element[]) {
     getJSErrors: () => {
       events.push(["getJSErrors"]);
       return Effect.succeed(jsErrors);
+    },
+    getHAR: () => {
+      events.push(["getHAR"]);
+      return Effect.succeed({
+        log: {
+          version: "1.2",
+          creator: { name: "spana", version: "dev" },
+          browser: { name: "Chromium" },
+          pages: [
+            {
+              id: "tab-1",
+              title: "https://example.com",
+              startedDateTime: "2026-04-07T00:00:00.000Z",
+              pageTimings: { onContentLoad: -1, onLoad: -1 },
+            },
+          ],
+          entries: [],
+        },
+      });
+    },
+    pinch: (cx, cy, scale, duration) => {
+      events.push(["pinch", cx, cy, scale, duration]);
+      return Effect.void;
+    },
+    zoom: (cx, cy, scale, duration) => {
+      events.push(["zoom", cx, cy, scale, duration]);
+      return Effect.void;
+    },
+    multiTouch: (sequences) => {
+      events.push(["multiTouch", sequences]);
+      return Effect.void;
     },
   };
 
@@ -200,13 +255,23 @@ describe("promise app", () => {
     await app.loadCookies("./cookies.json");
     await app.saveAuthState("./auth.json");
     await app.loadAuthState("./auth.json");
+    await app.downloadFile("./download.txt");
+    await app.uploadFile({ testID: "upload-input" }, "./upload.txt");
+    const newTabId = await app.newTab("https://tab.test");
+    await app.switchToTab(1);
+    await app.closeTab();
+    const tabIds = await app.getTabIds();
     const consoleLogs = await app.getConsoleLogs();
     const jsErrors = await app.getJSErrors();
+    const har = await app.getHAR();
     const screenshot = await app.takeScreenshot("home");
 
     expect(screenshot).toEqual(new Uint8Array([1, 2, 3]));
+    expect(newTabId).toBe("tab-2");
+    expect(tabIds).toEqual(["tab-1", "tab-2"]);
     expect(consoleLogs).toEqual([{ type: "info", text: "web flow ready" }]);
     expect(jsErrors).toEqual([]);
+    expect(har.log.browser.name).toBe("Chromium");
     expect(stepCalls.map((call) => call.command)).toEqual([
       "tap",
       "tapXY",
@@ -232,8 +297,15 @@ describe("promise app", () => {
       "loadCookies",
       "saveAuthState",
       "loadAuthState",
+      "downloadFile",
+      "uploadFile",
+      "newTab",
+      "switchToTab(1)",
+      "closeTab",
+      "getTabIds",
       "getConsoleLogs",
       "getJSErrors",
+      "getHAR",
     ]);
     expect(stepCalls[0]?.opts).toEqual({
       selector: { text: "Ready" },
@@ -266,6 +338,21 @@ describe("promise app", () => {
     expect(stepCalls[23]?.opts).toEqual({
       selector: { path: "./auth.json" },
     });
+    expect(stepCalls[24]?.opts).toEqual({
+      selector: { path: "./download.txt" },
+    });
+    expect(stepCalls[25]?.opts).toEqual({
+      selector: { target: { testID: "upload-input" }, path: "./upload.txt" },
+      captureScreenshot: true,
+    });
+    expect(stepCalls[26]?.opts).toEqual({
+      selector: { url: "https://tab.test" },
+      captureScreenshot: true,
+    });
+    expect(stepCalls[27]?.opts).toEqual({
+      selector: { index: 1 },
+      captureScreenshot: true,
+    });
     expect(screenshotCalls).toEqual([
       {
         command: "takeScreenshot(home)",
@@ -290,8 +377,15 @@ describe("promise app", () => {
     expect(events).toContainEqual(["loadCookies", "./cookies.json"]);
     expect(events).toContainEqual(["saveAuthState", "./auth.json"]);
     expect(events).toContainEqual(["loadAuthState", "./auth.json"]);
+    expect(events).toContainEqual(["downloadFile", "./download.txt"]);
+    expect(events).toContainEqual(["uploadFile", { testID: "upload-input" }, "./upload.txt"]);
+    expect(events).toContainEqual(["newTab", "https://tab.test"]);
+    expect(events).toContainEqual(["switchToTab", 1]);
+    expect(events).toContainEqual(["closeTab"]);
+    expect(events).toContainEqual(["getTabIds"]);
     expect(events).toContainEqual(["getConsoleLogs"]);
     expect(events).toContainEqual(["getJSErrors"]);
+    expect(events).toContainEqual(["getHAR"]);
     expect(events).toContainEqual(["takeScreenshot"]);
   });
 
@@ -383,10 +477,148 @@ describe("promise app", () => {
     expect(events).toEqual([["back"], ["takeScreenshot"]]);
   });
 
+  test("getText returns element text content", async () => {
+    const { driver } = createDriver(
+      createElement({ children: [createElement({ text: "Hello World" })] }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    const text = await app.getText({ text: "Hello World" });
+    expect(text).toBe("Hello World");
+  });
+
+  test("getAttribute returns element attribute value", async () => {
+    const { driver } = createDriver(
+      createElement({
+        children: [createElement({ text: "Submit", attributes: { role: "button", disabled: "" } })],
+      }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    const role = await app.getAttribute({ text: "Submit" }, "role");
+    expect(role).toBe("button");
+    const missing = await app.getAttribute({ text: "Submit" }, "nonexistent");
+    expect(missing).toBeUndefined();
+  });
+
+  test("isVisible returns true for visible elements and false for missing ones", async () => {
+    const { driver } = createDriver(
+      createElement({ children: [createElement({ text: "Visible" })] }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    expect(await app.isVisible({ text: "Visible" })).toBe(true);
+    expect(await app.isVisible({ text: "Missing" }, { timeout: 50 })).toBe(false);
+  });
+
+  test("isEnabled returns true for enabled elements", async () => {
+    const { driver } = createDriver(
+      createElement({ children: [createElement({ text: "Button", enabled: true })] }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    expect(await app.isEnabled({ text: "Button" })).toBe(true);
+  });
+
+  test("pinch delegates to driver with element center coordinates", async () => {
+    const { driver, events } = createDriver(
+      createElement({ children: [createElement({ text: "Map" })] }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    await app.pinch({ text: "Map" }, { scale: 0.75, duration: 1000 });
+    expect(events).toContainEqual(["pinch", 25, 40, 0.75, 1000]);
+  });
+
+  test("zoom delegates to driver with element center coordinates", async () => {
+    const { driver, events } = createDriver(
+      createElement({ children: [createElement({ text: "Map" })] }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    await app.zoom({ text: "Map" }, { scale: 0.8, duration: 2000 });
+    expect(events).toContainEqual(["zoom", 25, 40, 0.8, 2000]);
+  });
+
+  test("pinch and zoom use default scale and duration when not specified", async () => {
+    const { driver, events } = createDriver(
+      createElement({ children: [createElement({ text: "Map" })] }),
+    );
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    await app.pinch({ text: "Map" });
+    await app.zoom({ text: "Map" });
+    expect(events).toContainEqual(["pinch", 25, 40, 0.5, 1500]);
+    expect(events).toContainEqual(["zoom", 25, 40, 0.5, 1500]);
+  });
+
+  test("multiTouch delegates sequences to driver", async () => {
+    const { driver, events } = createDriver(createElement());
+    const app = createPromiseApp(driver, "com.example.app", { parse });
+    const sequences = [
+      {
+        id: 0,
+        actions: [
+          { type: "move" as const, x: 100, y: 200 },
+          { type: "down" as const },
+          { type: "move" as const, x: 50, y: 100, duration: 500 },
+          { type: "up" as const },
+        ],
+      },
+      {
+        id: 1,
+        actions: [
+          { type: "move" as const, x: 300, y: 200 },
+          { type: "down" as const },
+          { type: "move" as const, x: 350, y: 300, duration: 500 },
+          { type: "up" as const },
+        ],
+      },
+    ];
+    await app.multiTouch(sequences);
+    expect(events).toContainEqual(["multiTouch", sequences]);
+  });
+
+  test("pinch fails cleanly on web (no driver support)", async () => {
+    const { driver } = createDriver(createElement({ children: [createElement({ text: "Map" })] }));
+    const app = createPromiseApp(
+      { ...driver, pinch: undefined } as RawDriverService,
+      "com.example.app",
+      { parse },
+    );
+    await expect(app.pinch({ text: "Map" })).rejects.toThrow(
+      "pinch() is only supported on mobile platforms",
+    );
+  });
+
+  test("zoom fails cleanly on web (no driver support)", async () => {
+    const { driver } = createDriver(createElement({ children: [createElement({ text: "Map" })] }));
+    const app = createPromiseApp(
+      { ...driver, zoom: undefined } as RawDriverService,
+      "com.example.app",
+      { parse },
+    );
+    await expect(app.zoom({ text: "Map" })).rejects.toThrow(
+      "zoom() is only supported on mobile platforms",
+    );
+  });
+
+  test("multiTouch fails cleanly on web (no driver support)", async () => {
+    const { driver } = createDriver(createElement());
+    const app = createPromiseApp(
+      { ...driver, multiTouch: undefined } as RawDriverService,
+      "com.example.app",
+      { parse },
+    );
+    await expect(app.multiTouch([{ id: 0, actions: [{ type: "down" }] }])).rejects.toThrow(
+      "multiTouch() is only supported on mobile platforms",
+    );
+  });
+
   test("web-only browser helpers fail cleanly when the driver does not support them", async () => {
     const { driver } = createDriver(createElement());
     const app = createPromiseApp(
-      { ...driver, saveCookies: undefined, getConsoleLogs: undefined } as RawDriverService,
+      {
+        ...driver,
+        saveCookies: undefined,
+        downloadFile: undefined,
+        newTab: undefined,
+        getConsoleLogs: undefined,
+        getHAR: undefined,
+      } as RawDriverService,
       "com.example.app",
       { parse },
     );
@@ -394,8 +626,13 @@ describe("promise app", () => {
     await expect(app.saveCookies("./cookies.json")).rejects.toThrow(
       "saveCookies() is only supported on the web platform",
     );
+    await expect(app.downloadFile("./download.txt")).rejects.toThrow(
+      "downloadFile() is only supported on the web platform",
+    );
+    await expect(app.newTab()).rejects.toThrow("newTab() is only supported on the web platform");
     await expect(app.getConsoleLogs()).rejects.toThrow(
       "getConsoleLogs() is only supported on the web platform",
     );
+    await expect(app.getHAR()).rejects.toThrow("getHAR() is only supported on the web platform");
   });
 });

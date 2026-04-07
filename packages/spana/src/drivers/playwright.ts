@@ -6,11 +6,14 @@ import {
   webkit,
   type BrowserContext,
   type CDPSession,
+  type Download,
   type Page,
+  type Request,
   type Route,
 } from "playwright-core";
 import { DriverError } from "../errors.js";
 import type { BrowserName } from "../schemas/config.js";
+import type { Selector } from "../schemas/selector.js";
 import {
   RawDriver,
   type RawDriverService,
@@ -20,6 +23,10 @@ import {
   type BrowserNetworkConditions,
   type BrowserRouteMatcher,
   type BrowserConsoleLog,
+  type BrowserHAR,
+  type BrowserHAREntry,
+  type BrowserHARHeader,
+  type BrowserHARPage,
   type BrowserJSError,
 } from "./raw-driver.js";
 
@@ -37,6 +44,7 @@ export interface PlaywrightConfig {
   headless?: boolean;
   baseUrl?: string;
   storageState?: string;
+  verboseLogging?: boolean;
 }
 
 const browserLaunchers = {
@@ -118,6 +126,43 @@ function currentPageUrl(page: Page): string {
   }
 }
 
+function toHarHeaders(headers: Record<string, string>): BrowserHARHeader[] {
+  return Object.entries(headers).map(([name, value]) => ({ name, value }));
+}
+
+function toHarQueryString(url: string): BrowserHARHeader[] {
+  try {
+    return Array.from(new URL(url).searchParams.entries()).map(([name, value]) => ({
+      name,
+      value,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function timingDuration(start: number, end: number): number {
+  if (start < 0 || end < 0 || end < start) {
+    return -1;
+  }
+
+  return Math.max(Math.round(end - start), 0);
+}
+
+type RequestTiming = ReturnType<Request["timing"]>;
+
+function totalHarTime(timing: RequestTiming): number {
+  const end =
+    timing.responseEnd >= 0
+      ? timing.responseEnd
+      : timing.responseStart >= 0
+        ? timing.responseStart
+        : timing.requestStart >= 0
+          ? timing.requestStart
+          : 0;
+  return Math.max(Math.round(end), 0);
+}
+
 export function makePlaywrightDriver(
   config: PlaywrightConfig,
 ): Effect.Effect<RawDriverService, DriverError> {
@@ -134,15 +179,236 @@ export function makePlaywrightDriver(
     const routeDefinitions: RouteDefinition[] = [];
     let appliedRoutes: AppliedRoute[] = [];
     let currentNetworkConditions: BrowserNetworkConditions = {};
+    let currentFlowName = "unscoped";
     let consoleLogs: BrowserConsoleLog[] = [];
     let jsErrors: BrowserJSError[] = [];
+    let tabIds = new Map<Page, string>();
+    let nextTabId = 1;
+    let harEntries: BrowserHAREntry[] = [];
+    let harPages = new Map<Page, BrowserHARPage>();
+    let queuedDownloads: Download[] = [];
+    let downloadWaiters: Array<{
+      resolve: (download: Download) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    const attachedPages = new WeakSet<Page>();
 
     const resetWebDiagnostics = () => {
       consoleLogs = [];
       jsErrors = [];
     };
 
+    const debugLog = (...parts: Array<string | number | boolean | undefined>) => {
+      if (!config.verboseLogging) {
+        return;
+      }
+
+      const rendered = parts.filter((part) => part !== undefined).map((part) => String(part));
+      console.log("[spana:web]", `[${currentFlowName}]`, ...rendered);
+    };
+
+    const getTabId = (activePage: Page): string => {
+      const existing = tabIds.get(activePage);
+      if (existing) {
+        return existing;
+      }
+
+      const id = `tab-${nextTabId++}`;
+      tabIds.set(activePage, id);
+      harPages.set(activePage, {
+        id,
+        title: currentPageUrl(activePage),
+        startedDateTime: new Date().toISOString(),
+        pageTimings: { onContentLoad: -1, onLoad: -1 },
+      });
+      return id;
+    };
+
+    const updateHarPage = (activePage: Page) => {
+      const harPage = harPages.get(activePage);
+      if (harPage) {
+        harPage.title = currentPageUrl(activePage);
+      }
+    };
+
+    const flushDownload = (download: Download) => {
+      const waiter = downloadWaiters.shift();
+      if (waiter) {
+        waiter.resolve(download);
+        return;
+      }
+
+      queuedDownloads.push(download);
+    };
+
+    const nextDownload = (): Promise<Download> => {
+      const queued = queuedDownloads.shift();
+      if (queued) {
+        return Promise.resolve(queued);
+      }
+
+      return new Promise<Download>((resolve, reject) => {
+        downloadWaiters.push({ resolve, reject });
+      });
+    };
+
+    const defaultSizes = {
+      requestBodySize: 0,
+      requestHeadersSize: -1,
+      responseBodySize: 0,
+      responseHeadersSize: -1,
+    };
+
+    const recordRequestFinished = async (activePage: Page, request: Request) => {
+      const response = await request.response();
+      if (!response) {
+        return;
+      }
+
+      const [requestHeaders, responseHeaders, sizes, httpVersion, serverAddr] = await Promise.all([
+        request.allHeaders().catch(() => request.headers()),
+        response.allHeaders().catch(() => Promise.resolve(response.headers())),
+        request.sizes().catch(() => Promise.resolve(defaultSizes)),
+        response.httpVersion().catch(() => Promise.resolve("HTTP/1.1")),
+        response.serverAddr().catch(() => Promise.resolve(null)),
+      ]);
+
+      const timing = request.timing();
+      const responseContentType =
+        responseHeaders["content-type"] ??
+        response.headers()["content-type"] ??
+        "application/octet-stream";
+      const redirectURL = responseHeaders.location ?? response.headers().location ?? "";
+      const requestContentType = requestHeaders["content-type"] ?? "";
+      const postData = request.postData();
+
+      updateHarPage(activePage);
+      harEntries.push({
+        pageref: getTabId(activePage),
+        startedDateTime:
+          timing.startTime > 0
+            ? new Date(timing.startTime).toISOString()
+            : new Date().toISOString(),
+        time: totalHarTime(timing),
+        request: {
+          method: request.method(),
+          url: request.url(),
+          httpVersion,
+          headers: toHarHeaders(requestHeaders),
+          queryString: toHarQueryString(request.url()),
+          headersSize: sizes.requestHeadersSize,
+          bodySize: sizes.requestBodySize,
+          ...(postData
+            ? {
+                postData: {
+                  mimeType: requestContentType || "application/octet-stream",
+                  text: postData,
+                },
+              }
+            : {}),
+        },
+        response: {
+          status: response.status(),
+          statusText: response.statusText(),
+          httpVersion,
+          headers: toHarHeaders(responseHeaders),
+          redirectURL,
+          headersSize: sizes.responseHeadersSize,
+          bodySize: sizes.responseBodySize,
+          content: {
+            size: sizes.responseBodySize,
+            mimeType: responseContentType,
+          },
+        },
+        cache: {},
+        timings: {
+          blocked: 0,
+          dns: timingDuration(timing.domainLookupStart, timing.domainLookupEnd),
+          connect: timingDuration(timing.connectStart, timing.connectEnd),
+          ssl: timingDuration(timing.secureConnectionStart, timing.connectEnd),
+          send: 0,
+          wait: timingDuration(timing.requestStart, timing.responseStart),
+          receive: timingDuration(timing.responseStart, timing.responseEnd),
+        },
+        ...(serverAddr?.ipAddress ? { serverIPAddress: serverAddr.ipAddress } : {}),
+        _resourceType: request.resourceType(),
+      });
+
+      debugLog("network", request.method(), response.status(), request.url());
+    };
+
+    const recordRequestFailed = async (activePage: Page, request: Request) => {
+      const requestHeaders = await request
+        .allHeaders()
+        .catch(() => Promise.resolve(request.headers()));
+      const requestContentType = requestHeaders["content-type"] ?? "";
+      const postData = request.postData();
+      const timing = request.timing();
+      const failureText = request.failure()?.errorText ?? "Request failed";
+
+      updateHarPage(activePage);
+      harEntries.push({
+        pageref: getTabId(activePage),
+        startedDateTime:
+          timing.startTime > 0
+            ? new Date(timing.startTime).toISOString()
+            : new Date().toISOString(),
+        time: totalHarTime(timing),
+        request: {
+          method: request.method(),
+          url: request.url(),
+          httpVersion: "",
+          headers: toHarHeaders(requestHeaders),
+          queryString: toHarQueryString(request.url()),
+          headersSize: -1,
+          bodySize: postData ? Buffer.byteLength(postData) : 0,
+          ...(postData
+            ? {
+                postData: {
+                  mimeType: requestContentType || "application/octet-stream",
+                  text: postData,
+                },
+              }
+            : {}),
+        },
+        response: {
+          status: 0,
+          statusText: failureText,
+          httpVersion: "",
+          headers: [],
+          redirectURL: "",
+          headersSize: -1,
+          bodySize: 0,
+          content: {
+            size: 0,
+            mimeType: "application/octet-stream",
+          },
+        },
+        cache: {},
+        timings: {
+          blocked: 0,
+          dns: timingDuration(timing.domainLookupStart, timing.domainLookupEnd),
+          connect: timingDuration(timing.connectStart, timing.connectEnd),
+          ssl: timingDuration(timing.secureConnectionStart, timing.connectEnd),
+          send: 0,
+          wait: timing.requestStart >= 0 ? Math.max(Math.round(timing.requestStart), 0) : -1,
+          receive: -1,
+        },
+        _resourceType: request.resourceType(),
+        _failureText: failureText,
+      });
+
+      debugLog("network", request.method(), "FAILED", request.url(), failureText);
+    };
+
     const attachPageDiagnostics = (activePage: Page) => {
+      if (attachedPages.has(activePage)) {
+        return;
+      }
+
+      attachedPages.add(activePage);
+      getTabId(activePage);
+
       activePage.on("console", (message) => {
         const location = message.location();
         const entry: BrowserConsoleLog = {
@@ -150,7 +416,11 @@ export function makePlaywrightDriver(
           text: message.text(),
         };
 
-        if (location.url || location.lineNumber !== undefined || location.columnNumber !== undefined) {
+        if (
+          location.url ||
+          location.lineNumber !== undefined ||
+          location.columnNumber !== undefined
+        ) {
           entry.location = {
             url: location.url || undefined,
             lineNumber: location.lineNumber,
@@ -159,6 +429,7 @@ export function makePlaywrightDriver(
         }
 
         consoleLogs.push(entry);
+        debugLog("console", entry.type, entry.text);
       });
 
       activePage.on("pageerror", (error) => {
@@ -167,6 +438,24 @@ export function makePlaywrightDriver(
           message: error.message,
           stack: error.stack,
         });
+        debugLog("pageerror", error.message);
+      });
+
+      activePage.on("download", (download) => {
+        debugLog("download", getTabId(activePage), download.suggestedFilename(), download.url());
+        flushDownload(download);
+      });
+
+      activePage.on("requestfinished", (request) => {
+        void recordRequestFinished(activePage, request);
+      });
+
+      activePage.on("requestfailed", (request) => {
+        void recordRequestFailed(activePage, request);
+      });
+
+      activePage.on("close", () => {
+        debugLog("tabClosed", tabIds.get(activePage) ?? "untracked");
       });
     };
 
@@ -224,10 +513,50 @@ export function makePlaywrightDriver(
       }
     };
 
+    const setInputFiles = async (selector: Selector, path: string) => {
+      if (typeof selector === "string") {
+        try {
+          await page.getByLabel(selector, { exact: true }).setInputFiles(path);
+          return;
+        } catch {
+          await page.getByText(selector, { exact: true }).setInputFiles(path);
+          return;
+        }
+      }
+
+      if ("point" in selector) {
+        throw new DriverError({
+          message:
+            "uploadFile() does not support point selectors on the web platform. Use testID, text, or accessibilityLabel.",
+        });
+      }
+
+      if ("testID" in selector) {
+        await page.getByTestId(selector.testID).setInputFiles(path);
+        return;
+      }
+
+      if ("accessibilityLabel" in selector) {
+        await page.getByLabel(selector.accessibilityLabel, { exact: true }).setInputFiles(path);
+        return;
+      }
+
+      if ("text" in selector) {
+        try {
+          await page.getByLabel(selector.text, { exact: true }).setInputFiles(path);
+          return;
+        } catch {
+          await page.getByText(selector.text, { exact: true }).setInputFiles(path);
+          return;
+        }
+      }
+    };
+
     const createContextAndPage = async (storageStatePath?: string) => {
-      context = await browser.newContext(
-        storageStatePath ? { storageState: storageStatePath } : undefined,
-      );
+      context = await browser.newContext({
+        acceptDownloads: true,
+        ...(storageStatePath ? { storageState: storageStatePath } : {}),
+      });
       page = await context.newPage();
       cdpSession = undefined;
       attachPageDiagnostics(page);
@@ -250,12 +579,48 @@ export function makePlaywrightDriver(
       await Promise.allSettled([previousPage.close(), previousContext.close()]);
     };
 
+    const beginFlow = async (flowName: string) => {
+      currentFlowName = flowName;
+      resetWebDiagnostics();
+      harEntries = [];
+      harPages = new Map();
+      tabIds = new Map();
+      nextTabId = 1;
+      queuedDownloads = [];
+      for (const waiter of downloadWaiters) {
+        waiter.reject(
+          new Error("A new flow started before downloadFile() received a download event."),
+        );
+      }
+      downloadWaiters = [];
+
+      const openPages = context.pages();
+      if (openPages.length === 0) {
+        page = await context.newPage();
+      } else {
+        const [firstPage, ...extraPages] = openPages;
+        page = firstPage!;
+        await Promise.all(extraPages.map((extraPage) => extraPage.close()));
+      }
+
+      attachPageDiagnostics(page);
+      getTabId(page);
+      updateHarPage(page);
+      debugLog("beginFlow", flowName);
+    };
+
     yield* Effect.tryPromise({
       try: () => createContextAndPage(config.storageState),
       catch: (e) => new DriverError({ message: `Failed to create page: ${e}` }),
     });
 
     const service: RawDriverService = {
+      beginFlow: (flowName) =>
+        Effect.tryPromise({
+          try: () => beginFlow(flowName),
+          catch: (e) => new DriverError({ message: `Failed to prepare flow ${flowName}: ${e}` }),
+        }),
+
       dumpHierarchy: () =>
         Effect.tryPromise({
           try: async (): Promise<RawHierarchy> => {
@@ -272,12 +637,14 @@ export function makePlaywrightDriver(
                     text: el.childNodes.length === 1 && el.childNodes[0] && el.childNodes[0].nodeType === 3
                       ? (el.childNodes[0].textContent || "").trim() || undefined
                       : undefined,
+                    value: (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") ? (el.value !== undefined ? String(el.value) : undefined) : undefined,
                     accessibilityLabel: el.getAttribute("aria-label") || undefined,
                     role: el.getAttribute("role") || undefined,
                     bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
                     enabled: !el.hasAttribute("disabled"),
                     visible: isVisible && rect.width > 0 && rect.height > 0,
                     clickable: el.tagName === "BUTTON" || el.tagName === "A" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.getAttribute("role") === "button" || el.onclick !== null,
+                    attributes: (function() { var a = {}; for (var i = 0; i < el.attributes.length; i++) { var attr = el.attributes[i]; a[attr.name] = attr.value; } return Object.keys(a).length > 0 ? a : undefined; })(),
                     children: Array.from(el.children).map(walk),
                   };
                 }
@@ -383,18 +750,24 @@ export function makePlaywrightDriver(
       launchApp: (url, opts?: LaunchOptions) =>
         Effect.tryPromise({
           try: async () => {
-            resetWebDiagnostics();
+            const targetUrl = opts?.deepLink || url || config.baseUrl || "about:blank";
             if (opts?.clearState) {
               await clearStorage();
             }
-            await page.goto(opts?.deepLink || url || config.baseUrl || "about:blank");
+            await page.goto(targetUrl);
+            updateHarPage(page);
+            debugLog("launchApp", targetUrl);
           },
           catch: (e) => new DriverError({ message: `Failed to navigate to ${url}: ${e}` }),
         }),
 
       stopApp: (_id) =>
         Effect.tryPromise({
-          try: () => page.goto("about:blank").then(() => {}),
+          try: async () => {
+            await page.goto("about:blank");
+            updateHarPage(page);
+            debugLog("stopApp");
+          },
           catch: (e) => new DriverError({ message: `Failed to stop app: ${e}` }),
         }),
 
@@ -410,19 +783,28 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await clearStorage();
+            debugLog("clearAppState");
           },
           catch: (e) => new DriverError({ message: `Failed to clear app state: ${e}` }),
         }),
 
       openLink: (url) =>
         Effect.tryPromise({
-          try: () => page.goto(url).then(() => {}),
+          try: async () => {
+            await page.goto(url);
+            updateHarPage(page);
+            debugLog("openLink", url);
+          },
           catch: (e) => new DriverError({ message: `Failed to open link ${url}: ${e}` }),
         }),
 
       back: () =>
         Effect.tryPromise({
-          try: () => page.goBack().then(() => {}),
+          try: async () => {
+            await page.goBack();
+            updateHarPage(page);
+            debugLog("back", currentPageUrl(page));
+          },
           catch: (e) => new DriverError({ message: `Failed to go back: ${e}` }),
         }),
 
@@ -439,6 +821,7 @@ export function makePlaywrightDriver(
             const definition: RouteDefinition = { kind: "mock", matcher, response };
             routeDefinitions.push(definition);
             await applyRouteDefinition(definition);
+            debugLog("mockNetwork", typeof matcher === "string" ? matcher : matcher.toString());
           },
           catch: (e) => new DriverError({ message: `Failed to mock network route: ${e}` }),
         }),
@@ -449,6 +832,7 @@ export function makePlaywrightDriver(
             const definition: RouteDefinition = { kind: "block", matcher };
             routeDefinitions.push(definition);
             await applyRouteDefinition(definition);
+            debugLog("blockNetwork", typeof matcher === "string" ? matcher : matcher.toString());
           },
           catch: (e) => new DriverError({ message: `Failed to block network route: ${e}` }),
         }),
@@ -461,6 +845,7 @@ export function makePlaywrightDriver(
             }
             appliedRoutes = [];
             routeDefinitions.length = 0;
+            debugLog("clearNetworkMocks");
           },
           catch: (e) => new DriverError({ message: `Failed to clear network mocks: ${e}` }),
         }),
@@ -470,6 +855,7 @@ export function makePlaywrightDriver(
           try: async () => {
             currentNetworkConditions = { ...conditions };
             await applyNetworkConditions();
+            debugLog("setNetworkConditions", JSON.stringify(conditions));
           },
           catch: (e) => new DriverError({ message: `Failed to set network conditions: ${e}` }),
         }),
@@ -479,6 +865,7 @@ export function makePlaywrightDriver(
           try: async () => {
             const cookies = await context.cookies();
             await writeFile(path, JSON.stringify(cookies, null, 2), "utf8");
+            debugLog("saveCookies", path);
           },
           catch: (e) => new DriverError({ message: `Failed to save cookies to ${path}: ${e}` }),
         }),
@@ -492,13 +879,17 @@ export function makePlaywrightDriver(
               throw new Error("Cookie file must contain an array of cookies.");
             }
             await context.addCookies(cookies);
+            debugLog("loadCookies", path);
           },
           catch: (e) => new DriverError({ message: `Failed to load cookies from ${path}: ${e}` }),
         }),
 
       saveAuthState: (path) =>
         Effect.tryPromise({
-          try: () => context.storageState({ path }).then(() => {}),
+          try: async () => {
+            await context.storageState({ path });
+            debugLog("saveAuthState", path);
+          },
           catch: (e) => new DriverError({ message: `Failed to save auth state to ${path}: ${e}` }),
         }),
 
@@ -506,14 +897,117 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await replaceContext(path);
+            updateHarPage(page);
+            debugLog("loadAuthState", path);
           },
           catch: (e) =>
             new DriverError({ message: `Failed to load auth state from ${path}: ${e}` }),
         }),
 
+      downloadFile: (path) =>
+        Effect.tryPromise({
+          try: async () => {
+            const download = await nextDownload();
+            await download.saveAs(path);
+            debugLog("downloadFile", path, download.suggestedFilename());
+          },
+          catch: (e) => new DriverError({ message: `Failed to download file to ${path}: ${e}` }),
+        }),
+
+      uploadFile: (selector, path) =>
+        Effect.tryPromise({
+          try: async () => {
+            await setInputFiles(selector, path);
+            debugLog("uploadFile", path);
+          },
+          catch: (e) => new DriverError({ message: `Failed to upload file ${path}: ${e}` }),
+        }),
+
+      newTab: (url) =>
+        Effect.tryPromise({
+          try: async () => {
+            const nextPage = await context.newPage();
+            attachPageDiagnostics(nextPage);
+            page = nextPage;
+            if (url) {
+              await nextPage.goto(url);
+            }
+            updateHarPage(nextPage);
+            const tabId = getTabId(nextPage);
+            debugLog("newTab", tabId, url ?? "about:blank");
+            return tabId;
+          },
+          catch: (e) => new DriverError({ message: `Failed to open a new tab: ${e}` }),
+        }),
+
+      switchToTab: (index) =>
+        Effect.tryPromise({
+          try: async () => {
+            const openPages = context.pages();
+            const nextPage = openPages[index];
+            if (!nextPage) {
+              throw new Error(
+                `Tab index ${index} is out of range. Open tabs: ${Math.max(openPages.length - 1, 0)}.`,
+              );
+            }
+            page = nextPage;
+            attachPageDiagnostics(page);
+            updateHarPage(page);
+            debugLog("switchToTab", index, getTabId(page));
+          },
+          catch: (e) => new DriverError({ message: `Failed to switch tabs: ${e}` }),
+        }),
+
+      closeTab: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const openPages = context.pages();
+            if (openPages.length <= 1) {
+              await page.goto("about:blank");
+              updateHarPage(page);
+              debugLog("closeTab", "last-tab-reset");
+              return;
+            }
+
+            const currentIndex = openPages.indexOf(page);
+            const fallbackIndex =
+              currentIndex <= 0 ? 1 : Math.min(currentIndex - 1, openPages.length - 1);
+            const fallbackPage = openPages[fallbackIndex]!;
+            const closingTabId = getTabId(page);
+            await page.close();
+            page = fallbackPage;
+            updateHarPage(page);
+            debugLog("closeTab", closingTabId, "->", getTabId(page));
+          },
+          catch: (e) => new DriverError({ message: `Failed to close the current tab: ${e}` }),
+        }),
+
+      getTabIds: () =>
+        Effect.sync(() => {
+          const ids = context.pages().map((openPage) => getTabId(openPage));
+          debugLog("getTabIds", ids.join(", "));
+          return ids;
+        }),
+
       getConsoleLogs: () => Effect.succeed([...consoleLogs]),
 
       getJSErrors: () => Effect.succeed([...jsErrors]),
+
+      getHAR: () =>
+        Effect.sync<BrowserHAR>(() => ({
+          log: {
+            version: "1.2",
+            creator: {
+              name: "spana",
+              version: "dev",
+            },
+            browser: {
+              name: browserLabels[browserName],
+            },
+            pages: Array.from(harPages.values()).map((harPage) => ({ ...harPage })),
+            entries: [...harEntries],
+          },
+        })),
     };
 
     return service;

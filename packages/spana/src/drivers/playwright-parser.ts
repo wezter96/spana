@@ -7,24 +7,25 @@ interface RawWebNode {
   tag?: string;
   id?: string;
   text?: string;
+  value?: string;
   accessibilityLabel?: string;
   role?: string;
   bounds: { x: number; y: number; width: number; height: number };
   enabled?: boolean;
   visible?: boolean;
   clickable?: boolean;
+  attributes?: Record<string, string>;
   children?: RawWebNode[];
 }
 
 function rawNodeToElement(node: RawWebNode): Element {
   const children =
-    node.children && node.children.length > 0
-      ? node.children.map(rawNodeToElement)
-      : undefined;
+    node.children && node.children.length > 0 ? node.children.map(rawNodeToElement) : undefined;
 
   return {
     ...(node.id !== undefined ? { id: node.id } : {}),
     ...(node.text !== undefined ? { text: node.text } : {}),
+    ...(node.value !== undefined ? { value: node.value } : {}),
     ...(node.accessibilityLabel !== undefined
       ? { accessibilityLabel: node.accessibilityLabel }
       : {}),
@@ -43,6 +44,7 @@ function rawNodeToElement(node: RawWebNode): Element {
     ...(node.enabled !== undefined ? { enabled: node.enabled } : {}),
     ...(node.visible !== undefined ? { visible: node.visible } : {}),
     ...(node.clickable !== undefined ? { clickable: node.clickable } : {}),
+    ...(node.attributes !== undefined ? { attributes: node.attributes } : {}),
     ...(children !== undefined ? { children } : {}),
   };
 }

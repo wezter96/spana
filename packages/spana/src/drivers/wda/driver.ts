@@ -238,6 +238,24 @@ export function createWDADriver(
           catch: (e) => new DriverError({ message: `Swipe failed: ${e}` }),
         }),
 
+      pinch: (cx, cy, scale, duration) =>
+        Effect.tryPromise({
+          try: () => withSessionRecovery(() => client.pinch(cx, cy, scale, msToSec(duration))),
+          catch: (e) => new DriverError({ message: `Pinch failed: ${e}` }),
+        }),
+
+      zoom: (cx, cy, scale, duration) =>
+        Effect.tryPromise({
+          try: () => withSessionRecovery(() => client.zoom(cx, cy, scale, msToSec(duration))),
+          catch: (e) => new DriverError({ message: `Zoom failed: ${e}` }),
+        }),
+
+      multiTouch: (sequences) =>
+        Effect.tryPromise({
+          try: () => withSessionRecovery(() => client.multiTouch(sequences)),
+          catch: (e) => new DriverError({ message: `Multi-touch failed: ${e}` }),
+        }),
+
       // -----------------------------------------------------------------------
       // Text input
       // -----------------------------------------------------------------------

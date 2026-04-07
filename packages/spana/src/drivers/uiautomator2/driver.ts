@@ -69,6 +69,24 @@ export function createUiAutomator2Driver(
           catch: (e) => new DriverError({ message: `Swipe failed: ${e}` }),
         }),
 
+      pinch: (cx, cy, scale, duration) =>
+        Effect.tryPromise({
+          try: () => client.performPinch(cx, cy, scale, duration),
+          catch: (e) => new DriverError({ message: `Pinch failed: ${e}` }),
+        }),
+
+      zoom: (cx, cy, scale, duration) =>
+        Effect.tryPromise({
+          try: () => client.performZoom(cx, cy, scale, duration),
+          catch: (e) => new DriverError({ message: `Zoom failed: ${e}` }),
+        }),
+
+      multiTouch: (sequences) =>
+        Effect.tryPromise({
+          try: () => client.performMultiTouch(sequences),
+          catch: (e) => new DriverError({ message: `Multi-touch failed: ${e}` }),
+        }),
+
       // -----------------------------------------------------------------------
       // Text input
       // -----------------------------------------------------------------------

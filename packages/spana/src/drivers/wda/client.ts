@@ -267,6 +267,143 @@ export class WDAClient {
     });
   }
 
+  /**
+   * Pinch gesture (zoom out) — two fingers move toward center.
+   *
+   * @param cx - center X coordinate
+   * @param cy - center Y coordinate
+   * @param scale - 0..1 representing how far fingers start from center (as fraction of 200px)
+   * @param durationSec - gesture duration in seconds (WDA convention)
+   */
+  async pinch(cx: number, cy: number, scale: number, durationSec: number): Promise<void> {
+    const dist = 200 * scale;
+    const durationMs = durationSec * 1000;
+    await this.request("POST", this.sessionPath("/actions"), {
+      actions: [
+        {
+          type: "pointer",
+          id: "finger1",
+          parameters: { pointerType: "touch" },
+          actions: [
+            { type: "pointerMove", duration: 0, x: Math.round(cx - dist), y: Math.round(cy) },
+            { type: "pointerDown", button: 0 },
+            {
+              type: "pointerMove",
+              duration: durationMs,
+              x: Math.round(cx - 10),
+              y: Math.round(cy),
+            },
+            { type: "pointerUp", button: 0 },
+          ],
+        },
+        {
+          type: "pointer",
+          id: "finger2",
+          parameters: { pointerType: "touch" },
+          actions: [
+            { type: "pointerMove", duration: 0, x: Math.round(cx + dist), y: Math.round(cy) },
+            { type: "pointerDown", button: 0 },
+            {
+              type: "pointerMove",
+              duration: durationMs,
+              x: Math.round(cx + 10),
+              y: Math.round(cy),
+            },
+            { type: "pointerUp", button: 0 },
+          ],
+        },
+      ],
+    });
+  }
+
+  /**
+   * Zoom gesture (zoom in) — two fingers move away from center.
+   *
+   * @param cx - center X coordinate
+   * @param cy - center Y coordinate
+   * @param scale - 0..1 representing how far fingers end from center (as fraction of 200px)
+   * @param durationSec - gesture duration in seconds (WDA convention)
+   */
+  async zoom(cx: number, cy: number, scale: number, durationSec: number): Promise<void> {
+    const dist = 200 * scale;
+    const durationMs = durationSec * 1000;
+    await this.request("POST", this.sessionPath("/actions"), {
+      actions: [
+        {
+          type: "pointer",
+          id: "finger1",
+          parameters: { pointerType: "touch" },
+          actions: [
+            { type: "pointerMove", duration: 0, x: Math.round(cx - 10), y: Math.round(cy) },
+            { type: "pointerDown", button: 0 },
+            {
+              type: "pointerMove",
+              duration: durationMs,
+              x: Math.round(cx - dist),
+              y: Math.round(cy),
+            },
+            { type: "pointerUp", button: 0 },
+          ],
+        },
+        {
+          type: "pointer",
+          id: "finger2",
+          parameters: { pointerType: "touch" },
+          actions: [
+            { type: "pointerMove", duration: 0, x: Math.round(cx + 10), y: Math.round(cy) },
+            { type: "pointerDown", button: 0 },
+            {
+              type: "pointerMove",
+              duration: durationMs,
+              x: Math.round(cx + dist),
+              y: Math.round(cy),
+            },
+            { type: "pointerUp", button: 0 },
+          ],
+        },
+      ],
+    });
+  }
+
+  /**
+   * Arbitrary multi-touch gesture using W3C Actions.
+   */
+  async multiTouch(
+    sequences: Array<{
+      id: number;
+      actions: Array<
+        | { type: "move"; x: number; y: number; duration?: number }
+        | { type: "down" }
+        | { type: "up" }
+        | { type: "pause"; duration: number }
+      >;
+    }>,
+  ): Promise<void> {
+    const actions = sequences.map((seq) => ({
+      type: "pointer" as const,
+      id: `finger${seq.id}`,
+      parameters: { pointerType: "touch" as const },
+      actions: seq.actions.map((a) => {
+        switch (a.type) {
+          case "move":
+            return {
+              type: "pointerMove" as const,
+              duration: a.duration ?? 0,
+              x: Math.round(a.x),
+              y: Math.round(a.y),
+            };
+          case "down":
+            return { type: "pointerDown" as const, button: 0 };
+          case "up":
+            return { type: "pointerUp" as const, button: 0 };
+          case "pause":
+            return { type: "pause" as const, duration: a.duration };
+        }
+      }),
+    }));
+    await this.request("POST", this.sessionPath("/actions"), { actions });
+  }
+
   // ---------------------------------------------------------------------------
   // Text / keyboard
   // ---------------------------------------------------------------------------

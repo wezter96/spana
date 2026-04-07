@@ -134,6 +134,62 @@ describe("promise expect", () => {
     await expectFor({ text: "Hello World" }).toContainText("World");
   });
 
+  test("toHaveValue passes for matching value", async () => {
+    const el = createElement({
+      children: [createElement({ text: "Email", value: "test@example.com" })],
+    });
+    const { driver } = createDriver([el]);
+    const expectFor = createPromiseExpect(driver, { parse });
+    await expectFor({ text: "Email" }).toHaveValue("test@example.com", { timeout: 100 });
+  });
+
+  test("toHaveValue fails for mismatched value", async () => {
+    const el = createElement({
+      children: [createElement({ text: "Email", value: "wrong" })],
+    });
+    const { driver } = createDriver([el]);
+    const expectFor = createPromiseExpect(driver, { parse });
+    await expect(
+      expectFor({ text: "Email" }).toHaveValue("expected", { timeout: 50, pollInterval: 10 }),
+    ).rejects.toThrow('Expected value "expected"');
+  });
+
+  test("toHaveAttribute passes when attribute exists with value", async () => {
+    const el = createElement({
+      children: [
+        createElement({ text: "Submit", attributes: { role: "button", "aria-pressed": "true" } }),
+      ],
+    });
+    const { driver } = createDriver([el]);
+    const expectFor = createPromiseExpect(driver, { parse });
+    await expectFor({ text: "Submit" }).toHaveAttribute("role", "button", { timeout: 100 });
+  });
+
+  test("toHaveAttribute passes for existence check", async () => {
+    const el = createElement({
+      children: [createElement({ text: "Submit", attributes: { disabled: "" } })],
+    });
+    const { driver } = createDriver([el]);
+    const expectFor = createPromiseExpect(driver, { parse });
+    await expectFor({ text: "Submit" }).toHaveAttribute("disabled", undefined, { timeout: 100 });
+  });
+
+  test("toMatchText passes for matching regex", async () => {
+    const el = createElement({ children: [createElement({ text: "Price: $42.99" })] });
+    const { driver } = createDriver([el]);
+    const expectFor = createPromiseExpect(driver, { parse });
+    await expectFor({ text: "Price: $42.99" }).toMatchText(/\$\d+\.\d{2}/);
+  });
+
+  test("toMatchText fails for non-matching regex", async () => {
+    const el = createElement({ children: [createElement({ text: "No numbers here" })] });
+    const { driver } = createDriver([el]);
+    const expectFor = createPromiseExpect(driver, { parse });
+    await expect(
+      expectFor({ text: "No numbers here" }).toMatchText(/\d+/, { timeout: 50, pollInterval: 10 }),
+    ).rejects.toThrow("Expected text to match");
+  });
+
   test("works without a recorder", async () => {
     const { driver, getDumpCount } = createDriver([
       createElement({ children: [createElement({ text: "Ready" })] }),
