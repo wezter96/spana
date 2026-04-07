@@ -37,4 +37,6 @@ export {
   type BrowserRouteMatcher,
   type BrowserMockResponse,
   type BrowserNetworkConditions,
+  type BrowserConsoleLog,
+  type BrowserJSError,
 } from "./drivers/raw-driver.js";

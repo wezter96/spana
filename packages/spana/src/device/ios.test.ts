@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
+const realFs = { ...require("node:fs") } as typeof import("node:fs");
+
 const iosState = {
   listDevicesJson: JSON.stringify({ devices: {} }),
+  devicectlJson: JSON.stringify({ result: { devices: [] } }),
   installedApps: new Set<string>(),
   plistJson: JSON.stringify([]),
   bootShouldThrow: false,
   terminateShouldThrow: false,
+  devicectlShouldThrow: false,
+  lastDevicectlPath: "",
   execSyncCalls: [] as string[],
   execFileCalls: [] as Array<{ command: string; args: string[] }>,
 };
@@ -14,10 +19,13 @@ let importCounter = 0;
 
 function resetIOSState(): void {
   iosState.listDevicesJson = JSON.stringify({ devices: {} });
+  iosState.devicectlJson = JSON.stringify({ result: { devices: [] } });
   iosState.installedApps.clear();
   iosState.plistJson = JSON.stringify([]);
   iosState.bootShouldThrow = false;
   iosState.terminateShouldThrow = false;
+  iosState.devicectlShouldThrow = false;
+  iosState.lastDevicectlPath = "";
   iosState.execSyncCalls = [];
   iosState.execFileCalls = [];
 }
@@ -29,6 +37,16 @@ function registerIOSMocks(): void {
 
       if (command === "xcrun simctl list devices -j") {
         return iosState.listDevicesJson;
+      }
+
+      if (command.startsWith("xcrun devicectl list devices --json-output ")) {
+        if (iosState.devicectlShouldThrow) {
+          throw new Error("missing devicectl");
+        }
+
+        iosState.lastDevicectlPath =
+          command.match(/--json-output\s+(\S+)/)?.[1] ?? "/tmp/spana-devicectl-test.json";
+        return "";
       }
 
       if (command.startsWith("xcrun simctl get_app_container ")) {
@@ -64,6 +82,18 @@ function registerIOSMocks(): void {
 
       return "";
     },
+  }));
+
+  mock.module("node:fs", () => ({
+    ...realFs,
+    readFileSync: (path: string, encoding?: BufferEncoding) => {
+      if (path === iosState.lastDevicectlPath) {
+        return iosState.devicectlJson;
+      }
+
+      return realFs.readFileSync(path, encoding as never);
+    },
+    unlinkSync: () => undefined,
   }));
 }
 
@@ -173,5 +203,56 @@ describe("ios device helpers", () => {
         args: ["simctl", "launch", "SIM-1", "com.example.shop", "--open-url", "spana://checkout"],
       },
     ]);
+  });
+
+  test("lists only currently connected physical iOS devices from devicectl", async () => {
+    iosState.devicectlJson = JSON.stringify({
+      result: {
+        devices: [
+          {
+            identifier: "IOS-DISCONNECTED",
+            hardwareProperties: { deviceType: "iPhone", udid: "IOS-DISCONNECTED" },
+            deviceProperties: { name: "Remembered iPhone" },
+            connectionProperties: {
+              transportType: "localNetwork",
+              tunnelState: "disconnected",
+            },
+          },
+          {
+            identifier: "IOS-CONNECTED",
+            hardwareProperties: { deviceType: "iPad", udid: "IOS-CONNECTED" },
+            deviceProperties: { name: "Connected iPad" },
+            connectionProperties: {
+              transportType: "wired",
+              tunnelState: "connected",
+            },
+          },
+          {
+            identifier: "IOS-UNAVAILABLE",
+            hardwareProperties: { deviceType: "iPhone", udid: "IOS-UNAVAILABLE" },
+            deviceProperties: { name: "Unavailable iPhone" },
+            connectionProperties: {
+              transportType: "wired",
+              tunnelState: "unavailable",
+            },
+          },
+        ],
+      },
+    });
+
+    const ios = await importFreshIOS();
+
+    expect(ios.listIOSPhysicalDevices()).toEqual([
+      {
+        udid: "IOS-CONNECTED",
+        name: "Connected iPad",
+        connectionType: "USB",
+      },
+    ]);
+    expect(ios.firstIOSPhysicalDevice()).toEqual({
+      udid: "IOS-CONNECTED",
+      name: "Connected iPad",
+      connectionType: "USB",
+    });
   });
 });

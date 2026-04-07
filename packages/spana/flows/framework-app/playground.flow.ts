@@ -7,6 +7,7 @@ export default flow(
     tags: ["showcase", "e2e", "framework-app"],
     platforms: ["web", "android", "ios"],
     autoLaunch: false,
+    timeout: 90_000,
     artifacts: { captureOnSuccess: true, captureSteps: true },
   },
   async ({ app, expect, platform }) => {
@@ -49,7 +50,7 @@ export default flow(
     await expect({ testID: "playground-details-text" }).toBeVisible();
     await app.takeScreenshot("section-expanded");
 
-    await app.scrollUntilVisible({ testID: "playground-sentinel" });
+    await app.scrollUntilVisible({ testID: "playground-sentinel" }, { timeout: 20_000, maxScrolls: 10 });
     await expect({ testID: "playground-sentinel" }).toBeVisible({ timeout: 10_000 });
     await expect({ testID: "playground-sentinel-text" }).toHaveText("Bottom Reached");
     await app.takeScreenshot("scroll-sentinel");

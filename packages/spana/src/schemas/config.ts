@@ -92,6 +92,8 @@ export interface ArtifactConfig {
   captureSteps?: boolean;
   screenshot?: boolean;
   uiHierarchy?: boolean;
+  consoleLogs?: boolean;
+  jsErrors?: boolean;
 }
 
 export interface HookContext {
@@ -249,6 +251,8 @@ const artifactConfigSchema = z
     captureSteps: z.boolean().optional(),
     screenshot: z.boolean().optional(),
     uiHierarchy: z.boolean().optional(),
+    consoleLogs: z.boolean().optional(),
+    jsErrors: z.boolean().optional(),
   })
   .strict();
 

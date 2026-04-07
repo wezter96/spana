@@ -60,6 +60,8 @@ describe("artifacts", () => {
       captureSteps: false,
       screenshot: false,
       uiHierarchy: true,
+      consoleLogs: true,
+      jsErrors: true,
     });
   });
 
@@ -97,5 +99,33 @@ describe("artifacts", () => {
     expect(attachment?.path).toContain("007-take_screenshot_home.png");
     expect(attachment ? existsSync(attachment.path) : false).toBe(true);
     expect(attachment ? Array.from(readFileSync(attachment.path)) : []).toEqual([9, 8, 7]);
+  });
+
+  test("captureArtifacts writes web console log and JS error files when available", async () => {
+    const driver = createDriver({
+      getConsoleLogs: () => Effect.succeed([{ type: "info", text: "ready" }]),
+      getJSErrors: () => Effect.succeed([{ name: "Error", message: "boom" }]),
+    });
+    const config = resolveArtifactConfig({
+      outputDir: join(tempDir, "web-diagnostics"),
+      captureOnFailure: true,
+      screenshot: false,
+      uiHierarchy: false,
+      consoleLogs: true,
+      jsErrors: true,
+    });
+
+    const attachments = await captureArtifacts(driver, config, "Web diagnostics", "web", "failed");
+
+    expect(attachments.map((attachment) => attachment.name)).toEqual([
+      "failed-console-logs",
+      "failed-js-errors",
+    ]);
+    expect(JSON.parse(readFileSync(attachments[0]!.path, "utf8"))).toEqual([
+      { type: "info", text: "ready" },
+    ]);
+    expect(JSON.parse(readFileSync(attachments[1]!.path, "utf8"))).toEqual([
+      { name: "Error", message: "boom" },
+    ]);
   });
 });

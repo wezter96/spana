@@ -189,8 +189,10 @@ Direction values: `"up" | "down" | "left" | "right"`
 | `loadCookies`          | `(path) => Promise<void>`                                                                     | Load cookies from a JSON file                       |
 | `saveAuthState`        | `(path) => Promise<void>`                                                                     | Save Playwright storage state to disk               |
 | `loadAuthState`        | `(path) => Promise<void>`                                                                     | Replace the browser context with saved auth state   |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`                                             | Read captured browser console messages              |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`                                            | Read captured uncaught JavaScript errors            |
 
-These helpers are only available on the web platform. `setNetworkConditions()` supports offline mode on every browser, but latency/throughput throttling requires the Chromium browser runtime.
+These helpers are only available on local Playwright web runs. `setNetworkConditions()` supports offline mode on every browser, but latency/throughput throttling requires the Chromium browser runtime. When artifact capture is enabled, web failures also include console logs and JavaScript errors in `spana-output/` and the HTML report.
 
 ```ts
 flow("web app can run with mocked APIs", async ({ app, platform }) => {
@@ -202,6 +204,18 @@ flow("web app can run with mocked APIs", async ({ app, platform }) => {
   });
   await app.blockNetwork("**/analytics/**");
   await app.setNetworkConditions({ offline: false, latencyMs: 120 });
+  await app.evaluate(() => console.info("profile hydrated"));
+  const logs = await app.getConsoleLogs();
+  const jsErrors = await app.getJSErrors();
+
+  if (!logs.some((entry) => entry.text.includes("profile hydrated"))) {
+    throw new Error("Expected the profile hydration log to be captured.");
+  }
+
+  if (jsErrors.length > 0) {
+    throw new Error(`Unexpected JS errors: ${jsErrors.map((entry) => entry.message).join(", ")}`);
+  }
+
   await app.saveCookies("./tmp/cookies.json");
 });
 ```

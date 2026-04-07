@@ -30,10 +30,14 @@ describe("createHtmlReporter", () => {
     const screenshotDir = createTempDir();
     const finalScreenshot = join(screenshotDir, "final.png");
     const stepScreenshot = join(screenshotDir, "step.png");
+    const consoleLogsPath = join(screenshotDir, "console-logs.json");
+    const jsErrorsPath = join(screenshotDir, "js-errors.json");
     const logs: string[] = [];
 
     writeFileSync(finalScreenshot, Buffer.from([0xde, 0xad, 0xbe, 0xef]));
     writeFileSync(stepScreenshot, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
+    writeFileSync(consoleLogsPath, JSON.stringify([{ type: "info", text: 'ready <ok> & "quoted"' }]));
+    writeFileSync(jsErrorsPath, JSON.stringify([{ name: "Error", message: 'boom <bad> & "worse"' }]));
     console.log = (...args: unknown[]) => {
       logs.push(args.join(" "));
     };
@@ -56,6 +60,8 @@ describe("createHtmlReporter", () => {
           error: { message: 'boom <bad> & "worse"', category: "unknown" },
           attachments: [
             { name: "failed-screenshot", contentType: "image/png", path: finalScreenshot },
+            { name: "failed-console-logs", contentType: "application/json", path: consoleLogsPath },
+            { name: "failed-js-errors", contentType: "application/json", path: jsErrorsPath },
           ],
           steps: [
             {
@@ -81,6 +87,11 @@ describe("createHtmlReporter", () => {
     expect(html).toContain("Playwright");
     expect(html).toContain("data:image/png;base64,3q2+7w==");
     expect(html).toContain("data:image/png;base64,yv66vg==");
+    expect(html).toContain("Web diagnostics");
+    expect(html).toContain("Console logs");
+    expect(html).toContain("ready &lt;ok&gt; &amp; \\&quot;quoted\\&quot;");
+    expect(html).toContain("JavaScript errors");
+    expect(html).toContain("boom &lt;bad&gt; &amp; \\&quot;worse\\&quot;");
     expect(logs[0]).toContain(join(outputDir, "report.html"));
   });
 

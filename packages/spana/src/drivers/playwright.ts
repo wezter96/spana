@@ -19,6 +19,8 @@ import {
   type BrowserMockResponse,
   type BrowserNetworkConditions,
   type BrowserRouteMatcher,
+  type BrowserConsoleLog,
+  type BrowserJSError,
 } from "./raw-driver.js";
 
 type RouteDefinition =
@@ -132,6 +134,41 @@ export function makePlaywrightDriver(
     const routeDefinitions: RouteDefinition[] = [];
     let appliedRoutes: AppliedRoute[] = [];
     let currentNetworkConditions: BrowserNetworkConditions = {};
+    let consoleLogs: BrowserConsoleLog[] = [];
+    let jsErrors: BrowserJSError[] = [];
+
+    const resetWebDiagnostics = () => {
+      consoleLogs = [];
+      jsErrors = [];
+    };
+
+    const attachPageDiagnostics = (activePage: Page) => {
+      activePage.on("console", (message) => {
+        const location = message.location();
+        const entry: BrowserConsoleLog = {
+          type: message.type(),
+          text: message.text(),
+        };
+
+        if (location.url || location.lineNumber !== undefined || location.columnNumber !== undefined) {
+          entry.location = {
+            url: location.url || undefined,
+            lineNumber: location.lineNumber,
+            columnNumber: location.columnNumber,
+          };
+        }
+
+        consoleLogs.push(entry);
+      });
+
+      activePage.on("pageerror", (error) => {
+        jsErrors.push({
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        });
+      });
+    };
 
     const clearStorage = async () => {
       await context.clearCookies();
@@ -193,6 +230,7 @@ export function makePlaywrightDriver(
       );
       page = await context.newPage();
       cdpSession = undefined;
+      attachPageDiagnostics(page);
 
       await reapplyRoutes();
       await applyNetworkConditions();
@@ -345,6 +383,7 @@ export function makePlaywrightDriver(
       launchApp: (url, opts?: LaunchOptions) =>
         Effect.tryPromise({
           try: async () => {
+            resetWebDiagnostics();
             if (opts?.clearState) {
               await clearStorage();
             }
@@ -471,6 +510,10 @@ export function makePlaywrightDriver(
           catch: (e) =>
             new DriverError({ message: `Failed to load auth state from ${path}: ${e}` }),
         }),
+
+      getConsoleLogs: () => Effect.succeed([...consoleLogs]),
+
+      getJSErrors: () => Effect.succeed([...jsErrors]),
     };
 
     return service;

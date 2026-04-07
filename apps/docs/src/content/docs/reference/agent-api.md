@@ -109,6 +109,23 @@ interface ConnectOptions {
 | `screenshot` | `() => Promise<Uint8Array>`          | Capture a screenshot                             |
 | `evaluate`   | `<T>(fn, ...args) => Promise<T>`     | Run JS in browser context (web only)             |
 
+### Browser helpers (web)
+
+| Method                 | Signature                                              | Description                                 |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`                 | Fulfill matching requests with mocked data  |
+| `blockNetwork`         | `(matcher) => Promise<void>`                           | Abort matching requests                     |
+| `clearNetworkMocks`    | `() => Promise<void>`                                  | Remove active route mocks/blocks            |
+| `setNetworkConditions` | `(conditions) => Promise<void>`                        | Toggle offline mode / Chromium throttling   |
+| `saveCookies`          | `(path) => Promise<void>`                              | Save cookies to a JSON file                 |
+| `loadCookies`          | `(path) => Promise<void>`                              | Load cookies from a JSON file               |
+| `saveAuthState`        | `(path) => Promise<void>`                              | Save Playwright storage state               |
+| `loadAuthState`        | `(path) => Promise<void>`                              | Replace the browser context with auth state |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`      | Read captured browser console logs          |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`     | Read uncaught JavaScript errors             |
+
+These helpers are only available on local Playwright web sessions.
+
 ### Lifecycle
 
 | Method       | Signature             | Description                           |

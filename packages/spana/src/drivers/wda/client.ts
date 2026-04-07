@@ -207,6 +207,12 @@ export class WDAClient {
   }
 
   async doubleTap(x: number, y: number): Promise<void> {
+    // WDA/XCUITest cannot reliably fire React Native Pressable's onPress
+    // twice via any touch synthesis API (/wda/tap, /wda/doubleTap, W3C
+    // Actions, element click). The coordinator handles double-tap by
+    // calling tapAtCoordinate twice instead of using this method.
+    // This implementation is kept for non-React-Native use cases where
+    // the native double-tap gesture is appropriate.
     await this.request("POST", this.sessionPath("/wda/doubleTap"), { x, y });
   }
 
@@ -253,7 +259,7 @@ export class WDAClient {
    *
    * @param frequency - typing speed in keys/sec (0 = WDA default ~60/s)
    */
-  async sendKeys(text: string, frequency = 0): Promise<void> {
+  async sendKeys(text: string, frequency = 25): Promise<void> {
     const body: Record<string, unknown> = {
       value: splitGraphemes(text),
     };

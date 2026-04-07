@@ -5,16 +5,49 @@ interface RouteSpec {
   name: string;
   path: string;
   selector: { testID: string };
+  /** testID of the drawer item for iOS navigation. null = not in drawer. */
+  drawerItem?: string;
+  /** Extra steps after drawer navigation (e.g. tapping a tab). */
+  afterDrawer?: (app: any, expect: any) => Promise<void>;
 }
 
 const WEB_BASE_URL = "http://127.0.0.1:8081";
 
 const routeSpecs: RouteSpec[] = [
   { name: "home", path: "/", selector: { testID: "home-title" } },
-  { name: "tabs-home", path: "/(drawer)/(tabs)", selector: { testID: "tab-one-title" } },
-  { name: "tabs-explore", path: "/two", selector: { testID: "tab-two-title" } },
-  { name: "modal", path: "/modal", selector: { testID: "modal-title" } },
-  { name: "playground", path: "/playground", selector: { testID: "playground-title" } },
+  {
+    name: "tabs-home",
+    path: "/(drawer)/(tabs)",
+    selector: { testID: "tab-one-title" },
+    drawerItem: "drawer-tabs-item",
+  },
+  {
+    name: "tabs-explore",
+    path: "/two",
+    selector: { testID: "tab-two-title" },
+    drawerItem: "drawer-tabs-item",
+    afterDrawer: async (app: any) => {
+      // Navigate to the explore tab after opening the tabs screen
+      await app.tap({ testID: "tabs-explore-tab" });
+    },
+  },
+  {
+    name: "modal",
+    path: "/modal",
+    selector: { testID: "modal-title" },
+    drawerItem: "drawer-tabs-item",
+    afterDrawer: async (app: any, expect: any) => {
+      // Wait for tabs screen to fully load, then open modal
+      await expect({ testID: "tab-one-title" }).toBeVisible({ timeout: 10_000 });
+      await app.tap({ testID: "modal-open-button" });
+    },
+  },
+  {
+    name: "playground",
+    path: "/playground",
+    selector: { testID: "playground-title" },
+    drawerItem: "drawer-playground-item",
+  },
 ];
 
 function routeHref(platform: Platform, route: RouteSpec): string {
@@ -51,14 +84,16 @@ export default flow(
           await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({
             timeout: 10_000,
           });
-          const drawerItemId = `drawer-${route.path.replace(/^\/+/, "").replace(/[()]/g, "")}-item`;
           // For root "/" route, go directly to home
           if (route.path === "/") {
             await expect(route.selector).toBeVisible({ timeout: 10_000 });
-          } else {
+          } else if (route.drawerItem) {
             await app.tap({ accessibilityLabel: "Show navigation menu" });
-            await expect({ testID: drawerItemId }).toBeVisible({ timeout: 5_000 });
-            await app.tap({ testID: drawerItemId });
+            await expect({ testID: route.drawerItem }).toBeVisible({ timeout: 5_000 });
+            await app.tap({ testID: route.drawerItem });
+            if (route.afterDrawer) {
+              await route.afterDrawer(app, expect);
+            }
           }
         } else {
           await app.openLink(routeHref(platform, route));

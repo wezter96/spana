@@ -11,5 +11,7 @@ export {
   type BackUntilVisibleOptions,
   type DismissKeyboardOptions,
   type ScrollUntilVisibleOptions,
+  type BrowserConsoleLog,
+  type BrowserJSError,
 } from "./app.js";
 export { createPromiseExpect, type PromiseExpectation } from "./expect.js";

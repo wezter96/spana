@@ -6,6 +6,8 @@ import type {
   BrowserMockResponse,
   BrowserNetworkConditions,
   BrowserRouteMatcher,
+  BrowserConsoleLog,
+  BrowserJSError,
 } from "../drivers/raw-driver.js";
 import type { ExtendedSelector } from "../schemas/selector.js";
 import {
@@ -24,6 +26,7 @@ export type {
   DismissKeyboardOptions,
   ScrollUntilVisibleOptions,
 } from "../smart/coordinator.js";
+export type { BrowserConsoleLog, BrowserJSError } from "../drivers/raw-driver.js";
 
 export interface PromiseApp {
   tap(selector: ExtendedSelector, opts?: WaitOptions): Promise<void>;
@@ -55,6 +58,8 @@ export interface PromiseApp {
   loadCookies(path: string): Promise<void>;
   saveAuthState(path: string): Promise<void>;
   loadAuthState(path: string): Promise<void>;
+  getConsoleLogs(): Promise<BrowserConsoleLog[]>;
+  getJSErrors(): Promise<BrowserJSError[]>;
 
   getText(selector: ExtendedSelector, opts?: WaitOptions): Promise<string>;
   isVisible(selector: ExtendedSelector, opts?: { timeout?: number }): Promise<boolean>;
@@ -261,6 +266,14 @@ export function createPromiseApp(
         () =>
           run((driver.loadAuthState ?? ((_path) => unsupportedWebFeature("loadAuthState")))(path)),
         { selector: { path } },
+      ),
+    getConsoleLogs: () =>
+      runStep("getConsoleLogs", () =>
+        run((driver.getConsoleLogs ?? (() => unsupportedWebFeature("getConsoleLogs")))()),
+      ),
+    getJSErrors: () =>
+      runStep("getJSErrors", () =>
+        run((driver.getJSErrors ?? (() => unsupportedWebFeature("getJSErrors")))()),
       ),
 
     getText: (selector, opts) =>

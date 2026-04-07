@@ -6,6 +6,8 @@ import type {
   BrowserMockResponse,
   BrowserNetworkConditions,
   BrowserRouteMatcher,
+  BrowserConsoleLog,
+  BrowserJSError,
 } from "../drivers/raw-driver.js";
 import type { Platform, Selector, ExtendedSelector } from "../schemas/selector.js";
 import type { Element } from "../schemas/element.js";
@@ -323,6 +325,24 @@ export class Session {
         new DriverError({ message: "loadAuthState() is only supported on the web platform" }),
       );
     await Effect.runPromise(effect);
+  }
+
+  async getConsoleLogs(): Promise<BrowserConsoleLog[]> {
+    const effect =
+      this.driver.getConsoleLogs?.() ??
+      Effect.fail(
+        new DriverError({ message: "getConsoleLogs() is only supported on the web platform" }),
+      );
+    return Effect.runPromise(effect);
+  }
+
+  async getJSErrors(): Promise<BrowserJSError[]> {
+    const effect =
+      this.driver.getJSErrors?.() ??
+      Effect.fail(
+        new DriverError({ message: "getJSErrors() is only supported on the web platform" }),
+      );
+    return Effect.runPromise(effect);
   }
 
   // ---------------------------------------------------------------------------

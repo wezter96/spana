@@ -52,6 +52,8 @@ function mockDriver(overrides: Partial<RawDriverService> = {}): RawDriverService
     loadCookies: noop,
     saveAuthState: noop,
     loadAuthState: noop,
+    getConsoleLogs: () => Effect.succeed([]),
+    getJSErrors: () => Effect.succeed([]),
     ...overrides,
   } as RawDriverService;
 }
@@ -143,14 +145,19 @@ describe("Session", () => {
   });
 
   test("doubleTap finds element and double taps center", async () => {
-    const dtFn = mock(() => Effect.void);
+    const tapFn = mock(() => Effect.void);
     const session = new Session(
-      mockDriver({ doubleTapAtCoordinate: dtFn as any }),
+      mockDriver({ tapAtCoordinate: tapFn as any }),
       "web",
       parseHierarchy,
     );
     await session.doubleTap({ testID: "btn" });
-    expect(dtFn).toHaveBeenCalledWith(100, 70);
+    expect(tapFn).toHaveBeenCalledTimes(2);
+    const calls = tapFn.mock.calls as unknown as Array<[number, number]>;
+    expect(calls).toEqual([
+      [100, 70],
+      [100, 70],
+    ]);
   });
 
   test("longPress finds element and long presses with default duration", async () => {
@@ -316,11 +323,15 @@ describe("Session", () => {
     const saveCookies = mock(() => Effect.void);
     const loadAuthState = mock(() => Effect.void);
     const setNetworkConditions = mock(() => Effect.void);
+    const getConsoleLogs = mock(() => Effect.succeed([{ type: "info", text: "ready" }]));
+    const getJSErrors = mock(() => Effect.succeed([{ name: "Error", message: "boom" }]));
     const session = new Session(
       mockDriver({
         saveCookies: saveCookies as any,
         loadAuthState: loadAuthState as any,
         setNetworkConditions: setNetworkConditions as any,
+        getConsoleLogs: getConsoleLogs as any,
+        getJSErrors: getJSErrors as any,
       }),
       "web",
       parseHierarchy,
@@ -329,10 +340,16 @@ describe("Session", () => {
     await session.saveCookies("./cookies.json");
     await session.loadAuthState("./auth.json");
     await session.setNetworkConditions({ offline: true });
+    const consoleLogs = await session.getConsoleLogs();
+    const jsErrors = await session.getJSErrors();
 
     expect(saveCookies).toHaveBeenCalledWith("./cookies.json");
     expect(loadAuthState).toHaveBeenCalledWith("./auth.json");
     expect(setNetworkConditions).toHaveBeenCalledWith({ offline: true });
+    expect(getConsoleLogs).toHaveBeenCalled();
+    expect(getJSErrors).toHaveBeenCalled();
+    expect(consoleLogs).toEqual([{ type: "info", text: "ready" }]);
+    expect(jsErrors).toEqual([{ name: "Error", message: "boom" }]);
   });
 
   test("evaluate throws on mobile", async () => {
@@ -355,6 +372,7 @@ describe("Session", () => {
     const session = new Session(
       mockDriver({
         saveCookies: undefined,
+        getConsoleLogs: undefined,
       }),
       "android",
       parseHierarchy,
@@ -362,6 +380,9 @@ describe("Session", () => {
 
     await expect(session.saveCookies("./cookies.json")).rejects.toThrow(
       "saveCookies() is only supported on the web platform",
+    );
+    await expect(session.getConsoleLogs()).rejects.toThrow(
+      "getConsoleLogs() is only supported on the web platform",
     );
   });
 

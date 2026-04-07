@@ -19,6 +19,14 @@ function toBase64DataUri(filePath: string): string | null {
   }
 }
 
+function readTextFile(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function formatDuration(ms: number): string {
   return (ms / 1000).toFixed(1) + "s";
 }
@@ -74,6 +82,37 @@ function renderFinalScreenshot(result: FlowResult): string {
   return `<div class="final-card"><img src="${dataUri}" alt="${escapeHtml(result.platform)} final"><div class="label">${escapeHtml(result.platform)} (${driverName(result.platform)}) &bull; ${formatDuration(result.durationMs)}</div></div>`;
 }
 
+function renderWebDiagnostics(result: FlowResult): string {
+  const diagnostics = (result.attachments ?? [])
+    .map((attachment) => {
+      const title =
+        attachment.name.endsWith("console-logs")
+          ? "Console logs"
+          : attachment.name.endsWith("js-errors")
+            ? "JavaScript errors"
+            : null;
+      if (!title) return "";
+
+      const raw = readTextFile(attachment.path);
+      if (!raw) return "";
+
+      let content = raw;
+      try {
+        content = JSON.stringify(JSON.parse(raw), null, 2);
+      } catch {
+        // Keep the original text when it is not valid JSON.
+      }
+
+      return `<div class="diagnostic-card"><h3>${escapeHtml(title)}</h3><pre>${escapeHtml(content)}</pre></div>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  if (!diagnostics) return "";
+
+  return `<div class="diagnostics"><h3>Web diagnostics</h3><div class="diagnostic-grid">${diagnostics}</div></div>`;
+}
+
 function renderScenarioStep(step: ScenarioStepResult): string {
   const icon = step.status === "passed" ? "✓" : step.status === "failed" ? "✗" : "○";
   const statusClass =
@@ -107,6 +146,7 @@ function renderPlatform(result: FlowResult): string {
   ${scenarioStepsHtml}
   ${driverStepsHtml}
   ${renderScreenshots(result.steps ?? [])}
+  ${renderWebDiagnostics(result)}
   ${result.status === "failed" && result.error ? `<div class="error-msg"><strong>Error:</strong> ${escapeHtml(result.error.message)}</div>` : ""}
 </div>`;
 }
@@ -159,6 +199,12 @@ h1{font-size:1.5rem;font-weight:600;margin-bottom:.25rem}
 .screenshot-card{flex-shrink:0;text-align:center;max-width:80vw}
 .screenshot-card img{height:280px;max-width:100%;object-fit:contain;border-radius:.5rem;border:1px solid #262626;background:#0a0a0a}
 .screenshot-card .label{font-size:.7rem;color:#525252;margin-top:.5rem}
+.diagnostics{padding:0 1.5rem 1.5rem}
+.diagnostics h3{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:#525252;margin-bottom:1rem}
+.diagnostic-grid{display:grid;gap:1rem}
+.diagnostic-card{border:1px solid #262626;border-radius:.5rem;background:#0a0a0a;overflow:hidden}
+.diagnostic-card h3{font-size:.8rem;font-weight:600;color:#d4d4d4;padding:.75rem 1rem;border-bottom:1px solid #262626;margin:0;text-transform:none;letter-spacing:0}
+.diagnostic-card pre{margin:0;padding:1rem;white-space:pre-wrap;word-break:break-word;font-size:.75rem;line-height:1.5;color:#d4d4d4;font-family:'SF Mono',Menlo,monospace;max-height:320px;overflow:auto}
 .final-grid{display:flex;gap:1.5rem;flex-wrap:wrap;justify-content:center}
 .final-card{text-align:center;max-width:100%}
 .final-card img{height:320px;max-width:100%;object-fit:contain;border-radius:.5rem;border:1px solid #262626}
@@ -178,6 +224,7 @@ h1{font-size:1.5rem;font-weight:600;margin-bottom:.25rem}
   .step-action{min-width:auto;font-size:.875rem}
   .step-selector{font-size:.7rem;flex-basis:100%;padding-left:2.25rem}
   .screenshots{padding:0 1rem 1rem}
+  .diagnostics{padding:0 1rem 1rem}
   .screenshot-card img{height:200px}
   .final-card img{height:220px}
   .error-msg{padding:.75rem 1rem;font-size:.7rem}

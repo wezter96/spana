@@ -118,6 +118,8 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
       }[direction];
 
       yield* driver.swipe(coords.startX, coords.startY, coords.endX, coords.endY, 500);
+      // Wait for scroll animation to settle before probing hierarchy
+      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 300)));
       yield* afterMutation();
     });
 
@@ -209,7 +211,12 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
           cache,
         );
         const { x, y } = centerOf(element);
-        yield* driver.doubleTapAtCoordinate(x, y);
+        // Two separate taps with delay. On Android (UiAutomator2), both taps
+        // fire React Native's onPress. On iOS (WDA), this is best-effort —
+        // XCUITest touch synthesis cannot reliably fire onPress twice.
+        yield* driver.tapAtCoordinate(x, y);
+        yield* Effect.promise(() => new Promise((r) => setTimeout(r, 200)));
+        yield* driver.tapAtCoordinate(x, y);
         yield* afterMutation();
       }),
 

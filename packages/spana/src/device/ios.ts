@@ -1,4 +1,5 @@
 import { execFileSync, execSync } from "node:child_process";
+import { readFileSync, unlinkSync } from "node:fs";
 
 export interface IOSSimulator {
   udid: string;
@@ -190,7 +191,6 @@ export function listIOSPhysicalDevices(): IOSPhysicalDevice[] {
     execSync(`xcrun devicectl list devices --json-output ${tmpFile} 2>/dev/null`, {
       timeout: 10_000,
     });
-    const { readFileSync, unlinkSync } = require("node:fs") as typeof import("node:fs");
     const output = readFileSync(tmpFile, "utf-8");
     try {
       unlinkSync(tmpFile);
@@ -206,12 +206,14 @@ export function listIOSPhysicalDevices(): IOSPhysicalDevice[] {
       const transport = device.connectionProperties?.transportType;
       const state = device.connectionProperties?.tunnelState;
 
-      // Include iPhones and iPads that have a transport (physically connected)
-      // tunnelState can be "connected", "disconnected", or "unavailable"
+      // Only treat iPhones/iPads with an active tunnel as available physical
+      // devices. devicectl can report remembered Wi-Fi devices with a transport
+      // but tunnelState "disconnected", which should not trigger a device-first
+      // test run attempt.
       if (
         (deviceType === "iPhone" || deviceType === "iPad") &&
         transport &&
-        state !== "unavailable"
+        state === "connected"
       ) {
         devices.push({
           udid: device.hardwareProperties?.udid ?? device.identifier,
@@ -349,7 +351,6 @@ export function hasAppOnPhysicalDevice(udid: string, bundleId: string): boolean 
       `xcrun devicectl device info apps --device ${udid} --json-output ${tmpFile} 2>/dev/null`,
       { timeout: 15_000 },
     );
-    const { readFileSync, unlinkSync } = require("node:fs") as typeof import("node:fs");
     const output = readFileSync(tmpFile, "utf-8");
     try {
       unlinkSync(tmpFile);

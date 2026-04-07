@@ -288,11 +288,14 @@ export default flow("web dashboard", async ({ app, platform }) => {
   });
   await app.blockNetwork("**/analytics/**");
   await app.setNetworkConditions({ offline: false, latencyMs: 120 });
+  await app.evaluate(() => console.info("dashboard hydrated"));
+  console.log(await app.getConsoleLogs());
+  console.log(await app.getJSErrors());
   await app.saveCookies("./tmp/cookies.json");
 });
 ```
 
-`mockNetwork`, `blockNetwork`, `clearNetworkMocks`, `setNetworkConditions`, `saveCookies`, `loadCookies`, `saveAuthState`, and `loadAuthState` are web-only helpers backed by Playwright. Latency and throughput throttling require Chromium.
+`mockNetwork`, `blockNetwork`, `clearNetworkMocks`, `setNetworkConditions`, `saveCookies`, `loadCookies`, `saveAuthState`, `loadAuthState`, `getConsoleLogs`, and `getJSErrors` are web-only helpers backed by local Playwright runs. Latency and throughput throttling require Chromium. When artifact capture is enabled, web failures also include captured console logs and JavaScript errors in `spana-output/` and the HTML report.
 
 ### Hybrid / WebView helpers
 

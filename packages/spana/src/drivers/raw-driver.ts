@@ -28,6 +28,24 @@ export interface BrowserNetworkConditions {
   uploadThroughputKbps?: number;
 }
 
+export interface BrowserConsoleLogLocation {
+  url?: string;
+  lineNumber?: number;
+  columnNumber?: number;
+}
+
+export interface BrowserConsoleLog {
+  type: string;
+  text: string;
+  location?: BrowserConsoleLogLocation;
+}
+
+export interface BrowserJSError {
+  name?: string;
+  message: string;
+  stack?: string;
+}
+
 export interface RawDriverService {
   // Hierarchy
   readonly dumpHierarchy: () => Effect.Effect<RawHierarchy, DriverError>;
@@ -92,6 +110,8 @@ export interface RawDriverService {
   readonly loadCookies?: (path: string) => Effect.Effect<void, DriverError>;
   readonly saveAuthState?: (path: string) => Effect.Effect<void, DriverError>;
   readonly loadAuthState?: (path: string) => Effect.Effect<void, DriverError>;
+  readonly getConsoleLogs?: () => Effect.Effect<BrowserConsoleLog[], DriverError>;
+  readonly getJSErrors?: () => Effect.Effect<BrowserJSError[], DriverError>;
 }
 
 export class RawDriver extends Context.Tag("RawDriver")<RawDriver, RawDriverService>() {}

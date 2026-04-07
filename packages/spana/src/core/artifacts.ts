@@ -12,6 +12,8 @@ export interface ResolvedArtifactConfig {
   captureSteps: boolean;
   screenshot: boolean;
   uiHierarchy: boolean;
+  consoleLogs: boolean;
+  jsErrors: boolean;
 }
 
 export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
@@ -21,6 +23,8 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   captureSteps: false,
   screenshot: true,
   uiHierarchy: true,
+  consoleLogs: true,
+  jsErrors: true,
 };
 
 function safeName(value: string): string {
@@ -45,6 +49,17 @@ function flowArtifactDir(
 
 function createAttachment(name: string, contentType: string, path: string): Attachment {
   return { name, contentType, path };
+}
+
+function writeJsonAttachment(
+  dir: string,
+  fileName: string,
+  attachmentName: string,
+  value: unknown,
+): Attachment {
+  const path = join(dir, fileName);
+  writeFileSync(path, JSON.stringify(value, null, 2), "utf-8");
+  return createAttachment(attachmentName, "application/json", path);
 }
 
 export function resolveArtifactConfig(
@@ -95,6 +110,30 @@ export async function captureArtifacts(
       attachments.push(createAttachment(`${status}-hierarchy`, "application/json", path));
     } catch {
       // Hierarchy capture failed — don't block test execution
+    }
+  }
+
+  if (config.consoleLogs && driver.getConsoleLogs) {
+    try {
+      const consoleLogs = await Effect.runPromise(Effect.orDie(driver.getConsoleLogs()));
+      if (consoleLogs.length > 0) {
+        attachments.push(
+          writeJsonAttachment(dir, "console-logs.json", `${status}-console-logs`, consoleLogs),
+        );
+      }
+    } catch {
+      // Console log capture failed — don't block test execution
+    }
+  }
+
+  if (config.jsErrors && driver.getJSErrors) {
+    try {
+      const jsErrors = await Effect.runPromise(Effect.orDie(driver.getJSErrors()));
+      if (jsErrors.length > 0) {
+        attachments.push(writeJsonAttachment(dir, "js-errors.json", `${status}-js-errors`, jsErrors));
+      }
+    } catch {
+      // JS error capture failed — don't block test execution
     }
   }
 

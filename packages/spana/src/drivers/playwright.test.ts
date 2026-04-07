@@ -11,6 +11,12 @@ const tempDirs: string[] = [];
 const playwrightState = {
   events: [] as Array<[string, ...unknown[]]>,
   routes: [] as Array<{ matcher: unknown; handler: unknown }>,
+  consoleHandlers: [] as Array<(message: {
+    type: () => string;
+    text: () => string;
+    location: () => { url?: string; lineNumber?: number; columnNumber?: number };
+  }) => void>,
+  pageErrorHandlers: [] as Array<(error: Error) => void>,
   launchError: undefined as Error | undefined,
   newPageError: undefined as Error | undefined,
   pressError: undefined as Error | undefined,
@@ -43,6 +49,8 @@ function createTempDir(): string {
 function resetPlaywrightState() {
   playwrightState.events = [];
   playwrightState.routes = [];
+  playwrightState.consoleHandlers = [];
+  playwrightState.pageErrorHandlers = [];
   playwrightState.launchError = undefined;
   playwrightState.newPageError = undefined;
   playwrightState.pressError = undefined;
@@ -66,8 +74,41 @@ function resetPlaywrightState() {
   };
 }
 
+function emitConsole(
+  type: string,
+  text: string,
+  location: { url?: string; lineNumber?: number; columnNumber?: number } = {},
+) {
+  for (const handler of playwrightState.consoleHandlers) {
+    handler({
+      type: () => type,
+      text: () => text,
+      location: () => location,
+    });
+  }
+}
+
+function emitPageError(error: Error) {
+  for (const handler of playwrightState.pageErrorHandlers) {
+    handler(error);
+  }
+}
+
 function makePage(browserName: string, context: Record<string, unknown>) {
   return {
+    on(event: string, handler: unknown) {
+      playwrightState.events.push(["pageOn", event]);
+      if (event === "console") {
+        playwrightState.consoleHandlers.push(handler as (message: {
+          type: () => string;
+          text: () => string;
+          location: () => { url?: string; lineNumber?: number; columnNumber?: number };
+        }) => void);
+      }
+      if (event === "pageerror") {
+        playwrightState.pageErrorHandlers.push(handler as (error: Error) => void);
+      }
+    },
     async evaluate(script: string | ((...args: unknown[]) => unknown), ...args: unknown[]) {
       playwrightState.events.push(["evaluate", script, ...args]);
       if (typeof script === "string" && script.includes("return walk(document.body)")) {
@@ -353,6 +394,42 @@ describe("Playwright driver adapter", () => {
     expect(playwrightState.events).toContainEqual(["goto", "https://app.test"]);
     expect(playwrightState.events).toContainEqual(["pageClose", "chromium"]);
     expect(playwrightState.events).toContainEqual(["contextClose", "chromium"]);
+  });
+
+  test("captures browser console logs and page errors for diagnostics", async () => {
+    const { makePlaywrightDriver } = await importFreshDriver();
+    const driver = await Effect.runPromise(makePlaywrightDriver({}));
+
+    await Effect.runPromise(driver.launchApp("https://app.test"));
+    emitConsole("info", "spana web flow ready", {
+      url: "https://app.test",
+      lineNumber: 12,
+      columnNumber: 4,
+    });
+    emitPageError(new Error("boom"));
+
+    expect(await Effect.runPromise(driver.getConsoleLogs!())).toEqual([
+      {
+        type: "info",
+        text: "spana web flow ready",
+        location: {
+          url: "https://app.test",
+          lineNumber: 12,
+          columnNumber: 4,
+        },
+      },
+    ]);
+    expect(await Effect.runPromise(driver.getJSErrors!())).toEqual([
+      {
+        name: "Error",
+        message: "boom",
+        stack: expect.any(String),
+      },
+    ]);
+
+    await Effect.runPromise(driver.launchApp("https://next.test"));
+    expect(await Effect.runPromise(driver.getConsoleLogs!())).toEqual([]);
+    expect(await Effect.runPromise(driver.getJSErrors!())).toEqual([]);
   });
 
   test("uses CDP for chromium network throttling and rejects non-chromium throttling", async () => {

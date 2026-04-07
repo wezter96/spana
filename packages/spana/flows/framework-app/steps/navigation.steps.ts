@@ -67,15 +67,8 @@ When("I tap the {string} element", async ({ app }, testID) => {
   await app.tap({ testID: testID as string });
 });
 
-When("I double tap the {string} element", async ({ app, platform }, testID) => {
-  if (platform === "ios") {
-    // On iOS, WDA's doubleTap doesn't fire React Native's onPress.
-    // Use two explicit taps to trigger the React double-tap handler.
-    await app.tap({ testID: testID as string });
-    await app.tap({ testID: testID as string });
-  } else {
-    await app.doubleTap({ testID: testID as string });
-  }
+When("I double tap the {string} element", async ({ app }, testID) => {
+  await app.doubleTap({ testID: testID as string });
 });
 
 When("I long press the {string} element", async ({ app }, testID) => {

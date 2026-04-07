@@ -54,6 +54,38 @@ export function createWDADriver(
       throw lastError ?? new Error("Failed to create WDA session");
     };
 
+    const isSessionError = (error: unknown): boolean => {
+      const msg = String(error).toLowerCase();
+      return (
+        msg.includes("session does not exist") ||
+        msg.includes("unable to connect") ||
+        msg.includes("no active session") ||
+        msg.includes("invalid session") ||
+        /status[:\s]*404/.test(msg)
+      );
+    };
+
+    const withSessionRecovery = async <T>(fn: () => Promise<T>): Promise<T> => {
+      try {
+        return await fn();
+      } catch (error) {
+        if (!isSessionError(error)) throw error;
+        // Session lost — recreate and retry
+        try {
+          await client.deleteSession();
+        } catch {
+          /* already gone */
+        }
+        await createSessionWithRetry(bundleId || undefined);
+        try {
+          await client.disableQuiescence();
+        } catch {
+          /* non-critical — quiescence setting may fail on fresh sessions */
+        }
+        return await fn();
+      }
+    };
+
     const activateSimulatorApp = async (targetBundleId: string) => {
       if (!targetBundleId) return;
       await client.activateApp(targetBundleId);
@@ -159,7 +191,7 @@ export function createWDADriver(
       // -----------------------------------------------------------------------
       dumpHierarchy: () =>
         Effect.tryPromise({
-          try: () => client.getSource(),
+          try: () => withSessionRecovery(() => client.getSource()),
           catch: (e) => new DriverError({ message: `Failed to get page source: ${e}` }),
         }),
 
@@ -168,27 +200,42 @@ export function createWDADriver(
       // -----------------------------------------------------------------------
       tapAtCoordinate: (x, y) =>
         Effect.tryPromise({
-          try: () => client.tap(x, y),
+          try: () => withSessionRecovery(() => client.tap(x, y)),
           catch: (e) => new DriverError({ message: `Tap failed: ${e}` }),
         }),
 
       doubleTapAtCoordinate: (x, y) =>
         Effect.tryPromise({
-          try: () => client.doubleTap(x, y),
+          try: () => withSessionRecovery(() => client.doubleTap(x, y)),
           catch: (e) => new DriverError({ message: `Double tap failed: ${e}` }),
         }),
 
       longPressAtCoordinate: (x, y, duration) =>
         Effect.tryPromise({
           // duration arrives in ms (spana convention) → convert to seconds for WDA
-          try: () => client.longPress(x, y, msToSec(duration)),
+          try: () => withSessionRecovery(() => client.longPress(x, y, msToSec(duration))),
           catch: (e) => new DriverError({ message: `Long press failed: ${e}` }),
         }),
 
       swipe: (sx, sy, ex, ey, dur) =>
         Effect.tryPromise({
           // dur arrives in ms → convert to seconds for WDA
-          try: () => client.swipe(sx, sy, ex, ey, msToSec(dur)),
+          // Clamp Y coordinates to avoid iOS system gesture zones (home indicator
+          // at bottom, notification center at top). Safe zone: 15–85% of screen.
+          try: async () => {
+            let clampedSy = sy;
+            let clampedEy = ey;
+            try {
+              const size = await client.getWindowSize();
+              const minY = size.height * 0.15;
+              const maxY = size.height * 0.85;
+              clampedSy = Math.max(minY, Math.min(maxY, sy));
+              clampedEy = Math.max(minY, Math.min(maxY, ey));
+            } catch {
+              /* use original coordinates if getWindowSize fails */
+            }
+            await client.swipe(sx, clampedSy, ex, clampedEy, msToSec(dur));
+          },
           catch: (e) => new DriverError({ message: `Swipe failed: ${e}` }),
         }),
 
@@ -197,7 +244,7 @@ export function createWDADriver(
       // -----------------------------------------------------------------------
       inputText: (text) =>
         Effect.tryPromise({
-          try: () => client.sendKeys(text),
+          try: () => withSessionRecovery(() => client.sendKeys(text)),
           catch: (e) => new DriverError({ message: `Input text failed: ${e}` }),
         }),
 
@@ -222,9 +269,15 @@ export function createWDADriver(
 
       hideKeyboard: () =>
         Effect.tryPromise({
-          // WDA hides the keyboard when no text field has focus; pressing home
-          // is the most reliable cross-version approach.
-          try: () => client.pressHome(),
+          // Dismiss keyboard by tapping a neutral area above where the keyboard
+          // sits. The previous approach (pressHome) backgrounds the app on iOS.
+          try: async () => {
+            const size = await client.getWindowSize();
+            // Tap at ~20% from the top, horizontally centered — safely below the
+            // nav bar but above the keyboard
+            await client.tap(size.width / 2, Math.round(size.height * 0.2));
+            await sleep(300);
+          },
           catch: (e) => new DriverError({ message: `Hide keyboard failed: ${e}` }),
         }),
 
@@ -233,14 +286,14 @@ export function createWDADriver(
       // -----------------------------------------------------------------------
       takeScreenshot: () =>
         Effect.tryPromise({
-          try: () => client.getScreenshot(),
+          try: () => withSessionRecovery(() => client.getScreenshot()),
           catch: (e) => new DriverError({ message: `Screenshot failed: ${e}` }),
         }),
 
       getDeviceInfo: () =>
         Effect.tryPromise({
           try: async () => {
-            const size = await client.getWindowSize();
+            const size = await withSessionRecovery(() => client.getWindowSize());
             return {
               platform: "ios" as const,
               deviceId: `${host}:${port}`,
@@ -281,9 +334,38 @@ export function createWDADriver(
               if (opts?.deepLink) {
                 await openSimulatorUrl(opts.deepLink, appBundleId);
               } else {
-                launchOnSimulator(simulatorUdid, appBundleId);
-                await sleep(500);
-                await activateSimulatorApp(appBundleId);
+                // Terminate first to reset navigation state (ignore errors —
+                // app may not be running or session may be stale).
+                try {
+                  await client.terminateApp(appBundleId);
+                } catch {
+                  try {
+                    terminateOnSimulator(simulatorUdid, appBundleId);
+                  } catch {
+                    /* app may not be running */
+                  }
+                }
+                await sleep(300);
+                // Relaunch via WDA to keep session attached
+                try {
+                  await client.launchApp(appBundleId);
+                  await sleep(500);
+                } catch {
+                  // WDA launch failed — fall back to simctl + session recreation
+                  launchOnSimulator(simulatorUdid, appBundleId);
+                  await sleep(500);
+                  try {
+                    await client.deleteSession();
+                  } catch {
+                    /* old session may be gone */
+                  }
+                  await createSessionWithRetry(appBundleId);
+                  try {
+                    await client.disableQuiescence();
+                  } catch {
+                    /* non-critical */
+                  }
+                }
               }
               return;
             }

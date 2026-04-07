@@ -20,6 +20,8 @@ function createDriver(hierarchy: Element | Element[]) {
   const events: Array<[string, ...unknown[]]> = [];
   const hierarchies = Array.isArray(hierarchy) ? hierarchy : [hierarchy];
   let dumpCount = 0;
+  const consoleLogs = [{ type: "info", text: "web flow ready" }];
+  const jsErrors: Array<{ name?: string; message: string; stack?: string }> = [];
   const deviceInfo: DeviceInfo = {
     platform: "web",
     deviceId: "playwright",
@@ -126,6 +128,14 @@ function createDriver(hierarchy: Element | Element[]) {
       events.push(["loadAuthState", path]);
       return Effect.void;
     },
+    getConsoleLogs: () => {
+      events.push(["getConsoleLogs"]);
+      return Effect.succeed(consoleLogs);
+    },
+    getJSErrors: () => {
+      events.push(["getJSErrors"]);
+      return Effect.succeed(jsErrors);
+    },
   };
 
   return { driver, events };
@@ -190,9 +200,13 @@ describe("promise app", () => {
     await app.loadCookies("./cookies.json");
     await app.saveAuthState("./auth.json");
     await app.loadAuthState("./auth.json");
+    const consoleLogs = await app.getConsoleLogs();
+    const jsErrors = await app.getJSErrors();
     const screenshot = await app.takeScreenshot("home");
 
     expect(screenshot).toEqual(new Uint8Array([1, 2, 3]));
+    expect(consoleLogs).toEqual([{ type: "info", text: "web flow ready" }]);
+    expect(jsErrors).toEqual([]);
     expect(stepCalls.map((call) => call.command)).toEqual([
       "tap",
       "tapXY",
@@ -218,6 +232,8 @@ describe("promise app", () => {
       "loadCookies",
       "saveAuthState",
       "loadAuthState",
+      "getConsoleLogs",
+      "getJSErrors",
     ]);
     expect(stepCalls[0]?.opts).toEqual({
       selector: { text: "Ready" },
@@ -257,7 +273,7 @@ describe("promise app", () => {
       },
     ]);
     expect(events).toContainEqual(["tapAtCoordinate", 25, 40]);
-    expect(events).toContainEqual(["doubleTapAtCoordinate", 25, 40]);
+    expect(events.filter((event) => event[0] === "tapAtCoordinate")).toHaveLength(4);
     expect(events).toContainEqual(["longPressAtCoordinate", 25, 40, 1200]);
     expect(events).toContainEqual(["longPressAtCoordinate", 1, 2, 400]);
     expect(events).toContainEqual(["launchApp", "com.example.app", { deepLink: "app://home" }]);
@@ -274,6 +290,8 @@ describe("promise app", () => {
     expect(events).toContainEqual(["loadCookies", "./cookies.json"]);
     expect(events).toContainEqual(["saveAuthState", "./auth.json"]);
     expect(events).toContainEqual(["loadAuthState", "./auth.json"]);
+    expect(events).toContainEqual(["getConsoleLogs"]);
+    expect(events).toContainEqual(["getJSErrors"]);
     expect(events).toContainEqual(["takeScreenshot"]);
   });
 
@@ -368,13 +386,16 @@ describe("promise app", () => {
   test("web-only browser helpers fail cleanly when the driver does not support them", async () => {
     const { driver } = createDriver(createElement());
     const app = createPromiseApp(
-      { ...driver, saveCookies: undefined } as RawDriverService,
+      { ...driver, saveCookies: undefined, getConsoleLogs: undefined } as RawDriverService,
       "com.example.app",
       { parse },
     );
 
     await expect(app.saveCookies("./cookies.json")).rejects.toThrow(
       "saveCookies() is only supported on the web platform",
+    );
+    await expect(app.getConsoleLogs()).rejects.toThrow(
+      "getConsoleLogs() is only supported on the web platform",
     );
   });
 });
