@@ -52,6 +52,7 @@ interface ActiveRun {
   status: "running" | "completed";
   results: FlowResult[];
   summary?: RunSummary;
+  platformTotals?: Partial<Record<Platform, number>>;
 }
 
 const activeRuns = new Map<string, ActiveRun>();
@@ -184,11 +185,30 @@ export const testsRouter = {
     .handler(async ({ input, context }) => {
       const runId = nextRunId();
       const run: ActiveRun = { id: runId, status: "running", results: [] };
+
+      // Count expected flows per platform for progress tracking
+      const platforms = input.platforms as Platform[];
+      try {
+        const flowDir = input.flowDir ?? context.config.flowDir ?? "./flows";
+        const flows = await discoverAndLoad(flowDir);
+        const filtered = filterFlows(flows, {
+          tags: input.tags,
+          grep: input.grep,
+          platforms: input.platforms as Platform[] | undefined,
+        });
+        const totals: Partial<Record<Platform, number>> = {};
+        for (const p of platforms) {
+          totals[p] = filtered.length;
+        }
+        run.platformTotals = totals;
+      } catch {
+        // If discovery fails, progress just won't show percentages
+      }
+
       activeRuns.set(runId, run);
 
       // Fire-and-forget: run tests via bun subprocess (Node can't import .ts drivers)
       void (async () => {
-        const platforms = input.platforms as Platform[];
         const flowDir = input.flowDir ?? context.config.flowDir ?? "./flows";
         try {
           const { spawn } = await import("node:child_process");
@@ -343,12 +363,23 @@ export const testsRouter = {
   status: publicProcedure.input(z.object({ runId: z.string() })).handler(({ input }) => {
     const run = activeRuns.get(input.runId);
     if (!run) {
-      return { status: "not_found" as const, results: [] };
+      return { status: "not_found" as const, results: [], progress: {} };
     }
+
+    // Compute per-platform progress from accumulated results
+    const progress: Record<string, { done: number; total: number }> = {};
+    if (run.platformTotals) {
+      for (const [platform, total] of Object.entries(run.platformTotals)) {
+        const done = run.results.filter((r) => r.platform === platform).length;
+        progress[platform] = { done, total: total as number };
+      }
+    }
+
     return {
       status: run.status,
       results: run.results,
       summary: run.summary,
+      progress,
     };
   }),
 
