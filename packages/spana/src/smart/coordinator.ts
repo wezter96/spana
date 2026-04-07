@@ -46,6 +46,26 @@ const DEFAULT_MAX_SCROLLS = 5;
 const DEFAULT_DISMISS_KEYBOARD_STRATEGY: KeyboardDismissStrategy = "auto";
 const DEFAULT_MAX_BACKS = 3;
 
+function computeSwipeCoords(
+  direction: Direction,
+  screenW: number,
+  screenH: number,
+  offsetFraction: number,
+): { startX: number; startY: number; endX: number; endY: number } {
+  const cx = screenW / 2;
+  const cy = screenH / 2;
+  const offset = Math.min(screenW, screenH) * offsetFraction;
+
+  return {
+    up: { startX: cx, startY: cy + offset, endX: cx, endY: cy - offset },
+    down: { startX: cx, startY: cy - offset, endX: cx, endY: cy + offset },
+    left: { startX: cx + offset, startY: cy, endX: cx - offset, endY: cy },
+    right: { startX: cx - offset, startY: cy, endX: cx + offset, endY: cy },
+  }[direction];
+}
+
+type PollMatchResult = { matched: boolean; actual?: string };
+
 export interface CoordinatorConfig {
   parse: HierarchyParser;
   defaults?: WaitOptions;
@@ -93,24 +113,13 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
     Effect.gen(function* () {
       const w = config.screenWidth ?? 1080;
       const h = config.screenHeight ?? 1920;
-      const cx = w / 2;
-      const cy = h / 2;
-      const dur = opts?.duration ?? 300;
-      const dist = Math.min(w, h) * 0.4;
-
-      const coords = {
-        up: { startX: cx, startY: cy + dist / 2, endX: cx, endY: cy - dist / 2 },
-        down: { startX: cx, startY: cy - dist / 2, endX: cx, endY: cy + dist / 2 },
-        left: { startX: cx + dist / 2, startY: cy, endX: cx - dist / 2, endY: cy },
-        right: { startX: cx - dist / 2, startY: cy, endX: cx + dist / 2, endY: cy },
-      }[direction];
-
+      const coords = computeSwipeCoords(direction, w, h, 0.2);
       yield* driver.swipe(
         coords.startX,
         clampY(coords.startY),
         coords.endX,
         clampY(coords.endY),
-        dur,
+        opts?.duration ?? 300,
       );
       yield* afterMutation();
     });
@@ -119,17 +128,7 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
     Effect.gen(function* () {
       const w = config.screenWidth ?? 1080;
       const h = config.screenHeight ?? 1920;
-      const cx = w / 2;
-      const cy = h / 2;
-      const dist = Math.min(w, h) * 0.3;
-
-      const coords = {
-        up: { startX: cx, startY: cy + dist, endX: cx, endY: cy - dist },
-        down: { startX: cx, startY: cy - dist, endX: cx, endY: cy + dist },
-        left: { startX: cx + dist, startY: cy, endX: cx - dist, endY: cy },
-        right: { startX: cx - dist, startY: cy, endX: cx + dist, endY: cy },
-      }[direction];
-
+      const coords = computeSwipeCoords(direction, w, h, 0.3);
       yield* driver.swipe(
         coords.startX,
         clampY(coords.startY),
@@ -180,6 +179,49 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
 
     return directionMap[direction];
   };
+
+  const pollUntilMatch = (
+    selector: ExtendedSelector,
+    opts: WaitOptions | undefined,
+    check: (el: Element) => PollMatchResult,
+    formatError: (
+      actual: string | undefined,
+      timeout: number,
+    ) => {
+      message: string;
+      expected: string;
+    },
+  ): Effect.Effect<
+    void,
+    ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+  > =>
+    Effect.gen(function* () {
+      const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+      const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
+      const start = Date.now();
+      let lastActual: string | undefined;
+
+      while (Date.now() - start < timeout) {
+        if (cache) cache.invalidate();
+        const raw = yield* driver.dumpHierarchy();
+        const root = parse(raw);
+        const element = findElementExtended(root, selector);
+        if (element) {
+          const result = check(element);
+          if (result.matched) return;
+          lastActual = result.actual;
+        }
+        yield* Effect.sleep(Duration.millis(pollInterval));
+      }
+
+      const err = formatError(lastActual, timeout);
+      return yield* new TextMismatchError({
+        message: err.message,
+        expected: err.expected,
+        actual: lastActual,
+        selector,
+      });
+    });
 
   const dismissKeyboardWithDriver = (): Effect.Effect<void, DriverError> =>
     Effect.gen(function* () {
@@ -481,31 +523,15 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
     > =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
-        const start = Date.now();
-        let lastActual: string | undefined;
-
-        while (Date.now() - start < timeout) {
-          if (cache) cache.invalidate();
-          const raw = yield* driver.dumpHierarchy();
-          const root = parse(raw);
-          const element = findElementExtended(root, selector);
-          if (element) {
-            if (element.text === expected) return;
-            lastActual = element.text;
-          }
-          yield* Effect.sleep(Duration.millis(pollInterval));
-        }
-
-        return yield* new TextMismatchError({
-          message: `Expected text "${expected}" but got "${lastActual ?? "(no text)"}" after ${timeout}ms`,
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => ({ matched: el.text === expected, actual: el.text }),
+        (actual, timeout) => ({
+          message: `Expected text "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
           expected,
-          actual: lastActual,
-          selector,
-        });
-      }),
+        }),
+      ),
 
     assertContainsText: (
       selector: ExtendedSelector,
@@ -515,32 +541,21 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
     > =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
-        const start = Date.now();
-        let lastActual: string | undefined;
-
-        while (Date.now() - start < timeout) {
-          if (cache) cache.invalidate();
-          const raw = yield* driver.dumpHierarchy();
-          const root = parse(raw);
-          const element = findElementExtended(root, selector);
-          if (element) {
-            const actual = element.text ?? "";
-            if (actual.toLowerCase().includes(expected.toLowerCase())) return;
-            lastActual = element.text;
-          }
-          yield* Effect.sleep(Duration.millis(pollInterval));
-        }
-
-        return yield* new TextMismatchError({
-          message: `Expected text to contain "${expected}" but got "${lastActual ?? "(no text)"}" after ${timeout}ms`,
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.text ?? "";
+          return {
+            matched: actual.toLowerCase().includes(expected.toLowerCase()),
+            actual: el.text,
+          };
+        },
+        (actual, timeout) => ({
+          message: `Expected text to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
           expected,
-          actual: lastActual,
-          selector,
-        });
-      }),
+        }),
+      ),
 
     assertEnabled: (
       selector: ExtendedSelector,
@@ -629,34 +644,21 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
-        const start = Date.now();
-        let lastActual: string | undefined;
-        const expectedStr = String(expected);
-
-        while (Date.now() - start < timeout) {
-          if (cache) cache.invalidate();
-          const raw = yield* driver.dumpHierarchy();
-          const root = parse(raw);
-          const element = findElementExtended(root, selector);
-          if (element) {
-            const actual = element.value ?? "";
-            if (actual === expectedStr) return;
-            lastActual = actual;
-          }
-          yield* Effect.sleep(Duration.millis(pollInterval));
-        }
-
-        return yield* new TextMismatchError({
-          message: `Expected value "${expectedStr}" but got "${lastActual ?? "(no value)"}" after ${timeout}ms`,
+    > => {
+      const expectedStr = String(expected);
+      return pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.value ?? "";
+          return { matched: actual === expectedStr, actual };
+        },
+        (actual, timeout) => ({
+          message: `Expected value "${expectedStr}" but got "${actual ?? "(no value)"}" after ${timeout}ms`,
           expected: expectedStr,
-          actual: lastActual,
-          selector,
-        });
-      }),
+        }),
+      );
+    },
 
     assertAttribute: (
       selector: ExtendedSelector,
@@ -667,46 +669,27 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
     > =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
-        const start = Date.now();
-        let lastActual: string | undefined;
-
-        while (Date.now() - start < timeout) {
-          if (cache) cache.invalidate();
-          const raw = yield* driver.dumpHierarchy();
-          const root = parse(raw);
-          const element = findElementExtended(root, selector);
-          if (element?.attributes) {
-            const actual = element.attributes[name];
-            if (expectedValue === undefined) {
-              // Just check the attribute exists
-              if (actual !== undefined) return;
-            } else {
-              if (actual === expectedValue) return;
-            }
-            lastActual = actual;
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.attributes?.[name];
+          if (expectedValue === undefined) {
+            return { matched: actual !== undefined, actual };
           }
-          yield* Effect.sleep(Duration.millis(pollInterval));
-        }
-
-        if (expectedValue === undefined) {
-          return yield* new TextMismatchError({
-            message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
-            expected: name,
-            actual: undefined,
-            selector,
-          });
-        }
-
-        return yield* new TextMismatchError({
-          message: `Expected attribute "${name}" to be "${expectedValue}" but got "${lastActual ?? "(not found)"}" after ${timeout}ms`,
-          expected: expectedValue,
-          actual: lastActual,
-          selector,
-        });
-      }),
+          return { matched: actual === expectedValue, actual };
+        },
+        (actual, timeout) =>
+          expectedValue === undefined
+            ? {
+                message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
+                expected: name,
+              }
+            : {
+                message: `Expected attribute "${name}" to be "${expectedValue}" but got "${actual ?? "(not found)"}" after ${timeout}ms`,
+                expected: expectedValue,
+              },
+      ),
 
     assertMatchesText: (
       selector: ExtendedSelector,
@@ -716,32 +699,18 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
     > =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
-        const start = Date.now();
-        let lastActual: string | undefined;
-
-        while (Date.now() - start < timeout) {
-          if (cache) cache.invalidate();
-          const raw = yield* driver.dumpHierarchy();
-          const root = parse(raw);
-          const element = findElementExtended(root, selector);
-          if (element) {
-            const actual = element.text ?? "";
-            if (pattern.test(actual)) return;
-            lastActual = actual;
-          }
-          yield* Effect.sleep(Duration.millis(pollInterval));
-        }
-
-        return yield* new TextMismatchError({
-          message: `Expected text to match ${pattern} but got "${lastActual ?? "(no text)"}" after ${timeout}ms`,
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.text ?? "";
+          return { matched: pattern.test(actual), actual };
+        },
+        (actual, timeout) => ({
+          message: `Expected text to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
           expected: String(pattern),
-          actual: lastActual,
-          selector,
-        });
-      }),
+        }),
+      ),
 
     getAttribute: (
       selector: ExtendedSelector,
