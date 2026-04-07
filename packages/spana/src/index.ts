@@ -43,3 +43,15 @@ export {
   type TouchAction,
   type TouchSequence,
 } from "./drivers/raw-driver.js";
+
+// Reporter API — for custom reporter authors
+export {
+  type Reporter,
+  type FlowResult,
+  type RunSummary,
+  type StepResult,
+  type ScenarioStepResult,
+  type Attachment,
+  type FlowError,
+  type FailureCategory,
+} from "./report/types.js";
