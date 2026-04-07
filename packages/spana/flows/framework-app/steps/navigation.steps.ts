@@ -5,10 +5,17 @@ import { buildFrameworkHref, navigateToHomeScreen } from "../support/navigation.
 
 Given("I navigate to the home screen", navigateToHomeScreen);
 
-Given("I navigate to {string}", async ({ app, platform }, path) => {
+Given("I navigate to {string}", async ({ app, expect: expectFn, platform }, path) => {
   if (platform === "ios") {
-    // iOS: use openLink for deep links — more reliable than launch with deepLink
-    await app.openLink(buildFrameworkHref(platform, path as string));
+    // iOS: launch app then navigate via drawer menu
+    // WDA's openUrl with custom schemes (spana://) routes through Safari
+    // which breaks the WDA session, so we navigate through the UI instead.
+    await app.launch();
+    await expectFn({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
+    const drawerItemId = `drawer-${(path as string).replace(/^\/+/, "")}-item`;
+    await app.tap({ accessibilityLabel: "Show navigation menu" });
+    await expectFn({ testID: drawerItemId }).toBeVisible({ timeout: 5_000 });
+    await app.tap({ testID: drawerItemId });
   } else {
     await app.launch({
       clearState: platform === "android",
@@ -48,16 +55,27 @@ When("I type {string} into the {string} field", async ({ app, expect: expectFn }
   await app.inputText(text as string);
 });
 
-When("I dismiss the keyboard", async ({ app }) => {
-  await app.dismissKeyboard();
+When("I dismiss the keyboard", async ({ app, platform }) => {
+  // On iOS, hideKeyboard can accidentally tap the navigation menu.
+  // Only explicitly dismiss on Android where the keyboard blocks interactions.
+  if (platform !== "ios") {
+    await app.dismissKeyboard();
+  }
 });
 
 When("I tap the {string} element", async ({ app }, testID) => {
   await app.tap({ testID: testID as string });
 });
 
-When("I double tap the {string} element", async ({ app }, testID) => {
-  await app.doubleTap({ testID: testID as string });
+When("I double tap the {string} element", async ({ app, platform }, testID) => {
+  if (platform === "ios") {
+    // On iOS, WDA's doubleTap doesn't fire React Native's onPress.
+    // Use two explicit taps to trigger the React double-tap handler.
+    await app.tap({ testID: testID as string });
+    await app.tap({ testID: testID as string });
+  } else {
+    await app.doubleTap({ testID: testID as string });
+  }
 });
 
 When("I long press the {string} element", async ({ app }, testID) => {

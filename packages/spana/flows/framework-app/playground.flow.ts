@@ -11,7 +11,12 @@ export default flow(
   },
   async ({ app, expect, platform }) => {
     if (platform === "ios") {
-      await app.openLink(buildFrameworkHref(platform, "/playground"));
+      // Navigate via drawer menu — WDA's openUrl breaks session for custom URL schemes
+      await app.launch();
+      await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
+      await app.tap({ accessibilityLabel: "Show navigation menu" });
+      await expect({ testID: "drawer-playground-item" }).toBeVisible({ timeout: 5_000 });
+      await app.tap({ testID: "drawer-playground-item" });
     } else {
       await app.launch({
         clearState: platform === "android",

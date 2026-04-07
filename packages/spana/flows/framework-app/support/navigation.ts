@@ -20,7 +20,9 @@ export async function navigateToHomeScreen({
   platform,
 }: NavigationContext): Promise<void> {
   if (platform === "ios") {
-    await app.openLink(buildFrameworkHref(platform, "/"));
+    // Use app.launch() instead of openLink with custom scheme — WDA's openUrl
+    // routes through Safari which breaks the WDA session for spana:// URLs.
+    await app.launch();
     await expect({ testID: "home-title" }).toBeVisible({ timeout: 10_000 });
     return;
   }

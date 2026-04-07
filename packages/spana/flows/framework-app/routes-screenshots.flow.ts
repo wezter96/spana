@@ -46,7 +46,20 @@ export default flow(
           // Force clear state to reset scroll position and navigation stack
           await app.launch({ deepLink: routeHref(platform, route), clearState: true });
         } else if (platform === "ios") {
-          await app.openLink(routeHref(platform, route));
+          // Navigate via drawer menu — WDA's openUrl breaks session for custom URL schemes
+          await app.launch();
+          await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({
+            timeout: 10_000,
+          });
+          const drawerItemId = `drawer-${route.path.replace(/^\/+/, "").replace(/[()]/g, "")}-item`;
+          // For root "/" route, go directly to home
+          if (route.path === "/") {
+            await expect(route.selector).toBeVisible({ timeout: 10_000 });
+          } else {
+            await app.tap({ accessibilityLabel: "Show navigation menu" });
+            await expect({ testID: drawerItemId }).toBeVisible({ timeout: 5_000 });
+            await app.tap({ testID: drawerItemId });
+          }
         } else {
           await app.openLink(routeHref(platform, route));
         }

@@ -18,7 +18,7 @@ export default function Playground() {
 
   const handleDoubleTap = useCallback(() => {
     const now = Date.now();
-    if (now - lastTapAtRef.current < 400) {
+    if (now - lastTapAtRef.current < 1000) {
       setDoubleTapStatus("Detected");
       lastTapAtRef.current = 0;
       return;
