@@ -175,10 +175,12 @@ describe("WDA driver adapter", () => {
     expect(wdaState.events).toContainEqual(["createSession", "com.example.app"]);
     expect(wdaState.events).toContainEqual(["disableQuiescence"]);
     expect(wdaState.events).toContainEqual(["longPress", 1, 2, 1.5]);
-    expect(wdaState.events).toContainEqual(["swipe", 1, 2, 3, 4, 0.25]);
+    // Swipe Y coords are clamped to 15–85% of screen height (844) to avoid iOS system gestures
+    expect(wdaState.events).toContainEqual(["swipe", 1, 844 * 0.15, 3, 844 * 0.15, 0.25]);
     expect(wdaState.events).toContainEqual(["pressButton", "volumeUp"]);
     expect(wdaState.events.filter(([type]) => type === "pressButton")).toHaveLength(1);
-    expect(wdaState.events).toContainEqual(["pressHome"]);
+    // hideKeyboard taps at a neutral coordinate instead of pressing Home
+    expect(wdaState.events).toContainEqual(["tap", 390 / 2, Math.round(844 * 0.2)]);
     expect(info).toEqual({
       platform: "ios",
       deviceId: "127.0.0.1:8100",

@@ -100,8 +100,13 @@ describe("coordinator", () => {
     await Effect.runPromise(coordinator.doubleTap({ text: "Ready" }));
     await Effect.runPromise(coordinator.longPress({ text: "Ready" }));
 
-    expect(taps).toEqual([{ x: 25, y: 40 }]);
-    expect(doubleTaps).toEqual([{ x: 25, y: 40 }]);
+    // doubleTap now uses two tapAtCoordinate calls instead of doubleTapAtCoordinate
+    expect(taps).toEqual([
+      { x: 25, y: 40 },
+      { x: 25, y: 40 },
+      { x: 25, y: 40 },
+    ]);
+    expect(doubleTaps).toEqual([]);
     expect(longPresses).toEqual([{ x: 25, y: 40, duration: 1000 }]);
   });
 

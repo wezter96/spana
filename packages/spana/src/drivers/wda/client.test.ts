@@ -91,6 +91,7 @@ describe("WDA client", () => {
 
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
       value: ["H", "i", "👨‍👩‍👧‍👦", "e\u0301"],
+      frequency: 25,
     });
   });
 
