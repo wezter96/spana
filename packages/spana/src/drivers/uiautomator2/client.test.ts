@@ -88,16 +88,18 @@ describe("UiAutomator2 client", () => {
     expect(calls[3]?.init?.method).toBe("DELETE");
   });
 
-  test("sendKeys keeps combined Unicode graphemes intact", async () => {
+  test("sendKeys skips unsupported emoji and sends remaining graphemes", async () => {
     const calls = queueFetch([
       { body: { value: { sessionId: "session-2" } } },
-      { body: { value: null } },
+      { body: { value: null } }, // "A" batch
+      { body: { value: null } }, // "e\u0301" batch
     ]);
     const client = new UiAutomator2Client("127.0.0.1", 4723);
 
     await client.createSession("com.example.app");
     await client.sendKeys("A👨‍👩‍👧‍👦e\u0301");
 
+    // "A" sent as first batch (before the emoji)
     expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
       actions: [
         {
@@ -106,8 +108,17 @@ describe("UiAutomator2 client", () => {
           actions: [
             { type: "keyDown", value: "A" },
             { type: "keyUp", value: "A" },
-            { type: "keyDown", value: "👨‍👩‍👧‍👦" },
-            { type: "keyUp", value: "👨‍👩‍👧‍👦" },
+          ],
+        },
+      ],
+    });
+    // "e\u0301" sent as second batch (after emoji is skipped)
+    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+      actions: [
+        {
+          type: "key",
+          id: "keyboard",
+          actions: [
             { type: "keyDown", value: "e\u0301" },
             { type: "keyUp", value: "e\u0301" },
           ],

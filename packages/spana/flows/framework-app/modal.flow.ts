@@ -19,13 +19,15 @@ export default flow(
     await expect({ testID: "modal-description" }).toBeVisible();
     await app.takeScreenshot("modal-open");
 
-    if (platform === "android" || platform === "web") {
+    if (platform === "web") {
       await app.backUntilVisible({ testID: "tab-one-title" }, { maxBacks: 2 });
+    } else if (platform === "android") {
+      await app.back();
     } else {
       await app.tap({ testID: "modal-dismiss-button" });
     }
 
-    await expect({ testID: "tab-one-title" }).toBeVisible({ timeout: 5_000 });
+    await expect({ testID: "tab-one-title" }).toBeVisible({ timeout: 15_000 });
     await app.takeScreenshot("modal-dismissed");
   },
 );

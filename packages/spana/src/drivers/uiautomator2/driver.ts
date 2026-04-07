@@ -43,7 +43,14 @@ export function createUiAutomator2Driver(
 
       doubleTapAtCoordinate: (x, y) =>
         Effect.tryPromise({
-          try: () => client.performDoubleTap(x, y),
+          try: async () => {
+            // Use two quick taps instead of native double-click gesture,
+            // because React Native Pressable treats onPress as individual taps
+            // and the native double_click gesture doesn't fire onPress twice.
+            await client.performTap(x, y);
+            await new Promise((r) => setTimeout(r, 100));
+            await client.performTap(x, y);
+          },
           catch: (e) => new DriverError({ message: `Double tap failed: ${e}` }),
         }),
 

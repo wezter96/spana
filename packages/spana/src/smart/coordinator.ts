@@ -123,12 +123,19 @@ export function createCoordinator(driver: RawDriverService, config: CoordinatorC
 
   const probeVisible = (
     selector: ExtendedSelector,
-    opts?: WaitOptions,
+    opts?: WaitOptions & { probeTimeout?: number },
   ): Effect.Effect<boolean, DriverError> =>
     Effect.gen(function* () {
       cache.invalidate();
+      const probeTimeout = opts?.probeTimeout ?? 1;
       const result = yield* Effect.either(
-        waitForElement(driver, selector, parse, { ...defaults, ...opts, timeout: 1 }, cache),
+        waitForElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts, timeout: probeTimeout },
+          cache,
+        ),
       );
 
       if (result._tag === "Right") {

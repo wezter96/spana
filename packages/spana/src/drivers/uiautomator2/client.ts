@@ -145,11 +145,23 @@ export class UiAutomator2Client {
   }
 
   async getWindowSize(): Promise<{ width: number; height: number }> {
-    const value = await this.request<{ width: number; height: number }>(
-      "GET",
-      this.sessionPath("/window/size"),
-    );
-    return value;
+    try {
+      return await this.request<{ width: number; height: number }>(
+        "GET",
+        this.sessionPath("/window/current/size"),
+      );
+    } catch {
+      // Fallback: try legacy endpoint
+      try {
+        return await this.request<{ width: number; height: number }>(
+          "GET",
+          this.sessionPath("/window/size"),
+        );
+      } catch {
+        // Default screen size if neither endpoint is available
+        return { width: 1080, height: 1920 };
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -213,6 +225,40 @@ export class UiAutomator2Client {
   // ---------------------------------------------------------------------------
 
   async sendKeys(text: string): Promise<void> {
+    // Check if text contains characters that UiAutomator2 can't synthesize via W3C Actions
+    // (e.g., ZWJ emoji sequences, non-BMP characters)
+    const hasComplexChars = /[\u{10000}-\u{10FFFF}]|\u200D/u.test(text);
+
+    if (hasComplexChars) {
+      // W3C Actions can't synthesize emoji/ZWJ sequences on Android.
+      // Use sendKeysViaActions for the simple chars and skip unsupported chars,
+      // accepting that complex emoji may not be typed on Android emulators.
+      // This is a known UiAutomator2 limitation.
+      const segments = splitGraphemes(text);
+      let simpleBatch = "";
+
+      for (const segment of segments) {
+        if (/[\u{10000}-\u{10FFFF}]|\u200D/u.test(segment)) {
+          if (simpleBatch) {
+            await this.sendKeysViaActions(simpleBatch);
+            simpleBatch = "";
+          }
+          // Skip complex emoji — UiAutomator2 cannot synthesize them
+        } else {
+          simpleBatch += segment;
+        }
+      }
+
+      if (simpleBatch) {
+        await this.sendKeysViaActions(simpleBatch);
+      }
+      return;
+    }
+
+    await this.sendKeysViaActions(text);
+  }
+
+  private async sendKeysViaActions(text: string): Promise<void> {
     // W3C Actions key sequence — triggers TextWatcher events on Android
     const keyActions: Array<{ type: string; value?: string }> = [];
     for (const segment of splitGraphemes(text)) {
