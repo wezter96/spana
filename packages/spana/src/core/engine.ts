@@ -1,6 +1,7 @@
 import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
 import type { FlowDefinition } from "../api/flow.js";
 import type { Platform } from "../schemas/selector.js";
+import { Effect } from "effect";
 import { createPromiseApp } from "../api/app.js";
 import { createPromiseExpect } from "../api/expect.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
@@ -10,6 +11,8 @@ import { captureArtifacts, resolveArtifactConfig } from "./artifacts.js";
 import { runDebugReplOnce } from "./debug-repl.js";
 import { createStepRecorder } from "./step-recorder.js";
 import { classifyError } from "../report/classify-error.js";
+import { join } from "node:path";
+import { createFailureBundle, writeFailureBundle } from "../report/failure-bundle.js";
 
 export interface TestResult {
   name: string;
@@ -71,19 +74,41 @@ export async function executeFlow(
   const expect = createPromiseExpect(driver, mergedCoordinatorConfig, stepRecorder);
   // Mutable context so compiled Gherkin flows can attach scenarioSteps via __scenarioSteps
   const flowCtx: any = { app, expect, platform };
+  const buildFailureResult = async (error: unknown): Promise<TestResult> => {
+    const attachments = await captureArtifacts(
+      driver,
+      artifactConfig,
+      flow.name,
+      platform,
+      "failed",
+    );
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    return {
+      name: flow.name,
+      platform,
+      status: "failed",
+      durationMs: Date.now() - start,
+      error: classifyError(normalized),
+      attachments,
+      steps: stepRecorder.getSteps(),
+      scenarioSteps: flowCtx.__scenarioSteps,
+    };
+  };
+
+  if (driver.beginFlow) {
+    try {
+      await Effect.runPromise(driver.beginFlow(flow.name));
+    } catch (error) {
+      return buildFailureResult(error);
+    }
+  }
 
   // beforeEach hook — if it throws, abort without running the flow
   if (config.hooks?.beforeEach) {
     try {
       await config.hooks.beforeEach({ app, platform } as any);
     } catch (error) {
-      return {
-        name: flow.name,
-        platform,
-        status: "failed",
-        durationMs: Date.now() - start,
-        error: classifyError(error instanceof Error ? error : new Error(String(error))),
-      };
+      return buildFailureResult(error);
     }
   }
 
@@ -141,6 +166,32 @@ export async function executeFlow(
       steps: stepRecorder.getSteps(),
       scenarioSteps: flowCtx.__scenarioSteps,
     };
+
+    // Write structured failure bundle alongside artifacts
+    if (artifactConfig.captureOnFailure && result.error) {
+      try {
+        const artDir = join(
+          artifactConfig.outputDir,
+          `${
+            flow.name
+              .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
+              .replaceAll(/_+/g, "_")
+              .slice(0, 80) || "artifact"
+          }-${platform}`,
+        );
+        const bundle = createFailureBundle(
+          flow.name,
+          platform,
+          stepRecorder.getSteps(),
+          result.error,
+          artDir,
+          attachments,
+        );
+        writeFailureBundle(bundle, artDir);
+      } catch {
+        // Bundle writing is best-effort — don't block test execution
+      }
+    }
 
     if (config.debugOnFailure) {
       await runDebugReplOnce({
