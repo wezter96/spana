@@ -209,6 +209,58 @@ spana now supports custom reporters and cloud providers via config-path loading,
 
 ---
 
+## Phase 10 — Agent & Developer Experience (v1.6.0)
+
+Spana's raw capability is now broad enough that the next big win is tightening the day-to-day loop: setup, discovery, authoring, iteration, and failure repair should feel deterministic, fast, and equally friendly to humans and AI agents.
+
+### Stable machine interfaces
+
+- Add `--json` output mode to all relevant CLI commands, including `devices`, `validate`, `validate-config`, `selectors`, `hierarchy`, and future diagnostics commands
+- Version all structured CLI output with a `schemaVersion` field so agent integrations can rely on stable contracts
+- Include structured `errorCode`, `suggestedFix`, and `docsUrl` fields in machine-readable failures instead of forcing tools to scrape human text
+
+### Environment readiness
+
+- Add `spana doctor` to validate config, local runtime dependencies, connected devices/simulators, app installability, iOS signing, and Appium/cloud configuration before a run starts
+- Emit both human-readable and machine-readable diagnostics with concrete remediation steps
+
+### Faster authoring and iteration
+
+- Generate starter `.flow.ts` files from Studio or the current screen state using best-available selectors and placeholder assertions
+- Add reusable named setup states / fixtures for common starting points like authenticated sessions, seeded carts, or deep-linked screens
+- Add fast rerun modes such as `spana test --last-failed`, `--changed`, and `--watch`
+- Add opinionated config presets for common setups like local web, local React Native, BrowserStack, and Sauce Labs
+
+### Reliability guardrails
+
+- Add selector linting or strict validation to warn on brittle patterns like coordinate taps, ambiguous text selectors, and flows that over-rely on raw visible text
+- Surface clearer recommendations when apps should add stable `testID` / accessibility identifiers for long-term test reliability
+
+### Richer failure bundles
+
+- Write a single structured failure artifact that includes the failed step, last successful step, attempted selector, nearby selector alternatives, hierarchy snippet, screenshot/log artifact paths, and a repro command
+- Make failure output self-contained enough that both a human and an agent can attempt a repair loop without reopening multiple tools or docs pages
+
+### Agent-facing docs and context packaging
+
+- Build on the new `llms.txt` support with cleaner markdown exports or generated `llms-ctx` bundles for high-signal documentation ingestion
+- Document structured CLI output schemas so external agents and tools can integrate against Spana intentionally rather than heuristically
+
+### Delivered
+
+- [x] Structured failure bundles with selector alternatives, repro commands, and artifact references (`failure-bundle.json`)
+- [x] Runtime selector guardrails — advisory warnings for coordinate taps, text-heavy flows, and bare string selectors
+- [x] Auto-generated `llms-full.txt` with all documentation inlined for agent context packaging
+
+### Success criteria
+
+- Agents can use Spana's CLI and diagnostics without scraping human-oriented output
+- A new user can run one command to understand whether their environment is ready and how to fix it if not
+- Writing the first reliable flow takes fewer manual setup and discovery steps
+- Failure reports are rich enough to support an efficient fix-and-rerun loop for both humans and agents
+
+---
+
 ## Strategic bets — Explore, don't commit yet
 
 These are real areas where WebdriverIO is broader, but they are product-direction decisions rather than obvious next roadmap items.
