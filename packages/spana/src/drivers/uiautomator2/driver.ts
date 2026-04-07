@@ -47,8 +47,11 @@ export function createUiAutomator2Driver(
             // Use two quick taps instead of native double-click gesture,
             // because React Native Pressable treats onPress as individual taps
             // and the native double_click gesture doesn't fire onPress twice.
+            // Send both taps as fast as possible — the React handler
+            // checks Date.now() gap < 400ms between onPress events.
+            // Network latency to UiAutomator2 server adds ~100-200ms per tap,
+            // so we don't add any extra delay.
             await client.performTap(x, y);
-            await new Promise((r) => setTimeout(r, 100));
             await client.performTap(x, y);
           },
           catch: (e) => new DriverError({ message: `Double tap failed: ${e}` }),

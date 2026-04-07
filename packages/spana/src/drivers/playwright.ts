@@ -304,7 +304,7 @@ export function makePlaywrightDriver(
 
       inputText: (text) =>
         Effect.tryPromise({
-          try: () => page.keyboard.type(text),
+          try: () => page.keyboard.insertText(text),
           catch: (e) => new DriverError({ message: `Failed to input text: ${e}` }),
         }),
 

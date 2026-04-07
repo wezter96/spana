@@ -42,10 +42,13 @@ export default flow(
 
     for (const route of routeSpecs) {
       try {
-        if (platform === "ios") {
+        if (platform === "android") {
+          // Force clear state to reset scroll position and navigation stack
+          await app.launch({ deepLink: routeHref(platform, route), clearState: true });
+        } else if (platform === "ios") {
           await app.openLink(routeHref(platform, route));
         } else {
-          await app.launch({ deepLink: routeHref(platform, route), clearState: false });
+          await app.openLink(routeHref(platform, route));
         }
         await expect(route.selector).toBeVisible({ timeout: 15_000 });
         await app.takeScreenshot(route.name);

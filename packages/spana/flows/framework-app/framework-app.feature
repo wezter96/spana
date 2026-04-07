@@ -8,6 +8,7 @@ Feature: Framework app (BDD)
     And I should not see the element "playground-details-text"
     When I type "Hello BDD test" into the "playground-input" field
     Then the element "playground-input-mirror" should have text "Hello BDD test"
+    When I dismiss the keyboard
     When I double tap the "playground-double-tap" element
     Then the element "playground-double-tap-status" should have text "Detected"
     When I long press the "playground-long-press" element

@@ -48,6 +48,10 @@ When("I type {string} into the {string} field", async ({ app, expect: expectFn }
   await app.inputText(text as string);
 });
 
+When("I dismiss the keyboard", async ({ app }) => {
+  await app.dismissKeyboard();
+});
+
 When("I tap the {string} element", async ({ app }, testID) => {
   await app.tap({ testID: testID as string });
 });
