@@ -109,7 +109,6 @@ export function RecorderPage() {
     deviceX: number;
     deviceY: number;
   } | null>(null);
-  const [pendingPoint, _setPendingPoint] = useState<{ x: number; y: number } | null>(null);
 
   // Screenshot polling during recording
   const { data: screenshotData } = useQuery(
