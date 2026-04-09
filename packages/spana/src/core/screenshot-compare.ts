@@ -1,6 +1,5 @@
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
-import sharp from "sharp";
 
 export interface CompareOptions {
   /** Per-pixel sensitivity 0-1, default 0.2 */
@@ -68,6 +67,7 @@ export async function cropToElement(
   screenshot: Buffer | Uint8Array,
   bounds: { x: number; y: number; width: number; height: number },
 ): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
   return sharp(Buffer.from(screenshot))
     .extract({
       left: Math.round(bounds.x),
@@ -87,6 +87,8 @@ export async function applyMask(
   screenshot: Buffer | Uint8Array,
   regions: Array<{ x: number; y: number; width: number; height: number }>,
 ): Promise<Buffer> {
+  const sharp = (await import("sharp")).default;
+
   if (regions.length === 0) {
     return sharp(Buffer.from(screenshot)).png().toBuffer();
   }

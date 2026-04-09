@@ -586,7 +586,9 @@ export function RecorderPage() {
         <ActionPicker
           x={pickerPos.screenX}
           y={pickerPos.screenY}
-          onPick={handleActionPick}
+          onPick={(actionType) =>
+            handleActionPick(actionType, { x: pickerPos.screenX, y: pickerPos.screenY })
+          }
           onDismiss={() => setPickerPos(null)}
         />
       )}
