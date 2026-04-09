@@ -256,14 +256,14 @@ export function RecorderPage() {
   }, [sessionId]);
 
   const handleActionPick = useCallback(
-    async (actionType: ActionType) => {
-      if (!sessionId || !pendingPoint) return;
+    async (actionType: ActionType, point: { x: number; y: number }) => {
+      if (!sessionId) return;
       setPickerPos(null);
 
       const root = hierarchyData;
       let selector: string | undefined;
       if (root) {
-        const matches = elementsAtPoint(root as any, pendingPoint.x, pendingPoint.y);
+        const matches = elementsAtPoint(root as any, point.x, point.y);
         if (matches.length > 0) {
           const el = matches[0].element as any;
           selector = el.resourceId || el.accessibilityLabel || el.text || undefined;
@@ -276,7 +276,7 @@ export function RecorderPage() {
           platform,
           actionType,
           selector,
-          params: { x: pendingPoint.x, y: pendingPoint.y },
+          params: { x: point.x, y: point.y },
         });
         // selectorAlternatives available in execResult if needed
         void execResult;
@@ -290,7 +290,7 @@ export function RecorderPage() {
           action: {
             type: actionType,
             selector,
-            params: { x: pendingPoint.x, y: pendingPoint.y },
+            params: { x: point.x, y: point.y },
           } as any,
         });
         await refreshSession();
@@ -298,7 +298,7 @@ export function RecorderPage() {
         console.error("Failed to add action:", err);
       }
     },
-    [sessionId, pendingPoint, hierarchyData, platform, refreshSession],
+    [sessionId, hierarchyData, platform, refreshSession],
   );
 
   const handleWatchActionPick = useCallback(
@@ -598,7 +598,7 @@ export function RecorderPage() {
 
 interface ScreenshotWithPickerProps {
   image: string;
-  onActionPick: (actionType: ActionType) => void;
+  onActionPick: (actionType: ActionType, point: { x: number; y: number }) => void;
   hierarchyData: unknown;
   state: RecorderState;
 }
@@ -621,7 +621,7 @@ function ScreenshotWithPicker({
     (actionType: ActionType) => {
       setPickerPos(null);
       if (pendingPoint) {
-        onActionPick(actionType);
+        onActionPick(actionType, pendingPoint);
       }
     },
     [pendingPoint, onActionPick],
