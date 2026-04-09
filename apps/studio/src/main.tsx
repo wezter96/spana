@@ -4,10 +4,11 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/query";
 import { InspectorPage } from "./pages/inspector";
 import { RunnerPage } from "./pages/runner";
+import { RecorderPage } from "./pages/recorder";
 import { Toaster } from "sonner";
 import "./index.css";
 
-type Page = "inspector" | "runner";
+type Page = "inspector" | "runner" | "recorder";
 
 function App() {
   const [page, setPage] = useState<Page>("inspector");
@@ -42,6 +43,16 @@ function App() {
             >
               Test Runner
             </button>
+            <button
+              onClick={() => setPage("recorder")}
+              className={`px-3 py-1.5 rounded text-sm ${
+                page === "recorder"
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              Recorder
+            </button>
           </nav>
         </header>
         <main className="flex-1 p-6">
@@ -50,6 +61,9 @@ function App() {
           </div>
           <div className={page === "runner" ? "" : "hidden"}>
             <RunnerPage />
+          </div>
+          <div className={page === "recorder" ? "" : "hidden"}>
+            <RecorderPage />
           </div>
         </main>
       </div>

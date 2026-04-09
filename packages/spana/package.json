@@ -63,6 +63,7 @@
     "@orpc/client": "^1.13.13",
     "@orpc/server": "^1.13.13",
     "@orpc/zod": "^1.13.13",
+    "axe-core": "^4.10.0",
     "effect": "^3.21.0",
     "hono": "^4.12.10",
     "pixelmatch": "^7.1.0",
