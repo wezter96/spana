@@ -38,6 +38,10 @@ function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${++_idCounter}`;
 }
 
+export function createRecordingSessionStore(): RecordingSessionStore {
+  return new RecordingSessionStore();
+}
+
 export class RecordingSessionStore {
   private readonly sessions = new Map<string, RecordingSession>();
 
