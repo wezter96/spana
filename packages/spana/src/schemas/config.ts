@@ -152,6 +152,11 @@ export interface ProvConfig {
   };
   artifacts?: ArtifactConfig;
   execution?: ExecutionConfig;
+  visualRegression?: {
+    threshold?: number;
+    maxDiffPixelRatio?: number;
+    baselinesDir?: string;
+  };
 }
 
 const platformSchema = z.enum(["web", "android", "ios"]);
@@ -319,6 +324,13 @@ export const provConfigSchema = z
       .optional(),
     artifacts: artifactConfigSchema.optional(),
     execution: executionConfigSchema.optional(),
+    visualRegression: z
+      .object({
+        threshold: z.number().min(0).max(1).optional(),
+        maxDiffPixelRatio: z.number().min(0).max(1).optional(),
+        baselinesDir: z.string().optional(),
+      })
+      .optional(),
   })
   .strict();
 
