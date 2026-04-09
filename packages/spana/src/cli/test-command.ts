@@ -60,6 +60,7 @@ export interface TestCommandOptions {
   lastFailed?: boolean;
   changed?: boolean;
   watch?: boolean;
+  updateBaselines?: boolean;
 }
 
 function validateOptions(opts: TestCommandOptions): string | null {
@@ -105,7 +106,10 @@ function validateOptions(opts: TestCommandOptions): string | null {
 
 async function buildParallelPlatformConfigs(
   platforms: Platform[],
-  opts: Pick<TestCommandOptions, "devices" | "platforms" | "workers" | "debugOnFailure">,
+  opts: Pick<
+    TestCommandOptions,
+    "devices" | "platforms" | "workers" | "debugOnFailure" | "updateBaselines"
+  >,
   config: ProvConfig,
   runtimes: RuntimeHandle[],
   resolveFromConfig: (p: string) => string,
@@ -161,14 +165,22 @@ async function buildParallelPlatformConfigs(
             id: `web-context-${i + 1}`,
             name: `Chromium #${i + 1}`,
             driver: result.runtime.driver,
-            engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+            engineConfig: {
+              ...result.engineConfig,
+              debugOnFailure: opts.debugOnFailure,
+              updateBaselines: opts.updateBaselines,
+            },
           });
         }
 
         platformConfigs.push({
           platform,
           driver: primaryResult.runtime.driver,
-          engineConfig: { ...primaryResult.engineConfig, debugOnFailure: opts.debugOnFailure },
+          engineConfig: {
+            ...primaryResult.engineConfig,
+            debugOnFailure: opts.debugOnFailure,
+            updateBaselines: opts.updateBaselines,
+          },
           additionalWorkers: additionalWorkers.length > 0 ? additionalWorkers : undefined,
         });
       } else {
@@ -178,7 +190,11 @@ async function buildParallelPlatformConfigs(
         platformConfigs.push({
           platform,
           driver: result.runtime.driver,
-          engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+          engineConfig: {
+            ...result.engineConfig,
+            debugOnFailure: opts.debugOnFailure,
+            updateBaselines: opts.updateBaselines,
+          },
         });
       }
     } else if (platformDevices.length === 0) {
@@ -207,7 +223,11 @@ async function buildParallelPlatformConfigs(
               id: device.id,
               name: device.name,
               driver: result.runtime.driver,
-              engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+              engineConfig: {
+                ...result.engineConfig,
+                debugOnFailure: opts.debugOnFailure,
+                updateBaselines: opts.updateBaselines,
+              },
             });
           }
         } catch (err) {
@@ -220,7 +240,11 @@ async function buildParallelPlatformConfigs(
       platformConfigs.push({
         platform,
         driver: primaryResult.runtime.driver,
-        engineConfig: { ...primaryResult.engineConfig, debugOnFailure: opts.debugOnFailure },
+        engineConfig: {
+          ...primaryResult.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
         additionalWorkers: additionalWorkers.length > 0 ? additionalWorkers : undefined,
       });
     }
@@ -231,7 +255,7 @@ async function buildParallelPlatformConfigs(
 
 async function buildSerialPlatformConfigs(
   platforms: Platform[],
-  opts: Pick<TestCommandOptions, "capsPath" | "capsJson" | "debugOnFailure">,
+  opts: Pick<TestCommandOptions, "capsPath" | "capsJson" | "debugOnFailure" | "updateBaselines">,
   config: ProvConfig,
   runtimes: RuntimeHandle[],
   executionMode: string,
@@ -257,7 +281,11 @@ async function buildSerialPlatformConfigs(
       platformConfigs.push({
         platform,
         driver: result.runtime.driver,
-        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
       });
     } else if (platform === "web") {
       const result = await buildWebRuntime(config);
@@ -265,7 +293,11 @@ async function buildSerialPlatformConfigs(
       platformConfigs.push({
         platform,
         driver: result.runtime.driver,
-        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
       });
     } else if (platform === "android") {
       const result = await buildLocalAndroidRuntime(config, targetDevice, resolveFromConfig);
@@ -274,7 +306,11 @@ async function buildSerialPlatformConfigs(
       platformConfigs.push({
         platform,
         driver: result.runtime.driver,
-        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
       });
     } else if (platform === "ios") {
       const result = await buildLocalIOSRuntime(config, targetDevice, resolveFromConfig);
@@ -283,7 +319,11 @@ async function buildSerialPlatformConfigs(
       platformConfigs.push({
         platform,
         driver: result.runtime.driver,
-        engineConfig: { ...result.engineConfig, debugOnFailure: opts.debugOnFailure },
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
       });
     }
   }

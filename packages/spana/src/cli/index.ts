@@ -37,6 +37,7 @@ if (command === "test") {
   let lastFailed = false;
   let changed = false;
   let watch = false;
+  let updateBaselines = false;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
@@ -107,6 +108,8 @@ if (command === "test") {
       changed = true;
     } else if (arg === "--watch") {
       watch = true;
+    } else if (arg === "--update-baselines") {
+      updateBaselines = true;
     } else if (!arg.startsWith("--")) {
       flowPath = arg;
     }
@@ -139,6 +142,7 @@ if (command === "test") {
     lastFailed,
     changed,
     watch,
+    updateBaselines,
   });
   process.exit(success ? 0 : 1);
 } else if (command === "hierarchy" || command === "selectors") {

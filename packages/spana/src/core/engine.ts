@@ -37,6 +37,7 @@ export interface EngineConfig {
   launchOptions?: LaunchOptions;
   hooks?: ProvConfig["hooks"];
   debugOnFailure?: boolean;
+  updateBaselines?: boolean;
 }
 
 export async function executeFlow(
@@ -73,7 +74,7 @@ export async function executeFlow(
   const app = createPromiseApp(driver, appId, mergedCoordinatorConfig, stepRecorder);
   const expect = createPromiseExpect(driver, mergedCoordinatorConfig, stepRecorder);
   // Mutable context so compiled Gherkin flows can attach scenarioSteps via __scenarioSteps
-  const flowCtx: any = { app, expect, platform };
+  const flowCtx: any = { app, expect, platform, updateBaselines: config.updateBaselines ?? false };
   const buildFailureResult = async (error: unknown): Promise<TestResult> => {
     const attachments = await captureArtifacts(
       driver,
