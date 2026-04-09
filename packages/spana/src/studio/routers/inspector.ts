@@ -29,7 +29,7 @@ function connectOptsFromConfig(
   return opts;
 }
 
-async function getOrCreateSession(
+export async function getOrCreateSession(
   platform: Platform,
   config: ProvConfig,
   deviceId?: string,
