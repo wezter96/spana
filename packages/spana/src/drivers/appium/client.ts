@@ -18,12 +18,29 @@ interface W3CErrorValue {
 
 export class AppiumClient {
   private baseUrl: string;
+  private authHeader: string | null = null;
   private sessionId: string | null = null;
   private sessionCaps: Record<string, unknown> = {};
 
   constructor(serverUrl: string) {
+    const parsed = new URL(serverUrl);
+    if (parsed.username || parsed.password) {
+      const username = decodeURIComponent(parsed.username);
+      const password = decodeURIComponent(parsed.password);
+      this.authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+      parsed.username = "";
+      parsed.password = "";
+    }
+
     // Strip trailing slash for consistent URL building
-    this.baseUrl = serverUrl.replace(/\/+$/, "");
+    this.baseUrl = parsed.toString().replace(/\/+$/, "");
+  }
+
+  private createHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      ...(this.authHeader ? { Authorization: this.authHeader } : {}),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -34,7 +51,7 @@ export class AppiumClient {
     const url = `${this.baseUrl}${path}`;
     const init: RequestInit = {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: this.createHeaders(),
     };
     if (body !== undefined) {
       init.body = JSON.stringify(body);
@@ -89,7 +106,7 @@ export class AppiumClient {
 
     const res = await fetch(`${this.baseUrl}/session`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.createHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -112,7 +129,7 @@ export class AppiumClient {
       (value?.["sessionId"] as string | undefined) ?? (parsed["sessionId"] as string | undefined);
 
     if (!sessionId) {
-      throw new Error("Appium: no sessionId in session response");
+      throw new Error(`Appium: no sessionId in session response: ${text}`);
     }
 
     this.sessionId = sessionId;
@@ -125,7 +142,7 @@ export class AppiumClient {
     const path = `/session/${this.sessionId}`;
     this.sessionId = null;
     this.sessionCaps = {};
-    await fetch(`${this.baseUrl}${path}`, { method: "DELETE" });
+    await fetch(`${this.baseUrl}${path}`, { method: "DELETE", headers: this.createHeaders() });
   }
 
   getSessionId(): string | null {

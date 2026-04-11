@@ -99,8 +99,9 @@ export default flow(
             await app.launch({ deepLink: routeHref(platform, route), clearState: true });
           }
         } else if (platform === "ios") {
-          // Navigate via drawer menu — WDA's openUrl breaks session for custom URL schemes
-          await app.launch();
+          // Navigate via drawer menu — WDA's openUrl breaks session for custom URL schemes.
+          // clearState ensures each route starts from a fresh home screen.
+          await app.launch({ clearState: true });
           await expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({
             timeout: 10_000,
           });

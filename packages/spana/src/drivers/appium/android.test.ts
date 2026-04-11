@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { AppiumClient } from "./client.js";
@@ -77,43 +77,55 @@ describe("Appium Android driver", () => {
     expect(result).toBe("<hierarchy><node/></hierarchy>");
   });
 
-  test("tapAtCoordinate sends gesture click", async () => {
+  test("tapAtCoordinate sends W3C pointer action", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([{ body: { value: null } }]);
 
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
     await Effect.runPromise(driver.tapAtCoordinate(150, 300));
 
-    expect(calls[0]?.url).toBe("http://localhost:4723/session/test-session/appium/gestures/click");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-      offset: { x: 150, y: 300 },
-    });
+    expect(calls[0]?.url).toContain("/actions");
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    expect(body.actions[0].parameters.pointerType).toBe("touch");
+    expect(body.actions[0].actions).toEqual([
+      { type: "pointerMove", duration: 0, x: 150, y: 300 },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerUp", button: 0 },
+    ]);
   });
 
-  test("doubleTapAtCoordinate sends gesture double_click", async () => {
+  test("doubleTapAtCoordinate sends two W3C pointer action sequences", async () => {
     const { client } = await makeClient();
-    const calls = queueFetch([{ body: { value: null } }]);
+    const calls = queueFetch([{ body: { value: null } }, { body: { value: null } }]);
 
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
     await Effect.runPromise(driver.doubleTapAtCoordinate(50, 60));
 
-    expect(calls[0]?.url).toContain("/appium/gestures/double_click");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-      offset: { x: 50, y: 60 },
-    });
+    expect(calls[0]?.url).toContain("/actions");
+    expect(calls[1]?.url).toContain("/actions");
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    expect(body.actions[0].actions).toEqual([
+      { type: "pointerMove", duration: 0, x: 50, y: 60 },
+      { type: "pointerDown", button: 0 },
+      { type: "pointerUp", button: 0 },
+    ]);
   });
 
-  test("longPressAtCoordinate sends gesture long_click with duration", async () => {
+  test("longPressAtCoordinate sends W3C pointer action with pause duration", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([{ body: { value: null } }]);
 
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
     await Effect.runPromise(driver.longPressAtCoordinate(10, 20, 2000));
 
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-      offset: { x: 10, y: 20 },
-      duration: 2000,
-    });
+    expect(calls[0]?.url).toContain("/actions");
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    expect(body.actions[0].actions).toEqual([
+      { type: "pointerMove", duration: 0, x: 10, y: 20 },
+      { type: "pointerDown", button: 0 },
+      { type: "pause", duration: 2000 },
+      { type: "pointerUp", button: 0 },
+    ]);
   });
 
   test("swipe sends W3C Actions pointer sequence", async () => {
@@ -212,6 +224,20 @@ describe("Appium Android driver", () => {
     });
   });
 
+  test("getDeviceInfo falls back to window rect when window size is unavailable", async () => {
+    const { client } = await makeClient();
+    queueFetch([
+      { status: 404, body: { value: { message: "missing /window/size" } } },
+      { body: { value: { x: 0, y: 0, width: 1080, height: 2400 } } },
+    ]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    const info = await Effect.runPromise(driver.getDeviceInfo());
+
+    expect(info.screenWidth).toBe(1080);
+    expect(info.screenHeight).toBe(2400);
+  });
+
   test("launchApp activates app through Appium", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([{ body: { value: null } }]);
@@ -237,25 +263,28 @@ describe("Appium Android driver", () => {
     await Effect.runPromise(driver.launchApp("com.example.app", { clearState: true }));
 
     expect(calls[0]?.url).toContain("/appium/device/terminate_app");
-    expect(calls[1]?.url).toContain("/appium/execute_mobile/clearApp");
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ appId: "com.example.app" });
+    expect(calls[1]?.url).toContain("/execute/sync");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      script: "mobile: clearApp",
+      args: [{ appId: "com.example.app" }],
+    });
     expect(calls[2]?.url).toContain("/appium/device/activate_app");
   });
 
-  test("launchApp with deepLink opens URL after activation", async () => {
+  test("launchApp with deepLink uses mobile: deepLink and skips activation", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([
-      { body: { value: null } }, // activate
-      { body: { value: null } }, // url
+      { body: { value: null } }, // deep link
     ]);
 
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
     await Effect.runPromise(driver.launchApp("com.example.app", { deepLink: "myapp://home" }));
 
-    expect(calls[0]?.url).toContain("/appium/device/activate_app");
-    expect(calls[1]?.url).toContain("/url");
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
-      url: "myapp://home",
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toContain("/execute/sync");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      script: "mobile: deepLink",
+      args: [{ url: "myapp://home", package: "com.example.app" }],
     });
   });
 
@@ -282,20 +311,24 @@ describe("Appium Android driver", () => {
     await Effect.runPromise(driver.clearAppState("com.example.app"));
 
     expect(calls[0]?.url).toContain("/appium/device/terminate_app");
-    expect(calls[1]?.url).toContain("/appium/execute_mobile/clearApp");
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ appId: "com.example.app" });
+    expect(calls[1]?.url).toContain("/execute/sync");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      script: "mobile: clearApp",
+      args: [{ appId: "com.example.app" }],
+    });
   });
 
-  test("openLink sends URL to /url endpoint", async () => {
+  test("openLink uses mobile: deepLink with bundleId when provided", async () => {
     const { client } = await makeClient();
     const calls = queueFetch([{ body: { value: null } }]);
 
-    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client, "com.example.app"));
     await Effect.runPromise(driver.openLink("https://example.com"));
 
-    expect(calls[0]?.url).toContain("/url");
+    expect(calls[0]?.url).toContain("/execute/sync");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-      url: "https://example.com",
+      script: "mobile: deepLink",
+      args: [{ url: "https://example.com", package: "com.example.app" }],
     });
   });
 
@@ -367,6 +400,23 @@ describe("Appium Android driver", () => {
       expect(result.left).toBeInstanceOf(DriverError);
       expect(result.left.message).toContain("launchArguments are not supported");
     }
+  });
+
+  test("launchApp with deviceState warns and still activates the app", async () => {
+    const { client } = await makeClient();
+    const calls = queueFetch([{ body: { value: null } }]);
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    await Effect.runPromise(
+      driver.launchApp("com.example.app", {
+        deviceState: { language: "fr", locale: "FR", timeZone: "Europe/Paris" },
+      }),
+    );
+
+    expect(calls[0]?.url).toContain("/appium/device/activate_app");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("deviceState launch overrides"));
+    warnSpy.mockRestore();
   });
 
   test("wraps client failures in DriverError", async () => {

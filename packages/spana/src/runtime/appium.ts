@@ -13,13 +13,15 @@ export async function buildAppiumAndroidRuntime(
   appiumUrl: string,
   caps: Record<string, unknown>,
 ): Promise<RuntimeResult> {
+  const appId =
+    (caps["appium:appPackage"] as string | undefined) ?? config.apps?.android?.packageName ?? "";
   const client = new AppiumClient(appiumUrl);
   await client.createSession({
     platformName: "Android",
     ...caps,
   });
 
-  const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+  const driver = await Effect.runPromise(createAppiumAndroidDriver(client, appId || undefined));
   const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 
   const sessionId = client.getSessionId() ?? undefined;
@@ -48,7 +50,7 @@ export async function buildAppiumAndroidRuntime(
       },
     },
     engineConfig: {
-      appId: (caps["appium:appPackage"] as string) ?? "",
+      appId,
       platform: "android",
       coordinatorConfig: {
         parse: parseAndroidHierarchy,
@@ -79,12 +81,25 @@ export async function buildAppiumIOSRuntime(
   appiumUrl: string,
   caps: Record<string, unknown>,
 ): Promise<RuntimeResult> {
+  const appId = (caps["appium:bundleId"] as string | undefined) ?? config.apps?.ios?.bundleId ?? "";
   const client = new AppiumClient(appiumUrl);
   await client.createSession({
     platformName: "iOS",
     "appium:automationName": "XCUITest",
     ...caps,
   });
+
+  // Raise XCTest snapshotMaxDepth above the stock limit of 60 so deeply
+  // nested React Native hierarchies remain reachable by accessibilityIdentifier.
+  // See https://github.com/appium/appium/issues/14825.
+  const snapshotMaxDepth = config.defaults?.snapshotMaxDepth ?? 100;
+  try {
+    await client.request("POST", client.sessionPath("/appium/settings"), {
+      settings: { snapshotMaxDepth },
+    });
+  } catch (e) {
+    console.warn(`Failed to set snapshotMaxDepth (continuing): ${e}`);
+  }
 
   const driver = await Effect.runPromise(createAppiumIOSDriver(client));
   const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
@@ -115,7 +130,7 @@ export async function buildAppiumIOSRuntime(
       },
     },
     engineConfig: {
-      appId: (caps["appium:bundleId"] as string) ?? "",
+      appId,
       platform: "ios",
       coordinatorConfig: {
         parse: parseIOSHierarchy,

@@ -1,0 +1,108 @@
+{
+  "event": "flowPass",
+  "name": "Framework app - accessibility assertions stay green",
+  "platform": "web",
+  "status": "passed",
+  "durationMs": 680,
+  "attachments": [
+    {
+      "name": "passed-screenshot",
+      "contentType": "image/png",
+      "path": "./spana-output/Framework_app_-_accessibility_assertions_stay_green-web/screenshot.png"
+    },
+    {
+      "name": "passed-hierarchy",
+      "contentType": "application/json",
+      "path": "./spana-output/Framework_app_-_accessibility_assertions_stay_green-web/hierarchy.json"
+    },
+    {
+      "name": "passed-console-logs",
+      "contentType": "application/json",
+      "path": "./spana-output/Framework_app_-_accessibility_assertions_stay_green-web/console-logs.json"
+    },
+    {
+      "name": "passed-network-har",
+      "contentType": "application/json",
+      "path": "./spana-output/Framework_app_-_accessibility_assertions_stay_green-web/network.har"
+    }
+  ],
+  "steps": [
+    {
+      "command": "launch",
+      "selector": {
+        "clearState": false,
+        "deepLink": "http://127.0.0.1:8081/playground"
+      },
+      "status": "passed",
+      "durationMs": 413
+    },
+    {
+      "command": "expect.toBeVisible",
+      "selector": {
+        "testID": "playground-title"
+      },
+      "status": "passed",
+      "durationMs": 43
+    },
+    {
+      "command": "expect.toHaveAccessibilityLabel(\"Playground text input\")",
+      "selector": {
+        "testID": "playground-input"
+      },
+      "status": "passed",
+      "durationMs": 11
+    },
+    {
+      "command": "expect.toHaveAccessibilityLabel(\"Dismiss keyboard\")",
+      "selector": {
+        "testID": "playground-dismiss-keyboard"
+      },
+      "status": "passed",
+      "durationMs": 12
+    },
+    {
+      "command": "expect.toHaveRole(\"button\")",
+      "selector": {
+        "testID": "playground-dismiss-keyboard"
+      },
+      "status": "passed",
+      "durationMs": 13
+    },
+    {
+      "command": "expect.toHaveMinTouchTarget(44)",
+      "selector": {
+        "testID": "playground-dismiss-keyboard"
+      },
+      "status": "passed",
+      "durationMs": 11
+    },
+    {
+      "command": "expect.toPassAccessibilityAudit",
+      "selector": {
+        "testID": "playground-content"
+      },
+      "status": "passed",
+      "durationMs": 119
+    },
+    {
+      "command": "expect.toBeFocusable",
+      "selector": {
+        "testID": "playground-dismiss-keyboard"
+      },
+      "status": "passed",
+      "durationMs": 9
+    },
+    {
+      "command": "takeScreenshot(accessibility-showcase)",
+      "status": "passed",
+      "durationMs": 27,
+      "attachments": [
+        {
+          "name": "accessibility-showcase",
+          "contentType": "image/png",
+          "path": "./spana-output/Framework_app_-_accessibility_assertions_stay_green-web/steps/009-accessibility-showcase.png"
+        }
+      ]
+    }
+  ]
+}

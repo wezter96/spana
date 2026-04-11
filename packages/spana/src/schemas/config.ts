@@ -1,8 +1,8 @@
 import type { Platform } from "./selector.js";
-import type { LaunchOptions } from "../drivers/raw-driver.js";
+import type { DeviceStateConfig, LaunchOptions } from "../drivers/raw-driver.js";
 import { z, type ZodError } from "zod";
 
-export type { LaunchOptions };
+export type { DeviceStateConfig, LaunchOptions };
 
 export interface IOSSigningConfig {
   /** Apple Development Team ID (from developer.apple.com or Xcode) */
@@ -86,12 +86,33 @@ export interface SauceLabsHelperConfig {
 export interface AppiumExecutionConfig {
   serverUrl?: string;
   capabilities?: Record<string, unknown>;
+  /**
+   * Platform-specific capabilities merged on top of `capabilities` when the
+   * matching platform runs. Useful when you want different `appium:deviceName`
+   * or `appium:platformVersion` for Android vs iOS.
+   */
+  platformCapabilities?: {
+    android?: Record<string, unknown>;
+    ios?: Record<string, unknown>;
+  };
   capabilitiesFile?: string;
   reportToProvider?: boolean;
   browserstack?: BrowserStackHelperConfig;
   saucelabs?: SauceLabsHelperConfig;
   /** Path to a custom cloud provider module (default export must conform to CloudProvider interface). */
   cloudProvider?: string;
+  /**
+   * Opt in to having spana spawn a local `appium` subprocess for the
+   * duration of the test run. Requires `appium` to be on PATH. When true,
+   * `serverUrl` (if set) is ignored and a URL is assigned to the
+   * auto-started server instead. Off by default — spana never spawns
+   * background processes unless you ask.
+   */
+  autoStart?: boolean;
+  /** Override the `appium` binary name. Default: "appium". */
+  autoStartBinary?: string;
+  /** Extra CLI args to forward to the spawned Appium process. */
+  autoStartArgs?: readonly string[];
 }
 
 export interface ExecutionConfig {
@@ -139,6 +160,8 @@ export interface ProvConfig {
     initialPollInterval?: number;
     /** Max age in ms before cached hierarchy is stale. Default: 100. Set to 0 to disable. */
     hierarchyCacheTtl?: number;
+    /** Max depth for UI hierarchy snapshots on iOS. Default: 100. */
+    snapshotMaxDepth?: number;
     /** Delay in ms between retry attempts of a failed flow. Default: 0 (immediate). */
     retryDelay?: number;
     /** Max workers per platform when using --parallel. */
@@ -253,11 +276,21 @@ const appiumExecutionConfigSchema = z
   .object({
     serverUrl: z.string().url().optional(),
     capabilities: z.record(z.string(), z.unknown()).optional(),
+    platformCapabilities: z
+      .object({
+        android: z.record(z.string(), z.unknown()).optional(),
+        ios: z.record(z.string(), z.unknown()).optional(),
+      })
+      .strict()
+      .optional(),
     capabilitiesFile: z.string().min(1).optional(),
     reportToProvider: z.boolean().optional(),
     browserstack: browserStackHelperSchema.optional(),
     saucelabs: sauceLabsHelperSchema.optional(),
     cloudProvider: z.string().min(1).optional(),
+    autoStart: z.boolean().optional(),
+    autoStartBinary: z.string().min(1).optional(),
+    autoStartArgs: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -293,12 +326,21 @@ const artifactConfigSchema = z
   })
   .strict();
 
+const deviceStateSchema = z
+  .object({
+    language: z.string().min(1).optional(),
+    locale: z.string().min(1).optional(),
+    timeZone: z.string().min(1).optional(),
+  })
+  .strict();
+
 const launchOptionsSchema = z
   .object({
     clearState: z.boolean().optional(),
     clearKeychain: z.boolean().optional(),
     deepLink: z.string().min(1).optional(),
     launchArguments: z.record(z.string(), z.unknown()).optional(),
+    deviceState: deviceStateSchema.optional(),
   })
   .strict();
 
@@ -322,6 +364,7 @@ export const provConfigSchema = z
         typingDelay: z.number().nonnegative().optional(),
         initialPollInterval: z.number().positive().optional(),
         hierarchyCacheTtl: z.number().nonnegative().optional(),
+        snapshotMaxDepth: z.number().int().positive().optional(),
         retryDelay: z.number().nonnegative().optional(),
         workers: z.number().int().positive().optional(),
       })

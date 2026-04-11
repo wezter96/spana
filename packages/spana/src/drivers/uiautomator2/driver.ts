@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { adbLaunchApp, adbForceStop, adbClearApp, adbOpenLink } from "../../device/android.js";
+import { hasLaunchDeviceState } from "../launch-options.js";
 import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
 import { UiAutomator2Client } from "./client.js";
 
@@ -148,6 +149,12 @@ export function createUiAutomator2Driver(
             }
             if (opts?.clearKeychain) {
               console.warn("clearKeychain is not supported on Android, skipping.");
+            }
+            if (hasLaunchDeviceState(opts?.deviceState)) {
+              console.warn(
+                "deviceState launch overrides are not supported in local Android mode yet. " +
+                  "Use Appium Android mode for language/locale/timeZone session defaults.",
+              );
             }
             if (opts?.deepLink) {
               adbOpenLink(serial, opts.deepLink, bundleId);

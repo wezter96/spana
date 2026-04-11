@@ -66,3 +66,15 @@ apps/native/ios/
 
 # Studio embedded build
 packages/spana/studio-dist/
+
+# Local-only agent skills
+.agents/skills/caveman/
+.agents/skills/caveman-commit/
+.agents/skills/caveman-review/
+.agents/skills/compress/
+.claude/skills/caveman
+.claude/skills/caveman-commit
+.claude/skills/caveman-review
+.claude/skills/compress
+.factory/
+.superpowers/

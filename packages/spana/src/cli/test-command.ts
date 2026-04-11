@@ -45,6 +45,7 @@ export interface TestCommandOptions {
   device?: string;
   driver?: "local" | "appium";
   appiumUrl?: string;
+  appiumAutoStart?: boolean;
   capsPath?: string;
   capsJson?: string;
   noProviderReporting?: boolean;
@@ -260,7 +261,7 @@ async function buildSerialPlatformConfigs(
   runtimes: RuntimeHandle[],
   executionMode: string,
   appiumUrl: string | undefined,
-  baseAppiumCaps: Record<string, unknown> | undefined,
+  appiumConfig: import("../schemas/config.js").AppiumExecutionConfig | undefined,
   cloudHelper: Awaited<ReturnType<typeof createCloudProviderHelper>> | undefined,
   targetDevice: import("../device/discover.js").DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
@@ -269,11 +270,19 @@ async function buildSerialPlatformConfigs(
 
   for (const platform of platforms) {
     if (executionMode === "appium" && (platform === "android" || platform === "ios")) {
-      // Appium cloud mode
+      // Appium cloud mode — resolve capabilities per-platform so platformCapabilities applies
       const builder = platform === "android" ? buildAppiumAndroidRuntime : buildAppiumIOSRuntime;
+      const resolvedCaps = appiumConfig
+        ? await resolveCapabilities(appiumConfig, {
+            capsPath: opts.capsPath,
+            capsJson: opts.capsJson,
+            platform,
+            launchOptions: config.launchOptions,
+          })
+        : {};
       const preparedCaps = await cloudHelper!.prepareCapabilities(
         platform,
-        { ...baseAppiumCaps },
+        { ...resolvedCaps },
         platform === "android" ? config.apps?.android : config.apps?.ios,
       );
       const result = await builder(config, appiumUrl!, preparedCaps);
@@ -482,10 +491,12 @@ async function resolveExecutionContext(
 
   // Validate appium mode requirements
   if (executionMode === "appium") {
-    const appiumUrl = opts.appiumUrl ?? config.execution?.appium?.serverUrl;
-    if (!appiumUrl) {
+    const appiumUrl =
+      opts.appiumUrl ?? process.env.SPANA_APPIUM_URL ?? config.execution?.appium?.serverUrl;
+    const wantAutoStart = opts.appiumAutoStart ?? config.execution?.appium?.autoStart ?? false;
+    if (!appiumUrl && !wantAutoStart) {
       console.log(
-        "Appium mode requires a server URL. Set --appium-url or execution.appium.serverUrl in config.",
+        "Appium mode requires a server URL. Set --appium-url, SPANA_APPIUM_URL env var, execution.appium.serverUrl in config, or use --appium-auto-start to spawn a local server.",
       );
       return { ok: false, success: false };
     }
@@ -859,21 +870,37 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   process.on("SIGTERM", handleSignal);
 
   try {
-    const appiumUrl = opts.appiumUrl ?? config.execution?.appium?.serverUrl;
     const appiumConfig = config.execution?.appium ?? {};
+    const wantAutoStart =
+      executionMode === "appium" && (opts.appiumAutoStart ?? appiumConfig.autoStart ?? false);
+
+    let appiumUrl =
+      opts.appiumUrl ?? process.env.SPANA_APPIUM_URL ?? config.execution?.appium?.serverUrl;
+
+    if (wantAutoStart) {
+      if (opts.appiumUrl || process.env.SPANA_APPIUM_URL || appiumConfig.serverUrl) {
+        console.log(
+          "Appium auto-start is enabled; ignoring --appium-url / SPANA_APPIUM_URL / execution.appium.serverUrl.",
+        );
+      }
+      const { startLocalAppium } = await import("../runtime/appium-server.js");
+      const started = await startLocalAppium({
+        binary: appiumConfig.autoStartBinary,
+        extraArgs: appiumConfig.autoStartArgs,
+        log: (line) => console.log(line),
+      });
+      appiumUrl = started.url;
+      runCleanups.push(() => started.stop());
+    }
+
     const shouldReportToProvider =
       !opts.noProviderReporting && appiumConfig.reportToProvider !== false;
     const cloudHelper =
       executionMode === "appium" && appiumUrl
         ? await createCloudProviderHelper(appiumUrl, appiumConfig)
         : undefined;
-    const baseAppiumCaps =
-      executionMode === "appium" && appiumUrl
-        ? await resolveCapabilities(appiumConfig, {
-            capsPath: opts.capsPath,
-            capsJson: opts.capsJson,
-          })
-        : undefined;
+    // Capabilities are resolved per-platform inside the platform loop so that
+    // platformCapabilities merging can apply. We pass appiumConfig through.
 
     if (cloudHelper) {
       runCleanups.push(() => cloudHelper.cleanup());
@@ -898,7 +925,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           runtimes,
           executionMode,
           appiumUrl,
-          baseAppiumCaps,
+          appiumConfig,
           cloudHelper,
           targetDevice,
           resolveFromConfig,

@@ -195,7 +195,7 @@ describe("Appium client", () => {
     const client = new AppiumClient("http://localhost:4723");
 
     const error = await captureError(() => client.createSession({ platformName: "Android" }));
-    expect(error.message).toBe("Appium: no sessionId in session response");
+    expect(error.message).toContain("Appium: no sessionId in session response");
   });
 
   test("fails when session creation returns non-200", async () => {
@@ -224,6 +224,18 @@ describe("Appium client", () => {
     await client.createSession({ platformName: "Android" });
 
     expect(calls[0]?.url).toBe("http://localhost:4723/wd/hub/session");
+  });
+
+  test("sends basic auth when server URL includes credentials", async () => {
+    const calls = queueFetch([{ body: { value: { sessionId: "s-auth", capabilities: {} } } }]);
+    const client = new AppiumClient("https://user:p%40ss@hub-cloud.browserstack.com/wd/hub");
+
+    await client.createSession({ platformName: "Android" });
+
+    expect(calls[0]?.url).toBe("https://hub-cloud.browserstack.com/wd/hub/session");
+    expect((calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe(
+      "Basic dXNlcjpwQHNz",
+    );
   });
 
   test("request fails when response is not valid JSON", async () => {

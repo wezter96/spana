@@ -12,6 +12,7 @@ import {
   type Route,
 } from "playwright-core";
 import { DriverError } from "../errors.js";
+import { hasLaunchDeviceState } from "./launch-options.js";
 import type { BrowserName } from "../schemas/config.js";
 import type { Selector } from "../schemas/selector.js";
 import {
@@ -786,6 +787,12 @@ export function makePlaywrightDriver(
             const targetUrl = opts?.deepLink || url || config.baseUrl || "about:blank";
             if (opts?.clearState) {
               await clearStorage();
+            }
+            if (hasLaunchDeviceState(opts?.deviceState)) {
+              console.warn(
+                "deviceState launch overrides are ignored in web mode. " +
+                  "Use browser-specific emulation when execution.web adds that support.",
+              );
             }
             await page.goto(targetUrl);
             updateHarPage(page);

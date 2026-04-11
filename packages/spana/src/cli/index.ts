@@ -22,6 +22,7 @@ if (command === "test") {
   let device: string | undefined;
   let driver: "local" | "appium" | undefined;
   let appiumUrl: string | undefined;
+  let appiumAutoStart = false;
   let capsPath: string | undefined;
   let capsJson: string | undefined;
   let noProviderReporting = false;
@@ -59,6 +60,8 @@ if (command === "test") {
       driver = args[++i] as "local" | "appium";
     } else if (arg === "--appium-url" && args[i + 1]) {
       appiumUrl = args[++i];
+    } else if (arg === "--appium-auto-start") {
+      appiumAutoStart = true;
     } else if (arg === "--caps" && args[i + 1]) {
       capsPath = args[++i];
     } else if (arg === "--caps-json" && args[i + 1]) {
@@ -127,6 +130,7 @@ if (command === "test") {
     device,
     driver,
     appiumUrl,
+    appiumAutoStart,
     capsPath,
     capsJson,
     noProviderReporting,

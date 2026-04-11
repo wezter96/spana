@@ -168,6 +168,14 @@ export class WDAClient {
     });
   }
 
+  /**
+   * Sets the maximum depth for UI hierarchy snapshots.
+   * Higher values (e.g. 100) are required for deeply nested React Native apps.
+   */
+  async setSnapshotMaxDepth(depth: number): Promise<void> {
+    await this.updateSettings({ snapshotMaxDepth: depth });
+  }
+
   // ---------------------------------------------------------------------------
   // Screen queries
   // ---------------------------------------------------------------------------

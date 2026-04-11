@@ -389,6 +389,34 @@ describe("promise app", () => {
     expect(events).toContainEqual(["takeScreenshot"]);
   });
 
+  test("launch merges default launch options with per-call overrides", async () => {
+    const { driver, events } = createDriver(createElement());
+    const app = createPromiseApp(driver, "com.example.app", { parse }, undefined, {
+      launchOptions: {
+        clearState: true,
+        launchArguments: { featureFlag: "on", retries: 1 },
+        deviceState: { language: "fr", locale: "fr_CA" },
+      },
+    });
+
+    await app.launch({
+      deepLink: "app://checkout",
+      launchArguments: { retries: 2, entry: "promo" },
+      deviceState: { locale: "en_US", timeZone: "UTC" },
+    });
+
+    expect(events).toContainEqual([
+      "launchApp",
+      "com.example.app",
+      {
+        clearState: true,
+        deepLink: "app://checkout",
+        launchArguments: { featureFlag: "on", retries: 2, entry: "promo" },
+        deviceState: { language: "fr", locale: "en_US", timeZone: "UTC" },
+      },
+    ]);
+  });
+
   test("openStory builds a Storybook iframe URL and records the navigation step", async () => {
     const { driver, events } = createDriver(createElement({ text: "Ready" }));
     const { recorder, stepCalls } = createRecorder();

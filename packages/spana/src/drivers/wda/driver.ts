@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
+import { hasLaunchDeviceState } from "../launch-options.js";
 import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
 import { WDAClient } from "./client.js";
 import {
@@ -43,6 +44,7 @@ export function createWDADriver(
   port: number,
   bundleId: string,
   simulatorUdid?: string,
+  snapshotMaxDepth = 100,
 ): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const client = new WDAClient(host, port);
@@ -183,6 +185,12 @@ export function createWDADriver(
     yield* Effect.tryPromise({
       try: () => client.disableQuiescence(),
       catch: (e) => new DriverError({ message: `Failed to disable quiescence: ${e}` }),
+    });
+
+    // Set snapshot depth to support deep React Native trees
+    yield* Effect.tryPromise({
+      try: () => client.setSnapshotMaxDepth(snapshotMaxDepth),
+      catch: (e) => new DriverError({ message: `Failed to set snapshot depth: ${e}` }),
     });
 
     const service: RawDriverService = {
@@ -343,6 +351,15 @@ export function createWDADriver(
               resetSimulatorKeychain(simulatorUdid);
             } else if (opts?.clearKeychain) {
               console.warn("clearKeychain is only supported on iOS simulators, skipping.");
+            }
+            if (
+              hasLaunchDeviceState(opts?.deviceState) ||
+              (opts?.launchArguments && Object.keys(opts.launchArguments).length > 0)
+            ) {
+              console.warn(
+                "launchArguments and deviceState are not supported in local iOS WDA mode yet. " +
+                  "Use Appium iOS mode when you need launch-time localization, timezone, or custom process arguments.",
+              );
             }
 
             if (simulatorUdid) {

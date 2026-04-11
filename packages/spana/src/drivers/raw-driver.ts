@@ -5,11 +5,25 @@ import type { Selector } from "../schemas/selector.js";
 
 export type RawHierarchy = string; // Raw XML (Android/iOS) or JSON (web) — parsed by platform-specific parsers
 
-export interface LaunchOptions {
+/**
+ * Per-launch device state overrides (language/locale/timeZone) applied at app
+ * launch time. Maps to the `appium:language` / `appium:locale` /
+ * `appium:timeZone` capabilities on Appium providers; used to drive Expo /
+ * React Native localization for the duration of a flow.
+ */
+export interface DeviceStateConfig {
+  language?: string;
+  locale?: string;
+  timeZone?: string;
+}
+
+export interface LaunchOptions<R extends string = string> {
   clearState?: boolean;
   clearKeychain?: boolean;
-  deepLink?: string;
+  /** Native deep link URL (e.g. `spana://playground`). `R` lets projects type it. */
+  deepLink?: R;
   launchArguments?: Record<string, unknown>;
+  deviceState?: DeviceStateConfig;
 }
 
 export type BrowserRouteMatcher = string | RegExp;
@@ -133,7 +147,7 @@ export interface TouchSequence {
   actions: TouchAction[];
 }
 
-export interface RawDriverService {
+export interface RawDriverService<_T extends string = string, R extends string = string> {
   // Flow lifecycle
   readonly beginFlow?: (flowName: string) => Effect.Effect<void, DriverError>;
   readonly getDriverLogs?: () => Effect.Effect<string[], DriverError>;
@@ -182,7 +196,10 @@ export interface RawDriverService {
   readonly getDeviceInfo: () => Effect.Effect<DeviceInfo, DriverError>;
 
   // App lifecycle
-  readonly launchApp: (bundleId: string, opts?: LaunchOptions) => Effect.Effect<void, DriverError>;
+  readonly launchApp: (
+    bundleId: string,
+    opts?: LaunchOptions<R>,
+  ) => Effect.Effect<void, DriverError>;
   readonly stopApp: (bundleId: string) => Effect.Effect<void, DriverError>;
   readonly killApp: (bundleId: string) => Effect.Effect<void, DriverError>;
   readonly clearAppState: (bundleId: string) => Effect.Effect<void, DriverError>;
@@ -227,6 +244,8 @@ export interface RawDriverService {
   readonly getHAR?: () => Effect.Effect<BrowserHAR, DriverError>;
 }
 
+// Non-generic Context.Tag — the Effect runtime always resolves to the default
+// string-string instantiation; type parameters only matter at the call-site.
 export class RawDriver extends Context.Tag("RawDriver")<RawDriver, RawDriverService>() {}
 
 type DriverEffect<A> = Effect.Effect<A, DriverError>;

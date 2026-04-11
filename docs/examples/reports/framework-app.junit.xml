@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="spana" tests="8" failures="0" time="190.270" timestamp="2026-04-11T17:24:23.735Z">
+  <testsuite name="android" tests="8" failures="0" skipped="0" time="190.267">
+    <testcase name="Framework app - accessibility assertions stay green" classname="spana.android" time="20.717">
+      <system-out>attachment passed-screenshot (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_accessibility_assertions_stay_green-android/screenshot.png
+attachment passed-hierarchy (application/json): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_accessibility_assertions_stay_green-android/hierarchy.json
+step 1 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://playground&quot;}
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-title&quot;}
+step 3 expect.toHaveAccessibilityLabel(&quot;Playground text input&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-input&quot;}
+step 4 expect.toHaveAccessibilityLabel(&quot;Dismiss keyboard&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-dismiss-keyboard&quot;}
+step 5 expect.toHaveRole(&quot;button&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-dismiss-keyboard&quot;}
+step 6 expect.toHaveMinTouchTarget(44) [passed] selector={&quot;testID&quot;:&quot;playground-dismiss-keyboard&quot;}
+step 7 takeScreenshot(accessibility-showcase) [passed] attachment accessibility-showcase (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_accessibility_assertions_stay_green-android/steps/007-accessibility-showcase.png</system-out>
+    </testcase>
+    <testcase name="Framework app (BDD) — Playground interactions work across platforms" classname="spana.android" time="31.730">
+      <system-out>Given I navigate to &quot;/playground&quot; [passed] (13899ms)
+Then I should see the element &quot;playground-title&quot; within 10000ms [passed] (3450ms)
+And I should not see the element &quot;playground-details-text&quot; [passed] (5ms)
+When I type &quot;Hello BDD test&quot; into the &quot;playground-input&quot; field [passed] (2545ms)
+Then the element &quot;playground-input-mirror&quot; should have text &quot;Hello BDD test&quot; [passed] (547ms)
+When I dismiss the keyboard [passed] (244ms)
+When I double tap the &quot;playground-double-tap&quot; element [passed] (983ms)
+Then the element &quot;playground-double-tap-status&quot; should have text &quot;Detected&quot; [passed] (651ms)
+When I long press the &quot;playground-long-press&quot; element [passed] (1073ms)
+Then the element &quot;playground-long-press-status&quot; should have text &quot;Activated&quot; [passed] (482ms)
+When I tap the &quot;playground-nested-label&quot; element [passed] (92ms)
+Then the element &quot;playground-nested-status&quot; should have text &quot;Activated 1x&quot; [passed] (50ms)
+When I tap the &quot;playground-toggle&quot; element [passed] (692ms)
+When I scroll until I see the element &quot;playground-details-text&quot; [passed] (2224ms)
+Then I should see the element &quot;playground-details-text&quot; [passed] (40ms)
+When I scroll until I see the element &quot;playground-sentinel&quot; [passed] (3584ms)
+Then I should see the element &quot;playground-sentinel&quot; within 10000ms [passed] (113ms)
+When I scroll until I see the element &quot;playground-sentinel-text&quot; [passed] (112ms)
+And the element &quot;playground-sentinel-text&quot; should have text &quot;Bottom Reached&quot; [passed] (187ms)
+When I take a screenshot named &quot;playground-bdd&quot; [passed] (751ms)
+step 1 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://playground&quot;}
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-title&quot;}
+step 3 expect.toBeHidden [passed] selector={&quot;testID&quot;:&quot;playground-details-text&quot;}
+step 4 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-input&quot;}
+step 5 tap [passed] selector={&quot;testID&quot;:&quot;playground-input&quot;}
+step 7 expect.toHaveText(&quot;Hello BDD test&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-input-mirror&quot;}
+step 8 dismissKeyboard(auto) [passed] selector={&quot;strategy&quot;:&quot;auto&quot;}
+step 9 doubleTap [passed] selector={&quot;testID&quot;:&quot;playground-double-tap&quot;}
+step 10 expect.toHaveText(&quot;Detected&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-double-tap-status&quot;}
+step 11 longPress [passed] selector={&quot;testID&quot;:&quot;playground-long-press&quot;}
+step 12 expect.toHaveText(&quot;Activated&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-long-press-status&quot;}
+step 13 tap [passed] selector={&quot;testID&quot;:&quot;playground-nested-label&quot;}
+step 14 expect.toHaveText(&quot;Activated 1x&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-nested-status&quot;}
+step 15 tap [passed] selector={&quot;testID&quot;:&quot;playground-toggle&quot;}
+step 16 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-details-text&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 17 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-details-text&quot;}
+step 18 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-sentinel&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 19 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-sentinel&quot;}
+step 20 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-sentinel-text&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 21 expect.toHaveText(&quot;Bottom Reached&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-sentinel-text&quot;}
+step 22 takeScreenshot(playground-bdd) [passed] attachment playground-bdd (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_BDD_Playground_interactions_work_across_platforms-android/steps/022-playground-bdd.png</system-out>
+    </testcase>
+    <testcase name="Framework app - home screen renders on every platform" classname="spana.android" time="1.202">
+      <system-out>step 1 openLink [passed] selector={&quot;url&quot;:&quot;spana://&quot;}
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-scroll&quot;}
+step 3 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-content&quot;}
+step 4 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 5 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-card&quot;}
+step 6 expect.toBeVisible [passed] selector={&quot;text&quot;:&quot;Spana Demo&quot;}</system-out>
+    </testcase>
+    <testcase name="Framework app - modal navigation through UI" classname="spana.android" time="22.898">
+      <system-out>attachment passed-screenshot (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/screenshot.png
+attachment passed-hierarchy (application/json): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/hierarchy.json
+step 1 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://&quot;}
+step 1 launch [passed] attachment launch (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/001-launch.png
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 3 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 4 expect.toBeVisible [passed] selector={&quot;accessibilityLabel&quot;:&quot;Show navigation menu&quot;}
+step 5 tap [passed] selector={&quot;accessibilityLabel&quot;:&quot;Show navigation menu&quot;}
+step 5 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/005-tap.png
+step 6 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;drawer-tabs-item&quot;}
+step 7 tap [passed] selector={&quot;testID&quot;:&quot;drawer-tabs-item&quot;}
+step 7 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/007-tap.png
+step 8 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;tab-one-title&quot;}
+step 9 tap [passed] selector={&quot;testID&quot;:&quot;modal-open-button&quot;}
+step 9 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/009-tap.png
+step 10 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;modal-title&quot;}
+step 11 expect.toHaveText(&quot;Modal&quot;) [passed] selector={&quot;testID&quot;:&quot;modal-title&quot;}
+step 12 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;modal-description&quot;}
+step 13 takeScreenshot(modal-open) [passed] attachment modal-open (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/013-modal-open.png
+step 14 back [passed] attachment back (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/014-back.png
+step 15 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;tab-one-title&quot;}
+step 16 takeScreenshot(modal-dismissed) [passed] attachment modal-dismissed (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_modal_navigation_through_UI-android/steps/016-modal-dismissed.png</system-out>
+    </testcase>
+    <testcase name="Framework app - interaction playground showcase" classname="spana.android" time="20.071">
+      <system-out>attachment passed-screenshot (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/screenshot.png
+attachment passed-hierarchy (application/json): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/hierarchy.json
+step 1 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://playground&quot;}
+step 1 launch [passed] attachment launch (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/001-launch.png
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-title&quot;}
+step 3 tap [passed] selector={&quot;testID&quot;:&quot;playground-input&quot;}
+step 3 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/003-tap.png
+step 4 inputText [passed] attachment inputText (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/004-inputText.png
+step 5 expect.toHaveText(&quot;Hello spana&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-input-mirror&quot;}
+step 6 dismissKeyboard(auto) [passed] selector={&quot;strategy&quot;:&quot;auto&quot;}
+step 6 dismissKeyboard(auto) [passed] attachment dismissKeyboard(auto) (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/006-dismissKeyboard_auto.png
+step 7 takeScreenshot(text-input-unicode) [passed] attachment text-input-unicode (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/007-text-input-unicode.png
+step 8 doubleTap [passed] selector={&quot;testID&quot;:&quot;playground-double-tap&quot;}
+step 8 doubleTap [passed] attachment doubleTap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/008-doubleTap.png
+step 9 expect.toHaveText(&quot;Detected&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-double-tap-status&quot;}
+step 10 takeScreenshot(double-tap) [passed] attachment double-tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/010-double-tap.png
+step 11 longPress [passed] selector={&quot;testID&quot;:&quot;playground-long-press&quot;}
+step 11 longPress [passed] attachment longPress (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/011-longPress.png
+step 12 expect.toHaveText(&quot;Activated&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-long-press-status&quot;}
+step 13 takeScreenshot(long-press) [passed] attachment long-press (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/013-long-press.png
+step 14 tap [passed] selector={&quot;testID&quot;:&quot;playground-nested-label&quot;}
+step 14 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/014-tap.png
+step 15 expect.toHaveText(&quot;Activated 1x&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-nested-status&quot;}
+step 16 takeScreenshot(nested-target-resolution) [passed] attachment nested-target-resolution (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/016-nested-target-resolution.png
+step 17 expect.toBeHidden [passed] selector={&quot;testID&quot;:&quot;playground-details-text&quot;}
+step 18 tap [passed] selector={&quot;testID&quot;:&quot;playground-toggle&quot;}
+step 18 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/018-tap.png
+step 19 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-details-text&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 19 scrollUntilVisible(down) [passed] attachment scrollUntilVisible(down) (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/019-scrollUntilVisible_down.png
+step 20 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-details-text&quot;}
+step 21 takeScreenshot(section-expanded) [passed] attachment section-expanded (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/021-section-expanded.png
+step 22 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-sentinel&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 22 scrollUntilVisible(down) [passed] attachment scrollUntilVisible(down) (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/022-scrollUntilVisible_down.png
+step 23 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-sentinel&quot;}
+step 24 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-sentinel-text&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 24 scrollUntilVisible(down) [passed] attachment scrollUntilVisible(down) (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/024-scrollUntilVisible_down.png
+step 25 expect.toHaveText(&quot;Bottom Reached&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-sentinel-text&quot;}
+step 26 takeScreenshot(scroll-sentinel) [passed] attachment scroll-sentinel (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_interaction_playground_showcase-android/steps/026-scroll-sentinel.png</system-out>
+    </testcase>
+    <testcase name="Framework app - relative selectors disambiguate targets" classname="spana.android" time="18.623">
+      <system-out>attachment passed-screenshot (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_relative_selectors_disambiguate_targets-android/screenshot.png
+attachment passed-hierarchy (application/json): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_relative_selectors_disambiguate_targets-android/hierarchy.json
+step 1 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://playground&quot;}
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-title&quot;}
+step 3 expect.toHaveText(&quot;(empty)&quot;) [passed] selector={&quot;selector&quot;:{&quot;testID&quot;:&quot;playground-input-mirror&quot;},&quot;below&quot;:{&quot;testID&quot;:&quot;playground-input&quot;}}
+step 4 expect.toBeVisible [passed] selector={&quot;selector&quot;:{&quot;testID&quot;:&quot;playground-dismiss-keyboard&quot;},&quot;below&quot;:{&quot;testID&quot;:&quot;playground-input&quot;}}
+step 5 tap [passed] selector={&quot;selector&quot;:{&quot;testID&quot;:&quot;playground-nested-label&quot;},&quot;childOf&quot;:{&quot;testID&quot;:&quot;playground-nested-card&quot;}}
+step 6 expect.toHaveText(&quot;Activated 1x&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-nested-status&quot;}
+step 7 scrollUntilVisible(down) [passed] selector={&quot;target&quot;:{&quot;testID&quot;:&quot;playground-relative-label&quot;},&quot;timeout&quot;:20000,&quot;maxScrolls&quot;:10,&quot;direction&quot;:&quot;down&quot;}
+step 8 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-relative-label&quot;}
+step 9 tap [passed] selector={&quot;selector&quot;:{&quot;testID&quot;:&quot;playground-relative-button&quot;},&quot;rightOf&quot;:{&quot;testID&quot;:&quot;playground-relative-label&quot;}}
+step 10 expect.toHaveText(&quot;Triggered 1x&quot;) [passed] selector={&quot;testID&quot;:&quot;playground-relative-status&quot;}
+step 11 takeScreenshot(relative-selectors) [passed] attachment relative-selectors (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_relative_selectors_disambiguate_targets-android/steps/011-relative-selectors.png</system-out>
+    </testcase>
+    <testcase name="Framework app - capture screenshots for direct route jumps" classname="spana.android" time="56.304">
+      <system-out>attachment passed-screenshot (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/screenshot.png
+attachment passed-hierarchy (application/json): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/hierarchy.json
+step 1 launch [passed] selector={&quot;deepLink&quot;:&quot;spana://&quot;,&quot;clearState&quot;:true}
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 3 takeScreenshot(home) [passed] attachment home (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/steps/003-home.png
+step 4 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://&quot;}
+step 5 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 6 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 7 expect.toBeVisible [passed] selector={&quot;accessibilityLabel&quot;:&quot;Show navigation menu&quot;}
+step 8 tap [passed] selector={&quot;accessibilityLabel&quot;:&quot;Show navigation menu&quot;}
+step 9 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;drawer-tabs-item&quot;}
+step 10 tap [passed] selector={&quot;testID&quot;:&quot;drawer-tabs-item&quot;}
+step 11 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;tab-one-title&quot;}
+step 12 takeScreenshot(tabs-home) [passed] attachment tabs-home (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/steps/012-tabs-home.png
+step 13 launch [passed] selector={&quot;deepLink&quot;:&quot;spana://two&quot;,&quot;clearState&quot;:true}
+step 14 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;tab-two-title&quot;}
+step 15 takeScreenshot(tabs-explore) [passed] attachment tabs-explore (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/steps/015-tabs-explore.png
+step 16 launch [passed] selector={&quot;deepLink&quot;:&quot;spana://modal&quot;,&quot;clearState&quot;:true}
+step 17 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;modal-title&quot;}
+step 18 takeScreenshot(modal) [passed] attachment modal (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/steps/018-modal.png
+step 19 launch [passed] selector={&quot;deepLink&quot;:&quot;spana://playground&quot;,&quot;clearState&quot;:true}
+step 20 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;playground-title&quot;}
+step 21 takeScreenshot(playground) [passed] attachment playground (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_capture_screenshots_for_direct_route_jumps-android/steps/021-playground.png</system-out>
+    </testcase>
+    <testcase name="Framework app - navigate to tabs explore through the UI" classname="spana.android" time="18.722">
+      <system-out>attachment passed-screenshot (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_navigate_to_tabs_explore_through_the_UI-android/screenshot.png
+attachment passed-hierarchy (application/json): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_navigate_to_tabs_explore_through_the_UI-android/hierarchy.json
+step 1 launch [passed] selector={&quot;clearState&quot;:true,&quot;deepLink&quot;:&quot;spana://&quot;}
+step 1 launch [passed] attachment launch (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_navigate_to_tabs_explore_through_the_UI-android/steps/001-launch.png
+step 2 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 3 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;home-title&quot;}
+step 4 expect.toBeVisible [passed] selector={&quot;accessibilityLabel&quot;:&quot;Show navigation menu&quot;}
+step 5 tap [passed] selector={&quot;accessibilityLabel&quot;:&quot;Show navigation menu&quot;}
+step 5 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_navigate_to_tabs_explore_through_the_UI-android/steps/005-tap.png
+step 6 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;drawer-tabs-item&quot;}
+step 7 tap [passed] selector={&quot;testID&quot;:&quot;drawer-tabs-item&quot;}
+step 7 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_navigate_to_tabs_explore_through_the_UI-android/steps/007-tap.png
+step 8 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;tab-one-title&quot;}
+step 9 tap [passed] selector={&quot;text&quot;:&quot;Explore&quot;}
+step 9 tap [passed] attachment tap (image/png): /Users/anton/Documents/repos/spana/packages/spana/spana-output/Framework_app_-_navigate_to_tabs_explore_through_the_UI-android/steps/009-tap.png
+step 10 expect.toBeVisible [passed] selector={&quot;testID&quot;:&quot;tab-two-title&quot;}
+step 11 expect.toHaveText(&quot;Browse more of the Spana demo experience&quot;) [passed] selector={&quot;testID&quot;:&quot;tab-two-subtitle&quot;}</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>

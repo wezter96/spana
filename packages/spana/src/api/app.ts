@@ -11,6 +11,7 @@ import type {
   BrowserJSError,
   TouchSequence,
 } from "../drivers/raw-driver.js";
+import { mergeLaunchOptions } from "../drivers/launch-options.js";
 import type { StorybookConfig } from "../schemas/config.js";
 import type { ExtendedSelector, Selector, Platform } from "../schemas/selector.js";
 import {
@@ -33,11 +34,14 @@ export type {
 export type { BrowserConsoleLog, BrowserHAR, BrowserJSError } from "../drivers/raw-driver.js";
 export type { StorybookOpenOptions } from "./storybook.js";
 
-export interface PromiseApp {
-  tap(selector: ExtendedSelector, opts?: WaitOptions): Promise<void>;
+export interface PromiseApp<T extends string = string, R extends string = string> {
+  tap(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
   tapXY(x: number, y: number): Promise<void>;
-  doubleTap(selector: ExtendedSelector, opts?: WaitOptions): Promise<void>;
-  longPress(selector: ExtendedSelector, opts?: { duration?: number } & WaitOptions): Promise<void>;
+  doubleTap(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
+  longPress(
+    selector: ExtendedSelector<T>,
+    opts?: { duration?: number } & WaitOptions,
+  ): Promise<void>;
   longPressXY(x: number, y: number, opts?: { duration?: number }): Promise<void>;
   inputText(text: string): Promise<void>;
   pressKey(key: string): Promise<void>;
@@ -45,17 +49,23 @@ export interface PromiseApp {
   dismissKeyboard(opts?: DismissKeyboardOptions): Promise<void>;
   swipe(direction: Direction, opts?: { duration?: number }): Promise<void>;
   scroll(direction: Direction): Promise<void>;
-  scrollUntilVisible(selector: ExtendedSelector, opts?: ScrollUntilVisibleOptions): Promise<void>;
-  backUntilVisible(selector: ExtendedSelector, opts?: BackUntilVisibleOptions): Promise<void>;
-  launch(opts?: LaunchOptions): Promise<void>;
+  scrollUntilVisible(
+    selector: ExtendedSelector<T>,
+    opts?: ScrollUntilVisibleOptions<T>,
+  ): Promise<void>;
+  backUntilVisible(selector: ExtendedSelector<T>, opts?: BackUntilVisibleOptions<T>): Promise<void>;
+  launch(opts?: LaunchOptions<R>): Promise<void>;
   stop(): Promise<void>;
   kill(): Promise<void>;
   clearState(): Promise<void>;
-  openLink(url: string): Promise<void>;
+  openLink(url: R): Promise<void>;
   openStory(storyId: string, opts?: StorybookOpenOptions): Promise<void>;
   back(): Promise<void>;
   takeScreenshot(name?: string): Promise<Uint8Array>;
-  evaluate<T = unknown>(fn: ((...args: any[]) => T) | string, ...args: any[]): Promise<T>;
+  evaluate<Result = unknown>(
+    fn: ((...args: any[]) => Result) | string,
+    ...args: any[]
+  ): Promise<Result>;
   mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void>;
   blockNetwork(matcher: BrowserRouteMatcher): Promise<void>;
   clearNetworkMocks(): Promise<void>;
@@ -65,8 +75,8 @@ export interface PromiseApp {
   saveAuthState(path: string): Promise<void>;
   loadAuthState(path: string): Promise<void>;
   downloadFile(path: string): Promise<void>;
-  uploadFile(selector: Selector, path: string): Promise<void>;
-  newTab(url?: string): Promise<string>;
+  uploadFile(selector: Selector<T>, path: string): Promise<void>;
+  newTab(url?: R): Promise<string>;
   switchToTab(index: number): Promise<void>;
   closeTab(): Promise<void>;
   getTabIds(): Promise<string[]>;
@@ -75,23 +85,23 @@ export interface PromiseApp {
   getHAR(): Promise<BrowserHAR>;
 
   pinch(
-    selector: ExtendedSelector,
+    selector: ExtendedSelector<T>,
     opts?: { scale?: number; duration?: number } & WaitOptions,
   ): Promise<void>;
   zoom(
-    selector: ExtendedSelector,
+    selector: ExtendedSelector<T>,
     opts?: { scale?: number; duration?: number } & WaitOptions,
   ): Promise<void>;
   multiTouch(sequences: TouchSequence[]): Promise<void>;
 
-  getText(selector: ExtendedSelector, opts?: WaitOptions): Promise<string>;
+  getText(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<string>;
   getAttribute(
-    selector: ExtendedSelector,
+    selector: ExtendedSelector<T>,
     name: string,
     opts?: WaitOptions,
   ): Promise<string | undefined>;
-  isVisible(selector: ExtendedSelector, opts?: { timeout?: number }): Promise<boolean>;
-  isEnabled(selector: ExtendedSelector, opts?: WaitOptions): Promise<boolean>;
+  isVisible(selector: ExtendedSelector<T>, opts?: { timeout?: number }): Promise<boolean>;
+  isEnabled(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<boolean>;
 
   // WebView / hybrid context switching
   /** List available contexts (e.g. ["NATIVE_APP", "WEBVIEW_com.example.app"]). */
@@ -106,22 +116,23 @@ export interface PromiseApp {
   switchToNativeApp(): Promise<void>;
 }
 
-export interface PromiseAppOptions {
+export interface PromiseAppOptions<R extends string = string> {
   platform?: Platform;
   storybook?: StorybookConfig;
+  launchOptions?: LaunchOptions<R>;
 }
 
 const describeMatcher = (matcher: BrowserRouteMatcher) =>
   typeof matcher === "string" ? matcher : matcher.toString();
 
-export function createPromiseApp(
-  driver: RawDriverService,
+export function createPromiseApp<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
   appId: string,
   config: CoordinatorConfig,
   recorder?: StepRecorder,
-  options: PromiseAppOptions = {},
-): PromiseApp {
-  const coord = createCoordinator(driver, config);
+  options: PromiseAppOptions<R> = {},
+): PromiseApp<T, R> {
+  const coord = createCoordinator<T, R>(driver, config);
   const platform =
     options.platform ??
     (appId.startsWith("http://") || appId.startsWith("https://") ? "web" : undefined);
@@ -130,10 +141,10 @@ export function createPromiseApp(
   const unsupportedWebFeature = (feature: string) =>
     Effect.fail(new DriverError({ message: `${feature}() is only supported on the web platform` }));
 
-  const optionalMethod = <A extends any[], R>(
+  const optionalMethod = <A extends any[], Ret>(
     name: string,
-    method: ((...args: A) => Effect.Effect<R, DriverError>) | undefined,
-  ): ((...args: A) => Effect.Effect<R, DriverError>) =>
+    method: ((...args: A) => Effect.Effect<Ret, DriverError>) | undefined,
+  ): ((...args: A) => Effect.Effect<Ret, DriverError>) =>
     method ?? ((..._args: A) => unsupportedWebFeature(name));
 
   const runStep = <A>(
@@ -221,11 +232,13 @@ export function createPromiseApp(
           captureScreenshot: true,
         },
       ),
-    launch: (opts) =>
-      runStep("launch", () => run(driver.launchApp(appId, opts)), {
-        selector: opts,
+    launch: (opts) => {
+      const mergedLaunchOptions = mergeLaunchOptions(options.launchOptions, opts);
+      return runStep("launch", () => run(driver.launchApp(appId, mergedLaunchOptions)), {
+        selector: mergedLaunchOptions,
         captureScreenshot: true,
-      }),
+      });
+    },
     stop: () => runStep("stop", () => run(driver.stopApp(appId)), { captureScreenshot: true }),
     kill: () => runStep("kill", () => run(driver.killApp(appId)), { captureScreenshot: true }),
     clearState: () =>
@@ -268,8 +281,8 @@ export function createPromiseApp(
         () => run(driver.takeScreenshot()),
         { name },
       ),
-    evaluate: <T = unknown>(fn: ((...args: any[]) => T) | string, ...args: any[]) =>
-      runStep("evaluate", () => run(driver.evaluate(fn as any, ...args)) as Promise<T>),
+    evaluate: <Result = unknown>(fn: ((...args: any[]) => Result) | string, ...args: any[]) =>
+      runStep("evaluate", () => run(driver.evaluate(fn as any, ...args)) as Promise<Result>),
     mockNetwork: (matcher, response) =>
       runStep(
         "mockNetwork",

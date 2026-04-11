@@ -10,7 +10,8 @@ Given("I navigate to {string}", async ({ app, expect: expectFn, platform }, path
     // iOS: launch app then navigate via drawer menu
     // WDA's openUrl with custom schemes (spana://) routes through Safari
     // which breaks the WDA session, so we navigate through the UI instead.
-    await app.launch();
+    // clearState wipes residual input state between tests.
+    await app.launch({ clearState: true });
     await expectFn({ accessibilityLabel: "Show navigation menu" }).toBeVisible({ timeout: 10_000 });
     const drawerItemId = `drawer-${(path as string).replace(/^\/+/, "")}-item`;
     await app.tap({ accessibilityLabel: "Show navigation menu" });
@@ -55,8 +56,14 @@ When("I type {string} into the {string} field", async ({ app, expect: expectFn }
   await app.inputText(text as string);
 });
 
-When("I dismiss the keyboard", async ({ app }) => {
-  await app.dismissKeyboard();
+When("I dismiss the keyboard", async ({ app, platform }) => {
+  // iOS WDA's hideKeyboard cannot introspect RN keyboards; prefer the
+  // explicit Dismiss Keyboard control the framework app exposes.
+  if (platform === "ios") {
+    await app.tap({ testID: "playground-dismiss-keyboard" });
+  } else {
+    await app.dismissKeyboard();
+  }
 });
 
 When("I tap the {string} element", async ({ app }, testID) => {

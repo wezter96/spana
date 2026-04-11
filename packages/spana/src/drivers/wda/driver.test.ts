@@ -46,6 +46,10 @@ mock.module("./client.js", () => ({
       wdaState.events.push(["disableQuiescence"]);
     }
 
+    async setSnapshotMaxDepth(depth: number) {
+      wdaState.events.push(["setSnapshotMaxDepth", depth]);
+    }
+
     async getSource() {
       return "<xml />";
     }
@@ -174,6 +178,7 @@ describe("WDA driver adapter", () => {
 
     expect(wdaState.events).toContainEqual(["createSession", "com.example.app"]);
     expect(wdaState.events).toContainEqual(["disableQuiescence"]);
+    expect(wdaState.events).toContainEqual(["setSnapshotMaxDepth", 100]);
     expect(wdaState.events).toContainEqual(["longPress", 1, 2, 1.5]);
     // Swipe Y coords are clamped to 15–85% of screen height (844) to avoid iOS system gestures
     expect(wdaState.events).toContainEqual(["swipe", 1, 844 * 0.15, 3, 844 * 0.15, 0.25]);

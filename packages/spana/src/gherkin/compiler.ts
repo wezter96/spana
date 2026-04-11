@@ -110,12 +110,13 @@ function buildFlowDefinition(
   scenarioSteps: readonly GherkinStep[],
   filePath?: string,
 ): FlowDefinition {
-  const { platforms, filteredTags } = extractPlatformTags(tags);
+  const { platforms, timeout, filteredTags } = extractFlowTags(tags);
 
   const config: FlowConfig = {
     tags: filteredTags.length > 0 ? filteredTags : undefined,
     platforms: platforms.length > 0 ? platforms : undefined,
     autoLaunch: false, // Gherkin flows use Background/Given steps to navigate
+    ...(timeout !== undefined ? { timeout } : {}),
   };
 
   const allSteps = [...backgroundSteps, ...scenarioSteps];
@@ -266,20 +267,31 @@ function attachScenarioSteps(flowCtx: any, scenarioSteps: ScenarioStepResult[]):
   flowCtx.__scenarioSteps = scenarioSteps;
 }
 
-function extractPlatformTags(tags: string[]): { platforms: Platform[]; filteredTags: string[] } {
+function extractFlowTags(tags: string[]): {
+  platforms: Platform[];
+  timeout: number | undefined;
+  filteredTags: string[];
+} {
   const platforms: Platform[] = [];
   const filteredTags: string[] = [];
+  let timeout: number | undefined;
 
   for (const tag of tags) {
     const platform = PLATFORM_TAGS[tag.toLowerCase()];
     if (platform) {
       platforms.push(platform);
-    } else {
-      filteredTags.push(tag);
+      continue;
     }
+    // @timeout:90000 sets the flow-level timeout in milliseconds
+    const timeoutMatch = /^@timeout:(\d+)$/i.exec(tag);
+    if (timeoutMatch) {
+      timeout = Number(timeoutMatch[1]);
+      continue;
+    }
+    filteredTags.push(tag);
   }
 
-  return { platforms, filteredTags };
+  return { platforms, timeout, filteredTags };
 }
 
 function normalizeKeyword(keyword: string): ScenarioStepKeyword {

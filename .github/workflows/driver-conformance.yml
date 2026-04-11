@@ -1,0 +1,218 @@
+name: Driver conformance
+
+# Runs the spana driver conformance suite against both the direct drivers
+# and a locally-started Appium server. Any behavioral divergence between the
+# two paths fails the job — this is the safety net for the cloud path
+# (BrowserStack et al.) that uses the Appium driver underneath.
+#
+# See:
+#   - packages/spana/flows/conformance/README.md
+#   - docs/internals/appium-endpoints.md
+#   - docs/internals/appium-local-dev.md
+
+on:
+  pull_request:
+    paths:
+      - "packages/spana/src/drivers/**"
+      - "packages/spana/src/runtime/appium**"
+      - "packages/spana/flows/conformance/**"
+      - "packages/spana/conformance.config.ts"
+      - ".github/workflows/driver-conformance.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: driver-conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android — direct (UiAutomator2) + Appium
+    runs-on: ubuntu-latest
+    # Hardware-accel KVM is available on larger runners; default runner is OK
+    # for emulators but each boot is slow. Keep this job generous on timeout.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install workspace deps
+        run: bun install
+
+      - name: Build spana package
+        run: bun run --cwd packages/spana build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Appium + UiAutomator2 driver
+        run: |
+          npm install -g appium@2
+          appium driver install uiautomator2
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Cache AVD
+        id: avd-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-pixel7-api-33
+
+      - name: Create AVD snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: echo "AVD snapshot created"
+
+      - name: Build framework-app release APK
+        run: |
+          cd apps/native
+          bun install
+          bun run expo prebuild --platform android --no-install || true
+          cd android && ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Run conformance — direct UiAutomator2
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            cd packages/spana
+            bun ./dist/cli.js test \
+              --driver local \
+              --platform android \
+              --config ./conformance.config.ts
+
+      - name: Run conformance — Appium (local server, auto-start)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            cd packages/spana
+            bun ./dist/cli.js test \
+              --driver appium \
+              --appium-auto-start \
+              --platform android \
+              --config ./conformance.config.ts
+
+      - name: Upload conformance artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-conformance-artifacts
+          path: |
+            packages/spana/spana-conformance-output/
+            packages/spana/spana-output/
+          retention-days: 7
+
+  ios:
+    name: iOS — direct (WDA) + Appium
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install workspace deps
+        run: bun install
+
+      - name: Build spana package
+        run: bun run --cwd packages/spana build
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install Appium + XCUITest driver
+        run: |
+          npm install -g appium@2
+          appium driver install xcuitest
+
+      - name: Boot iOS simulator
+        run: |
+          DEVICE="iPhone 15"
+          RUNTIME=$(xcrun simctl list runtimes -j | jq -r '.runtimes[] | select(.isAvailable==true and (.identifier | contains("iOS"))) | .identifier' | tail -1)
+          UDID=$(xcrun simctl create "spana-conformance" "$DEVICE" "$RUNTIME")
+          xcrun simctl boot "$UDID"
+          echo "SPANA_IOS_UDID=$UDID" >> "$GITHUB_ENV"
+
+      - name: Build framework-app for simulator
+        run: |
+          cd apps/native
+          bun install
+          bun run expo prebuild --platform ios --no-install || true
+          cd ios
+          xcodebuild \
+            -workspace spana.xcworkspace \
+            -scheme spana \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${SPANA_IOS_UDID}" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Install app on simulator
+        run: |
+          APP_PATH=$(find apps/native/ios/build -name "spana.app" -type d | head -1)
+          xcrun simctl install "$SPANA_IOS_UDID" "$APP_PATH"
+          echo "SPANA_IOS_APP=$APP_PATH" >> "$GITHUB_ENV"
+
+      - name: Run conformance — direct WDA
+        run: |
+          cd packages/spana
+          bun ./dist/cli.js test \
+            --driver local \
+            --platform ios \
+            --config ./conformance.config.ts
+
+      - name: Run conformance — Appium (local server, auto-start)
+        env:
+          SPANA_IOS_DEVICE: "iPhone 15"
+        run: |
+          cd packages/spana
+          bun ./dist/cli.js test \
+            --driver appium \
+            --appium-auto-start \
+            --platform ios \
+            --config ./conformance.config.ts
+
+      - name: Upload conformance artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-conformance-artifacts
+          path: |
+            packages/spana/spana-conformance-output/
+            packages/spana/spana-output/
+          retention-days: 7

@@ -54,11 +54,7 @@ export function createStepRecorder(
   const steps: StepResult[] = [];
 
   return {
-    async runStep<A>(
-      command: string,
-      action: () => Promise<A>,
-      opts?: StepRecordOptions,
-    ) {
+    async runStep<A>(command: string, action: () => Promise<A>, opts?: StepRecordOptions) {
       const startedAt = Date.now();
 
       try {

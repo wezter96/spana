@@ -4,16 +4,28 @@
  * All operations go through Appium HTTP endpoints --- no adb, no local
  * device tooling. This makes the driver suitable for cloud providers
  * (BrowserStack, Sauce Labs, etc.) as well as remote Appium servers.
+ *
+ * ## Endpoint conventions
+ *
+ * See `docs/internals/appium-endpoints.md` for the full allow/avoid list.
+ *
+ * Summary: prefer W3C-standard endpoints (`/actions`, `/execute/sync` with
+ * `mobile:` commands, `/source`, `/screenshot`) over Appium-proprietary
+ * extensions like `/appium/gestures/*` or `/appium/execute_mobile/*`.
+ * Proprietary extensions diverge across Appium versions and cloud providers.
  */
 
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { splitGraphemes } from "../../core/graphemes.js";
+import { hasLaunchDeviceState } from "../launch-options.js";
 import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
 import type { AppiumClient } from "./client.js";
+import { getAppiumWindowSize } from "./window-size.js";
 
 export function createAppiumAndroidDriver(
   client: AppiumClient,
+  defaultBundleId?: string,
 ): Effect.Effect<RawDriverService, DriverError> {
   const service: RawDriverService = {
     // -----------------------------------------------------------------------
@@ -31,27 +43,64 @@ export function createAppiumAndroidDriver(
     tapAtCoordinate: (x, y) =>
       Effect.tryPromise({
         try: () =>
-          client.request("POST", client.sessionPath("/appium/gestures/click"), {
-            offset: { x, y },
+          client.request("POST", client.sessionPath("/actions"), {
+            actions: [
+              {
+                type: "pointer",
+                id: "finger1",
+                parameters: { pointerType: "touch" },
+                actions: [
+                  { type: "pointerMove", duration: 0, x, y },
+                  { type: "pointerDown", button: 0 },
+                  { type: "pointerUp", button: 0 },
+                ],
+              },
+            ],
           }),
         catch: (e) => new DriverError({ message: `Tap failed: ${e}` }),
       }),
 
     doubleTapAtCoordinate: (x, y) =>
       Effect.tryPromise({
-        try: () =>
-          client.request("POST", client.sessionPath("/appium/gestures/double_click"), {
-            offset: { x, y },
-          }),
+        try: async () => {
+          const tapSequence = [
+            {
+              type: "pointer" as const,
+              id: "finger1",
+              parameters: { pointerType: "touch" as const },
+              actions: [
+                { type: "pointerMove", duration: 0, x, y },
+                { type: "pointerDown", button: 0 },
+                { type: "pointerUp", button: 0 },
+              ],
+            },
+          ];
+          // Two separate tap requests with a short gap so Android treats
+          // them as independent gestures rather than a hold.
+          await client.request("POST", client.sessionPath("/actions"), { actions: tapSequence });
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          await client.request("POST", client.sessionPath("/actions"), { actions: tapSequence });
+        },
         catch: (e) => new DriverError({ message: `Double tap failed: ${e}` }),
       }),
 
     longPressAtCoordinate: (x, y, duration) =>
       Effect.tryPromise({
         try: () =>
-          client.request("POST", client.sessionPath("/appium/gestures/long_click"), {
-            offset: { x, y },
-            duration,
+          client.request("POST", client.sessionPath("/actions"), {
+            actions: [
+              {
+                type: "pointer",
+                id: "finger1",
+                parameters: { pointerType: "touch" },
+                actions: [
+                  { type: "pointerMove", duration: 0, x, y },
+                  { type: "pointerDown", button: 0 },
+                  { type: "pause", duration },
+                  { type: "pointerUp", button: 0 },
+                ],
+              },
+            ],
           }),
         catch: (e) => new DriverError({ message: `Long press failed: ${e}` }),
       }),
@@ -131,10 +180,7 @@ export function createAppiumAndroidDriver(
     getDeviceInfo: () =>
       Effect.tryPromise({
         try: async () => {
-          const size = await client.request<{ width: number; height: number }>(
-            "GET",
-            client.sessionPath("/window/size"),
-          );
+          const size = await getAppiumWindowSize(client);
           const caps = client.getSessionCaps();
           return {
             platform: "android" as const,
@@ -156,7 +202,7 @@ export function createAppiumAndroidDriver(
       Effect.tryPromise({
         try: async () => {
           if (opts?.clearState) {
-            // Terminate -> clearApp -> activate (clean launch without uninstalling)
+            // Terminate + clearApp wipes app data so the next launch is cold.
             try {
               await client.request("POST", client.sessionPath("/appium/device/terminate_app"), {
                 appId: bundleId,
@@ -164,16 +210,7 @@ export function createAppiumAndroidDriver(
             } catch {
               /* app may not be running */
             }
-            await client.request("POST", client.sessionPath("/appium/execute_mobile/clearApp"), {
-              appId: bundleId,
-            });
-            await client.request("POST", client.sessionPath("/appium/device/activate_app"), {
-              appId: bundleId,
-            });
-          } else {
-            await client.request("POST", client.sessionPath("/appium/device/activate_app"), {
-              appId: bundleId,
-            });
+            await client.executeScript("mobile: clearApp", [{ appId: bundleId }]);
           }
 
           if (opts?.clearKeychain) {
@@ -188,9 +225,24 @@ export function createAppiumAndroidDriver(
             });
           }
 
+          if (hasLaunchDeviceState(opts?.deviceState)) {
+            console.warn(
+              "deviceState launch overrides are not supported during Appium Android relaunches. " +
+                "Set launchOptions.deviceState in config to apply Android language/locale/timeZone at session start.",
+            );
+          }
+
           if (opts?.deepLink) {
-            await client.request("POST", client.sessionPath("/url"), {
-              url: opts.deepLink,
+            // Deep link launches the app at the target route in one intent.
+            // Use mobile: deepLink (Android Appium 2.x) rather than W3C POST /url,
+            // which many cloud providers (BrowserStack) do not route to native apps.
+            await client.executeScript("mobile: deepLink", [
+              { url: opts.deepLink, package: bundleId },
+            ]);
+          } else {
+            // No deep link — activate the main intent.
+            await client.request("POST", client.sessionPath("/appium/device/activate_app"), {
+              appId: bundleId,
             });
           }
         },
@@ -225,9 +277,7 @@ export function createAppiumAndroidDriver(
           } catch {
             /* app may not be running */
           }
-          await client.request("POST", client.sessionPath("/appium/execute_mobile/clearApp"), {
-            appId: bundleId,
-          });
+          await client.executeScript("mobile: clearApp", [{ appId: bundleId }]);
         },
         catch: (e) => new DriverError({ message: `Clear app state failed: ${e}` }),
       }),
@@ -237,7 +287,11 @@ export function createAppiumAndroidDriver(
     // -----------------------------------------------------------------------
     openLink: (url) =>
       Effect.tryPromise({
-        try: () => client.request("POST", client.sessionPath("/url"), { url }),
+        try: () => {
+          const args: { url: string; package?: string } = { url };
+          if (defaultBundleId) args.package = defaultBundleId;
+          return client.executeScript("mobile: deepLink", [args]);
+        },
         catch: (e) => new DriverError({ message: `Open link failed: ${e}` }),
       }),
 

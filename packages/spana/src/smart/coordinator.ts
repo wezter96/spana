@@ -22,7 +22,11 @@ export type Direction = "up" | "down" | "left" | "right";
 
 type HierarchyParser = (raw: string) => Element;
 
-export interface ScrollUntilVisibleOptions extends WaitOptions {
+// The `_T` type parameter is reserved for typed-testID projects that want to
+// thread a testID union through options. It's unused in the interface body
+// but enabled at the type level so `ScrollUntilVisibleOptions<"foo"|"bar">`
+// works when called from a typed app.
+export interface ScrollUntilVisibleOptions<_T extends string = string> extends WaitOptions {
   /** Where the target is relative to the current viewport. Default: "down". */
   direction?: Direction;
   /** Max number of scroll gestures to attempt before failing. Default: 5. */
@@ -36,7 +40,7 @@ export interface DismissKeyboardOptions {
   strategy?: KeyboardDismissStrategy;
 }
 
-export interface BackUntilVisibleOptions extends WaitOptions {
+export interface BackUntilVisibleOptions<_T extends string = string> extends WaitOptions {
   /** Max number of back actions to attempt before failing. Default: 3. */
   maxBacks?: number;
 }
@@ -81,7 +85,10 @@ export interface CoordinatorConfig {
   outputDir?: string;
 }
 
-export function createCoordinator(driver: RawDriverService, config: CoordinatorConfig) {
+export function createCoordinator<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
+  config: CoordinatorConfig,
+) {
   const { parse, defaults } = config;
 
   const cacheConfig: HierarchyCacheConfig = {

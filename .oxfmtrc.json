@@ -1,3 +1,7 @@
 {
-  "ignorePatterns": []
+  "ignorePatterns": [
+    "docs/examples/reports/**",
+    "spana-output/**",
+    "packages/spana/spana-output/**"
+  ]
 }

@@ -425,7 +425,7 @@ describe("runTestCommand", () => {
 
     expect(success).toBe(false);
     expect(cliState.logs).toContain(
-      "Appium mode requires a server URL. Set --appium-url or execution.appium.serverUrl in config.",
+      "Appium mode requires a server URL. Set --appium-url, SPANA_APPIUM_URL env var, execution.appium.serverUrl in config, or use --appium-auto-start to spawn a local server.",
     );
   });
 

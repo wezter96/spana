@@ -169,6 +169,7 @@ export async function buildLocalIOSRuntime(
   const bundleId = config.apps?.ios?.bundleId ?? "";
   const iosAppPath = config.apps?.ios?.appPath;
   const signing = config.apps?.ios?.signing;
+  const snapshotMaxDepth = config.defaults?.snapshotMaxDepth ?? 100;
 
   const createIOSRuntime = async (
     deviceId: string,
@@ -176,7 +177,7 @@ export async function buildLocalIOSRuntime(
     simulatorUdid?: string,
   ): Promise<RuntimeResult> => {
     const driver = await Effect.runPromise(
-      createWDADriver(conn.host, conn.port, bundleId, simulatorUdid),
+      createWDADriver(conn.host, conn.port, bundleId, simulatorUdid, snapshotMaxDepth),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 

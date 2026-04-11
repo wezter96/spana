@@ -475,6 +475,41 @@ Guides:
 
 ---
 
+## Example Reports
+
+Real reports generated from the framework-app test suite are checked into
+[`docs/examples/reports/`](./docs/examples/reports). They're regenerated from
+an actual `spana test` run against the demo app and kept up to date with each
+release. Use them as reference for wiring spana into CI or integrating with
+existing reporting pipelines.
+
+| File                                                                                                               | Reporter                | What it shows                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`framework-app-single-flow.json`](./docs/examples/reports/framework-app-single-flow.json)                         | `json` (pretty-printed) | A single flow's full structured output — steps, selectors, timings, and attachments. Start here if you want to understand the JSON schema.                                         |
+| [`framework-app-web.ndjson`](./docs/examples/reports/framework-app-web.ndjson)                                     | `json` (streaming)      | Full suite in newline-delimited JSON — one event per line. This is what `--reporter json` emits to stdout, suitable for piping into CI dashboards.                                 |
+| [`framework-app.junit.xml`](./docs/examples/reports/framework-app.junit.xml)                                       | `junit`                 | Standard JUnit XML. Drop straight into GitHub Actions, GitLab CI, Jenkins, or anything else that speaks JUnit.                                                                     |
+| [E2E HTML report](https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html) | `html`                  | Full self-contained HTML report with embedded screenshots, hierarchy dumps, and step-by-step timelines. Hosted via htmlpreview.github.io so you can click through without cloning. |
+
+Generate your own by passing `--reporter` to `spana test`:
+
+```bash
+# Streaming JSON events to stdout
+spana test --platform web --reporter json > run.ndjson
+
+# JUnit XML (writes spana-output/junit-report.xml)
+spana test --platform android --reporter junit
+
+# HTML (writes spana-output/report.html)
+spana test --reporter html
+
+# Multiple reporters at once
+spana test --reporter console,junit,html
+```
+
+Reporters can also be pinned in `spana.config.ts` via the `reporters` array.
+
+---
+
 ## Architecture
 
 spana uses a layered architecture: CLI -> TestRunner -> PlatformOrchestrator -> SmartLayer -> RawDriver.

@@ -28,12 +28,15 @@ const DEFAULT_SETTLE_TIMEOUT = 0;
 type HierarchyParser = (raw: string) => Element;
 
 /** Get the hierarchy root — uses cache if provided, otherwise dumps fresh. */
-function getHierarchy(
-  driver: RawDriverService,
+// Generic on `<T, R>` so the wait helpers can be called from typed flow code
+// without widening errors. None of the body actually uses T/R — we only need
+// the parameters so `RawDriverService<T, R>` passes assignability checks.
+function getHierarchy<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
   parse: HierarchyParser,
   cache?: HierarchyCache,
 ): Effect.Effect<Element, DriverError> {
-  if (cache) return cache.get(driver, parse);
+  if (cache) return cache.get(driver as unknown as RawDriverService, parse);
   return Effect.gen(function* () {
     const raw = yield* driver.dumpHierarchy();
     return parse(raw);
@@ -50,11 +53,11 @@ function nextInterval(elapsed: number, timeout: number, initial: number, max: nu
 }
 
 /** Poll until an element matching selector is found */
-function waitForResolvedElement(
-  driver: RawDriverService,
-  selector: ExtendedSelector,
+function waitForResolvedElement<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
+  selector: ExtendedSelector<T>,
   parse: HierarchyParser,
-  resolveElement: (root: Element, selector: ExtendedSelector) => Element | undefined,
+  resolveElement: (root: Element, selector: ExtendedSelector<T>) => Element | undefined,
   opts?: WaitOptions,
   cache?: HierarchyCache,
 ): Effect.Effect<Element, ElementNotFoundError | WaitTimeoutError | DriverError> {
@@ -106,9 +109,9 @@ function waitForResolvedElement(
 }
 
 /** Poll until an element matching selector is found. */
-export function waitForElement(
-  driver: RawDriverService,
-  selector: ExtendedSelector,
+export function waitForElement<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
+  selector: ExtendedSelector<T>,
   parse: HierarchyParser,
   opts?: WaitOptions,
   cache?: HierarchyCache,
@@ -117,9 +120,9 @@ export function waitForElement(
 }
 
 /** Poll until an actionable element matching selector is found. */
-export function waitForActionElement(
-  driver: RawDriverService,
-  selector: ExtendedSelector,
+export function waitForActionElement<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
+  selector: ExtendedSelector<T>,
   parse: HierarchyParser,
   opts?: WaitOptions,
   cache?: HierarchyCache,
@@ -128,9 +131,9 @@ export function waitForActionElement(
 }
 
 /** Poll until element matching selector is NOT visible */
-export function waitForNotVisible(
-  driver: RawDriverService,
-  selector: ExtendedSelector,
+export function waitForNotVisible<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
+  selector: ExtendedSelector<T>,
   parse: HierarchyParser,
   opts?: WaitOptions,
   cache?: HierarchyCache,

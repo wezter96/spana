@@ -37,4 +37,22 @@ describe("flow", () => {
     const f = flow("ci only", { when: { env: "CI" } }, async () => {});
     expect(f.config.when?.env).toBe("CI");
   });
+
+  test("accepts per-flow launchOptions config", () => {
+    const f = flow(
+      "localized launch",
+      {
+        launchOptions: {
+          clearState: true,
+          deviceState: { language: "fr", locale: "fr_CA", timeZone: "America/Toronto" },
+        },
+      },
+      async () => {},
+    );
+
+    expect(f.config.launchOptions).toEqual({
+      clearState: true,
+      deviceState: { language: "fr", locale: "fr_CA", timeZone: "America/Toronto" },
+    });
+  });
 });

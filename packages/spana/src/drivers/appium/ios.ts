@@ -5,17 +5,29 @@
  * no local WDA tooling. This makes the driver suitable for cloud providers
  * (BrowserStack, Sauce Labs, etc.) as well as remote Appium servers.
  *
+ * ## Endpoint conventions
+ *
+ * See `docs/internals/appium-endpoints.md` for the full allow/avoid list.
+ *
+ * Summary: prefer W3C-standard endpoints (`/actions`, `/execute/sync` with
+ * `mobile:` commands, `/source`, `/screenshot`) over Appium-proprietary
+ * extensions. Proprietary extensions diverge across Appium versions and
+ * cloud providers.
+ *
  * Key differences from the Android Appium driver:
- * - Uses W3C touch pointer actions instead of Appium gesture extensions
  * - back() is not supported (iOS has no system back button)
- * - clearAppState uses terminate + clearApp (may not be available on all providers)
+ * - clearAppState uses terminate + clearApp; mobile: clearApp may not exist on
+ *   older XCUITest driver versions (e.g. BrowserStack), so we fall back to
+ *   terminate-only and log a warning.
  */
 
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { splitGraphemes } from "../../core/graphemes.js";
+import { buildIOSLaunchConfiguration } from "../launch-options.js";
 import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
 import type { AppiumClient } from "./client.js";
+import { getAppiumWindowSize } from "./window-size.js";
 
 export function createAppiumIOSDriver(
   client: AppiumClient,
@@ -181,10 +193,7 @@ export function createAppiumIOSDriver(
     getDeviceInfo: () =>
       Effect.tryPromise({
         try: async () => {
-          const size = await client.request<{ width: number; height: number }>(
-            "GET",
-            client.sessionPath("/window/size"),
-          );
+          const size = await getAppiumWindowSize(client);
           const caps = client.getSessionCaps();
           return {
             platform: "ios" as const,
@@ -205,8 +214,13 @@ export function createAppiumIOSDriver(
     launchApp: (bundleId, opts?: LaunchOptions) =>
       Effect.tryPromise({
         try: async () => {
+          const launchConfig = buildIOSLaunchConfiguration(opts);
           if (opts?.clearState) {
-            // Terminate -> clearApp -> activate (clean launch without uninstalling)
+            // Terminate -> clearApp -> relaunch (clean launch without uninstalling).
+            // mobile: clearApp requires appium-xcuitest-driver 4.17+ and may not be
+            // available on all cloud providers; fall back to terminate-only, which
+            // still clears in-memory state (text fields, current route, etc.) even
+            // though AsyncStorage and keychain persist.
             try {
               await client.request("POST", client.sessionPath("/appium/device/terminate_app"), {
                 appId: bundleId,
@@ -214,13 +228,16 @@ export function createAppiumIOSDriver(
             } catch {
               /* app may not be running */
             }
-            await client.request("POST", client.sessionPath("/appium/execute_mobile/clearApp"), {
-              appId: bundleId,
-            });
-            await client.request("POST", client.sessionPath("/appium/device/activate_app"), {
-              appId: bundleId,
-            });
-          } else {
+            try {
+              await client.executeScript("mobile: clearApp", [{ bundleId }]);
+            } catch (e) {
+              console.warn(
+                `mobile: clearApp unavailable on this provider; falling back to terminate-only. In-memory state will still be reset. (${e})`,
+              );
+            }
+          }
+
+          if (!launchConfig) {
             await client.request("POST", client.sessionPath("/appium/device/activate_app"), {
               appId: bundleId,
             });
@@ -233,12 +250,21 @@ export function createAppiumIOSDriver(
             );
           }
 
-          if (opts?.launchArguments && Object.keys(opts.launchArguments).length > 0) {
-            throw new DriverError({
-              message:
-                "launchArguments are not supported in Appium iOS mode. " +
-                "Remove launchArguments from your config or use local mode.",
-            });
+          if (launchConfig) {
+            try {
+              await client.request("POST", client.sessionPath("/appium/device/terminate_app"), {
+                appId: bundleId,
+              });
+            } catch {
+              /* app may not be running */
+            }
+            await client.executeScript("mobile: launchApp", [
+              {
+                bundleId,
+                arguments: launchConfig.arguments,
+                environment: launchConfig.environment,
+              },
+            ]);
           }
 
           if (opts?.deepLink) {
@@ -278,9 +304,7 @@ export function createAppiumIOSDriver(
           } catch {
             /* app may not be running */
           }
-          await client.request("POST", client.sessionPath("/appium/execute_mobile/clearApp"), {
-            appId: bundleId,
-          });
+          await client.executeScript("mobile: clearApp", [{ bundleId }]);
         },
         catch: (e) =>
           new DriverError({

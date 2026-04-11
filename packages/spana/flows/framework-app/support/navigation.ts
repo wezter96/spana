@@ -22,7 +22,8 @@ export async function navigateToHomeScreen({
   if (platform === "ios") {
     // Use app.launch() instead of openLink with custom scheme — WDA's openUrl
     // routes through Safari which breaks the WDA session for spana:// URLs.
-    await app.launch();
+    // clearState ensures each test starts from a clean slate.
+    await app.launch({ clearState: true });
     await expect({ testID: "home-title" }).toBeVisible({ timeout: 10_000 });
     return;
   }
@@ -57,7 +58,9 @@ export async function navigateToTabsScreen(ctx: NavigationContext): Promise<void
 
 export async function navigateToPlaygroundScreen(ctx: NavigationContext): Promise<void> {
   if (ctx.platform === "ios") {
-    await ctx.app.launch();
+    // clearState ensures we start from the home route with no leftover
+    // input state from a previous test.
+    await ctx.app.launch({ clearState: true });
     await ctx.expect({ accessibilityLabel: "Show navigation menu" }).toBeVisible({
       timeout: 10_000,
     });

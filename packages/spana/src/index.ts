@@ -32,6 +32,8 @@ export {
   type StorybookConfig,
   type StorybookValue,
   type WebExecutionConfig,
+  type DeviceStateConfig,
+  type LaunchOptions,
   type ArtifactConfig,
 } from "./schemas/config.js";
 export { type Element } from "./schemas/element.js";

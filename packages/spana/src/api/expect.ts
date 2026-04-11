@@ -12,7 +12,7 @@ export interface FlowContext {
   updateBaselines?: boolean;
 }
 
-export interface PromiseExpectation {
+export interface PromiseExpectation<T extends string = string> {
   toBeVisible(opts?: WaitOptions): Promise<void>;
   toBeHidden(opts?: WaitOptions): Promise<void>;
   toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
@@ -29,7 +29,7 @@ export interface PromiseExpectation {
     options?: {
       threshold?: number;
       maxDiffPixelRatio?: number;
-      mask?: ExtendedSelector[];
+      mask?: ExtendedSelector<T>[];
     },
   ): Promise<void>;
 
@@ -37,7 +37,7 @@ export interface PromiseExpectation {
   toPassAccessibilityAudit(options?: {
     severity?: "critical" | "serious" | "moderate" | "minor";
     rules?: string[];
-    exclude?: ExtendedSelector[];
+    exclude?: ExtendedSelector<T>[];
   }): Promise<void>;
 
   toHaveAccessibilityLabel(expected?: string): Promise<void>;
@@ -46,16 +46,22 @@ export interface PromiseExpectation {
   toHaveMinTouchTarget(size?: number): Promise<void>;
 }
 
-function selectorToCss(sel: ExtendedSelector): string {
+function selectorToCss<T extends string = string>(sel: ExtendedSelector<T>): string {
   if (typeof sel === "string") return sel;
-  if ("testID" in sel && sel.testID) return `[data-testid="${sel.testID}"]`;
-  if ("accessibilityLabel" in sel && sel.accessibilityLabel)
+  if (typeof sel === "object" && sel !== null && "testID" in sel && sel.testID)
+    return `[data-testid="${sel.testID}"]`;
+  if (
+    typeof sel === "object" &&
+    sel !== null &&
+    "accessibilityLabel" in sel &&
+    sel.accessibilityLabel
+  )
     return `[aria-label="${sel.accessibilityLabel}"]`;
   return "";
 }
 
-export function createPromiseExpect(
-  driver: RawDriverService,
+export function createPromiseExpect<T extends string = string, R extends string = string>(
+  driver: RawDriverService<T, R>,
   config: CoordinatorConfig,
   recorder?: StepRecorder,
   flowContext?: FlowContext,
@@ -64,21 +70,21 @@ export function createPromiseExpect(
     maxDiffPixelRatio?: number;
     baselinesDir?: string;
   },
-): (selector: ExtendedSelector) => PromiseExpectation {
+): (selector: ExtendedSelector<T>) => PromiseExpectation<T> {
   const ctx: FlowContext = flowContext ?? {
     flowFilePath: "",
     flowName: "unknown",
     platform: "web",
   };
 
-  const coord = createCoordinator(driver, config);
+  const coord = createCoordinator<T, R>(driver, config);
 
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
-  const runStep = <A>(command: string, selector: ExtendedSelector, action: () => Promise<A>) =>
+  const runStep = <A>(command: string, selector: ExtendedSelector<T>, action: () => Promise<A>) =>
     recorder ? recorder.runStep(command, action, { selector, captureScreenshot: false }) : action();
 
-  return (selector: ExtendedSelector): PromiseExpectation => ({
+  return (selector: ExtendedSelector<T>): PromiseExpectation<T> => ({
     toBeVisible: (opts) =>
       runStep("expect.toBeVisible", selector, () =>
         run(coord.assertVisible(selector, opts)).then(() => {}),

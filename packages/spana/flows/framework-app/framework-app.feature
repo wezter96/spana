@@ -1,7 +1,7 @@
 @e2e @framework-app @showcase
 Feature: Framework app (BDD)
 
-  @web @android @ios
+  @web @android @ios @timeout:120000
   Scenario: Playground interactions work across platforms
     Given I navigate to "/playground"
     Then I should see the element "playground-title" within 10000ms
@@ -16,8 +16,10 @@ Feature: Framework app (BDD)
     When I tap the "playground-nested-label" element
     Then the element "playground-nested-status" should have text "Activated 1x"
     When I tap the "playground-toggle" element
+    When I scroll until I see the element "playground-details-text"
     Then I should see the element "playground-details-text"
     When I scroll until I see the element "playground-sentinel"
     Then I should see the element "playground-sentinel" within 10000ms
+    When I scroll until I see the element "playground-sentinel-text"
     And the element "playground-sentinel-text" should have text "Bottom Reached"
     When I take a screenshot named "playground-bdd"

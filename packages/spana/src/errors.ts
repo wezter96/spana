@@ -23,36 +23,27 @@ export class TextMismatchError extends Schema.TaggedError<TextMismatchError>()(
 
 // Timeout errors
 
-export class TimeoutError extends Schema.TaggedError<TimeoutError>()(
-  "TimeoutError",
-  {
-    message: Schema.String,
-    operation: Schema.String,
-    timeoutMs: Schema.Number,
-  },
-) {}
+export class TimeoutError extends Schema.TaggedError<TimeoutError>()("TimeoutError", {
+  message: Schema.String,
+  operation: Schema.String,
+  timeoutMs: Schema.Number,
+}) {}
 
-export class WaitTimeoutError extends Schema.TaggedError<WaitTimeoutError>()(
-  "WaitTimeoutError",
-  {
-    message: Schema.String,
-    selector: Schema.Unknown,
-    timeoutMs: Schema.Number,
-  },
-) {}
+export class WaitTimeoutError extends Schema.TaggedError<WaitTimeoutError>()("WaitTimeoutError", {
+  message: Schema.String,
+  selector: Schema.Unknown,
+  timeoutMs: Schema.Number,
+}) {}
 
 // Connection errors
 
-export class DriverError extends Schema.TaggedError<DriverError>()(
-  "DriverError",
-  {
-    message: Schema.String,
-    command: Schema.optional(Schema.String),
-    exitCode: Schema.optional(Schema.Number),
-    stdout: Schema.optional(Schema.String),
-    stderr: Schema.optional(Schema.String),
-  },
-) {}
+export class DriverError extends Schema.TaggedError<DriverError>()("DriverError", {
+  message: Schema.String,
+  command: Schema.optional(Schema.String),
+  exitCode: Schema.optional(Schema.Number),
+  stdout: Schema.optional(Schema.String),
+  stderr: Schema.optional(Schema.String),
+}) {}
 
 export class DeviceDisconnectedError extends Schema.TaggedError<DeviceDisconnectedError>()(
   "DeviceDisconnectedError",
@@ -65,14 +56,11 @@ export class DeviceDisconnectedError extends Schema.TaggedError<DeviceDisconnect
 
 // App errors
 
-export class AppCrashedError extends Schema.TaggedError<AppCrashedError>()(
-  "AppCrashedError",
-  {
-    message: Schema.String,
-    appId: Schema.optional(Schema.String),
-    platform: Schema.optional(Schema.String),
-  },
-) {}
+export class AppCrashedError extends Schema.TaggedError<AppCrashedError>()("AppCrashedError", {
+  message: Schema.String,
+  appId: Schema.optional(Schema.String),
+  platform: Schema.optional(Schema.String),
+}) {}
 
 export class AppNotInstalledError extends Schema.TaggedError<AppNotInstalledError>()(
   "AppNotInstalledError",
@@ -85,13 +73,10 @@ export class AppNotInstalledError extends Schema.TaggedError<AppNotInstalledErro
 
 // Config errors
 
-export class FlowSyntaxError extends Schema.TaggedError<FlowSyntaxError>()(
-  "FlowSyntaxError",
-  {
-    message: Schema.String,
-    filePath: Schema.String,
-  },
-) {}
+export class FlowSyntaxError extends Schema.TaggedError<FlowSyntaxError>()("FlowSyntaxError", {
+  message: Schema.String,
+  filePath: Schema.String,
+}) {}
 
 export class DeviceNotFoundError extends Schema.TaggedError<DeviceNotFoundError>()(
   "DeviceNotFoundError",
@@ -102,13 +87,10 @@ export class DeviceNotFoundError extends Schema.TaggedError<DeviceNotFoundError>
   },
 ) {}
 
-export class ConfigError extends Schema.TaggedError<ConfigError>()(
-  "ConfigError",
-  {
-    message: Schema.String,
-    filePath: Schema.optional(Schema.String),
-  },
-) {}
+export class ConfigError extends Schema.TaggedError<ConfigError>()("ConfigError", {
+  message: Schema.String,
+  filePath: Schema.optional(Schema.String),
+}) {}
 
 // Union type of all error types
 

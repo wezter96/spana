@@ -18,7 +18,13 @@ export default flow(
     const inputText = platform === "android" ? "Hello spana" : "Hello 👨‍👩‍👧‍👦 cafe\u0301";
     await app.inputText(inputText);
     await expect({ testID: "playground-input-mirror" }).toHaveText(inputText);
-    await app.dismissKeyboard();
+    // iOS WDA's hideKeyboard() can't introspect RN keyboards; prefer the
+    // explicit Dismiss Keyboard control the app exposes.
+    if (platform === "ios") {
+      await app.tap({ testID: "playground-dismiss-keyboard" });
+    } else {
+      await app.dismissKeyboard();
+    }
     await app.takeScreenshot("text-input-unicode");
 
     await app.doubleTap({ testID: "playground-double-tap" });
@@ -47,6 +53,13 @@ export default flow(
       { timeout: 20_000, maxScrolls: 10 },
     );
     await expect({ testID: "playground-sentinel" }).toBeVisible({ timeout: 10_000 });
+    // Scroll the inner text into view explicitly — on iOS XCUITest the
+    // container element can be visible while the child Text is still clipped
+    // off the bottom of the screen, which causes toHaveText() to see "(no text)".
+    await app.scrollUntilVisible(
+      { testID: "playground-sentinel-text" },
+      { timeout: 20_000, maxScrolls: 10 },
+    );
     await expect({ testID: "playground-sentinel-text" }).toHaveText("Bottom Reached");
     await app.takeScreenshot("scroll-sentinel");
   },

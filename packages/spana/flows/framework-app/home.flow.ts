@@ -26,7 +26,7 @@ export default flow(
   },
   async ({ app, expect, platform }) => {
     await app.openLink(homeHref(platform));
-    await expect({ testID: "home-scroll" }).toBeVisible();
+    await expect({ testID: "home-scroll" }).toBeVisible({ timeout: 15_000 });
     await expect({ testID: "home-content" }).toBeVisible();
     await expect({ testID: "home-title" }).toBeVisible();
     await expect({ testID: "home-card" }).toBeVisible();

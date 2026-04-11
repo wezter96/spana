@@ -232,6 +232,20 @@ describe("Appium iOS driver", () => {
     });
   });
 
+  test("getDeviceInfo falls back to window rect when window size is unavailable", async () => {
+    const { client } = await makeClient();
+    queueFetch([
+      { status: 404, body: { value: { message: "missing /window/size" } } },
+      { body: { value: { x: 0, y: 0, width: 1179, height: 2556 } } },
+    ]);
+
+    const driver = await Effect.runPromise(createAppiumIOSDriver(client));
+    const info = await Effect.runPromise(driver.getDeviceInfo());
+
+    expect(info.screenWidth).toBe(1179);
+    expect(info.screenHeight).toBe(2556);
+  });
+
   // ---------------------------------------------------------------------------
   // App lifecycle
   // ---------------------------------------------------------------------------
@@ -260,8 +274,11 @@ describe("Appium iOS driver", () => {
     await Effect.runPromise(driver.launchApp("com.example.app", { clearState: true }));
 
     expect(calls[0]?.url).toContain("/appium/device/terminate_app");
-    expect(calls[1]?.url).toContain("/appium/execute_mobile/clearApp");
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ appId: "com.example.app" });
+    expect(calls[1]?.url).toContain("/execute/sync");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      script: "mobile: clearApp",
+      args: [{ bundleId: "com.example.app" }],
+    });
     expect(calls[2]?.url).toContain("/appium/device/activate_app");
   });
 
@@ -282,20 +299,48 @@ describe("Appium iOS driver", () => {
     });
   });
 
-  test("launchApp with launchArguments fails with DriverError", async () => {
+  test("launchApp with launchArguments and deviceState uses mobile: launchApp", async () => {
     const { client } = await makeClient();
-    queueFetch([{ body: { value: null } }]);
+    const calls = queueFetch([
+      { body: { value: null } }, // terminate
+      { body: { value: null } }, // executeScript mobile: launchApp
+    ]);
 
     const driver = await Effect.runPromise(createAppiumIOSDriver(client));
-    const result = await Effect.runPromise(
-      Effect.either(driver.launchApp("com.example.app", { launchArguments: { foo: "bar" } })),
+    await Effect.runPromise(
+      driver.launchApp("com.example.app", {
+        launchArguments: { featureFlag: "on", retries: 2 },
+        deviceState: {
+          language: "ja",
+          locale: "ja_JP",
+          timeZone: "Asia/Tokyo",
+        },
+      }),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("launchArguments are not supported");
-    }
+    expect(calls[0]?.url).toContain("/appium/device/terminate_app");
+    expect(calls[1]?.url).toContain("/execute/sync");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      script: "mobile: launchApp",
+      args: [
+        {
+          bundleId: "com.example.app",
+          arguments: [
+            "-AppleLanguages",
+            "(ja)",
+            "-AppleLocale",
+            "ja_JP",
+            "-featureFlag",
+            "on",
+            "-retries",
+            "2",
+          ],
+          environment: {
+            TZ: "Asia/Tokyo",
+          },
+        },
+      ],
+    });
   });
 
   test("launchApp with clearKeychain warns but does not fail", async () => {
@@ -333,8 +378,11 @@ describe("Appium iOS driver", () => {
     await Effect.runPromise(driver.clearAppState("com.example.app"));
 
     expect(calls[0]?.url).toContain("/appium/device/terminate_app");
-    expect(calls[1]?.url).toContain("/appium/execute_mobile/clearApp");
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ appId: "com.example.app" });
+    expect(calls[1]?.url).toContain("/execute/sync");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      script: "mobile: clearApp",
+      args: [{ bundleId: "com.example.app" }],
+    });
   });
 
   // ---------------------------------------------------------------------------

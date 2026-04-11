@@ -179,6 +179,45 @@ describe("engine", () => {
     expect(result.steps).toEqual([]);
   });
 
+  test("executeFlow merges global and flow launchOptions before auto-launch", async () => {
+    const { driver, events } = createDriver(createElement());
+
+    const flow: FlowDefinition = {
+      name: "Localized boot",
+      config: {
+        launchOptions: {
+          deepLink: "app://checkout",
+          launchArguments: { entry: "promo" },
+          deviceState: { locale: "en_US", timeZone: "UTC" },
+        },
+      },
+      fn: async () => {},
+    };
+
+    const result = await executeFlow(flow, driver, {
+      ...createConfig(join(tempDir, "launch-options")),
+      launchOptions: {
+        clearState: true,
+        launchArguments: { featureFlag: "on" },
+        deviceState: { language: "fr", locale: "fr_CA" },
+      },
+    });
+
+    expect(result.status).toBe("passed");
+    expect(events).toEqual([
+      [
+        "launchApp",
+        "com.example.app",
+        {
+          clearState: true,
+          deepLink: "app://checkout",
+          launchArguments: { featureFlag: "on", entry: "promo" },
+          deviceState: { language: "fr", locale: "en_US", timeZone: "UTC" },
+        },
+      ],
+    ]);
+  });
+
   test("executeFlow prepares flow-scoped driver state before hooks and launch", async () => {
     const events: Array<[string, ...unknown[]]> = [];
     const { driver } = createDriver(createElement(), {

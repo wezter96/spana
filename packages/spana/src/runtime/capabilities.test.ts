@@ -97,6 +97,95 @@ describe("resolveCapabilities", () => {
     expect(result).toEqual({ browserName: "safari", platformVersion: "17" });
   });
 
+  test("maps launchOptions.deviceState into Appium capabilities", async () => {
+    const result = await resolveCapabilities(
+      {},
+      {
+        platform: "ios",
+        launchOptions: {
+          deviceState: {
+            language: "fr",
+            locale: "fr_CA",
+            timeZone: "America/Toronto",
+          },
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      "appium:language": "fr",
+      "appium:locale": "fr_CA",
+      "appium:appTimeZone": "America/Toronto",
+    });
+  });
+
+  test("explicit capabilities override typed deviceState defaults", async () => {
+    const result = await resolveCapabilities(
+      {
+        capabilities: {
+          "appium:language": "en",
+          "appium:locale": "en_US",
+        },
+        platformCapabilities: {
+          ios: {
+            "appium:appTimeZone": "UTC",
+          },
+        },
+      },
+      {
+        platform: "ios",
+        launchOptions: {
+          deviceState: {
+            language: "fr",
+            locale: "fr_CA",
+            timeZone: "America/Toronto",
+          },
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      "appium:language": "en",
+      "appium:locale": "en_US",
+      "appium:appTimeZone": "UTC",
+    });
+  });
+
+  test("normalizes combined locale values for Appium Android", async () => {
+    const result = await resolveCapabilities(
+      {},
+      {
+        platform: "android",
+        launchOptions: {
+          deviceState: {
+            locale: "fr_CA",
+          },
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      "appium:language": "fr",
+      "appium:locale": "CA",
+    });
+  });
+
+  test("rejects Android deviceState when only one of language or locale is provided", async () => {
+    await expect(
+      resolveCapabilities(
+        {},
+        {
+          platform: "android",
+          launchOptions: {
+            deviceState: {
+              language: "fr",
+            },
+          },
+        },
+      ),
+    ).rejects.toThrow("Appium Android deviceState requires both language and locale");
+  });
+
   test("throws on malformed caps file", async () => {
     const dir = createTempDir();
     const capsFile = join(dir, "bad.json");

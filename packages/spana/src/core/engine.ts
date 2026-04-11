@@ -4,6 +4,7 @@ import type { Platform } from "../schemas/selector.js";
 import { Effect } from "effect";
 import { createPromiseApp } from "../api/app.js";
 import { createPromiseExpect } from "../api/expect.js";
+import { mergeLaunchOptions } from "../drivers/launch-options.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { Attachment, StepResult, ScenarioStepResult, FlowError } from "../report/types.js";
 import type { ArtifactConfig, ProvConfig, StorybookConfig } from "../schemas/config.js";
@@ -53,6 +54,7 @@ export async function executeFlow(
   const timeout = flow.config.timeout ?? config.flowTimeout ?? 60_000;
   const artifactConfig = resolveArtifactConfig(config.artifactConfig, flow.config.artifacts);
   const stepRecorder = createStepRecorder(driver, artifactConfig, flow.name, platform);
+  const launchOptions = mergeLaunchOptions(config.launchOptions, flow.config.launchOptions);
 
   // Merge per-flow defaults into coordinator config
   const flowDefaults = flow.config.defaults;
@@ -76,6 +78,7 @@ export async function executeFlow(
   const app = createPromiseApp(driver, appId, mergedCoordinatorConfig, stepRecorder, {
     platform,
     storybook: config.storybook,
+    launchOptions,
   });
   const flowMeta = {
     flowFilePath: flow.sourcePath ?? "",
@@ -134,7 +137,7 @@ export async function executeFlow(
 
   try {
     if (autoLaunch) {
-      await app.launch(config.launchOptions);
+      await app.launch();
     }
 
     await Promise.race([
