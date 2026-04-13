@@ -36,12 +36,18 @@ export interface BrowserMockResponse {
   contentType?: string;
 }
 
-export interface BrowserNetworkConditions {
+export type NetworkProfile = "wifi" | "4g" | "3g" | "2g" | "edge" | "offline";
+
+export interface NetworkConditions {
+  profile?: NetworkProfile;
   offline?: boolean;
   latencyMs?: number;
   downloadThroughputKbps?: number;
   uploadThroughputKbps?: number;
 }
+
+/** @deprecated Use `NetworkConditions` instead. */
+export type BrowserNetworkConditions = NetworkConditions;
 
 export interface BrowserConsoleLogLocation {
   url?: string;
@@ -219,7 +225,7 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly getCurrentContext?: () => Effect.Effect<string, DriverError>;
   readonly setContext?: (contextId: string) => Effect.Effect<void, DriverError>;
 
-  // Web-only browser state helpers
+  // Network & browser state helpers
   readonly mockNetwork?: (
     matcher: BrowserRouteMatcher,
     response: BrowserMockResponse,
@@ -227,7 +233,7 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly blockNetwork?: (matcher: BrowserRouteMatcher) => Effect.Effect<void, DriverError>;
   readonly clearNetworkMocks?: () => Effect.Effect<void, DriverError>;
   readonly setNetworkConditions?: (
-    conditions: BrowserNetworkConditions,
+    conditions: NetworkConditions,
   ) => Effect.Effect<void, DriverError>;
   readonly saveCookies?: (path: string) => Effect.Effect<void, DriverError>;
   readonly loadCookies?: (path: string) => Effect.Effect<void, DriverError>;
