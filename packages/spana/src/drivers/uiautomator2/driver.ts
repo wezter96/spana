@@ -1,8 +1,20 @@
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
-import { adbLaunchApp, adbForceStop, adbClearApp, adbOpenLink } from "../../device/android.js";
+import {
+  adbLaunchApp,
+  adbForceStop,
+  adbClearApp,
+  adbOpenLink,
+  adbSetAirplaneMode,
+  adbSetNetworkProfile,
+  adbSetCustomNetwork,
+  adbResetNetwork,
+  adbSetWifi,
+  adbSetData,
+} from "../../device/android.js";
 import { hasLaunchDeviceState } from "../launch-options.js";
-import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
+import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
+import { resolveNetworkConditions } from "../network-profiles.js";
 import { UiAutomator2Client } from "./client.js";
 
 export function createUiAutomator2Driver(
@@ -261,6 +273,73 @@ export function createUiAutomator2Driver(
         Effect.tryPromise({
           try: () => client.setContext(contextId),
           catch: (e) => new DriverError({ message: `setContext failed: ${e}` }),
+        }),
+
+      // -----------------------------------------------------------------------
+      // Network conditions
+      // -----------------------------------------------------------------------
+      setNetworkConditions: (conditions: NetworkConditions) =>
+        Effect.tryPromise({
+          try: async () => {
+            const isEmulator = serial.startsWith("emulator-");
+            const resolved = resolveNetworkConditions(conditions);
+            const hasThrottling =
+              conditions.profile !== undefined ||
+              conditions.latencyMs !== undefined ||
+              conditions.downloadThroughputKbps !== undefined ||
+              conditions.uploadThroughputKbps !== undefined;
+
+            // Reset case: no profile, no offline, no custom values
+            if (!resolved.offline && !hasThrottling) {
+              if (isEmulator) {
+                adbResetNetwork(serial);
+              } else {
+                adbSetAirplaneMode(serial, false);
+              }
+              return;
+            }
+
+            // Offline
+            if (resolved.offline) {
+              if (isEmulator) {
+                adbSetWifi(serial, false);
+                adbSetData(serial, false);
+              } else {
+                adbSetAirplaneMode(serial, true);
+              }
+              return;
+            }
+
+            // Throttling
+            if (hasThrottling) {
+              if (!isEmulator) {
+                throw new DriverError({
+                  message:
+                    "Network throttling is not supported on physical Android devices. " +
+                    "Use an emulator or a cloud provider.",
+                });
+              }
+
+              // Ensure wifi/data are on
+              adbSetWifi(serial, true);
+              adbSetData(serial, true);
+
+              if (conditions.profile) {
+                adbSetNetworkProfile(serial, conditions.profile);
+              } else {
+                adbSetCustomNetwork(
+                  serial,
+                  resolved.downloadThroughputKbps,
+                  resolved.uploadThroughputKbps,
+                  resolved.latencyMs,
+                );
+              }
+            }
+          },
+          catch: (e) => {
+            if (e instanceof DriverError) return e;
+            return new DriverError({ message: `setNetworkConditions failed: ${e}` });
+          },
         }),
     };
 

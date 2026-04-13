@@ -96,6 +96,24 @@ mock.module("../../device/android.js", () => ({
   adbOpenLink(serial: string, url: string, packageName?: string) {
     uiaState.events.push(["adbOpenLink", serial, url, packageName]);
   },
+  adbSetAirplaneMode(serial: string, enable: boolean) {
+    uiaState.events.push(["adbSetAirplaneMode", serial, enable]);
+  },
+  adbSetNetworkProfile(serial: string, profile: string) {
+    uiaState.events.push(["adbSetNetworkProfile", serial, profile]);
+  },
+  adbSetCustomNetwork(serial: string, downloadKbps: number, uploadKbps: number, delayMs: number) {
+    uiaState.events.push(["adbSetCustomNetwork", serial, downloadKbps, uploadKbps, delayMs]);
+  },
+  adbResetNetwork(serial: string) {
+    uiaState.events.push(["adbResetNetwork", serial]);
+  },
+  adbSetWifi(serial: string, enable: boolean) {
+    uiaState.events.push(["adbSetWifi", serial, enable]);
+  },
+  adbSetData(serial: string, enable: boolean) {
+    uiaState.events.push(["adbSetData", serial, enable]);
+  },
 }));
 
 let importCounter = 0;
@@ -218,5 +236,55 @@ describe("UiAutomator2 driver adapter", () => {
         "Failed to create UiAutomator2 session: Error: session exploded",
       );
     }
+  });
+
+  test("setNetworkConditions with profile on emulator calls adbSetNetworkProfile", async () => {
+    const { createUiAutomator2Driver } = await importFreshDriver();
+    const driver = await Effect.runPromise(
+      createUiAutomator2Driver("127.0.0.1", 4723, "emulator-5554", "com.example.app"),
+    );
+
+    await Effect.runPromise(driver.setNetworkConditions!({ profile: "3g" }));
+
+    expect(uiaState.events).toContainEqual(["adbSetNetworkProfile", "emulator-5554", "3g"]);
+  });
+
+  test("setNetworkConditions with offline on real device uses airplane mode", async () => {
+    const { createUiAutomator2Driver } = await importFreshDriver();
+    const driver = await Effect.runPromise(
+      createUiAutomator2Driver("127.0.0.1", 4723, "R5CT1234567", "com.example.app"),
+    );
+
+    await Effect.runPromise(driver.setNetworkConditions!({ offline: true }));
+
+    expect(uiaState.events).toContainEqual(["adbSetAirplaneMode", "R5CT1234567", true]);
+  });
+
+  test("setNetworkConditions with profile on real device throws", async () => {
+    const { createUiAutomator2Driver } = await importFreshDriver();
+    const driver = await Effect.runPromise(
+      createUiAutomator2Driver("127.0.0.1", 4723, "R5CT1234567", "com.example.app"),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.either(driver.setNetworkConditions!({ profile: "3g" })),
+    );
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left).toBeInstanceOf(DriverError);
+      expect(result.left.message).toContain("not supported on physical");
+    }
+  });
+
+  test("setNetworkConditions with empty object resets network on emulator", async () => {
+    const { createUiAutomator2Driver } = await importFreshDriver();
+    const driver = await Effect.runPromise(
+      createUiAutomator2Driver("127.0.0.1", 4723, "emulator-5554", "com.example.app"),
+    );
+
+    await Effect.runPromise(driver.setNetworkConditions!({}));
+
+    expect(uiaState.events).toContainEqual(["adbResetNetwork", "emulator-5554"]);
   });
 });
