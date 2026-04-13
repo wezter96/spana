@@ -271,7 +271,7 @@ describe("WDA driver adapter", () => {
       createWDADriver("localhost", 8100, "com.example.app", "SIM-1"),
     );
 
-    await Effect.runPromise(driver.setNetworkConditions({ offline: true }));
+    await Effect.runPromise(driver.setNetworkConditions!({ offline: true }));
 
     expect(wdaState.events).toContainEqual(["pfctlSetOffline", true]);
   });
@@ -282,7 +282,7 @@ describe("WDA driver adapter", () => {
       createWDADriver("localhost", 8100, "com.example.app", "SIM-1"),
     );
 
-    await Effect.runPromise(driver.setNetworkConditions({ profile: "3g" }));
+    await Effect.runPromise(driver.setNetworkConditions!({ profile: "3g" }));
 
     expect(wdaState.events).toContainEqual(["pfctlSetThrottle", 1500, 100]);
   });
@@ -294,7 +294,7 @@ describe("WDA driver adapter", () => {
     );
 
     const result = await Effect.runPromise(
-      Effect.either(driver.setNetworkConditions({ profile: "3g" })),
+      Effect.either(driver.setNetworkConditions!({ profile: "3g" })),
     );
 
     expect(result._tag).toBe("Left");
@@ -310,7 +310,7 @@ describe("WDA driver adapter", () => {
       createWDADriver("localhost", 8100, "com.example.app", "SIM-1"),
     );
 
-    await Effect.runPromise(driver.setNetworkConditions({}));
+    await Effect.runPromise(driver.setNetworkConditions!({}));
 
     expect(wdaState.events).toContainEqual(["pfctlResetNetwork"]);
   });
