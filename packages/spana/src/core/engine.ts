@@ -14,6 +14,9 @@ import { createStepRecorder } from "./step-recorder.js";
 import { classifyError } from "../report/classify-error.js";
 import { join } from "node:path";
 import { createFailureBundle, writeFailureBundle } from "../report/failure-bundle.js";
+import { SessionManager, createSessions } from "./session-manager.js";
+import { makePlaywrightDriver } from "../drivers/playwright.js";
+import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 
 export interface TestResult {
   name: string;
@@ -95,6 +98,24 @@ export async function executeFlow(
   );
   // Mutable context so compiled Gherkin flows can attach scenarioSteps via __scenarioSteps
   const flowCtx: any = { app, expect, platform, updateBaselines: flowMeta.updateBaselines };
+  const sessionManager = new SessionManager();
+  const sessions = createSessions(
+    sessionManager,
+    async (opts) => {
+      const pwDriver = await Effect.runPromise(
+        makePlaywrightDriver({
+          browser: opts.browser,
+          headless: opts.headless ?? true,
+          baseUrl: opts.baseUrl,
+          storageState: opts.storageState,
+          verboseLogging: opts.verboseLogging,
+        }),
+      );
+      return pwDriver;
+    },
+    { parse: (raw: string) => parseWebHierarchy(raw) },
+  );
+  flowCtx.sessions = sessions;
   const buildFailureResult = async (error: unknown): Promise<TestResult> => {
     const attachments = await captureArtifacts(
       driver,
@@ -225,6 +246,13 @@ export async function executeFlow(
         parseHierarchy: coordinatorConfig.parse,
       });
     }
+  }
+
+  // Clean up all secondary sessions
+  try {
+    await sessionManager.disconnectAll();
+  } catch {
+    // Best-effort cleanup — don't mask the primary result
   }
 
   // afterEach hook — always runs, errors are warnings only
