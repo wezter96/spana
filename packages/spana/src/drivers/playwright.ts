@@ -13,6 +13,7 @@ import {
 } from "playwright-core";
 import { DriverError } from "../errors.js";
 import { hasLaunchDeviceState } from "./launch-options.js";
+import { resolveNetworkConditions } from "./network-profiles.js";
 import type { BrowserName } from "../schemas/config.js";
 import type { Selector } from "../schemas/selector.js";
 import {
@@ -21,7 +22,7 @@ import {
   type RawHierarchy,
   type LaunchOptions,
   type BrowserMockResponse,
-  type BrowserNetworkConditions,
+  type NetworkConditions,
   type BrowserRouteMatcher,
   type BrowserConsoleLog,
   type BrowserHAR,
@@ -103,20 +104,12 @@ function buildMockResponse(response: BrowserMockResponse): {
   };
 }
 
-function toBytesPerSecond(kbps: number | undefined): number {
-  if (kbps === undefined) {
+function toBytesPerSecond(kbps: number): number {
+  if (kbps < 0) {
     return -1;
   }
 
   return Math.max(Math.round((kbps * 1024) / 8), 0);
-}
-
-function requiresChromiumThrottling(conditions: BrowserNetworkConditions): boolean {
-  return (
-    conditions.latencyMs !== undefined ||
-    conditions.downloadThroughputKbps !== undefined ||
-    conditions.uploadThroughputKbps !== undefined
-  );
 }
 
 function currentPageUrl(page: Page): string {
@@ -179,7 +172,7 @@ export function makePlaywrightDriver(
     let cdpSession: CDPSession | undefined;
     const routeDefinitions: RouteDefinition[] = [];
     let appliedRoutes: AppliedRoute[] = [];
-    let currentNetworkConditions: BrowserNetworkConditions = {};
+    let currentNetworkConditions: NetworkConditions = {};
     let currentFlowName = "unscoped";
     let consoleLogs: BrowserConsoleLog[] = [];
     let jsErrors: BrowserJSError[] = [];
@@ -466,18 +459,25 @@ export function makePlaywrightDriver(
     };
 
     const applyNetworkConditions = async () => {
-      if (browserName !== "chromium" && requiresChromiumThrottling(currentNetworkConditions)) {
+      const resolved = resolveNetworkConditions(currentNetworkConditions);
+
+      const needsThrottling =
+        resolved.latencyMs > 0 ||
+        resolved.downloadThroughputKbps >= 0 ||
+        resolved.uploadThroughputKbps >= 0;
+
+      if (browserName !== "chromium" && needsThrottling) {
         throw new DriverError({
           message:
             "setNetworkConditions() latency and throughput controls are only supported with the chromium browser. Use offline mode only for firefox or webkit.",
         });
       }
 
-      await context.setOffline(currentNetworkConditions.offline ?? false);
+      await context.setOffline(resolved.offline);
 
       const shouldUseCDP =
         browserName === "chromium" &&
-        (requiresChromiumThrottling(currentNetworkConditions) || cdpSession !== undefined);
+        (needsThrottling || cdpSession !== undefined);
 
       if (!shouldUseCDP) {
         return;
@@ -486,10 +486,10 @@ export function makePlaywrightDriver(
       const session = cdpSession ?? (cdpSession = await context.newCDPSession(page));
       await session.send("Network.enable");
       await session.send("Network.emulateNetworkConditions", {
-        offline: currentNetworkConditions.offline ?? false,
-        latency: currentNetworkConditions.latencyMs ?? 0,
-        downloadThroughput: toBytesPerSecond(currentNetworkConditions.downloadThroughputKbps),
-        uploadThroughput: toBytesPerSecond(currentNetworkConditions.uploadThroughputKbps),
+        offline: resolved.offline,
+        latency: resolved.latencyMs,
+        downloadThroughput: toBytesPerSecond(resolved.downloadThroughputKbps),
+        uploadThroughput: toBytesPerSecond(resolved.uploadThroughputKbps),
       });
     };
 
