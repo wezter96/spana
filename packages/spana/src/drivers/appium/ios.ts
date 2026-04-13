@@ -25,7 +25,8 @@ import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { splitGraphemes } from "../../core/graphemes.js";
 import { buildIOSLaunchConfiguration } from "../launch-options.js";
-import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
+import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
+import { resolveNetworkConditions } from "../network-profiles.js";
 import type { AppiumClient } from "./client.js";
 import { getAppiumWindowSize } from "./window-size.js";
 
@@ -364,6 +365,42 @@ export function createAppiumIOSDriver(
       Effect.tryPromise({
         try: () => client.setContext(contextId),
         catch: (e) => new DriverError({ message: `setContext failed: ${e}` }),
+      }),
+
+    // -----------------------------------------------------------------------
+    // Network conditions
+    // -----------------------------------------------------------------------
+    setNetworkConditions: (conditions: NetworkConditions) =>
+      Effect.tryPromise({
+        try: () => {
+          const resolved = resolveNetworkConditions(conditions);
+          const hasAnyValue =
+            conditions.profile !== undefined ||
+            conditions.offline !== undefined ||
+            conditions.latencyMs !== undefined ||
+            conditions.downloadThroughputKbps !== undefined ||
+            conditions.uploadThroughputKbps !== undefined;
+
+          if (!hasAnyValue) {
+            // Reset: restore full connectivity
+            return client.executeScript("mobile: setConnectivity", [
+              { wifi: true, data: true, airplaneMode: false },
+            ]);
+          }
+
+          if (resolved.offline) {
+            return client.executeScript("mobile: setConnectivity", [
+              { wifi: false, data: false, airplaneMode: true },
+            ]);
+          }
+
+          // Non-offline (profile or custom values): set connectivity to online.
+          // True throttling requires provider-specific commands.
+          return client.executeScript("mobile: setConnectivity", [
+            { wifi: true, data: true, airplaneMode: false },
+          ]);
+        },
+        catch: (e) => new DriverError({ message: `setNetworkConditions failed: ${e}` }),
       }),
   };
 

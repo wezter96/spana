@@ -419,6 +419,54 @@ describe("Appium Android driver", () => {
     warnSpy.mockRestore();
   });
 
+  // ---------------------------------------------------------------------------
+  // Network conditions
+  // ---------------------------------------------------------------------------
+
+  test("setNetworkConditions with offline sends connectivity command", async () => {
+    const { client } = await makeClient();
+    const calls = queueFetch([{ body: { value: null } }]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    await Effect.runPromise(driver.setNetworkConditions!({ offline: true }));
+
+    expect(calls[0]?.url).toContain("/execute/sync");
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    expect(body).toEqual({
+      script: "mobile: setConnectivity",
+      args: [{ wifi: false, data: false, airplaneMode: true }],
+    });
+  });
+
+  test("setNetworkConditions with empty object resets connectivity", async () => {
+    const { client } = await makeClient();
+    const calls = queueFetch([{ body: { value: null } }]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    await Effect.runPromise(driver.setNetworkConditions!({}));
+
+    expect(calls[0]?.url).toContain("/execute/sync");
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    expect(body).toEqual({
+      script: "mobile: setConnectivity",
+      args: [{ wifi: true, data: true, airplaneMode: false }],
+    });
+  });
+
+  test("setNetworkConditions with profile sets connectivity online", async () => {
+    const { client } = await makeClient();
+    const calls = queueFetch([{ body: { value: null } }]);
+
+    const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
+    await Effect.runPromise(driver.setNetworkConditions!({ profile: "3g" }));
+
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    expect(body).toEqual({
+      script: "mobile: setConnectivity",
+      args: [{ wifi: true, data: true, airplaneMode: false }],
+    });
+  });
+
   test("wraps client failures in DriverError", async () => {
     const { client } = await makeClient();
     queueFetch([
