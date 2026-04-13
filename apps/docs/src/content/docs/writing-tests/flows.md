@@ -235,7 +235,7 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 | `mockNetwork`          | `(matcher, response) => Promise<void>`                                                        | Fulfill matching requests with a mocked response   |
 | `blockNetwork`         | `(matcher) => Promise<void>`                                                                  | Abort matching requests                            |
 | `clearNetworkMocks`    | `() => Promise<void>`                                                                         | Remove active route mocks or blocks                |
-| `setNetworkConditions` | `({ offline?, latencyMs?, downloadThroughputKbps?, uploadThroughputKbps? }) => Promise<void>` | Toggle offline mode and Chromium throttling        |
+| `setNetworkConditions` | `(conditions) => Promise<void>` | Simulate network conditions — profiles, custom throttling, or offline mode |
 | `saveCookies`          | `(path) => Promise<void>`                                                                     | Save Playwright cookies to a JSON file             |
 | `loadCookies`          | `(path) => Promise<void>`                                                                     | Load cookies from a JSON file                      |
 | `saveAuthState`        | `(path) => Promise<void>`                                                                     | Save Playwright storage state to disk              |
@@ -250,7 +250,45 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 | `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`                                            | Read captured uncaught JavaScript errors           |
 | `getHAR`               | `() => Promise<Record<string, unknown>>`                                                      | Read the recorded HTTP Archive for the current run |
 
-These helpers are available on local Playwright web runs. `setNetworkConditions()` supports offline mode on every browser, but latency and throughput throttling require Chromium. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
+These helpers are available on local Playwright web runs. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
+
+#### `setNetworkConditions()`
+
+Simulate degraded or offline network conditions across all platforms. You can use a named profile or supply custom values.
+
+**Available profiles:** `wifi`, `4g`, `3g`, `2g`, `edge`, `offline`
+
+```ts
+// Simulate 3G network
+await app.setNetworkConditions({ profile: "3g" });
+
+// Go offline
+await app.setNetworkConditions({ profile: "offline" });
+
+// Back to normal
+await app.setNetworkConditions({ profile: "wifi" });
+```
+
+Custom values still work when you need fine-grained control:
+
+```ts
+await app.setNetworkConditions({
+  latencyMs: 150,
+  downloadThroughputKbps: 1000,
+  uploadThroughputKbps: 500,
+});
+```
+
+**Platform support:**
+
+| Platform | Offline | Profiles | Custom Values |
+|---|---|---|---|
+| Web (Chromium) | Yes | Yes | Yes |
+| Web (Firefox/WebKit) | Yes | No | No |
+| Android emulator | Yes | Yes | Yes |
+| Android device | Yes | No | No |
+| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
+| Appium cloud | Yes | Yes | varies |
 
 ```ts
 flow("web app can run with mocked APIs", async ({ app, platform }) => {
@@ -261,7 +299,7 @@ flow("web app can run with mocked APIs", async ({ app, platform }) => {
     json: { id: "demo", name: "Demo User" },
   });
   await app.blockNetwork("**/analytics/**");
-  await app.setNetworkConditions({ offline: false, latencyMs: 120 });
+  await app.setNetworkConditions({ profile: "3g" });
   await app.evaluate(() => console.info("profile hydrated"));
 
   const logs = await app.getConsoleLogs();

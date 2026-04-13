@@ -123,7 +123,7 @@ interface ConnectOptions {
 | `mockNetwork`          | `(matcher, response) => Promise<void>`             | Fulfill matching requests with mocked data        |
 | `blockNetwork`         | `(matcher) => Promise<void>`                       | Abort matching requests                           |
 | `clearNetworkMocks`    | `() => Promise<void>`                              | Remove active network mocks                       |
-| `setNetworkConditions` | `(conditions) => Promise<void>`                    | Toggle offline mode and Chromium throttling       |
+| `setNetworkConditions` | `(conditions) => Promise<void>`                    | Simulate network conditions — profiles, custom throttling, or offline mode |
 | `saveCookies`          | `(path) => Promise<void>`                          | Persist cookies to disk                           |
 | `loadCookies`          | `(path) => Promise<void>`                          | Load cookies from disk                            |
 | `saveAuthState`        | `(path) => Promise<void>`                          | Save Playwright storage state                     |
@@ -139,6 +139,41 @@ interface ConnectOptions {
 | `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the current HAR network capture              |
 
 These helpers are available on local Playwright web sessions.
+
+#### `setNetworkConditions()`
+
+Simulate degraded or offline network conditions across all platforms. You can use a named profile or supply custom values.
+
+**Available profiles:** `wifi`, `4g`, `3g`, `2g`, `edge`, `offline`
+
+```ts
+// Simulate 3G network
+await session.setNetworkConditions({ profile: "3g" });
+
+// Go offline
+await session.setNetworkConditions({ profile: "offline" });
+
+// Back to normal
+await session.setNetworkConditions({ profile: "wifi" });
+
+// Custom values
+await session.setNetworkConditions({
+  latencyMs: 150,
+  downloadThroughputKbps: 1000,
+  uploadThroughputKbps: 500,
+});
+```
+
+**Platform support:**
+
+| Platform | Offline | Profiles | Custom Values |
+|---|---|---|---|
+| Web (Chromium) | Yes | Yes | Yes |
+| Web (Firefox/WebKit) | Yes | No | No |
+| Android emulator | Yes | Yes | Yes |
+| Android device | Yes | No | No |
+| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
+| Appium cloud | Yes | Yes | varies |
 
 ### Hybrid / WebView helpers
 
