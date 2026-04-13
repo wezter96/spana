@@ -17,6 +17,13 @@ export {
 } from "./api/app.js";
 export { type PromiseExpectation } from "./api/expect.js";
 
+// Secondary sessions
+export {
+  type SecondarySession,
+  type SecondarySessionOptions,
+  type Sessions,
+} from "./core/session-manager.js";
+
 // Schemas
 export {
   type Selector,
