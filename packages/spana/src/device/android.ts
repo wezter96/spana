@@ -214,6 +214,69 @@ export function adbClearApp(serial: string, packageName: string): void {
   execSync(`${adb} -s ${serial} shell pm clear ${packageName}`, { stdio: "ignore" });
 }
 
+// ── Network control helpers ──────────────────────────────────────────
+
+/** Maps friendly profile names to ADB emulator network presets */
+export const ADB_PROFILE_MAP: Record<string, { speed: string; delay: string }> = {
+  "2g": { speed: "gprs", delay: "gprs" },
+  edge: { speed: "edge", delay: "edge" },
+  "3g": { speed: "umts", delay: "umts" },
+  "4g": { speed: "lte", delay: "none" },
+  wifi: { speed: "full", delay: "none" },
+};
+
+/** Toggle airplane mode on/off */
+export function adbSetAirplaneMode(serial: string, enable: boolean): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  execSync(`${adb} -s ${serial} shell cmd connectivity airplane-mode ${enable ? "enable" : "disable"}`);
+}
+
+/** Toggle Wi-Fi on/off */
+export function adbSetWifi(serial: string, enable: boolean): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  execSync(`${adb} -s ${serial} shell svc wifi ${enable ? "enable" : "disable"}`);
+}
+
+/** Toggle mobile data on/off */
+export function adbSetData(serial: string, enable: boolean): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  execSync(`${adb} -s ${serial} shell svc data ${enable ? "enable" : "disable"}`);
+}
+
+/** Apply a named network profile (emulator only) */
+export function adbSetNetworkProfile(serial: string, profile: string): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  const mapping = ADB_PROFILE_MAP[profile];
+  if (!mapping) throw new Error(`Unknown network profile "${profile}"`);
+  execSync(`${adb} -s ${serial} emu network speed ${mapping.speed}`);
+  execSync(`${adb} -s ${serial} emu network delay ${mapping.delay}`);
+}
+
+/** Apply custom network throttling (emulator only) */
+export function adbSetCustomNetwork(serial: string, downloadKbps: number, uploadKbps: number, delayMs: number): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  execSync(`${adb} -s ${serial} emu network speed ${downloadKbps}:${uploadKbps}`);
+  execSync(`${adb} -s ${serial} emu network delay ${delayMs}:${delayMs}`);
+}
+
+/** Reset network to full speed and disable airplane mode */
+export function adbResetNetwork(serial: string): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  execSync(`${adb} -s ${serial} emu network speed full`);
+  execSync(`${adb} -s ${serial} emu network delay none`);
+  try {
+    execSync(`${adb} -s ${serial} shell cmd connectivity airplane-mode disable`);
+  } catch {
+    // best-effort: may fail on physical devices
+  }
+}
+
 /** Open a deep link or URL on the device */
 export function adbOpenLink(serial: string, url: string, packageName?: string): void {
   const adb = findADB();
