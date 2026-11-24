@@ -109,7 +109,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
 
       // If the element isn't in the DOM yet and spana-bridge is connected,
       // wait once for in-flight network/animations/renders to settle instead of blind polling.
-      if (!waitedForIdle) {
+      if (!waitedForIdle && driver.domChannel?.isConnected() && driver.domChannel.waitForIdle) {
         waitedForIdle = true;
         const remaining = Math.max(0, timeout - (Date.now() - start));
         if (remaining > 0) {
@@ -201,7 +201,7 @@ export function waitForNotVisible<T extends string = string, R extends string = 
       });
       if (!resolved) return;
 
-      if (!waitedForIdle) {
+      if (!waitedForIdle && driver.domChannel?.isConnected() && driver.domChannel.waitForIdle) {
         waitedForIdle = true;
         const remaining = Math.max(0, timeout - (Date.now() - start));
         if (remaining > 0) {

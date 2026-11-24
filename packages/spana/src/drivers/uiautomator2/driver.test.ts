@@ -114,6 +114,14 @@ mock.module("../../device/android.js", () => ({
   adbSetData(serial: string, enable: boolean) {
     uiaState.events.push(["adbSetData", serial, enable]);
   },
+  findADB() {
+    return "adb";
+  },
+  adbShell() {
+    return "";
+  },
+  adbReverse() {},
+  adbReverseRemove() {},
 }));
 
 let importCounter = 0;

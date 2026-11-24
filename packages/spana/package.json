@@ -1,15 +1,19 @@
 {
   "name": "spana-test",
   "version": "0.4.0",
-  "description": "TypeScript-native E2E testing for React Native + Web",
+  "description": "Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — zero Appium required",
   "keywords": [
     "android",
+    "capacitor",
     "cross-platform",
     "e2e",
+    "electrobun",
+    "electron",
     "ios",
     "playwright",
     "react-native",
-    "testing"
+    "testing",
+    "webview"
   ],
   "license": "Apache-2.0",
   "author": "Anton Wester",

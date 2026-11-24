@@ -1,6 +1,6 @@
 # spana
 
-TypeScript-native E2E testing for React Native + Web.
+Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — one `{ testID }` selector model, zero Appium required.
 
 [Documentation](https://wezter96.github.io/spana/) | [GitHub](https://github.com/wezter96/spana) | [npm](https://www.npmjs.com/package/spana-test) | [E2E Test Report](https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html)
 
@@ -9,15 +9,15 @@ TypeScript-native E2E testing for React Native + Web.
 ## Features
 
 - Pure TypeScript flows, plus optional Gherkin / BDD `.feature` support
-- Cross-platform execution across web, Android, and iOS from the same suite
-- Local web via Playwright, local Android via UiAutomator2, local iOS via WebDriverAgent, plus Appium cloud mode
-- Smart waits, retries, relative selectors, and per-flow stability defaults
+- **5 targets from one suite:** Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun
+- **Dual-channel web-first engine (no Appium required):** ~1 ms DOM queries via `spana-bridge`, Android CDP, iOS WebKit Inspector, or Apple `webinspectord` (with Shadow DOM & same-origin `<iframe>` piercing), paired with direct UiAutomator2 / WebDriverAgent for real native touches and OS sheets (`systemUI()`)
+- **Built for speed:** persistent warm WDA/UiAutomator2 daemons (`spana daemon`), WDA session reuse, single-browser multi-context web worker pools, and in-page `spana-bridge` state injection (`setStorage`, `clearStorage`, `resetFast`, lazy `waitForIdle`)
+- Smart waits, retries, relative selectors, auto-scroll for offscreen DOM targets, and per-flow stability defaults
 - Reporters: console, JSON, JUnit XML, HTML, and Allure
-- Artifacts on failure or success: screenshots, UI hierarchy dumps, and per-step capture
-- App auto-install with `appPath`, iOS device signing, and BrowserStack / Sauce helper services
-- CLI tooling for teams and agents: `validate`, `validate-config`, `init`, `studio`, `selectors`, `hierarchy`, and `devices`
-- Execution controls for targeted and CI runs: `--device`, `--shard`, `--bail`, `--debug-on-failure`
-- Browser helpers for network/auth state plus WebView / hybrid context APIs where the driver supports them
+- Artifacts on failure or success: screenshots, UI hierarchy dumps, structured failure bundles (`failure-bundle.json`), and per-step capture
+- App auto-install with `appPath`, iOS device signing, and optional Appium cloud mode (BrowserStack / Sauce Labs helpers)
+- CLI tooling for teams and agents: `doctor`, `daemon`, `validate`, `validate-config`, `init`, `init-flow`, `studio`, `selectors`, `hierarchy`, and `devices`
+- Execution controls for targeted and CI runs: `--parallel`, `--workers`, `--device`, `--devices`, `--shard`, `--bail`, `--last-failed`, `--watch`, `--debug-on-failure`
 
 ---
 
@@ -84,15 +84,15 @@ spana test
 
 ## Capability Matrix
 
-| Capability                                           | Web | Local Android / iOS              | Appium cloud                               |
-| ---------------------------------------------------- | --- | -------------------------------- | ------------------------------------------ |
-| TypeScript `.flow.ts` suites                         | Yes | Yes                              | Yes                                        |
-| Gherkin `.feature` suites                            | Yes | Yes                              | Yes                                        |
-| Smart waits, retries, relative selectors             | Yes | Yes                              | Yes                                        |
-| HTML / JUnit / Allure reports and artifacts          | Yes | Yes                              | Yes                                        |
-| App install / app reference handling                 | n/a | Yes, via `appPath`               | Yes, via capabilities and provider helpers |
-| Browser helpers (`mockNetwork`, cookies, auth state) | Yes | No                               | No                                         |
-| WebView context APIs                                 | n/a | Android yes, iOS via Appium mode | Yes                                        |
+| Capability                                                | Web | Local Android / iOS (Direct)         | Electron / Electrobun      | Appium cloud                               |
+| --------------------------------------------------------- | --- | ------------------------------------ | -------------------------- | ------------------------------------------ |
+| TypeScript `.flow.ts` & Gherkin `.feature` suites         | Yes | Yes                                  | Yes                        | Yes                                        |
+| `{ testID }` DOM queries + Shadow DOM / `<iframe>` pierce | Yes | Yes (CDP / WebKit / `spana-bridge`)  | Yes (CDP / `spana-bridge`) | Via WebView context                        |
+| Native OS sheets / OAuth (`systemUI(...)`)                | n/a | Yes (direct UiAutomator2 / WDA)      | Via native/bridge          | Yes                                        |
+| Storage inject, fast reset, idle & network mock           | Yes | Yes (via `spana-bridge`)             | Yes (CDP / `spana-bridge`) | No                                         |
+| Warm daemons / shared browser pool                        | Yes | Yes (`spana daemon` + session reuse) | Yes                        | Cloud-managed                              |
+| HTML / JUnit / Allure reports & failure bundles           | Yes | Yes                                  | Yes                        | Yes                                        |
+| App install / app reference handling                      | n/a | Yes, via `appPath`                   | Yes, via binary/entry path | Yes, via capabilities and provider helpers |
 
 ---
 
@@ -340,23 +340,21 @@ export default flow("primary button story", async ({ app, expect, platform }) =>
 
 `app.openStory()` opens Storybook's isolated `iframe.html` entry inside Spana's existing browser runtime. That makes Storybook a good component surface for Spana web flows, screenshots, and accessibility checks. `execution.web.storybook.url` is optional; when omitted, `openStory()` falls back to `apps.web.url`. `args` and `globals` support simple scalar values (`string`, `number`, `boolean`, `null`).
 
-### Hybrid / WebView helpers
+### Hybrid / WebView & `spana-bridge` helpers
+
+With Spana's dual-channel resolver, you rarely need manual `switchToWebView()` calls. `{ testID }` queries resolve inside WebViews (including Shadow DOM and same-origin `<iframe>`s) over `spana-bridge`, Android CDP, iOS WebKit Inspector, or Apple `webinspectord`, while `systemUI(...)` targets native sheets like `SFSafariViewController`, Chrome Custom Tabs, or OS permission prompts:
 
 ```ts
-import { flow } from "spana-test";
+import { flow, systemUI } from "spana-test";
 
-export default flow("hybrid checkout", async ({ app, platform }) => {
-  if (platform === "web") return;
-
-  const contexts = await app.getContexts();
-  await app.switchToWebView();
-  await app.switchToNativeApp();
-
-  console.log(contexts);
+export default flow("SSO sign-in across WebView and native sheet", async ({ app, expect }) => {
+  await app.tap({ testID: "sign-in" }); // DOM lookup -> real native touch
+  await app.tap(systemUI({ text: "Continue" })); // SFSafariViewController / Chrome Custom Tabs
+  await expect({ testID: "profile-id" }).toBeVisible(); // ~1 ms DOM check, 0 native dumps
 });
 ```
 
-Context APIs depend on driver support. Appium mode is the best path for iOS WebView automation.
+Legacy explicit context APIs (`getContexts()`, `switchToWebView()`, `switchToNativeApp()`) remain supported on direct Android/iOS drivers and Appium mode.
 
 ---
 
@@ -522,13 +520,15 @@ See [ARCHITECTURE.md](https://github.com/wezter96/spana/blob/main/ARCHITECTURE.m
 
 ## Platforms
 
-| Platform      | Driver                      | Companion binary                                         |
-| ------------- | --------------------------- | -------------------------------------------------------- |
-| Web / RN Web  | Playwright (CDP)            | None - Playwright is a dev dependency                    |
-| Android       | UiAutomator2 HTTP client    | Appium UiAutomator2 server APK (bundled)                 |
-| iOS Simulator | WebDriverAgent HTTP client  | WDA XCTest bundle (bundled unsigned)                     |
-| iOS Device    | Same WDA bundle             | Re-signed with `codesign`; requires `iproxy`             |
-| Appium cloud  | Appium 2 / 3 compatible hub | BrowserStack, Sauce Labs, or another W3C-compatible grid |
+| Platform      | Driver / DOM Channel                                                                  | Companion binary                                         |
+| ------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Web / RN Web  | Playwright (shared multi-context pool) + optional `spana-bridge`                      | None — Playwright is a dev dependency                    |
+| Android       | Direct UiAutomator2 + Android CDP / `spana-bridge` (`adb reverse`)                    | Appium UiAutomator2 server APK (bundled, warm daemon)    |
+| iOS Simulator | Direct WDA (warm session reuse) + WebKit Inspector / `webinspectord` / `spana-bridge` | WDA XCTest bundle (bundled unsigned)                     |
+| iOS Device    | Same WDA bundle + `iproxy` + WebKit / `spana-bridge`                                  | Re-signed with `codesign`; requires `iproxy`             |
+| Electron      | Electron CDP (`--remote-debugging-port`) + `spana-bridge`                             | App binary / entry point                                 |
+| Electrobun    | CEF / WebView2 CDP / WebKit Inspector + `spana-bridge`                                | App binary / entry point                                 |
+| Appium cloud  | Appium 2 / 3 compatible hub                                                           | BrowserStack, Sauce Labs, or another W3C-compatible grid |
 
 ---
 

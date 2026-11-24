@@ -257,9 +257,18 @@ Spana's raw capability is now broad enough that the next big win is tightening t
 
 ### Delivered
 
+- [x] `spana doctor` environment readiness diagnostics (config, Android/iOS WebView inspection, WDA/UiAutomator2, Electron/Electrobun, `spana-bridge`)
+- [x] Opinionated `spana init` presets including `capacitor-web-first`
+- [x] Fast rerun modes: `spana test --last-failed` and `--watch`
 - [x] Structured failure bundles with selector alternatives, repro commands, and artifact references (`failure-bundle.json`)
-- [x] Runtime selector guardrails — advisory warnings for coordinate taps, text-heavy flows, and bare string selectors
+- [x] Runtime selector guardrails — advisory warnings for coordinate taps, text-heavy flows, and bare string selectors (with `systemUI()` exemption)
 - [x] Auto-generated `llms-full.txt` with all documentation inlined for agent context packaging
+
+### Remaining in Phase 10
+
+- [ ] Versioned `--json` contracts (`schemaVersion`, `errorCode`, `suggestedFix`, `docsUrl`) across all CLI commands (`devices`, `validate`, `validate-config`, `selectors`, `hierarchy`, `doctor`)
+- [ ] First-class reusable named setup states / auth fixtures (`defineSetup` backed by `spana-bridge` `setStorage` + Playwright `storageState`)
+- [ ] `spana test --changed` (git-diff affected flow selection) and Studio starter `.flow.ts` generation from live screen state
 
 ### Success criteria
 
@@ -267,6 +276,35 @@ Spana's raw capability is now broad enough that the next big win is tightening t
 - A new user can run one command to understand whether their environment is ready and how to fix it if not
 - Writing the first reliable flow takes fewer manual setup and discovery steps
 - Failure reports are rich enough to support an efficient fix-and-rerun loop for both humans and agents
+
+---
+
+## Phase 11 — Web-First Cross-Platform Engine (v1.7.0) [complete]
+
+One `{ testID }` + `systemUI()` selector model across **Web, Android (Capacitor/WebView & native), iOS (WKWebView & native), Electron, and Electrobun** — without Appium.
+
+### Delivered
+
+- [x] Dual-channel smart resolver (`resolveElementAcrossChannels`) routing `{ testID }` to ~1 ms DOM channels and `systemUI()` / native fallbacks to direct WDA / UiAutomator2 with WebView-frame + DPR coordinate mapping
+- [x] Shadow DOM (`el.shadowRoot`) and same-origin `<iframe>` piercing plus automatic offscreen `scrollIntoView` before native coordinate taps
+- [x] Opt-in `spana-bridge` workspace package (`packages/spana-bridge`) over WebSocket with DOM queries, lazy `waitForIdle()`, storage injection (`setStorage`/`clearStorage`/`resetFast`), network mocking, console/error capture, and automatic Android `adb reverse`
+- [x] Direct mobile DOM channels without Appium: Android CDP over ADB, iOS WebKit Inspector (`ios_webkit_debug_proxy`), and zero-dependency Apple `webinspectord` Unix-socket XML-plist client fallback
+- [x] Desktop targets: Electron (`ELECTRON_CDP_PORT` / `--remote-debugging-port`) and Electrobun (CEF / WebView2 / WKWebView / WebKitGTK + `spana-bridge`)
+- [x] Performance infrastructure: persistent warm WDA/UiAutomator2 daemons (`spana daemon`), WDA `sessionId` reuse, single-browser multi-context `buildWebRuntimePool`, and lazy `bridge.idle()` on miss
+- [x] Reproducible head-to-head benchmark harness (`benchmarks/framework-comparison/`) comparing Spana vs Playwright vs WebdriverIO on the same application
+
+---
+
+## Phase 12 — Agent-Native Workflows, CI Filters & Deep Inspection (Planned)
+
+Selective inspiration from AI-first E2E and agent tooling (`e2e-inc/e2e` and Software Mansion's `argent`), while keeping Spana's deterministic, zero-Appium, web-first speed advantage.
+
+- [ ] **Pluggable Filters API + `--changed-since <ref>`** — composable `{ name, filter(flows, ctx) }` hooks for CI test selection (deterministic path/tag rules + optional low-cost decision-model filter with safe fail-open defaults: always run changed test files, config/lockfile changes, large diffs, or low-confidence skips)
+- [ ] **`spana mcp` stdio MCP server** — let coding agents (Claude Code, Codex, Cursor, Antigravity) drive live web, mobile, and desktop sessions, inspect DOM + native + React trees, capture network/console logs, and emit verified `.flow.ts` lines back (no LLM required inside the server)
+- [ ] **Optional `agent.act()` + verified replay cache (`.spana/cache/`)** — record verified natural-language exploration into deterministic `{ testID }` / `systemUI()` steps with `--strict-cache` for zero-LLM, zero-cost CI gating
+- [ ] **Composable lazy fixtures** — `extend()` fixtures with automatic teardown and named `session` bindings layered onto `spana-bridge` `setStorage` / Playwright `storageState`
+- [ ] **Deep runtime diagnostics & OCR/font-aware visual diffs** — surface native/bridge network logs, optional Hermes/Perfetto/Instruments profiling hooks (Argent-inspired), and font/OCR-aware screenshot diffing alongside a GitHub PR comment reporter
+- [ ] **Pluggable lightweight browser / cloud sandbox adapters** — optional Lightpanda / remote CDP / hosted sandbox providers for ultra-fast CI fan-out
 
 ---
 
