@@ -2,14 +2,42 @@ import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import astroMermaid from "astro-mermaid";
 
+const site = process.env.SITE ?? "https://spana.antonwester.se";
+const base = process.env.BASE ?? "/";
+
 export default defineConfig({
-  site: "https://wezter96.github.io",
-  base: "/spana",
+  site,
+  base,
   integrations: [
     astroMermaid(),
     starlight({
       title: "spana",
-      description: "TypeScript-native E2E testing for React Native + Web",
+      description:
+        "Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — zero Appium required.",
+      customCss: ["./src/styles/custom.css"],
+      head: [
+        {
+          tag: "meta",
+          attrs: {
+            property: "og:image",
+            content: `${site.replace(/\/$/, "")}/assets/spana-scout.jpg`,
+          },
+        },
+        {
+          tag: "meta",
+          attrs: {
+            name: "twitter:card",
+            content: "summary_large_image",
+          },
+        },
+        {
+          tag: "meta",
+          attrs: {
+            name: "twitter:image",
+            content: `${site.replace(/\/$/, "")}/assets/spana-scout.jpg`,
+          },
+        },
+      ],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/wezter96/spana" }],
       sidebar: [
         {

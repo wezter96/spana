@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://wezter96.github.io/spana/">Documentation</a> ·
+  <a href="https://spana.antonwester.se/">Documentation</a> ·
   <a href="#benchmarks">Benchmarks</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#agent-integration--mcp-server">MCP Server</a> ·

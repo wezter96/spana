@@ -6,7 +6,7 @@
 
 spana favors TypeScript flows over YAML, exposes agent-oriented CLI commands like `selectors`, `hierarchy`, and `validate`, and includes a programmatic `spana-test/agent` API for custom automation.
 
-The rendered documentation lives at https://wezter96.github.io/spana/.
+The rendered documentation lives at https://spana.antonwester.se/.
 The links below intentionally point to the canonical Markdown sources in GitHub because they are cleaner for LLM and agent ingestion than the rendered HTML pages.
 
 ## Start here

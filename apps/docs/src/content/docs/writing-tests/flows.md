@@ -230,25 +230,25 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 
 ### Browser runtime helpers
 
-| Method                 | Signature                                                                                     | Description                                        |
-| ---------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `mockNetwork`          | `(matcher, response) => Promise<void>`                                                        | Fulfill matching requests with a mocked response   |
-| `blockNetwork`         | `(matcher) => Promise<void>`                                                                  | Abort matching requests                            |
-| `clearNetworkMocks`    | `() => Promise<void>`                                                                         | Remove active route mocks or blocks                |
-| `setNetworkConditions` | `(conditions) => Promise<void>` | Simulate network conditions — profiles, custom throttling, or offline mode |
-| `saveCookies`          | `(path) => Promise<void>`                                                                     | Save Playwright cookies to a JSON file             |
-| `loadCookies`          | `(path) => Promise<void>`                                                                     | Load cookies from a JSON file                      |
-| `saveAuthState`        | `(path) => Promise<void>`                                                                     | Save Playwright storage state to disk              |
-| `loadAuthState`        | `(path) => Promise<void>`                                                                     | Replace the browser context with saved auth state  |
-| `downloadFile`         | `(path) => Promise<void>`                                                                     | Save the next browser download to disk             |
-| `uploadFile`           | `(selector, path) => Promise<void>`                                                           | Upload a local file through a file input           |
-| `newTab`               | `(url?) => Promise<void>`                                                                     | Open a new browser tab                             |
-| `switchToTab`          | `(index) => Promise<void>`                                                                    | Switch to a tab by index                           |
-| `closeTab`             | `() => Promise<void>`                                                                         | Close the current tab                              |
-| `getTabIds`            | `() => Promise<string[]>`                                                                     | List known browser tab IDs                         |
-| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`                                             | Read captured browser console messages             |
-| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`                                            | Read captured uncaught JavaScript errors           |
-| `getHAR`               | `() => Promise<Record<string, unknown>>`                                                      | Read the recorded HTTP Archive for the current run |
+| Method                 | Signature                                          | Description                                                                |
+| ---------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`             | Fulfill matching requests with a mocked response                           |
+| `blockNetwork`         | `(matcher) => Promise<void>`                       | Abort matching requests                                                    |
+| `clearNetworkMocks`    | `() => Promise<void>`                              | Remove active route mocks or blocks                                        |
+| `setNetworkConditions` | `(conditions) => Promise<void>`                    | Simulate network conditions — profiles, custom throttling, or offline mode |
+| `saveCookies`          | `(path) => Promise<void>`                          | Save Playwright cookies to a JSON file                                     |
+| `loadCookies`          | `(path) => Promise<void>`                          | Load cookies from a JSON file                                              |
+| `saveAuthState`        | `(path) => Promise<void>`                          | Save Playwright storage state to disk                                      |
+| `loadAuthState`        | `(path) => Promise<void>`                          | Replace the browser context with saved auth state                          |
+| `downloadFile`         | `(path) => Promise<void>`                          | Save the next browser download to disk                                     |
+| `uploadFile`           | `(selector, path) => Promise<void>`                | Upload a local file through a file input                                   |
+| `newTab`               | `(url?) => Promise<void>`                          | Open a new browser tab                                                     |
+| `switchToTab`          | `(index) => Promise<void>`                         | Switch to a tab by index                                                   |
+| `closeTab`             | `() => Promise<void>`                              | Close the current tab                                                      |
+| `getTabIds`            | `() => Promise<string[]>`                          | List known browser tab IDs                                                 |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`  | Read captured browser console messages                                     |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>` | Read captured uncaught JavaScript errors                                   |
+| `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the recorded HTTP Archive for the current run                         |
 
 These helpers are available on local Playwright web runs. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
 
@@ -281,14 +281,14 @@ await app.setNetworkConditions({
 
 **Platform support:**
 
-| Platform | Offline | Profiles | Custom Values |
-|---|---|---|---|
-| Web (Chromium) | Yes | Yes | Yes |
-| Web (Firefox/WebKit) | Yes | No | No |
-| Android emulator | Yes | Yes | Yes |
-| Android device | Yes | No | No |
-| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
-| Appium cloud | Yes | Yes | varies |
+| Platform             | Offline | Profiles   | Custom Values |
+| -------------------- | ------- | ---------- | ------------- |
+| Web (Chromium)       | Yes     | Yes        | Yes           |
+| Web (Firefox/WebKit) | Yes     | No         | No            |
+| Android emulator     | Yes     | Yes        | Yes           |
+| Android device       | Yes     | No         | No            |
+| iOS simulator        | Yes     | Yes (sudo) | Yes (sudo)    |
+| Appium cloud         | Yes     | Yes        | varies        |
 
 ```ts
 flow("web app can run with mocked APIs", async ({ app, platform }) => {
@@ -406,7 +406,7 @@ export default flow(
 );
 ```
 
-Use the global config in [Configuration](/spana/getting-started/configuration/) for your default policy, then tighten or loosen capture per flow only where it helps debugging.
+Use the global config in [Configuration](/getting-started/configuration/) for your default policy, then tighten or loosen capture per flow only where it helps debugging.
 
 ## Settings export
 

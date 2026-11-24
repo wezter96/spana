@@ -89,7 +89,7 @@ On failure, spana captures screenshots and diagnostics under `spana-output/` by 
 
 ## Next steps
 
-- [Configuration](/spana/getting-started/configuration/) — all `defineConfig` options
-- [Flows](/spana/writing-tests/flows/) — `flow()` API, tags, timeouts
-- [Selectors](/spana/writing-tests/selectors/) — all selector types
-- [CLI Commands](/spana/cli/commands/) — all flags
+- [Configuration](/getting-started/configuration/) — all `defineConfig` options
+- [Flows](/writing-tests/flows/) — `flow()` API, tags, timeouts
+- [Selectors](/writing-tests/selectors/) — all selector types
+- [CLI Commands](/cli/commands/) — all flags

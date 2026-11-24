@@ -1,0 +1,275 @@
+---
+const setupPrompt = `Set up spana (spana-test) for fast, TypeScript-native E2E testing in this repository.
+
+Follow these steps:
+1. Inspect the workspace to detect our targets (Web, Capacitor iOS/Android, React Native, Electron, or Electrobun) and package manager (bun / npm / pnpm).
+2. Install spana-test as a devDependency (\`bun add -d spana-test\` or \`npm install -D spana-test\`).
+3. Create \`spana.config.ts\` using \`defineConfig\` from \`spana-test\`:
+   - Configure \`apps\` for our detected targets (e.g. \`apps.web.url\`, \`apps.android\`, \`apps.ios\`).
+   - Enable fast web defaults: \`execution.web: { warmBrowser: true, instantAnimations: true }\`.
+   - Configure \`artifacts: { outputDir: ".spana/artifacts", captureOnFailure: true }\` and \`reporters: ["console", "html"]\`.
+   - If this repo uses GitHub Actions, also show how to add \`--changed-since origin/main --reporter console,github\` with \`decisionFilter\` / \`pathRuleFilter\`.
+4. Add a first realistic smoke flow in \`flows/smoke.flow.ts\` using \`flow()\` and stable \`{ testID }\` selectors (use \`systemUI()\` only for native OS sheets/OAuth).
+5. Run \`npx spana doctor\`, \`npx spana validate-config\`, \`npx spana validate ./flows\`, and verify \`npx spana test\` passes.
+
+Docs & full LLM reference: https://spana.antonwester.se/llms-full.txt`;
+
+const skillsPrompt = `Install the Spana E2E agent skill and connect the Spana MCP server so you can drive live web/mobile/desktop sessions and export verified TypeScript flows.
+
+Follow these steps:
+1. Fetch the official Spana testing skill from:
+   https://raw.githubusercontent.com/wezter96/spana/main/.agents/skills/spana-testing/SKILL.md
+   (or copy \`node_modules/spana-test/.agents/skills/spana-testing/SKILL.md\` if \`spana-test\` is already installed)
+   and install it in this project's or my global agent skills directory as \`spana-testing/SKILL.md\`.
+2. Register Spana's model-free stdio MCP server in my MCP config:
+   - Command: \`npx\` (or \`bunx\`)
+   - Args: \`["spana", "mcp"]\`
+   This exposes \`spana_session_start\`, \`spana_observe\`, \`spana_tap\`, \`spana_input_text\`, \`spana_assert_visible\`, \`spana_diagnostics\`, \`spana_screenshot\`, and \`spana_export_flow\`.
+3. When I ask you to test a flow or debug a UI issue, drive the app via \`spana mcp\` (or \`spana selectors\` / \`spana hierarchy\`), verify assertions pass, and export a deterministic \`.flow.ts\` file.
+4. Keep https://spana.antonwester.se/llms-full.txt as the canonical API reference for \`spana-test\`.`;
+
+const cards = [
+  {
+    id: "setup",
+    badge: "PROJECT SETUP",
+    title: "Set up Spana in your repo",
+    subtitle:
+      "Paste into Claude Code, Codex, Cursor, or Antigravity to install spana-test, generate spana.config.ts, write a smoke flow, and run spana doctor.",
+    buttonLabel: "Copy setup prompt for your agent",
+    prompt: setupPrompt,
+  },
+  {
+    id: "skills",
+    badge: "SKILLS + MCP",
+    title: "Install Spana Skill & MCP Server",
+    subtitle:
+      "Give your coding agent the spana-testing skill, sub-5 ms stdio MCP tools (spana mcp), and llms-full.txt reference in one paste.",
+    buttonLabel: "Copy skills + MCP prompt for your agent",
+    prompt: skillsPrompt,
+  },
+];
+---
+
+<section id="agent-prompts" class="spana-agent-section">
+  <div class="spana-agent-header">
+    <span class="spana-eyebrow">BUILT FOR AI AGENTS</span>
+    <h2>One paste to onboard your coding agent</h2>
+    <p>
+      Copy either prompt into Claude Code, Codex, Cursor, or Antigravity — or point any agent directly at{" "}
+      <a href="/llms.txt"><code>/llms.txt</code></a> and{" "}
+      <a href="/llms-full.txt"><code>/llms-full.txt</code></a>.
+    </p>
+  </div>
+
+  <div class="spana-prompt-grid">
+    {
+      cards.map((card) => (
+        <article class="spana-prompt-card" data-prompt-card={card.id}>
+          <div class="spana-prompt-card-top">
+            <span class="spana-prompt-badge">{card.badge}</span>
+            <h3>{card.title}</h3>
+            <p>{card.subtitle}</p>
+          </div>
+
+          <pre class="spana-prompt-preview"><code>{card.prompt}</code></pre>
+
+          <div class="spana-prompt-actions">
+            <button
+              type="button"
+              class="spana-copy-btn"
+              data-copy-prompt={card.prompt}
+              data-default-label={card.buttonLabel}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              <span class="spana-copy-label">{card.buttonLabel}</span>
+            </button>
+          </div>
+        </article>
+      ))
+    }
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>("[data-copy-prompt]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const text = btn.dataset.copyPrompt ?? "";
+      const defaultLabel = btn.dataset.defaultLabel ?? "Copy for your agent";
+      const labelEl = btn.querySelector(".spana-copy-label");
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.classList.add("copied");
+        if (labelEl) labelEl.textContent = "Copied! Paste into your agent";
+        window.setTimeout(() => {
+          btn.classList.remove("copied");
+          if (labelEl) labelEl.textContent = defaultLabel;
+        }, 2200);
+      } catch {
+        // Fallback selection copy
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        btn.classList.add("copied");
+        if (labelEl) labelEl.textContent = "Copied! Paste into your agent";
+        window.setTimeout(() => {
+          btn.classList.remove("copied");
+          if (labelEl) labelEl.textContent = defaultLabel;
+        }, 2200);
+      }
+    });
+  });
+</script>
+
+<style>
+  .spana-agent-section {
+    margin: 2.5rem 0 3.5rem;
+  }
+
+  .spana-agent-header {
+    margin-bottom: 1.5rem;
+  }
+
+  .spana-eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #22d3ee;
+    background: rgba(6, 182, 212, 0.12);
+    border: 1px solid rgba(34, 211, 238, 0.35);
+    padding: 0.22rem 0.65rem;
+    border-radius: 999px;
+    margin-bottom: 0.75rem;
+  }
+
+  .spana-agent-header h2 {
+    margin: 0 0 0.45rem;
+    font-size: clamp(1.5rem, 2.5vw, 2rem);
+  }
+
+  .spana-agent-header p {
+    margin: 0;
+    color: var(--sl-color-gray-3);
+    max-width: 68ch;
+  }
+
+  .spana-prompt-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+    gap: 1.25rem;
+  }
+
+  .spana-prompt-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.35rem;
+    border-radius: 16px;
+    border: 1px solid var(--sl-color-hairline);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(11, 17, 32, 0.96));
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+  }
+
+  :root[data-theme="light"] .spana-prompt-card {
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  }
+
+  .spana-prompt-badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #34d399;
+    background: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    padding: 0.16rem 0.55rem;
+    border-radius: 999px;
+    margin-bottom: 0.55rem;
+  }
+
+  .spana-prompt-card-top h3 {
+    margin: 0 0 0.35rem;
+    font-size: 1.2rem;
+  }
+
+  .spana-prompt-card-top p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--sl-color-gray-3);
+    line-height: 1.5;
+  }
+
+  .spana-prompt-preview {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(2, 6, 23, 0.72);
+    max-height: 185px;
+    overflow: auto;
+    font-size: 0.78rem;
+    line-height: 1.48;
+    white-space: pre-wrap;
+    color: #cbd5e1;
+  }
+
+  :root[data-theme="light"] .spana-prompt-preview {
+    background: #0f172a;
+    color: #e2e8f0;
+  }
+
+  .spana-prompt-actions {
+    display: flex;
+  }
+
+  .spana-copy-btn {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    padding: 0.75rem 1.1rem;
+    border-radius: 10px;
+    border: 1px solid rgba(34, 211, 238, 0.45);
+    background: linear-gradient(90deg, #0891b2, #059669);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.92rem;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.15s ease, background 0.15s ease;
+  }
+
+  .spana-copy-btn:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+  }
+
+  .spana-copy-btn:active {
+    transform: translateY(0);
+  }
+
+  .spana-copy-btn.copied {
+    background: linear-gradient(90deg, #059669, #10b981);
+    border-color: #34d399;
+  }
+</style>

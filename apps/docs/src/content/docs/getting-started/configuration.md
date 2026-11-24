@@ -226,7 +226,7 @@ Use `mode: "appium"` when running against BrowserStack, Sauce Labs, or another A
 | `browserstack`                      | BrowserStack upload, local tunnel, and capability helper settings              |
 | `saucelabs`                         | Sauce Labs upload, Sauce Connect, and capability helper settings               |
 
-Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. Provider helper sections fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled. For a custom provider implementation, see [Cloud Providers](/spana/guides/cloud-providers/).
+Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. Provider helper sections fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled. For a custom provider implementation, see [Cloud Providers](/guides/cloud-providers/).
 
 ## CLI precedence
 
@@ -451,23 +451,23 @@ interface DeviceStateConfig {
 }
 ```
 
-| Option            | Default | Description                                                                       |
-| ----------------- | ------- | --------------------------------------------------------------------------------- |
-| `clearState`      | `false` | Clear app data/storage before launch                                              |
-| `clearKeychain`   | `false` | Clear the iOS keychain before launch (simulator only)                             |
-| `deepLink`        | —       | Open the app via a deep link URL                                                  |
-| `launchArguments` | —       | Key-value pairs passed as launch arguments to the app                             |
+| Option            | Default | Description                                                                          |
+| ----------------- | ------- | ------------------------------------------------------------------------------------ |
+| `clearState`      | `false` | Clear app data/storage before launch                                                 |
+| `clearKeychain`   | `false` | Clear the iOS keychain before launch (simulator only)                                |
+| `deepLink`        | —       | Open the app via a deep link URL                                                     |
+| `launchArguments` | —       | Key-value pairs passed as launch arguments to the app                                |
 | `deviceState`     | —       | Launch-time language / locale / time-zone overrides where the runtime can honor them |
 
 #### Platform behavior
 
-| Option            | Web                                 | Android                                                      | iOS                                                                      |
-| ----------------- | ----------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `clearState`      | Clears cookies, localStorage        | `adb shell pm clear`                                         | Resets app permissions                                                   |
-| `clearKeychain`   | No-op                               | No-op (warns)                                                | `xcrun simctl keychain reset`                                            |
-| `launchArguments` | No-op                               | Passed as `--es` extras via `am start`                       | Appium iOS: process args via `mobile: launchApp`; local WDA: warns + ignores |
-| `deviceState`     | Warns + ignores                     | Appium: session-start caps; local Android: warns + ignores   | Appium: session caps + launch-time process config; local WDA: warns + ignores |
-| `deepLink`        | Navigates to URL                    | `adb shell am start -d <url>`                                | `xcrun simctl openurl` / WDA                                             |
+| Option            | Web                          | Android                                                    | iOS                                                                           |
+| ----------------- | ---------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `clearState`      | Clears cookies, localStorage | `adb shell pm clear`                                       | Resets app permissions                                                        |
+| `clearKeychain`   | No-op                        | No-op (warns)                                              | `xcrun simctl keychain reset`                                                 |
+| `launchArguments` | No-op                        | Passed as `--es` extras via `am start`                     | Appium iOS: process args via `mobile: launchApp`; local WDA: warns + ignores  |
+| `deviceState`     | Warns + ignores              | Appium: session-start caps; local Android: warns + ignores | Appium: session caps + launch-time process config; local WDA: warns + ignores |
+| `deepLink`        | Navigates to URL             | `adb shell am start -d <url>`                              | `xcrun simctl openurl` / WDA                                                  |
 
 Android `launchArguments` are string extras. For example:
 

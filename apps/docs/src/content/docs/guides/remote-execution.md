@@ -36,7 +36,7 @@ In Appium mode, spana:
 2. Creates a session with the resolved [capabilities](#capabilities)
 3. Runs your flows using the Appium WebDriver protocol instead of local drivers
 4. Deletes the session when the run completes
-5. Reports results to the [cloud provider](/spana/guides/cloud-providers) if detected
+5. Reports results to the [cloud provider](/guides/cloud-providers) if detected
 
 The same flow files work in both local and Appium mode -- no changes needed.
 
@@ -163,4 +163,4 @@ export default defineConfig({
 
 ## Cloud providers
 
-When the Appium URL points to BrowserStack or Sauce Labs, spana auto-detects the provider and reports test results. See the [Cloud Providers](/spana/guides/cloud-providers) guide for setup details.
+When the Appium URL points to BrowserStack or Sauce Labs, spana auto-detects the provider and reports test results. See the [Cloud Providers](/guides/cloud-providers) guide for setup details.

@@ -26,8 +26,8 @@ jobs:
       - run: bun install
       - run: cd apps/docs && bun run build
         env:
-          SITE: https://wezter96.github.io
-          BASE: /spana
+          SITE: https://spana.antonwester.se
+          BASE: /
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/docs/dist

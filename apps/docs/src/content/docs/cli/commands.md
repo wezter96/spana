@@ -138,7 +138,7 @@ spana selectors --platform <web|android|ios> [--config path] [--json] [--pretty]
 
 This command connects to the running app, inspects the hierarchy, and returns the best selectors Spana can infer for each visible element.
 
-For deeper examples of both commands, see [Agent Commands](/spana/cli/agent-commands/).
+For deeper examples of both commands, see [Agent Commands](/cli/agent-commands/).
 
 ## `spana validate`
 
@@ -189,7 +189,7 @@ Launch the Studio UI for recording, inspection, and running flows.
 spana studio [--config path] [--port 4400] [--no-open]
 ```
 
-See [Studio](/spana/cli/studio/) for the full workflow.
+See [Studio](/cli/studio/) for the full workflow.
 
 ## `spana init`
 
@@ -199,7 +199,7 @@ Scaffold a new Spana project.
 spana init [--preset <local-web|local-react-native|browserstack|saucelabs>] [--force]
 ```
 
-See [Init](/spana/cli/init/) for the generated config and starter flow.
+See [Init](/cli/init/) for the generated config and starter flow.
 
 ## `spana init-flow`
 

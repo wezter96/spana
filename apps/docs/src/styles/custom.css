@@ -1,0 +1,77 @@
+:root {
+  --sl-color-accent-low: #083344;
+  --sl-color-accent: #06b6d4;
+  --sl-color-accent-high: #67e8f9;
+  --sl-color-bg: #070b14;
+  --sl-color-bg-nav: #0b1120;
+  --sl-color-bg-sidebar: #0b1120;
+  --sl-color-hairline: #1e293b;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #cffafe;
+  --sl-color-accent: #0891b2;
+  --sl-color-accent-high: #164e63;
+}
+
+.hero img {
+  border-radius: 20px;
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.spana-section {
+  margin: 3.5rem 0;
+}
+
+.spana-section-header {
+  margin-bottom: 1.25rem;
+}
+
+.spana-section-header h2 {
+  font-size: clamp(1.5rem, 2.4vw, 2rem);
+  margin: 0 0 0.4rem;
+}
+
+.spana-section-header p {
+  color: var(--sl-color-gray-3);
+  margin: 0;
+  max-width: 68ch;
+}
+
+.spana-visual-frame {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid var(--sl-color-hairline);
+  background: #0b1120;
+  margin: 1rem 0 1.5rem;
+}
+
+.spana-visual-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.spana-install-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.15rem;
+  border-radius: 12px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  background: rgba(11, 17, 32, 0.85);
+  margin: 1.5rem 0 2.5rem;
+}
+
+:root[data-theme="light"] .spana-install-bar {
+  background: #f8fafc;
+}
+
+.spana-install-bar code {
+  font-size: 0.95rem;
+  background: transparent;
+  padding: 0;
+}

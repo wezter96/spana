@@ -1,7 +1,8 @@
-# spana — TypeScript-native E2E testing for React Native + Web
+# spana — Web-first, TypeScript-native E2E testing (Web, iOS, Android, Electron, Electrobun)
 
+> Docs: https://spana.antonwester.se/
 > Full documentation for AI/LLM consumption.
-> For links-only version, see llms.txt
+> For links-only version, see https://spana.antonwester.se/llms.txt
 >
 > Generated from source docs — do not edit manually.
 
@@ -144,10 +145,10 @@ On failure, spana captures screenshots and diagnostics under `spana-output/` by 
 
 ## Next steps
 
-- [Configuration](/spana/getting-started/configuration/) — all `defineConfig` options
-- [Flows](/spana/writing-tests/flows/) — `flow()` API, tags, timeouts
-- [Selectors](/spana/writing-tests/selectors/) — all selector types
-- [CLI Commands](/spana/cli/commands/) — all flags
+- [Configuration](/getting-started/configuration/) — all `defineConfig` options
+- [Flows](/writing-tests/flows/) — `flow()` API, tags, timeouts
+- [Selectors](/writing-tests/selectors/) — all selector types
+- [CLI Commands](/cli/commands/) — all flags
 
 ---
 
@@ -376,7 +377,7 @@ Use `mode: "appium"` when running against BrowserStack, Sauce Labs, or another A
 | `browserstack`                      | BrowserStack upload, local tunnel, and capability helper settings              |
 | `saucelabs`                         | Sauce Labs upload, Sauce Connect, and capability helper settings               |
 
-Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. Provider helper sections fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled. For a custom provider implementation, see [Cloud Providers](/spana/guides/cloud-providers/).
+Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. Provider helper sections fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled. For a custom provider implementation, see [Cloud Providers](/guides/cloud-providers/).
 
 ## CLI precedence
 
@@ -939,7 +940,43 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 
 These helpers are available on local Playwright web runs. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
 
-`setNetworkConditions()` simulates degraded or offline network conditions across all platforms. Use a named profile (`wifi`, `4g`, `3g`, `2g`, `edge`, `offline`) or supply custom values. Platform support: Web (Chromium) supports offline, profiles, and custom values; Web (Firefox/WebKit) supports offline only; Android emulator supports all; Android device supports offline only; iOS simulator supports all (requires sudo); Appium cloud supports offline and profiles (custom values vary).
+#### `setNetworkConditions()`
+
+Simulate degraded or offline network conditions across all platforms. You can use a named profile or supply custom values.
+
+**Available profiles:** `wifi`, `4g`, `3g`, `2g`, `edge`, `offline`
+
+```ts
+// Simulate 3G network
+await app.setNetworkConditions({ profile: "3g" });
+
+// Go offline
+await app.setNetworkConditions({ profile: "offline" });
+
+// Back to normal
+await app.setNetworkConditions({ profile: "wifi" });
+```
+
+Custom values still work when you need fine-grained control:
+
+```ts
+await app.setNetworkConditions({
+  latencyMs: 150,
+  downloadThroughputKbps: 1000,
+  uploadThroughputKbps: 500,
+});
+```
+
+**Platform support:**
+
+| Platform | Offline | Profiles | Custom Values |
+|---|---|---|---|
+| Web (Chromium) | Yes | Yes | Yes |
+| Web (Firefox/WebKit) | Yes | No | No |
+| Android emulator | Yes | Yes | Yes |
+| Android device | Yes | No | No |
+| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
+| Appium cloud | Yes | Yes | varies |
 
 ```ts
 flow("web app can run with mocked APIs", async ({ app, platform }) => {
@@ -1057,7 +1094,7 @@ export default flow(
 );
 ```
 
-Use the global config in [Configuration](/spana/getting-started/configuration/) for your default policy, then tighten or loosen capture per flow only where it helps debugging.
+Use the global config in [Configuration](/getting-started/configuration/) for your default policy, then tighten or loosen capture per flow only where it helps debugging.
 
 ## Settings export
 
@@ -1832,7 +1869,7 @@ spana selectors --platform <web|android|ios> [--config path] [--json] [--pretty]
 
 This command connects to the running app, inspects the hierarchy, and returns the best selectors Spana can infer for each visible element.
 
-For deeper examples of both commands, see [Agent Commands](/spana/cli/agent-commands/).
+For deeper examples of both commands, see [Agent Commands](/cli/agent-commands/).
 
 ## `spana validate`
 
@@ -1883,7 +1920,7 @@ Launch the Studio UI for recording, inspection, and running flows.
 spana studio [--config path] [--port 4400] [--no-open]
 ```
 
-See [Studio](/spana/cli/studio/) for the full workflow.
+See [Studio](/cli/studio/) for the full workflow.
 
 ## `spana init`
 
@@ -1893,7 +1930,7 @@ Scaffold a new Spana project.
 spana init [--preset <local-web|local-react-native|browserstack|saucelabs>] [--force]
 ```
 
-See [Init](/spana/cli/init/) for the generated config and starter flow.
+See [Init](/cli/init/) for the generated config and starter flow.
 
 ## `spana init-flow`
 
@@ -2780,6 +2817,41 @@ interface ConnectOptions {
 
 These helpers are available on local Playwright web sessions.
 
+#### `setNetworkConditions()`
+
+Simulate degraded or offline network conditions across all platforms. You can use a named profile or supply custom values.
+
+**Available profiles:** `wifi`, `4g`, `3g`, `2g`, `edge`, `offline`
+
+```ts
+// Simulate 3G network
+await session.setNetworkConditions({ profile: "3g" });
+
+// Go offline
+await session.setNetworkConditions({ profile: "offline" });
+
+// Back to normal
+await session.setNetworkConditions({ profile: "wifi" });
+
+// Custom values
+await session.setNetworkConditions({
+  latencyMs: 150,
+  downloadThroughputKbps: 1000,
+  uploadThroughputKbps: 500,
+});
+```
+
+**Platform support:**
+
+| Platform | Offline | Profiles | Custom Values |
+|---|---|---|---|
+| Web (Chromium) | Yes | Yes | Yes |
+| Web (Firefox/WebKit) | Yes | No | No |
+| Android emulator | Yes | Yes | Yes |
+| Android device | Yes | No | No |
+| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
+| Appium cloud | Yes | Yes | varies |
+
 ### Hybrid / WebView helpers
 
 | Method              | Signature                      | Description                           |
@@ -3508,7 +3580,7 @@ In Appium mode, spana:
 2. Creates a session with the resolved [capabilities](#capabilities)
 3. Runs your flows using the Appium WebDriver protocol instead of local drivers
 4. Deletes the session when the run completes
-5. Reports results to the [cloud provider](/spana/guides/cloud-providers) if detected
+5. Reports results to the [cloud provider](/guides/cloud-providers) if detected
 
 The same flow files work in both local and Appium mode -- no changes needed.
 
@@ -3635,7 +3707,7 @@ export default defineConfig({
 
 ## Cloud providers
 
-When the Appium URL points to BrowserStack or Sauce Labs, spana auto-detects the provider and reports test results. See the [Cloud Providers](/spana/guides/cloud-providers) guide for setup details.
+When the Appium URL points to BrowserStack or Sauce Labs, spana auto-detects the provider and reports test results. See the [Cloud Providers](/guides/cloud-providers) guide for setup details.
 
 ---
 

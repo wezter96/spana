@@ -47,10 +47,11 @@ function extractTitle(content: string): string {
   return match ? match[1]!.trim().replaceAll(/^["']|["']$/g, "") : "Untitled";
 }
 
-const header = `# spana — TypeScript-native E2E testing for React Native + Web
+const header = `# spana — Web-first, TypeScript-native E2E testing (Web, iOS, Android, Electron, Electrobun)
 
+> Docs: https://spana.antonwester.se/
 > Full documentation for AI/LLM consumption.
-> For links-only version, see llms.txt
+> For links-only version, see https://spana.antonwester.se/llms.txt
 >
 > Generated from source docs — do not edit manually.
 
