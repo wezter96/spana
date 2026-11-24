@@ -1,6 +1,6 @@
 {
   "name": "spana-test",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — zero Appium required",
   "keywords": [
     "android",
