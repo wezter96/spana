@@ -1,0 +1,170 @@
+{
+  "target": "http://localhost:4892",
+  "measuredAt": "2026-11-24T20:52:31.167Z",
+  "spana1w": {
+    "workerCount": 1,
+    "totalMs": 11311,
+    "passed": 15,
+    "failed": 0,
+    "perFlow": [
+      {
+        "name": "Home page loads and shows hero content",
+        "ms": 543,
+        "status": "passed"
+      },
+      {
+        "name": "/bostader loads listings page",
+        "ms": 4730,
+        "status": "passed"
+      },
+      {
+        "name": "/salj loads seller landing page",
+        "ms": 982,
+        "status": "passed"
+      },
+      {
+        "name": "/b2b loads B2B landing",
+        "ms": 463,
+        "status": "passed"
+      },
+      {
+        "name": "Auth modal opens when sign-in link is clicked",
+        "ms": 1081,
+        "status": "passed"
+      },
+      {
+        "name": "Logo is visible in navbar",
+        "ms": 63,
+        "status": "passed"
+      },
+      {
+        "name": "Logo link navigates to home",
+        "ms": 296,
+        "status": "passed"
+      },
+      {
+        "name": "/bevakningar page loads",
+        "ms": 172,
+        "status": "passed"
+      },
+      {
+        "name": "/kontakt page loads without errors",
+        "ms": 77,
+        "status": "passed"
+      },
+      {
+        "name": "/hyra lands on the rental browse view with results",
+        "ms": 707,
+        "status": "passed"
+      },
+      {
+        "name": "/uthyrning loads landlord rental page",
+        "ms": 564,
+        "status": "passed"
+      },
+      {
+        "name": "/kunskapsbank lists articles",
+        "ms": 197,
+        "status": "passed"
+      },
+      {
+        "name": "All public pages have a skip-to-content link",
+        "ms": 268,
+        "status": "passed"
+      },
+      {
+        "name": "All public pages have exactly one main landmark",
+        "ms": 217,
+        "status": "passed"
+      },
+      {
+        "name": "kunskapsbank article page renders heading and back link",
+        "ms": 482,
+        "status": "passed"
+      }
+    ]
+  },
+  "spana4w": {
+    "workerCount": 4,
+    "totalMs": 2313,
+    "passed": 15,
+    "failed": 0,
+    "perFlow": [
+      {
+        "name": "/b2b loads B2B landing",
+        "ms": 230,
+        "status": "passed"
+      },
+      {
+        "name": "/bostader loads listings page",
+        "ms": 230,
+        "status": "passed"
+      },
+      {
+        "name": "Home page loads and shows hero content",
+        "ms": 230,
+        "status": "passed"
+      },
+      {
+        "name": "/salj loads seller landing page",
+        "ms": 291,
+        "status": "passed"
+      },
+      {
+        "name": "/bevakningar page loads",
+        "ms": 154,
+        "status": "passed"
+      },
+      {
+        "name": "Logo is visible in navbar",
+        "ms": 321,
+        "status": "passed"
+      },
+      {
+        "name": "/kontakt page loads without errors",
+        "ms": 172,
+        "status": "passed"
+      },
+      {
+        "name": "Logo link navigates to home",
+        "ms": 437,
+        "status": "passed"
+      },
+      {
+        "name": "/uthyrning loads landlord rental page",
+        "ms": 235,
+        "status": "passed"
+      },
+      {
+        "name": "/kunskapsbank lists articles",
+        "ms": 210,
+        "status": "passed"
+      },
+      {
+        "name": "Auth modal opens when sign-in link is clicked",
+        "ms": 1378,
+        "status": "passed"
+      },
+      {
+        "name": "/hyra lands on the rental browse view with results",
+        "ms": 1099,
+        "status": "passed"
+      },
+      {
+        "name": "kunskapsbank article page renders heading and back link",
+        "ms": 287,
+        "status": "passed"
+      },
+      {
+        "name": "All public pages have a skip-to-content link",
+        "ms": 1142,
+        "status": "passed"
+      },
+      {
+        "name": "All public pages have exactly one main landmark",
+        "ms": 1166,
+        "status": "passed"
+      }
+    ]
+  }
+}

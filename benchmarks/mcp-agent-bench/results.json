@@ -1,0 +1,120 @@
+{
+  "measuredAt": "2026-11-24T20:50:59.202Z",
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "runtime": "Bun 1.4.5"
+  },
+  "protocolMicroBench": {
+    "toolCount": 11,
+    "totalProtocolMs": 359.2,
+    "avgObserveTokens": 273,
+    "steps": [
+      {
+        "label": "initialize",
+        "ms": 0.08,
+        "textBytes": 146,
+        "approxTokens": 37
+      },
+      {
+        "label": "tools/list",
+        "ms": 0.01,
+        "textBytes": 2908,
+        "approxTokens": 727
+      },
+      {
+        "label": "spana_session_start",
+        "ms": 110.92,
+        "textBytes": 92,
+        "approxTokens": 23
+      },
+      {
+        "label": "spana_observe (login)",
+        "ms": 5.3,
+        "textBytes": 769,
+        "approxTokens": 193
+      },
+      {
+        "label": "spana_tap (sign-in)",
+        "ms": 56.98,
+        "textBytes": 130,
+        "approxTokens": 33
+      },
+      {
+        "label": "spana_observe (billing)",
+        "ms": 1.53,
+        "textBytes": 1406,
+        "approxTokens": 352
+      },
+      {
+        "label": "spana_tap (coupon-input)",
+        "ms": 47.89,
+        "textBytes": 135,
+        "approxTokens": 34
+      },
+      {
+        "label": "spana_input_text",
+        "ms": 1.33,
+        "textBytes": 118,
+        "approxTokens": 30
+      },
+      {
+        "label": "spana_tap (upgrade-pro)",
+        "ms": 48.65,
+        "textBytes": 134,
+        "approxTokens": 34
+      },
+      {
+        "label": "spana_tap (confirm-upgrade)",
+        "ms": 50.98,
+        "textBytes": 138,
+        "approxTokens": 35
+      },
+      {
+        "label": "spana_assert_visible (plan-status)",
+        "ms": 1.13,
+        "textBytes": 147,
+        "approxTokens": 37
+      },
+      {
+        "label": "spana_diagnostics",
+        "ms": 0.81,
+        "textBytes": 217,
+        "approxTokens": 55
+      },
+      {
+        "label": "spana_screenshot",
+        "ms": 22.83,
+        "textBytes": 16839,
+        "approxTokens": 4210
+      },
+      {
+        "label": "spana_export_flow",
+        "ms": 0.05,
+        "textBytes": 586,
+        "approxTokens": 147
+      },
+      {
+        "label": "spana_session_stop",
+        "ms": 10.69,
+        "textBytes": 575,
+        "approxTokens": 144
+      }
+    ]
+  },
+  "modelAgentRuns": [
+    {
+      "model": "ollama/qwen2.5:1.5b",
+      "completed": false,
+      "turns": 12,
+      "totalMs": 4772,
+      "llmMs": 4229,
+      "mcpToolMs": 540,
+      "mcpSharePct": 11.3,
+      "promptTokens": 4159,
+      "completionTokens": 229,
+      "totalTokens": 4388,
+      "verifiedStepsExported": 12
+    }
+  ]
+}

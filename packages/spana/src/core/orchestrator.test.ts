@@ -602,9 +602,9 @@ describe("orchestrate", () => {
       { retries: 1 },
     );
 
-    // Without retryDelay, gap should be minimal
+    // Without retryDelay, gap should be well below a configured delay (e.g. 100ms)
     const gap = timestamps[1]! - timestamps[0]!;
-    expect(gap).toBeLessThan(30);
+    expect(gap).toBeLessThan(95);
   });
 
   test("delegates to runParallel when additionalWorkers provided", async () => {

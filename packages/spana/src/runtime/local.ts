@@ -104,6 +104,7 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
       baseUrl: webUrl,
       storageState: webExecution?.storageState,
       verboseLogging: webExecution?.verboseLogging,
+      recordHar: Boolean(config.artifacts?.har),
     }),
   );
   const driver = bridge ? { ...rawDriver, domChannel: bridge } : rawDriver;
@@ -160,6 +161,7 @@ export async function buildWebRuntimePool(
         storageState: webExecution?.storageState,
         verboseLogging: webExecution?.verboseLogging,
         sharedBrowser,
+        recordHar: Boolean(config.artifacts?.har),
       }),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());

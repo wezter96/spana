@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SökHem Real-App Playwright vs Spana &amp; MCP Agent Performance Benchmark</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+        color: var(--foreground);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        width: 100%;
+      }
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+      @media (max-width: 560px) {
+        .kpi-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .kpi-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .kpi-value {
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.15;
+      }
+      .kpi-value.success {
+        color: var(--success);
+      }
+      .kpi-value.accent {
+        color: var(--chart-1);
+      }
+      .kpi-value.info {
+        color: var(--chart-2);
+      }
+      .kpi-value.purple {
+        color: var(--chart-4);
+      }
+      .kpi-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--foreground);
+      }
+      .kpi-sub {
+        font-size: 10.5px;
+        color: var(--muted-foreground);
+      }
+
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+      }
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .panel-title {
+        font-size: 14px;
+        font-weight: 700;
+        margin: 0;
+        color: var(--foreground);
+      }
+      .panel-subtitle {
+        font-size: 11.5px;
+        color: var(--muted-foreground);
+        margin: 2px 0 0 0;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        font-family: var(--font-mono, monospace);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--success);
+        background: var(--accent-surface, var(--secondary));
+        color: var(--success);
+        white-space: nowrap;
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @media (max-width: 580px) {
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+      }
+      .sub-box {
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) - 2px);
+        padding: 12px;
+        background: var(--code-background, var(--secondary));
+      }
+      .sub-title {
+        font-size: 12px;
+        font-weight: 700;
+        margin: 0 0 10px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .pill {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: var(--accent-surface, var(--secondary));
+        color: var(--success);
+      }
+      .mini-row {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-bottom: 9px;
+      }
+      .mini-row:last-child {
+        margin-bottom: 0;
+      }
+      .mini-top {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+      }
+      .mini-top .val {
+        font-family: var(--font-mono, monospace);
+        font-weight: 700;
+      }
+      .track {
+        height: 18px;
+        background: var(--muted);
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+      }
+      .fill {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        padding-left: 7px;
+        font-size: 10px;
+        font-weight: 600;
+        font-family: var(--font-mono, monospace);
+        color: var(--primary-foreground, var(--background));
+        white-space: nowrap;
+        border-radius: 4px;
+      }
+      .fill.pw {
+        background: var(--chart-2, var(--info));
+      }
+      .fill.spana {
+        background: var(--chart-1, var(--success));
+      }
+      .fill.spana-pool {
+        background: var(--chart-4, var(--primary));
+      }
+      .fill.llm {
+        background: var(--chart-3, var(--warning));
+        color: var(--background);
+        border-radius: 4px 0 0 4px;
+      }
+      .fill.mcp-slice {
+        background: var(--chart-1, var(--success));
+        border-radius: 0 4px 4px 0;
+      }
+
+      .mcp-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      @media (max-width: 540px) {
+        .mcp-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .mcp-stat {
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) - 2px);
+        padding: 9px 10px;
+        background: var(--code-background, var(--secondary));
+      }
+      .mcp-stat .k {
+        font-family: var(--font-mono, monospace);
+        font-size: 10.5px;
+        color: var(--muted-foreground);
+      }
+      .mcp-stat .v {
+        font-family: var(--font-mono, monospace);
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--foreground);
+        margin-top: 2px;
+      }
+      .mcp-stat .s {
+        font-size: 10px;
+        color: var(--muted-foreground);
+      }
+
+      .footnote {
+        font-size: 10.5px;
+        color: var(--muted-foreground);
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stack">
+      <!-- KPI Strip -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-value success">1.69×</div>
+          <div class="kpi-label">Live sokhem.se (1w)</div>
+          <div class="kpi-sub">5.88s Spana vs 9.92s PW</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value accent">1.55×</div>
+          <div class="kpi-label">Local SökHem Dev (4w)</div>
+          <div class="kpi-sub">2.31s Spana vs 3.58s PW</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value info">1.53 ms</div>
+          <div class="kpi-label">MCP spana_observe</div>
+          <div class="kpi-sub">~273 tokens / turn</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value purple">11.3%</div>
+          <div class="kpi-label">MCP Share of Agent Loop</div>
+          <div class="kpi-sub">540ms MCP vs 4,229ms LLM</div>
+        </div>
+      </div>
+
+      <!-- Panel 1: Real SökHem 15-Test @smoke Suite -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">
+              1. Real Production App: SökHem 15-Test @smoke Suite (Playwright vs Spana)
+            </h2>
+            <p class="panel-subtitle">
+              Exact 1:1 port of e2e/smoke.spec.ts (all 15/15 passing on both targets) · Lower is
+              faster
+            </p>
+          </div>
+          <span class="badge">LIVE MEASURED · 15/15 PASS</span>
+        </div>
+
+        <div class="two-col">
+          <div class="sub-box">
+            <div class="sub-title">
+              <span>Live https://sokhem.se</span>
+              <span class="pill">Up to 1.69× faster</span>
+            </div>
+
+            <div class="mini-row">
+              <div class="mini-top">
+                <span>Playwright (1 worker)</span><span class="val">9,923 ms</span>
+              </div>
+              <div class="track"><div class="fill pw" style="width: 100%">15/15</div></div>
+            </div>
+            <div class="mini-row">
+              <div class="mini-top">
+                <strong>Spana (1 worker, persistent)</strong
+                ><span class="val" style="color: var(--success)">5,881 ms</span>
+              </div>
+              <div class="track">
+                <div class="fill spana" style="width: 59.3%">1.69× faster</div>
+              </div>
+            </div>
+            <div class="mini-row">
+              <div class="mini-top">
+                <span>Playwright (4 parallel workers)</span><span class="val">3,323 ms</span>
+              </div>
+              <div class="track"><div class="fill pw" style="width: 33.5%">4w</div></div>
+            </div>
+            <div class="mini-row">
+              <div class="mini-top">
+                <strong>Spana Shared Pool (4 workers)</strong
+                ><span class="val" style="color: var(--success)">2,255 ms</span>
+              </div>
+              <div class="track"><div class="fill spana-pool" style="width: 22.7%">1.47×</div></div>
+            </div>
+          </div>
+
+          <div class="sub-box">
+            <div class="sub-title">
+              <span>Local Dev Stack (:4892 + API :4891)</span>
+              <span class="pill">Up to 1.55× faster</span>
+            </div>
+
+            <div class="mini-row">
+              <div class="mini-top">
+                <span>Playwright (1 worker)</span><span class="val">15,127 ms</span>
+              </div>
+              <div class="track"><div class="fill pw" style="width: 100%">15/15</div></div>
+            </div>
+            <div class="mini-row">
+              <div class="mini-top">
+                <strong>Spana (1 worker, persistent)</strong
+                ><span class="val" style="color: var(--success)">11,311 ms</span>
+              </div>
+              <div class="track">
+                <div class="fill spana" style="width: 74.8%">1.34× faster</div>
+              </div>
+            </div>
+            <div class="mini-row">
+              <div class="mini-top">
+                <span>Playwright (4 parallel workers)</span><span class="val">3,582 ms</span>
+              </div>
+              <div class="track"><div class="fill pw" style="width: 23.7%">4w</div></div>
+            </div>
+            <div class="mini-row">
+              <div class="mini-top">
+                <strong>Spana Shared Pool (4 workers)</strong
+                ><span class="val" style="color: var(--success)">2,313 ms</span>
+              </div>
+              <div class="track"><div class="fill spana-pool" style="width: 15.3%">1.55×</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 2: Spana MCP Agent Performance Benchmark -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">2. Spana MCP Agent Performance Benchmark (Model-Agnostic)</h2>
+            <p class="panel-subtitle">
+              Pure JSON-RPC tool latency + live 12-turn agent loop driven by local Ollama
+              qwen2.5:1.5b on Apple M4 Pro
+            </p>
+          </div>
+          <span class="badge">359.2 ms FULL 15-CALL LIFECYCLE</span>
+        </div>
+
+        <div class="mcp-grid">
+          <div class="mcp-stat">
+            <div class="k">spana_observe</div>
+            <div class="v">1.53 ms</div>
+            <div class="s">~273 tokens (compact testIDs)</div>
+          </div>
+          <div class="mcp-stat">
+            <div class="k">spana_assert_visible</div>
+            <div class="v">1.13 ms</div>
+            <div class="s">Returns verified expect() line</div>
+          </div>
+          <div class="mcp-stat">
+            <div class="k">spana_diagnostics</div>
+            <div class="v">0.81 ms</div>
+            <div class="s">Console + JS errors + counts</div>
+          </div>
+          <div class="mcp-stat">
+            <div class="k">spana_input_text</div>
+            <div class="v">1.33 ms</div>
+            <div class="s">30-token response</div>
+          </div>
+          <div class="mcp-stat">
+            <div class="k">spana_screenshot</div>
+            <div class="v">22.83 ms</div>
+            <div class="s">Base64 PNG image block</div>
+          </div>
+          <div class="mcp-stat">
+            <div class="k">spana_export_flow</div>
+            <div class="v">0.05 ms</div>
+            <div class="s">Runnable .flow.ts code</div>
+          </div>
+        </div>
+
+        <div class="sub-box">
+          <div class="mini-row">
+            <div class="mini-top">
+              <span>12-Turn Live Agent Loop (ollama/qwen2.5:1.5b · 4,388 total tokens)</span>
+              <span class="val">4,772 ms total</span>
+            </div>
+            <div class="track">
+              <div class="fill llm" style="width: 88.7%">LLM Inference: 4,229 ms (88.7%)</div>
+              <div class="fill mcp-slice" style="width: 11.3%">540ms</div>
+            </div>
+          </div>
+          <div class="footnote">
+            Run with any model:
+            <code
+              >bun run benchmarks/mcp-agent-bench/benchmark.ts --models
+              ollama/qwen2.5:1.5b,openai/gpt-4o-mini</code
+            >
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

@@ -53,6 +53,10 @@ export interface PlaywrightConfig {
   /** Optional browser channel (e.g. "chrome") or explicit executable path. */
   channel?: string;
   executablePath?: string;
+  /** Navigation wait condition for launchApp / openLink (e.g. "domcontentloaded" for prefetch-heavy SSR apps). */
+  waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+  /** Record per-request HAR metadata over CDP/IPC. Disable when `artifacts.har` is off for faster page loads. Default: true. */
+  recordHar?: boolean;
 }
 
 export async function launchPlaywrightBrowser(
@@ -279,8 +283,9 @@ export function makePlaywrightDriver(
     };
 
     const recordRequestFinished = async (activePage: Page, request: Request) => {
-      const response = await request.response();
-      if (!response) {
+      if (typeof activePage.isClosed === "function" && activePage.isClosed()) return;
+      const response = await request.response().catch(() => null);
+      if (!response || (typeof activePage.isClosed === "function" && activePage.isClosed())) {
         return;
       }
 
@@ -465,13 +470,15 @@ export function makePlaywrightDriver(
         flushDownload(download);
       });
 
-      activePage.on("requestfinished", (request) => {
-        void recordRequestFinished(activePage, request);
-      });
+      if (config.recordHar !== false) {
+        activePage.on("requestfinished", (request) => {
+          void recordRequestFinished(activePage, request).catch(() => {});
+        });
 
-      activePage.on("requestfailed", (request) => {
-        void recordRequestFailed(activePage, request);
-      });
+        activePage.on("requestfailed", (request) => {
+          void recordRequestFailed(activePage, request).catch(() => {});
+        });
+      }
 
       activePage.on("close", () => {
         debugLog("tabClosed", tabIds.get(activePage) ?? "untracked");
@@ -821,7 +828,10 @@ export function makePlaywrightDriver(
                   "Use browser-specific emulation when execution.web adds that support.",
               );
             }
-            await page.goto(targetUrl);
+            await page.goto(
+              targetUrl,
+              config.waitUntil ? { waitUntil: config.waitUntil } : undefined,
+            );
             updateHarPage(page);
             debugLog("launchApp", targetUrl);
           },
@@ -862,7 +872,7 @@ export function makePlaywrightDriver(
       openLink: (url) =>
         Effect.tryPromise({
           try: async () => {
-            await page.goto(url);
+            await page.goto(url, config.waitUntil ? { waitUntil: config.waitUntil } : undefined);
             updateHarPage(page);
             debugLog("openLink", url);
           },
