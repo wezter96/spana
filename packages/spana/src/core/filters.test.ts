@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   applyTestFilters,
   collectGitChanges,
+  createOllamaDecisionJudge,
   decisionFilter,
   formatFilterSummary,
   pathRuleFilter,
@@ -182,5 +183,31 @@ describe("CI Filters API (--changed-since)", () => {
     expect(changes.truncated).toBe(true);
     expect(changes.diffBytes).toBe(50);
     expect(changes.diff.length).toBe(20);
+  });
+
+  test("createOllamaDecisionJudge batches all flows in 1 call and fails open on missing keys", async () => {
+    const judge = createOllamaDecisionJudge({
+      model: "qwen2.5:1.5b",
+      fetchFn: (async () =>
+        new Response(
+          JSON.stringify({
+            response: JSON.stringify({ "0": 0.92, "1": 0.04 }),
+            prompt_eval_count: 350,
+            eval_count: 25,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        )) as unknown as typeof fetch,
+    });
+
+    const filter = decisionFilter({ alwaysRunTags: ["smoke"], batchJudge: judge });
+    const res = await applyTestFilters(
+      CANDIDATES,
+      CANDIDATES,
+      [filter],
+      makeContext(makeChanges()),
+    );
+    expect(res.kept.map((c) => c.name)).toEqual(["checkout", "login-smoke"]);
+    expect(res.excluded.map((e) => e.candidate.name)).toEqual(["avatar"]);
+    expect(res.reports[0]!.usage).toEqual({ calls: 1, tokens: 375, costUsd: 0 });
   });
 });

@@ -217,15 +217,31 @@ export type DecisionModelJudge = (
   input: DecisionJudgeInput,
 ) => Promise<DecisionJudgeResult> | DecisionJudgeResult;
 
+export interface DecisionBatchJudgeResult {
+  /** Map of candidate `id` -> probability `[0, 1]` that the PR changes affect it. */
+  probabilities: Record<string, number>;
+  reasons?: Record<string, string>;
+  usage?: FilterUsage;
+}
+
+export type DecisionBatchJudge = (input: {
+  candidates: FilterCandidate[];
+  changes: GitChanges;
+}) => Promise<DecisionBatchJudgeResult> | DecisionBatchJudgeResult;
+
 export interface DecisionFilterOptions {
   /** Optional custom name (default: "decision") */
   name?: string;
   /**
-   * Model judge function returning an impact probability in `[0, 1]`.
-   * Compatible with AI SDK decision models (e.g. Typesafe AI Jev), OpenAI,
-   * Anthropic, or any local classifier.
+   * Per-flow model judge function returning an impact probability in `[0, 1]`.
+   * Provide either `judge` or `batchJudge` (batched evaluates all flows in 1 LLM call).
    */
-  judge: DecisionModelJudge;
+  judge?: DecisionModelJudge;
+  /**
+   * Batched model judge evaluating all candidate flows in a single model call
+   * (dramatically faster for local Ollama/MLX models and cloud decision models).
+   */
+  batchJudge?: DecisionBatchJudge;
   /**
    * Skip a flow only when `probability < threshold`.
    * Default: `0.20` (fail-open safety bias — runs anything >= 20% likely affected).
@@ -296,18 +312,52 @@ export function decisionFilter(options: DecisionFilterOptions): TestFilter {
       let tokens = 0;
       let costUsd = 0;
 
+      // Filter down to flows eligible for model judgment (safety rules always keep the rest)
+      const eligible: FilterCandidate[] = [];
       for (const candidate of flows) {
-        // Safety rule: never skip a modified flow file
         if (changedSet.has(normalizePath(candidate.file))) continue;
-
-        // Safety rule: never skip always-run tags (e.g. smoke)
         if (candidate.tags.some((t) => alwaysRunTags.has(t))) continue;
-
-        // Safety rule: fail open if flow file is too large to send cleanly
         if (candidate.source && Buffer.byteLength(candidate.source, "utf-8") > maxFileBytes) {
           continue;
         }
+        eligible.push(candidate);
+      }
 
+      if (eligible.length === 0) {
+        return { exclude };
+      }
+
+      // Fast path: evaluate all eligible flows in ONE batched model call
+      if (options.batchJudge) {
+        try {
+          const batch = await options.batchJudge({ candidates: eligible, changes });
+          calls += batch.usage?.calls ?? 1;
+          tokens += batch.usage?.tokens ?? 0;
+          costUsd += batch.usage?.costUsd ?? 0;
+          for (const candidate of eligible) {
+            const prob = batch.probabilities[candidate.id];
+            if (typeof prob === "number" && !Number.isNaN(prob) && prob >= 0 && prob < threshold) {
+              const pct = Math.round(prob * 100);
+              exclude[candidate.id] =
+                batch.reasons?.[candidate.id] ??
+                `rated ${pct}% likely affected (< ${Math.round(threshold * 100)}%)`;
+            }
+          }
+        } catch {
+          // Fail open on batch judge error
+          return { exclude: {}, note: "decision model error — failed open" };
+        }
+        return {
+          exclude,
+          usage: calls > 0 ? { calls, tokens, costUsd } : undefined,
+        };
+      }
+
+      if (!options.judge) {
+        return { exclude: {}, note: "no judge configured — failed open" };
+      }
+
+      for (const candidate of eligible) {
         try {
           const verdict = await options.judge({ candidate, changes });
           calls += verdict.usage?.calls ?? 1;
@@ -335,6 +385,94 @@ export function decisionFilter(options: DecisionFilterOptions): TestFilter {
         usage: calls > 0 ? { calls, tokens, costUsd } : undefined,
       };
     },
+  };
+}
+
+export interface OllamaDecisionJudgeOptions {
+  /** Ollama model tag, e.g. `"qwen2.5:1.5b"` or `"qwen2.5:0.5b"`. */
+  model: string;
+  /** Ollama HTTP endpoint (default: `"http://127.0.0.1:11434"`). */
+  baseUrl?: string;
+  /** Request timeout in ms (default: 15000). */
+  timeoutMs?: number;
+  /** Optional custom fetch implementation for testing. */
+  fetchFn?: typeof fetch;
+}
+
+/**
+ * Built-in local batched decision judge for Ollama (Apple Silicon / local GPU).
+ * Evaluates all candidate flows against a PR diff in ONE structured JSON call
+ * with `temperature: 0` and zero cloud token cost ($0.0000).
+ */
+export function createOllamaDecisionJudge(options: OllamaDecisionJudgeOptions): DecisionBatchJudge {
+  const baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/$/, "");
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const fetchFn = options.fetchFn ?? fetch;
+
+  return async ({ candidates, changes }): Promise<DecisionBatchJudgeResult> => {
+    const flowList = candidates
+      .map((c, i) => `${i}: file="${c.file}", name="${c.name}", tags=[${c.tags.join(",")}]`)
+      .join("\n");
+
+    const prompt = [
+      "You are a conservative CI test-impact classifier. Err on the side of RUNNING tests (high recall).",
+      "For each E2E flow below, output a probability from 0.0 to 1.0 that the git diff could affect it.",
+      "Rules:",
+      "- If a flow's file path, name, or tags share the same feature/module/domain as ANY changed file, rate it 0.9.",
+      "- If unsure or possibly connected via shared UI/state/API, rate it 0.5.",
+      "- Rate 0.05 ONLY if the flow is clearly in a completely unrelated module.",
+      `Changed files: ${changes.files.join(", ")}`,
+      `Diff:\n${changes.diff.slice(0, 3000)}`,
+      `Flows:\n${flowList}`,
+      'Output compact single-line JSON mapping each index string to a number, e.g. {"0":0.9,"1":0.05}',
+    ].join("\n");
+
+    const res = await fetchFn(`${baseUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: options.model,
+        prompt,
+        format: "json",
+        stream: false,
+        options: { temperature: 0, num_predict: 256 },
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Ollama returned HTTP ${res.status}`);
+    }
+
+    const payload = (await res.json()) as {
+      response?: string;
+      prompt_eval_count?: number;
+      eval_count?: number;
+    };
+
+    const rawJson = (payload.response ?? "{}").trim();
+    const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+    const probabilities: Record<string, number> = {};
+
+    for (let i = 0; i < candidates.length; i++) {
+      const cand = candidates[i]!;
+      const val = parsed[String(i)] ?? parsed[cand.id] ?? parsed[cand.name];
+      if (typeof val === "number" && !Number.isNaN(val)) {
+        probabilities[cand.id] = Math.max(0, Math.min(1, val));
+      } else {
+        // Missing index -> fail open (1.0)
+        probabilities[cand.id] = 1;
+      }
+    }
+
+    return {
+      probabilities,
+      usage: {
+        calls: 1,
+        tokens: (payload.prompt_eval_count ?? 0) + (payload.eval_count ?? 0),
+        costUsd: 0,
+      },
+    };
   };
 }
 

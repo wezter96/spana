@@ -167,6 +167,7 @@ export {
 export {
   decisionFilter,
   pathRuleFilter,
+  createOllamaDecisionJudge,
   applyTestFilters,
   collectGitChanges,
   buildFilterCandidates,
@@ -179,7 +180,10 @@ export {
   type GitChanges,
   type ChangedFile,
   type DecisionModelJudge,
+  type DecisionBatchJudge,
+  type DecisionBatchJudgeResult,
   type DecisionFilterOptions,
+  type OllamaDecisionJudgeOptions,
   type PathRule,
   type PathRuleFilterOptions,
   type AppliedFilterReport,

@@ -1,60 +1,99 @@
 {
-  "measuredAt": "2026-11-24T19:43:13.950Z",
+  "measuredAt": "2026-11-24T20:36:29.032Z",
   "environment": {
     "os": "darwin",
     "arch": "arm64",
+    "cpu": "Apple M4 Pro (48 GB)",
     "runtime": "Bun 1.4.5",
     "browser": "Google Chrome (headless)",
-    "flowCount": 5
+    "localDecisionModel": "Ollama qwen2.5:1.5b",
+    "flowCount": 20,
+    "stepsPerFlow": 14,
+    "totalInteractions": 280
   },
-  "liveWeb5Flows": {
+  "liveMultiStep20Flows": {
     "webdriverioHttpUiLogin": {
-      "totalMs": 1786,
-      "avgFlowMs": 357,
-      "httpCalls": 80
+      "totalMs": 9365,
+      "avgFlowMs": 468,
+      "httpCalls": 600,
+      "flowCount": 20
     },
     "webdriverioHttpStateInject": {
-      "totalMs": 1103,
-      "avgFlowMs": 221,
-      "httpCalls": 72
+      "totalMs": 7477,
+      "avgFlowMs": 374,
+      "httpCalls": 562,
+      "flowCount": 20
     },
-    "playwrightUiLogin": {
-      "totalMs": 1412,
-      "avgFlowMs": 282
-    },
-    "playwrightStorageState": {
-      "totalMs": 1397,
-      "avgFlowMs": 279
+    "playwrightStorageStateSerial": {
+      "totalMs": 8230,
+      "avgFlowMs": 412,
+      "flowCount": 20
     },
     "playwrightParallel4": {
-      "totalMs": 931,
-      "avgFlowMs": 186
+      "totalMs": 4927,
+      "avgFlowMs": 246,
+      "flowCount": 20
     },
     "spanaBridgeSerial": {
-      "totalMs": 718,
-      "avgFlowMs": 144
+      "totalMs": 2899,
+      "avgFlowMs": 145,
+      "flowCount": 20
     },
     "spanaSharedPoolParallel4": {
-      "totalMs": 754,
-      "avgFlowMs": 151
+      "totalMs": 2488,
+      "avgFlowMs": 124,
+      "flowCount": 20
+    },
+    "spanaLocalDecisionBridge1w": {
+      "filterMs": 1906,
+      "runMs": 407,
+      "totalMs": 2313,
+      "flowsKept": 2,
+      "flowsTotal": 20,
+      "tokens": 936,
+      "costUsd": 0
+    },
+    "spanaLocalDecisionPool4w": {
+      "filterMs": 1906,
+      "runMs": 675,
+      "totalMs": 2581,
+      "flowsKept": 2,
+      "flowsTotal": 20,
+      "tokens": 936,
+      "costUsd": 0
+    },
+    "spanaPathRulePool4w": {
+      "filterMs": 0,
+      "runMs": 1295,
+      "totalMs": 1295,
+      "flowsKept": 5,
+      "flowsTotal": 20
     }
+  },
+  "agenticVsReplayCache": {
+    "model": "qwen2.5:1.5b",
+    "liveLlmActMs": 1100,
+    "strictReplayCacheMs": 4,
+    "speedup": 275,
+    "llmTokens": 219,
+    "stepsRecorded": 7
   },
   "fiveTargetSignIn": [
     {
       "platform": "web",
       "mode": "harness",
-      "uiSignInMs": 142,
-      "bridgeSignInMs": 22,
-      "speedup": 6.5,
+      "uiSignInMs": 141,
+      "bridgeSignInMs": 23,
+      "speedup": 6.1,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "android",
       "mode": "harness",
-      "uiSignInMs": 1073,
-      "bridgeSignInMs": 41,
-      "speedup": 26.2,
+      "uiSignInMs": 1071,
+      "bridgeSignInMs": 40,
+      "speedup": 26.8,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
@@ -70,18 +109,18 @@
     {
       "platform": "electron",
       "mode": "harness",
-      "uiSignInMs": 165,
+      "uiSignInMs": 166,
       "bridgeSignInMs": 26,
-      "speedup": 6.3,
+      "speedup": 6.4,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "electrobun",
       "mode": "harness",
-      "uiSignInMs": 157,
-      "bridgeSignInMs": 25,
-      "speedup": 6.3,
+      "uiSignInMs": 156,
+      "bridgeSignInMs": 24,
+      "speedup": 6.5,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     }
