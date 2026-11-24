@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { Browser } from "playwright-core";
 import type { BridgeConfig, ProvConfig } from "../schemas/config.js";
 import type { Platform } from "../schemas/selector.js";
 import type { EngineConfig } from "../core/engine.js";
@@ -79,6 +80,7 @@ function buildEngineConfig(
         initialPollInterval: config.defaults?.initialPollInterval,
         tapMode: config.defaults?.tapMode,
         platform,
+        failFastWhenIdle: config.defaults?.failFastWhenIdle,
       },
       waitForIdleTimeout: config.defaults?.waitForIdleTimeout,
       typingDelay: config.defaults?.typingDelay,
@@ -98,10 +100,50 @@ function buildEngineConfig(
   };
 }
 
-export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult> {
+export interface PrelaunchedWebBrowser {
+  browserPromise: Promise<Browser>;
+  ownsBrowser: boolean;
+}
+
+/**
+ * Start launching (or connecting to a warm/CDP) Playwright browser immediately
+ * so browser boot overlaps with flow discovery and TypeScript imports.
+ */
+export function speculativelyPrelaunchWebBrowser(
+  config: ProvConfig,
+): PrelaunchedWebBrowser | undefined {
+  const webExecution = config.execution?.web;
+  if (webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
+    return undefined;
+  }
+
+  const useWarm =
+    (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
+    (webExecution?.browser ?? "chromium") === "chromium";
+  const ownsBrowser = !useWarm && !webExecution?.cdpUrl;
+  const browserPromise = webExecution?.cdpUrl
+    ? connectPlaywrightOverCDP(webExecution.cdpUrl)
+    : useWarm
+      ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then((r) => r.browser)
+      : launchPlaywrightBrowser({
+          browser: webExecution?.browser,
+          headless: webExecution?.headless ?? true,
+        });
+
+  // Prevent unhandled rejection if CLI exits early before awaiting
+  browserPromise.catch(() => {});
+  return { browserPromise, ownsBrowser };
+}
+
+export async function buildWebRuntime(
+  config: ProvConfig,
+  prelaunched?: PrelaunchedWebBrowser,
+): Promise<RuntimeResult> {
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
   const webExecution = config.execution?.web;
   const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
+
+  const prelaunchedBrowser = prelaunched ? await prelaunched.browserPromise : undefined;
 
   const rawDriver =
     webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda"
@@ -123,9 +165,11 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
             waitUntil: webExecution?.waitUntil,
             instantAnimations: webExecution?.instantAnimations,
             blockResources: webExecution?.blockResources,
-            cdpEndpoint: webExecution?.cdpUrl,
-            warmBrowser:
-              webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
+            sharedBrowser: prelaunchedBrowser,
+            cdpEndpoint: prelaunchedBrowser ? undefined : webExecution?.cdpUrl,
+            warmBrowser: prelaunchedBrowser
+              ? false
+              : (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false),
           }),
         );
   const driver = bridge ? { ...rawDriver, domChannel: bridge } : rawDriver;
@@ -137,6 +181,10 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
       cleanup: () =>
         safeCleanup(
           () => Effect.runPromise(driver.killApp("")),
+          () =>
+            prelaunchedBrowser && prelaunched?.ownsBrowser
+              ? prelaunchedBrowser.close()
+              : Promise.resolve(),
           () => bridge?.disconnect() ?? Promise.resolve(),
         ),
       metadata: {
@@ -158,25 +206,32 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
 export async function buildWebRuntimePool(
   config: ProvConfig,
   workerCount: number,
+  prelaunched?: PrelaunchedWebBrowser,
 ): Promise<RuntimeResult[]> {
   const webExecution = config.execution?.web;
   if (workerCount <= 1 || webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
-    return [await buildWebRuntime(config)];
+    return [await buildWebRuntime(config, prelaunched)];
   }
 
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
   const useWarm =
     (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
     (webExecution?.browser ?? "chromium") === "chromium";
-  const ownsSharedBrowser = !useWarm && !webExecution?.cdpUrl;
-  const sharedBrowser = webExecution?.cdpUrl
-    ? connectPlaywrightOverCDP(webExecution.cdpUrl)
-    : useWarm
-      ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then((r) => r.browser)
-      : launchPlaywrightBrowser({
-          browser: webExecution?.browser,
-          headless: webExecution?.headless ?? true,
-        });
+  const ownsSharedBrowser = prelaunched
+    ? prelaunched.ownsBrowser
+    : !useWarm && !webExecution?.cdpUrl;
+  const sharedBrowser = prelaunched
+    ? prelaunched.browserPromise
+    : webExecution?.cdpUrl
+      ? connectPlaywrightOverCDP(webExecution.cdpUrl)
+      : useWarm
+        ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then(
+            (r) => r.browser,
+          )
+        : launchPlaywrightBrowser({
+            browser: webExecution?.browser,
+            headless: webExecution?.headless ?? true,
+          });
   const resolvedBrowser = await sharedBrowser;
 
   let remaining = workerCount;

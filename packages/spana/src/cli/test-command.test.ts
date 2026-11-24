@@ -201,6 +201,7 @@ function registerCliMocks(): void {
     },
   }));
   mock.module("../runtime/local.js", () => ({
+    speculativelyPrelaunchWebBrowser: () => undefined,
     buildWebRuntime: async () => ({
       runtime: {
         driver: {},

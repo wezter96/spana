@@ -5,6 +5,7 @@ import {
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
+  buildDomWaitForSelectorScript,
   type DomChannel,
   type DomElementMatch,
 } from "../channels/dom-channel.js";
@@ -810,6 +811,10 @@ export function makePlaywrightDriver(
             },
             query: async (selector) => {
               const res = await page.evaluate(buildDomQueryScript(selector));
+              return Array.isArray(res) ? res : [];
+            },
+            waitForSelector: async (selector, opts) => {
+              const res = await page.evaluate(buildDomWaitForSelectorScript(selector, opts));
               return Array.isArray(res) ? res : [];
             },
             scrollIntoView: async (selector) => {

@@ -1,7 +1,8 @@
 import { Duration, Effect } from "effect";
 import { type DriverError, ElementNotFoundError, WaitTimeoutError } from "../errors.js";
 import type { Element } from "../schemas/element.js";
-import type { ExtendedSelector, Platform, TapMode } from "../schemas/selector.js";
+import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/selector.js";
+import { isSystemUISelector, isTestIDSelector } from "../schemas/selector.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import { formatSelector } from "./element-matcher.js";
 import type { HierarchyCache } from "./hierarchy-cache.js";
@@ -18,6 +19,10 @@ export interface WaitOptions {
   tapMode?: TapMode;
   /** Platform hint for coordinate scaling (android physical px vs ios logical pt). */
   platform?: Platform;
+  /** Fail early on web when DOM stays idle and document is complete instead of waiting full timeout. */
+  failFastWhenIdle?: boolean;
+  /** Quiet window in ms before failFastWhenIdle resolves empty. Default: 250. */
+  idleQuietMs?: number;
 }
 
 const DEFAULT_TIMEOUT = 5000;
@@ -64,6 +69,17 @@ function maybeWaitForBridgeIdle<T extends string = string, R extends string = st
   }).pipe(Effect.catchAll(() => Effect.void));
 }
 
+function isRelativeSelectorLike(selector: ExtendedSelector<any>): boolean {
+  if (typeof selector !== "object" || selector === null) return false;
+  return (
+    "below" in selector ||
+    "above" in selector ||
+    "leftOf" in selector ||
+    "rightOf" in selector ||
+    "childOf" in selector
+  );
+}
+
 /** Poll until an element matching selector is resolved via DOM or native channel. */
 function waitForResolvedAcrossChannels<T extends string = string, R extends string = string>(
   driver: RawDriverService<T, R>,
@@ -82,6 +98,11 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
     const start = Date.now();
     let waitedForIdle = false;
     let isFirstPoll = true;
+    const canReactiveDomWait =
+      !isSystemUISelector(selector) &&
+      !isRelativeSelectorLike(selector) &&
+      (opts?.platform === "web" || isTestIDSelector(selector));
+
     while (Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
       isFirstPoll = false;
@@ -104,6 +125,39 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
           if (settled) return settled;
         } else {
           return resolved;
+        }
+      }
+
+      // Reactive MutationObserver wait inside the browser/WebView DOM channel:
+      // wakes up in ~1-2ms as soon as the element mounts instead of sleeping 50-200ms per poll tick.
+      const domChannel = driver.domChannel;
+      if (canReactiveDomWait && domChannel?.isConnected() && domChannel.waitForSelector) {
+        const remaining = Math.max(0, timeout - (Date.now() - start));
+        if (remaining > 0) {
+          const reactiveResult = yield* Effect.tryPromise({
+            try: () =>
+              domChannel.waitForSelector!(selector as Selector, {
+                timeoutMs: Math.min(remaining, opts?.platform === "web" ? remaining : 1000),
+                forAction,
+                failFastWhenIdle: opts?.failFastWhenIdle,
+                idleQuietMs: opts?.idleQuietMs,
+              }),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (Array.isArray(reactiveResult) && reactiveResult.length > 0) {
+            // Element mounted! Loop immediately to resolve coordinates & return without sleeping.
+            continue;
+          }
+          if (
+            Array.isArray(reactiveResult) &&
+            reactiveResult.length === 0 &&
+            opts?.failFastWhenIdle &&
+            opts?.platform === "web"
+          ) {
+            // Page is idle & document.readyState === "complete" — fail fast instead of burning full timeout.
+            break;
+          }
         }
       }
 

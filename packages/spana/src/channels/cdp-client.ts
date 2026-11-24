@@ -3,10 +3,12 @@ import {
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
+  buildDomWaitForSelectorScript,
   buildEvaluateExpression,
   type DomChannel,
   type DomElementMatch,
   type DomTargetInfo,
+  type DomWaitForSelectorOptions,
 } from "./dom-channel.js";
 
 export interface MinimalWebSocket {
@@ -293,6 +295,16 @@ export class CdpDomChannel implements DomChannel {
 
   async query(selector: Selector): Promise<DomElementMatch[]> {
     const result = await this.evaluate<DomElementMatch[]>(buildDomQueryScript(selector));
+    return Array.isArray(result) ? result : [];
+  }
+
+  async waitForSelector(
+    selector: Selector,
+    opts?: DomWaitForSelectorOptions,
+  ): Promise<DomElementMatch[]> {
+    const result = await this.evaluate<DomElementMatch[]>(
+      buildDomWaitForSelectorScript(selector, opts),
+    );
     return Array.isArray(result) ? result : [];
   }
 

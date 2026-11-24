@@ -20,6 +20,8 @@ export interface OrchestrateOptions {
   bail?: number;
   /** Run platforms concurrently instead of serially. Default: false. */
   parallelPlatforms?: boolean;
+  /** Optional prior per-flow durations (ms) to schedule longest flows first in parallel mode. */
+  durationHintsMs?: Record<string, number>;
   /** Called before each flow starts executing. */
   onFlowStart?: (name: string, platform: Platform, workerName?: string) => void;
   /** Called after each flow finishes (pass, fail, or skip). */
@@ -107,6 +109,7 @@ async function runPlatform(
       retries: options?.retries ?? 0,
       retryDelay: options?.retryDelay ?? 0,
       bail: options?.bail,
+      durationHintsMs: options?.durationHintsMs,
       onFlowStart: (name, workerName) => {
         options?.onFlowStart?.(name, platform, workerName);
       },

@@ -384,4 +384,90 @@ describe("hierarchy cache integration", () => {
     // Should use cached result, no additional dump
     expect(getDumpCount()).toBe(1);
   });
+
+  test("uses MutationObserver reactive domChannel.waitForSelector without sleeping on poll backoff", async () => {
+    let mounted = false;
+    let waitForSelectorCalls = 0;
+    const match = {
+      id: "async-cta",
+      tag: "button",
+      text: "Ready",
+      rect: { x: 10, y: 20, width: 100, height: 40 },
+      scrollX: 0,
+      scrollY: 0,
+      devicePixelRatio: 1,
+      viewportWidth: 1280,
+      viewportHeight: 720,
+      visible: true,
+      enabled: true,
+      clickable: true,
+    };
+
+    const { driver } = createDriver([createElement()]);
+    const driverWithDom = {
+      ...driver,
+      domChannel: {
+        kind: "playwright" as const,
+        isConnected: () => true,
+        connect: async () => {},
+        disconnect: async () => {},
+        evaluate: async () => undefined as any,
+        query: async () => (mounted ? [match] : []),
+        waitForSelector: async () => {
+          waitForSelectorCalls += 1;
+          await new Promise((r) => setTimeout(r, 15));
+          mounted = true;
+          return [match];
+        },
+        tapDom: async () => true,
+      },
+    };
+
+    const t0 = Date.now();
+    const el = await Effect.runPromise(
+      waitForElement(driverWithDom, { testID: "async-cta" }, parse, {
+        timeout: 2000,
+        pollInterval: 500,
+        initialPollInterval: 500,
+        platform: "web",
+      }),
+    );
+    const elapsed = Date.now() - t0;
+    expect(el.id).toBe("async-cta");
+    expect(waitForSelectorCalls).toBe(1);
+    // Woke up reactively (~15ms) instead of sleeping 500ms poll interval!
+    expect(elapsed).toBeLessThan(200);
+  });
+
+  test("failFastWhenIdle on web fails early instead of waiting full timeout", async () => {
+    const { driver } = createDriver([createElement()]);
+    const driverWithDom = {
+      ...driver,
+      domChannel: {
+        kind: "playwright" as const,
+        isConnected: () => true,
+        connect: async () => {},
+        disconnect: async () => {},
+        evaluate: async () => undefined as any,
+        query: async () => [],
+        waitForSelector: async () => [],
+        tapDom: async () => false,
+      },
+    };
+
+    const t0 = Date.now();
+    const result = await Effect.runPromise(
+      Effect.either(
+        waitForElement(driverWithDom, { testID: "missing-btn" }, parse, {
+          timeout: 3000,
+          pollInterval: 200,
+          platform: "web",
+          failFastWhenIdle: true,
+        }),
+      ),
+    );
+    const elapsed = Date.now() - t0;
+    expect(result._tag).toBe("Left");
+    expect(elapsed).toBeLessThan(500);
+  });
 });

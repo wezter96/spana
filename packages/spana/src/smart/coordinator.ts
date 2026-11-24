@@ -151,8 +151,10 @@ export function createCoordinator<T extends string = string, R extends string = 
         clampY(coords.endY),
         500,
       );
-      // Wait for scroll animation to settle before probing hierarchy
-      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 300)));
+      // On mobile, wait briefly for scroll momentum to settle; web scrollBy is synchronous.
+      if (config.platform !== "web") {
+        yield* Effect.promise(() => new Promise((r) => setTimeout(r, 300)));
+      }
       yield* afterMutation();
     });
 

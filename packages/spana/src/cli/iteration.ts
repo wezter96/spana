@@ -10,6 +10,7 @@ interface LastRunFlowRecord {
   name: string;
   platform: string;
   passed: boolean;
+  durationMs?: number;
   sourcePath?: string;
 }
 
@@ -36,7 +37,13 @@ export function buildLastRunState(options: {
   for (const result of results) {
     const passed = result.status === "passed";
     const sourcePath = sourcePathsByFlowName.get(result.name);
-    flows.push({ name: result.name, platform: result.platform, passed, sourcePath });
+    flows.push({
+      name: result.name,
+      platform: result.platform,
+      passed,
+      durationMs: result.durationMs,
+      sourcePath,
+    });
     if (!passed) {
       if (!failedFlowNames.includes(result.name)) failedFlowNames.push(result.name);
       if (sourcePath && !failedSourcePaths.includes(sourcePath)) failedSourcePaths.push(sourcePath);
@@ -62,6 +69,21 @@ export async function readLastRunState(filePath: string): Promise<LastRunState |
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract per-flow duration hints (max observed ms across platforms) from the
+ * previous run's `last-run.json` so `--parallel` schedules the slowest flows first.
+ */
+export function extractDurationHints(state: LastRunState | null): Record<string, number> {
+  const hints: Record<string, number> = {};
+  if (!state?.flows) return hints;
+  for (const entry of state.flows) {
+    if (typeof entry.durationMs === "number" && entry.durationMs > 0) {
+      hints[entry.name] = Math.max(hints[entry.name] ?? 0, entry.durationMs);
+    }
+  }
+  return hints;
 }
 
 export async function writeLastRunState(filePath: string, state: LastRunState): Promise<void> {

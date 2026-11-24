@@ -126,6 +126,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -163,6 +164,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -191,6 +193,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -226,6 +229,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -419,6 +423,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -552,6 +557,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -593,6 +599,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -618,6 +625,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },
@@ -658,6 +666,7 @@ describe("orchestrate", () => {
             appId: "com.example",
             platform: "android",
             autoLaunch: false,
+            artifactConfig: { captureOnFailure: false },
             coordinatorConfig: {
               parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
             },

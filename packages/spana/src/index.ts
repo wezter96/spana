@@ -85,9 +85,11 @@ export {
   type DomElementMatch,
   type DomRect,
   type DomIdleOptions,
+  type DomWaitForSelectorOptions,
   type DomStorageEntries,
   type DomClearStorageOptions,
   type DomTargetInfo,
+  buildDomWaitForSelectorScript,
 } from "./channels/dom-channel.js";
 export {
   createCdpDomChannel,
@@ -129,7 +131,12 @@ export {
   resolveElementAcrossChannels,
   type ResolvedElementResult,
 } from "./smart/channel-resolver.js";
-export { ensureWarmBrowserDaemon, launchPlaywrightBrowser } from "./drivers/playwright.js";
+export {
+  ensureWarmBrowserDaemon,
+  launchPlaywrightBrowser,
+  connectPlaywrightOverCDP,
+} from "./drivers/playwright.js";
+export { speculativelyPrelaunchWebBrowser, type PrelaunchedWebBrowser } from "./runtime/local.js";
 export {
   makeLightweightCdpDriver,
   type LightweightCdpDriverOptions,

@@ -46,6 +46,17 @@ export interface DomIdleOptions {
   quietPeriodMs?: number;
 }
 
+export interface DomWaitForSelectorOptions {
+  /** Max time to wait in ms. Default: 5000. */
+  timeoutMs?: number;
+  /** Require the matched element to be visible & enabled for pointer actions. */
+  forAction?: boolean;
+  /** Fail early once the DOM stays quiet and document.readyState === "complete". */
+  failFastWhenIdle?: boolean;
+  /** Quiet window in ms before failFastWhenIdle resolves empty. Default: 250. */
+  idleQuietMs?: number;
+}
+
 export interface DomStorageEntries {
   localStorage?: Record<string, string>;
   sessionStorage?: Record<string, string>;
@@ -82,6 +93,11 @@ export interface DomChannel {
   disconnect(): Promise<void>;
   evaluate<T = unknown>(script: string | ((...args: any[]) => T), ...args: any[]): Promise<T>;
   query(selector: Selector): Promise<DomElementMatch[]>;
+  /** MutationObserver-reactive DOM wait: resolves immediately when a matching visible element mounts. */
+  waitForSelector?(
+    selector: Selector,
+    opts?: DomWaitForSelectorOptions,
+  ): Promise<DomElementMatch[]>;
   tapDom(selector: Selector): Promise<boolean>;
   /** Scroll a DOM element into the viewport center and return its updated bounding rect. */
   scrollIntoView?(selector: Selector): Promise<DomElementMatch | null>;
@@ -340,4 +356,98 @@ export function buildDomTapScript(selector: Selector): string {
     else { el.dispatchEvent(new MouseEvent("click", init)); }
     return true;
   })(${serialized})`;
+}
+
+/**
+ * Self-contained MutationObserver-reactive DOM wait script.
+ * Resolves synchronously (< 1ms) if the element is already visible, otherwise
+ * listens for DOM mutations so async renders resolve in ~1-2ms instead of
+ * waiting on 50-200ms poll ticks. Optionally supports `failFastWhenIdle`.
+ */
+export function buildDomWaitForSelectorScript(
+  selector: Selector,
+  opts: DomWaitForSelectorOptions = {},
+): string {
+  const serialized = JSON.stringify(selector);
+  const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
+  const forAction = Boolean(opts.forAction);
+  const failFastWhenIdle = Boolean(opts.failFastWhenIdle);
+  const idleQuietMs = Math.max(50, Math.round(opts.idleQuietMs ?? 250));
+
+  return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    function check() {
+      var hits = findAcrossRoots(sel).map(toMatch);
+      var filtered = hits.filter(function(m) {
+        return m.visible && (!forAction || m.enabled);
+      });
+      return filtered.length > 0 ? filtered : null;
+    }
+    var immediate = check();
+    if (immediate) return immediate;
+
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+      var idleTimer = null;
+
+      function finish(result) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        if (idleTimer) clearTimeout(idleTimer);
+        resolve(result);
+      }
+
+      function armIdleTimer() {
+        if (!failFastWhenIdle) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(function() {
+          if (document.readyState === "complete") {
+            var hit = check();
+            finish(hit || []);
+          } else {
+            armIdleTimer();
+          }
+        }, idleQuietMs);
+      }
+
+      function onChange() {
+        var hit = check();
+        if (hit) {
+          finish(hit);
+          return;
+        }
+        armIdleTimer();
+      }
+
+      timeoutTimer = setTimeout(function() {
+        finish(check() || []);
+      }, timeoutMs);
+
+      fallbackInterval = setInterval(function() {
+        var hit = check();
+        if (hit) finish(hit);
+      }, 250);
+
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(onChange);
+          observer.observe(root, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true
+          });
+        }
+      }
+
+      armIdleTimer();
+    });
+  })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs})`;
 }

@@ -271,6 +271,8 @@ export interface ProvConfig {
     tapMode?: TapMode;
     /** Pin device locale across targets so system UI sheet labels stay deterministic. */
     locale?: string;
+    /** Fail web element waits early when the page is idle & readyState === "complete" instead of waiting full waitTimeout. */
+    failFastWhenIdle?: boolean;
   };
   platforms?: Platform[];
   /** Run platforms concurrently when they use independent resources. Default: false (serial). */
@@ -549,6 +551,7 @@ export const provConfigSchema = z
         workers: z.number().int().positive().optional(),
         tapMode: z.enum(["native", "dom"]).optional(),
         locale: z.string().min(1).optional(),
+        failFastWhenIdle: z.boolean().optional(),
       })
       .strict()
       .optional(),

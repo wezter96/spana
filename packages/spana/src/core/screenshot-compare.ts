@@ -85,8 +85,16 @@ export function compareScreenshots(
   const threshold = options?.threshold ?? (mode === "layout-tolerant" ? 0.28 : 0.2);
   const maxDiffPixelRatio = options?.maxDiffPixelRatio ?? 0.01;
 
-  const expectedPng = PNG.sync.read(Buffer.from(expected));
-  const actualPng = PNG.sync.read(Buffer.from(actual));
+  const expectedBuf = Buffer.from(expected);
+  const actualBuf = Buffer.from(actual);
+
+  // Instant byte-identical fast path — avoids PNG decoding & pixelmatch altogether
+  if (Buffer.compare(expectedBuf, actualBuf) === 0) {
+    return { match: true, diffPixelCount: 0, diffPixelRatio: 0, mode };
+  }
+
+  const expectedPng = PNG.sync.read(expectedBuf);
+  const actualPng = PNG.sync.read(actualBuf);
 
   if (expectedPng.width !== actualPng.width || expectedPng.height !== actualPng.height) {
     return {

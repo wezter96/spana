@@ -22,6 +22,8 @@ import {
   buildElectrobunRuntime,
   buildLocalAndroidRuntime,
   buildLocalIOSRuntime,
+  speculativelyPrelaunchWebBrowser,
+  type PrelaunchedWebBrowser,
 } from "../runtime/local.js";
 import { buildAppiumAndroidRuntime, buildAppiumIOSRuntime } from "../runtime/appium.js";
 import { createCloudProviderHelper } from "../cloud/provider.js";
@@ -30,6 +32,7 @@ import { collectDiagnosticSections } from "../report/failure-diagnostics.js";
 import {
   buildLastRunState,
   createLastRunStatePath,
+  extractDurationHints,
   getGitChangedFiles,
   readLastRunState,
   selectChangedFlowPaths,
@@ -121,6 +124,7 @@ async function buildParallelPlatformConfigs(
   config: ProvConfig,
   runtimes: RuntimeHandle[],
   resolveFromConfig: (p: string) => string,
+  prelaunchedWeb?: PrelaunchedWebBrowser,
 ): Promise<PlatformConfig[]> {
   const { discoverDevices, findDeviceById } = await import("../device/discover.js");
 
@@ -161,7 +165,7 @@ async function buildParallelPlatformConfigs(
       const webWorkers = maxWorkers ?? 1;
       if (webWorkers > 1) {
         // Share ONE browser process with N isolated BrowserContexts
-        const pooledResults = await buildWebRuntimePool(config, webWorkers);
+        const pooledResults = await buildWebRuntimePool(config, webWorkers, prelaunchedWeb);
         const primaryResult = pooledResults[0]!;
         runtimes.push(primaryResult.runtime);
 
@@ -193,7 +197,7 @@ async function buildParallelPlatformConfigs(
         });
       } else {
         // Single web runtime (existing behavior)
-        const result = await buildWebRuntime(config);
+        const result = await buildWebRuntime(config, prelaunchedWeb);
         runtimes.push(result.runtime);
         platformConfigs.push({
           platform,
@@ -296,6 +300,7 @@ async function buildSerialPlatformConfigs(
   cloudHelper: Awaited<ReturnType<typeof createCloudProviderHelper>> | undefined,
   targetDevice: import("../device/discover.js").DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
+  prelaunchedWeb?: PrelaunchedWebBrowser,
 ): Promise<PlatformConfig[]> {
   const platformConfigs: PlatformConfig[] = [];
 
@@ -328,7 +333,7 @@ async function buildSerialPlatformConfigs(
         },
       });
     } else if (platform === "web") {
-      const result = await buildWebRuntime(config);
+      const result = await buildWebRuntime(config, prelaunchedWeb);
       runtimes.push(result.runtime);
       platformConfigs.push({
         platform,
@@ -924,23 +929,38 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       ? config.reporters.join(",")
       : "console";
 
-  // 2. Discover flows and step definitions
+  // 2. Discover flows & step definitions while speculatively pre-launching web browser
+  //    and loading prior run duration hints for longest-first parallel scheduling.
   const outputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
-  const flowResult = await discoverAndFilterFlows({
-    flowDir,
-    configPath,
-    tags: opts.tags,
-    grep: opts.grep,
-    platforms,
-    shard: opts.shard,
-    lastFailed: opts.lastFailed,
-    changed: opts.changed,
-    changedSince: opts.changedSince,
-    filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
-    outputDir,
-  });
-  if (!flowResult.ok) return { success: flowResult.success, watchRoots: flowResult.watchRoots };
+  const prelaunchedWeb =
+    executionMode === "local" && platforms.includes("web")
+      ? speculativelyPrelaunchWebBrowser(config)
+      : undefined;
+
+  const [flowResult, priorRunState] = await Promise.all([
+    discoverAndFilterFlows({
+      flowDir,
+      configPath,
+      tags: opts.tags,
+      grep: opts.grep,
+      platforms,
+      shard: opts.shard,
+      lastFailed: opts.lastFailed,
+      changed: opts.changed,
+      changedSince: opts.changedSince,
+      filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
+      outputDir,
+    }),
+    readLastRunState(createLastRunStatePath(outputDir)),
+  ]);
+  if (!flowResult.ok) {
+    if (prelaunchedWeb?.ownsBrowser) {
+      await prelaunchedWeb.browserPromise.then((b) => b.close()).catch(() => {});
+    }
+    return { success: flowResult.success, watchRoots: flowResult.watchRoots };
+  }
   const { selectedLoadedFlows, selectedFlows, watchRoots, filterSummaries } = flowResult;
+  const durationHintsMs = extractDurationHints(priorRunState);
 
   console.log(`Running ${selectedFlows.length} flow(s) on ${platforms.join(", ")}...\n`);
 
@@ -1015,6 +1035,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           config,
           runtimes,
           resolveFromConfig,
+          prelaunchedWeb,
         )),
       );
     } else {
@@ -1030,6 +1051,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           cloudHelper,
           targetDevice,
           resolveFromConfig,
+          prelaunchedWeb,
         )),
       );
     }
@@ -1088,6 +1110,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       retries,
       retryDelay,
       bail: opts.bail,
+      durationHintsMs: Object.keys(durationHintsMs).length > 0 ? durationHintsMs : undefined,
       parallelPlatforms:
         opts.parallel || config.parallelPlatforms || !!opts.workers || !!opts.devices,
       onFlowStart(name, platform, workerName) {
