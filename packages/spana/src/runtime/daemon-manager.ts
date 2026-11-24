@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-export type WarmDaemonKind = "wda" | "uiautomator2" | "iproxy";
+export type WarmDaemonKind = "wda" | "uiautomator2" | "iproxy" | "chromium";
 
 export interface WarmDaemonRecord {
   kind: WarmDaemonKind;
@@ -115,11 +115,14 @@ export async function getHealthyWarmDaemon(
     stateFile?: string;
     fetchFn?: typeof fetch;
     timeoutMs?: number;
+    /** HTTP health endpoint path (default: "/status", use "/json/version" for chromium). */
+    statusPath?: string;
   } = {},
 ): Promise<WarmDaemonRecord | null> {
   const stateFile = options.stateFile ?? defaultDaemonStatePath();
   const fetchFn = options.fetchFn ?? fetch;
   const timeoutMs = options.timeoutMs ?? 1500;
+  const statusPath = options.statusPath ?? (kind === "chromium" ? "/json/version" : "/status");
 
   const registry = loadDaemonRegistry(stateFile);
   const record = registry.daemons[daemonKey(kind, deviceId)];
@@ -129,7 +132,7 @@ export async function getHealthyWarmDaemon(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetchFn(`http://${record.host}:${record.port}/status`, {
+      const res = await fetchFn(`http://${record.host}:${record.port}${statusPath}`, {
         signal: controller.signal,
       });
       if (res.ok) {

@@ -1,5 +1,15 @@
+import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { Effect, Layer } from "effect";
+import {
+  buildDomQueryScript,
+  buildDomScrollIntoViewScript,
+  buildDomTapScript,
+  type DomChannel,
+  type DomElementMatch,
+} from "../channels/dom-channel.js";
+import { allocatePort } from "../core/port-allocator.js";
+import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
 import {
   chromium,
   firefox,
@@ -57,6 +67,105 @@ export interface PlaywrightConfig {
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
   /** Record per-request HAR metadata over CDP/IPC. Disable when `artifacts.har` is off for faster page loads. Default: true. */
   recordHar?: boolean;
+  /** Flashwright-inspired: speed up CSS transitions & animations to 0.001ms so actions never stall on transitions. */
+  instantAnimations?: boolean;
+  /** Flashwright-inspired: abort specified resource types (e.g. ["image", "font", "media"]) before hitting the network. */
+  blockResources?: Array<"image" | "font" | "media" | "stylesheet">;
+  /** Connect to an already-running warm Chromium CDP endpoint instead of launching a new browser process. */
+  cdpEndpoint?: string;
+  /** Reuse a persistent detached headless Chromium daemon across CLI runs (Flashwright-style warm session). */
+  warmBrowser?: boolean;
+  /** Attach a built-in zero-setup Playwright DOM channel for ~1ms `{ testID }` queries without full DOM dumps. Default: true. */
+  enableDomChannel?: boolean;
+}
+
+const INSTANT_ANIMATIONS_INIT_SCRIPT = `
+  (() => {
+    const inject = () => {
+      if (document.getElementById("__spana_instant_anim")) return;
+      const style = document.createElement("style");
+      style.id = "__spana_instant_anim";
+      style.textContent = "*, *::before, *::after { transition-duration: 0.001ms !important; transition-delay: 0ms !important; animation-duration: 0.001ms !important; animation-delay: 0ms !important; scroll-behavior: auto !important; }";
+      (document.head || document.documentElement).appendChild(style);
+    };
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", inject, { once: true });
+    } else {
+      inject();
+    }
+  })();
+`;
+
+/**
+ * Connect to an existing warm headless Chromium daemon or start a detached one
+ * registered in Spana's warm daemon registry (`spana daemon status|stop`).
+ */
+export async function ensureWarmBrowserDaemon(
+  config: Pick<PlaywrightConfig, "executablePath" | "headless"> = {},
+): Promise<{ browser: Browser; cdpUrl: string; reused: boolean }> {
+  const existing = await getHealthyWarmDaemon("chromium", "default", {
+    statusPath: "/json/version",
+  });
+  if (existing) {
+    const cdpUrl = `http://${existing.host}:${existing.port}`;
+    try {
+      const browser = await chromium.connectOverCDP(cdpUrl);
+      return { browser, cdpUrl, reused: true };
+    } catch {
+      // Fall through to launch fresh warm daemon
+    }
+  }
+
+  const port = allocatePort(9322);
+  const execPath = config.executablePath ?? chromium.executablePath();
+  const child = spawn(
+    execPath,
+    [
+      ...(config.headless !== false ? ["--headless=new"] : []),
+      `--remote-debugging-port=${port}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-gpu",
+      "about:blank",
+    ],
+    { detached: true, stdio: "ignore" },
+  );
+  child.unref();
+
+  const cdpUrl = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 10_000;
+  let ready = false;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(500) });
+      if (res.ok) {
+        ready = true;
+        break;
+      }
+    } catch {
+      // booting
+    }
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  if (!ready) {
+    throw new Error(`Warm Chromium daemon failed to start on ${cdpUrl}`);
+  }
+
+  registerWarmDaemon({
+    kind: "chromium",
+    deviceId: "default",
+    host: "127.0.0.1",
+    port,
+    pid: child.pid,
+    startedAt: new Date().toISOString(),
+  });
+
+  const browser = await chromium.connectOverCDP(cdpUrl);
+  return { browser, cdpUrl, reused: false };
+}
+
+export async function connectPlaywrightOverCDP(cdpEndpoint: string): Promise<Browser> {
+  return chromium.connectOverCDP(cdpEndpoint);
 }
 
 export async function launchPlaywrightBrowser(
@@ -183,18 +292,32 @@ export function makePlaywrightDriver(
 ): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const browserName = config.browser ?? "chromium";
-    const ownsBrowser = !config.sharedBrowser;
+    const ownsBrowser = !config.sharedBrowser && !config.cdpEndpoint && !config.warmBrowser;
     const browser = config.sharedBrowser
       ? config.sharedBrowser
-      : yield* Effect.tryPromise({
-          try: () =>
-            browserLaunchers[browserName].launch({
-              headless: config.headless ?? true,
-              ...(config.channel ? { channel: config.channel } : {}),
-              ...(config.executablePath ? { executablePath: config.executablePath } : {}),
-            }),
-          catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
-        });
+      : config.cdpEndpoint
+        ? yield* Effect.tryPromise({
+            try: () => chromium.connectOverCDP(config.cdpEndpoint!),
+            catch: (e) =>
+              new DriverError({
+                message: `Failed to connect to browser over CDP (${config.cdpEndpoint}): ${e}`,
+              }),
+          })
+        : config.warmBrowser && browserName === "chromium"
+          ? yield* Effect.tryPromise({
+              try: async () => (await ensureWarmBrowserDaemon(config)).browser,
+              catch: (e) =>
+                new DriverError({ message: `Failed to connect to warm Chromium daemon: ${e}` }),
+            })
+          : yield* Effect.tryPromise({
+              try: () =>
+                browserLaunchers[browserName].launch({
+                  headless: config.headless ?? true,
+                  ...(config.channel ? { channel: config.channel } : {}),
+                  ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+                }),
+              catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
+            });
 
     let context!: BrowserContext;
     let page!: Page;
@@ -584,11 +707,32 @@ export function makePlaywrightDriver(
       }
     };
 
+    const applyContextSpeedOptions = async (ctx: BrowserContext) => {
+      if (config.instantAnimations && typeof ctx.addInitScript === "function") {
+        await ctx.addInitScript(INSTANT_ANIMATIONS_INIT_SCRIPT);
+      }
+      if (
+        config.blockResources &&
+        config.blockResources.length > 0 &&
+        typeof ctx.route === "function"
+      ) {
+        const blocked = new Set<string>(config.blockResources);
+        await ctx.route("**/*", async (route) => {
+          if (blocked.has(route.request().resourceType())) {
+            await route.abort();
+          } else {
+            await route.continue();
+          }
+        });
+      }
+    };
+
     const createContextAndPage = async (storageStatePath?: string) => {
       context = await browser.newContext({
         acceptDownloads: true,
         ...(storageStatePath ? { storageState: storageStatePath } : {}),
       });
+      await applyContextSpeedOptions(context);
       page = await context.newPage();
       cdpSession = undefined;
       attachPageDiagnostics(page);
@@ -646,7 +790,40 @@ export function makePlaywrightDriver(
       catch: (e) => new DriverError({ message: `Failed to create page: ${e}` }),
     });
 
+    const domChannel: DomChannel | undefined =
+      config.enableDomChannel === false
+        ? undefined
+        : {
+            kind: "playwright",
+            isConnected: () =>
+              Boolean(page) && (typeof page.isClosed !== "function" || !page.isClosed()),
+            connect: async () => {},
+            disconnect: async () => {},
+            evaluate: async <T = unknown>(
+              script: string | ((...args: any[]) => T),
+              ...args: any[]
+            ): Promise<T> => {
+              if (typeof script === "string") {
+                return (await page.evaluate(script)) as T;
+              }
+              return (await page.evaluate(script as any, ...(args as [any]))) as T;
+            },
+            query: async (selector) => {
+              const res = await page.evaluate(buildDomQueryScript(selector));
+              return Array.isArray(res) ? res : [];
+            },
+            scrollIntoView: async (selector) => {
+              const res = await page.evaluate(buildDomScrollIntoViewScript(selector));
+              return res && typeof res === "object" ? (res as DomElementMatch) : null;
+            },
+            tapDom: async (selector) => {
+              const res = await page.evaluate(buildDomTapScript(selector));
+              return Boolean(res);
+            },
+          };
+
     const service: RawDriverService = {
+      ...(domChannel ? { domChannel } : {}),
       beginFlow: (flowName) =>
         Effect.tryPromise({
           try: () => beginFlow(flowName),
@@ -695,24 +872,26 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await page.mouse.click(x, y);
-            // Ensure focus is set for input elements (React Native Web needs explicit focus).
-            // React concurrent renders can steal focus back to <body> after our click, so
-            // we wait for a rAF + microtask flush, then re-focus if needed, retrying once.
-            // Ignore execution-context destruction when the click triggered a page navigation.
+            // Only wait for React Native Web focus retention when the tapped target is
+            // actually an editable input; non-input buttons/links return immediately (~2ms vs 48ms).
             await page
               .evaluate(`
-              new Promise(resolve => {
-                function tryFocus() {
-                  var el = document.elementFromPoint(${x}, ${y});
-                  if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")) {
-                    el.focus();
-                  }
+              (function() {
+                var el = document.elementFromPoint(${x}, ${y});
+                if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && el.tagName !== "SELECT")) {
+                  return;
                 }
-                requestAnimationFrame(() => requestAnimationFrame(() => {
-                  tryFocus();
-                  setTimeout(() => { tryFocus(); resolve(); }, 16);
-                }));
-              })
+                el.focus();
+                return new Promise(function(resolve) {
+                  requestAnimationFrame(function() {
+                    var cur = document.elementFromPoint(${x}, ${y});
+                    if (cur && (cur.tagName === "INPUT" || cur.tagName === "TEXTAREA" || cur.tagName === "SELECT")) {
+                      cur.focus();
+                    }
+                    resolve();
+                  });
+                });
+              })()
             `)
               .catch(() => {});
           },

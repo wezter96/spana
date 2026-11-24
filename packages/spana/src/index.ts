@@ -45,6 +45,8 @@ export {
   type BridgeConfig,
   type WarmDaemonConfig,
   type BrowserName,
+  type WebBrowserEngine,
+  type WebResourceBlockType,
   type StorybookConfig,
   type StorybookValue,
   type WebExecutionConfig,
@@ -121,12 +123,18 @@ export {
 // Channel resolver & Desktop drivers
 export {
   findWebViewFrame,
+  invalidateWebViewFrameCache,
   domRectToScreenBounds,
   isOffscreenInViewport,
   resolveElementAcrossChannels,
   type ResolvedElementResult,
 } from "./smart/channel-resolver.js";
-export { launchPlaywrightBrowser } from "./drivers/playwright.js";
+export { ensureWarmBrowserDaemon, launchPlaywrightBrowser } from "./drivers/playwright.js";
+export {
+  makeLightweightCdpDriver,
+  type LightweightCdpDriverOptions,
+} from "./drivers/cdp-browser.js";
+export { orderFlowsLongestFirst } from "./core/parallel.js";
 export { makeElectronDriver, type ElectronDriverOptions } from "./drivers/electron.js";
 export {
   makeElectrobunDriver,
@@ -168,6 +176,8 @@ export {
   decisionFilter,
   pathRuleFilter,
   createOllamaDecisionJudge,
+  createLogprobDecisionJudge,
+  probabilityFromTopLogprobs,
   applyTestFilters,
   collectGitChanges,
   buildFilterCandidates,
@@ -184,6 +194,7 @@ export {
   type DecisionBatchJudgeResult,
   type DecisionFilterOptions,
   type OllamaDecisionJudgeOptions,
+  type LogprobDecisionJudgeOptions,
   type PathRule,
   type PathRuleFilterOptions,
   type AppliedFilterReport,

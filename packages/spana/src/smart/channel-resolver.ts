@@ -41,6 +41,22 @@ const WEBVIEW_TYPES = new Set([
   "WKWebView",
 ]);
 
+const WEBVIEW_FRAME_CACHE_TTL_MS = 10_000;
+
+interface CachedWebViewFrame {
+  frame: Bounds | undefined;
+  viewportWidth: number;
+  viewportHeight: number;
+  cachedAt: number;
+}
+
+const webViewFrameCache = new WeakMap<object, CachedWebViewFrame>();
+
+/** Explicitly invalidate the cached WebView frame for a driver (e.g. after navigation or rotation). */
+export function invalidateWebViewFrameCache(driver: RawDriverService<any, any>): void {
+  webViewFrameCache.delete(driver as object);
+}
+
 /**
  * Locate the active WebView container's frame inside a parsed native
  * accessibility hierarchy (iOS `XCUIElementTypeWebView` or Android
@@ -251,9 +267,49 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
           }
         }
 
-        // Convert DOM rect -> native screen coordinates using WebView frame
-        const nativeRoot = yield* getNativeHierarchy(driver, parse, cache);
-        const webViewFrame = findWebViewFrame(nativeRoot);
+        // On pure web targets, the viewport IS the screen frame (0 native dumps!).
+        if (options.platform === "web") {
+          const webFrame: Bounds = {
+            x: 0,
+            y: 0,
+            width: targetMatch.viewportWidth,
+            height: targetMatch.viewportHeight,
+          };
+          const screenBounds = domRectToScreenBounds(targetMatch, webFrame, {
+            platform: "web",
+          });
+          return {
+            element: domMatchToElement(targetMatch, screenBounds),
+            channel: "dom" as const,
+            domMatch: targetMatch,
+            webViewFrame: webFrame,
+          };
+        }
+
+        // Convert DOM rect -> native screen coordinates using cached WebView frame
+        // (eliminates ~90% of native WDA/UiAutomator2 XML dumps across consecutive WebView taps;
+        // auto-invalidates if viewport dimensions change, e.g. on orientation rotation).
+        const now = Date.now();
+        const cachedFrame = webViewFrameCache.get(driver as object);
+        let webViewFrame: Bounds | undefined;
+        if (
+          cachedFrame &&
+          cachedFrame.viewportWidth === targetMatch.viewportWidth &&
+          cachedFrame.viewportHeight === targetMatch.viewportHeight &&
+          now - cachedFrame.cachedAt < WEBVIEW_FRAME_CACHE_TTL_MS
+        ) {
+          webViewFrame = cachedFrame.frame;
+        } else {
+          const nativeRoot = yield* getNativeHierarchy(driver, parse, cache);
+          webViewFrame = findWebViewFrame(nativeRoot);
+          webViewFrameCache.set(driver as object, {
+            frame: webViewFrame,
+            viewportWidth: targetMatch.viewportWidth,
+            viewportHeight: targetMatch.viewportHeight,
+            cachedAt: now,
+          });
+        }
+
         const screenBounds = domRectToScreenBounds(targetMatch, webViewFrame, {
           platform: options.platform,
         });

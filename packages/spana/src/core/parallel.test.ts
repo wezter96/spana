@@ -256,4 +256,43 @@ describe("runParallel", () => {
     const gap = timestamps[1]! - timestamps[0]!;
     expect(gap).toBeGreaterThanOrEqual(45); // allow small timing variance
   });
+
+  test("orderFlowsLongestFirst schedules known slow flows before fast flows", async () => {
+    const { orderFlowsLongestFirst } = await import("./parallel.js");
+    const flows = [
+      createFlow("fast"),
+      createFlow("medium"),
+      createFlow("slow"),
+      createFlow("unknown"),
+    ];
+    const ordered = orderFlowsLongestFirst(flows, {
+      fast: 120,
+      medium: 850,
+      slow: 4200,
+    });
+    expect(ordered.map((f) => f.name)).toEqual(["slow", "medium", "fast", "unknown"]);
+
+    const startOrder: string[] = [];
+    await runParallel({
+      workers: [
+        {
+          id: "worker-a",
+          name: "Single",
+          driver: createDriver("worker-a"),
+          engineConfig: {
+            appId: "com.example.app",
+            platform: "android",
+            autoLaunch: false,
+            coordinatorConfig: {
+              parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+            },
+          },
+        },
+      ],
+      flows,
+      durationHintsMs: { fast: 120, medium: 850, slow: 4200 },
+      onFlowStart: (name) => startOrder.push(name),
+    });
+    expect(startOrder).toEqual(["slow", "medium", "fast", "unknown"]);
+  });
 });

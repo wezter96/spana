@@ -15,8 +15,24 @@ export interface ParallelRunnerConfig {
   retries?: number;
   retryDelay?: number;
   bail?: number;
+  /**
+   * Flashwright-inspired longest-test-first scheduling: pass previous flow durations
+   * (`flowName -> ms`) so slow flows start immediately on workers instead of straggling at the tail.
+   */
+  durationHintsMs?: Record<string, number>;
   onFlowStart?: (name: string, workerName: string) => void;
   onFlowComplete?: (result: TestResult, workerName: string) => void;
+}
+
+/** Order flows descending by known duration (longest first) while preserving order on ties. */
+export function orderFlowsLongestFirst(
+  flows: FlowDefinition[],
+  durationHintsMs?: Record<string, number>,
+): FlowDefinition[] {
+  if (!durationHintsMs || Object.keys(durationHintsMs).length === 0) {
+    return flows;
+  }
+  return flows.toSorted((a, b) => (durationHintsMs[b.name] ?? 0) - (durationHintsMs[a.name] ?? 0));
 }
 
 export interface ParallelResult {
@@ -31,7 +47,17 @@ export interface ParallelResult {
 }
 
 export async function runParallel(config: ParallelRunnerConfig): Promise<ParallelResult> {
-  const { workers, flows, onFlowComplete, onFlowStart, retries = 0, retryDelay = 0, bail } = config;
+  const {
+    workers,
+    flows: rawFlows,
+    onFlowComplete,
+    onFlowStart,
+    retries = 0,
+    retryDelay = 0,
+    bail,
+    durationHintsMs,
+  } = config;
+  const flows = orderFlowsLongestFirst(rawFlows, durationHintsMs);
   const start = Date.now();
   const results: TestResult[] = [];
   let nextFlowIndex = 0;

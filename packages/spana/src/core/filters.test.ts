@@ -210,4 +210,77 @@ describe("CI Filters API (--changed-since)", () => {
     expect(res.excluded.map((e) => e.candidate.name)).toEqual(["avatar"]);
     expect(res.reports[0]!.usage).toEqual({ calls: 1, tokens: 375, costUsd: 0 });
   });
+
+  test("probabilityFromTopLogprobs computes exact normalized YES/(YES+NO) probability", async () => {
+    const { probabilityFromTopLogprobs, createLogprobDecisionJudge } = await import("./filters.js");
+
+    // log(0.9) ≈ -0.10536, log(0.1) ≈ -2.30258 -> ~0.90
+    const high = probabilityFromTopLogprobs([
+      { token: "YES", logprob: Math.log(0.9) },
+      { token: "NO", logprob: Math.log(0.1) },
+    ]);
+    expect(high).toBeCloseTo(0.9, 3);
+
+    const low = probabilityFromTopLogprobs([
+      { token: " no", logprob: Math.log(0.95) },
+      { token: " yes", logprob: Math.log(0.05) },
+    ]);
+    expect(low).toBeCloseTo(0.05, 3);
+
+    const promptsSeen: string[] = [];
+    const judge = createLogprobDecisionJudge({
+      provider: "openai",
+      model: "typesafe-ai/jev",
+      baseUrl: "http://127.0.0.1:8000",
+      fetchFn: (async (_url: string | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        const prompt = String(body.messages?.[0]?.content ?? "");
+        promptsSeen.push(prompt);
+        const isCheckout = prompt.includes("Flow name: checkout");
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { content: isCheckout ? "YES" : "NO" },
+                logprobs: {
+                  content: [
+                    {
+                      token: isCheckout ? "YES" : "NO",
+                      top_logprobs: isCheckout
+                        ? [
+                            { token: "YES", logprob: Math.log(0.94) },
+                            { token: "NO", logprob: Math.log(0.06) },
+                          ]
+                        : [
+                            { token: "NO", logprob: Math.log(0.96) },
+                            { token: "YES", logprob: Math.log(0.04) },
+                          ],
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 119, completion_tokens: 1 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as unknown as typeof fetch,
+    });
+
+    const filter = decisionFilter({ alwaysRunTags: ["smoke"], judge });
+    const res = await applyTestFilters(
+      CANDIDATES,
+      CANDIDATES,
+      [filter],
+      makeContext(makeChanges()),
+    );
+    expect(res.kept.map((c) => c.name)).toEqual(["checkout", "login-smoke"]);
+    expect(res.excluded.map((e) => e.candidate.name)).toEqual(["avatar"]);
+    // Shared diff prefix comes FIRST in both prompts for KV-cache reuse
+    expect(promptsSeen).toHaveLength(2);
+    const prefix0 = promptsSeen[0]!.split("Flow file:")[0];
+    const prefix1 = promptsSeen[1]!.split("Flow file:")[0];
+    expect(prefix0).toBe(prefix1);
+    expect(prefix0).toContain("Changed files:");
+  });
 });

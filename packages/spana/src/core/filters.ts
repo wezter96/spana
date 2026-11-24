@@ -476,6 +476,165 @@ export function createOllamaDecisionJudge(options: OllamaDecisionJudgeOptions): 
   };
 }
 
+export interface LogprobDecisionJudgeOptions {
+  /** Model identifier (e.g. `"hf.co/apus-ailab/APUS-OpenJev-v1-9B-GGUF:Q8_0"`, `"jevk5-4b-v0.3:q8_0"`, `"decider4b-v2:bf16"`, `"plumb-4b"`). */
+  model: string;
+  /** Protocol backend: `"openai"` (vLLM / SGLang / llama-server / OpenRouter / Typesafe AI) or `"ollama"`. */
+  provider: "openai" | "ollama";
+  /** Base URL (default: `http://127.0.0.1:8000/v1` for openai, `http://127.0.0.1:11434` for ollama). */
+  baseUrl?: string;
+  /** Optional Bearer API key for hosted OpenAI-compatible endpoints. */
+  apiKey?: string;
+  /** Request timeout per flow judgment in ms (default: 15000). */
+  timeoutMs?: number;
+  /** Injectable fetch for unit tests. */
+  fetchFn?: typeof fetch;
+}
+
+/**
+ * Compute calibrated binary YES probability from OpenAI-style `top_logprobs`
+ * on a 1-token decision model response (`max_tokens: 1`, `logprobs: true`).
+ * Returns `null` when neither YES nor NO tokens appeared in top_logprobs.
+ */
+export function probabilityFromTopLogprobs(
+  topLogprobs: Array<{ token: string; logprob: number }>,
+): number | null {
+  let yesProb = 0;
+  let noProb = 0;
+
+  for (const entry of topLogprobs) {
+    const norm = entry.token.trim().toLowerCase();
+    const p = Math.exp(entry.logprob);
+    if (norm === "yes" || norm === "y" || norm === "true" || norm === "1") {
+      yesProb += p;
+    } else if (norm === "no" || norm === "n" || norm === "false" || norm === "0") {
+      noProb += p;
+    }
+  }
+
+  const total = yesProb + noProb;
+  if (total <= 0) return null;
+  return Math.max(0, Math.min(1, yesProb / total));
+}
+
+/**
+ * Native 1-Token Logprob Decision Judge for System-1 decision models
+ * (OpenJev, JevK5, Decider-4B, Plumb-4B, Winnow-12B, Typesafe AI Jev).
+ *
+ * Places the shared git diff prefix at the start of every prompt so vLLM,
+ * SGLang, and llama.cpp automatically reuse the KV cache across all flows in a PR,
+ * generating only **1 single token** (`YES` / `NO`) with exact calibrated probabilities.
+ */
+export function createLogprobDecisionJudge(
+  options: LogprobDecisionJudgeOptions,
+): DecisionModelJudge {
+  const baseUrl = (
+    options.baseUrl ??
+    (options.provider === "ollama" ? "http://127.0.0.1:11434" : "http://127.0.0.1:8000/v1")
+  ).replace(/\/$/, "");
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const fetchFn = options.fetchFn ?? fetch;
+
+  return async ({ candidate, changes }): Promise<DecisionJudgeResult> => {
+    // Shared prefix FIRST to maximize automatic KV-cache prefix hits across flows
+    const prompt = [
+      "You are a binary CI test-impact classifier. Answer strictly YES or NO.",
+      `Changed files: ${changes.files.join(", ")}`,
+      `Git diff:\n${changes.diff.slice(0, 3500)}`,
+      `Question: Could this change affect or break the E2E flow below?`,
+      `Flow file: ${candidate.file}`,
+      `Flow name: ${candidate.name}`,
+      `Flow tags: ${candidate.tags.join(", ") || "(none)"}`,
+      "Answer (YES or NO):",
+    ].join("\n");
+
+    if (options.provider === "ollama") {
+      const res = await fetchFn(`${baseUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: options.model,
+          prompt,
+          stream: false,
+          logprobs: true,
+          top_logprobs: 10,
+          options: { temperature: 0, num_predict: 1 },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) throw new Error(`Ollama returned HTTP ${res.status}`);
+      const data = (await res.json()) as {
+        response?: string;
+        prompt_eval_count?: number;
+        eval_count?: number;
+        logprobs?: Array<{ top_logprobs?: Array<{ token: string; logprob: number }> }>;
+      };
+
+      const top = data.logprobs?.[0]?.top_logprobs;
+      let probability = top ? probabilityFromTopLogprobs(top) : null;
+      if (probability === null) {
+        const tok = (data.response ?? "").trim().toLowerCase();
+        if (tok.startsWith("n") || tok === "0" || tok === "false") probability = 0.05;
+        else probability = 0.95; // fail open on ambiguous token
+      }
+
+      return {
+        probability,
+        usage: {
+          calls: 1,
+          tokens: (data.prompt_eval_count ?? 0) + (data.eval_count ?? 0),
+          costUsd: 0,
+        },
+      };
+    }
+
+    // OpenAI-compatible 1-token logprob endpoint (vLLM / SGLang / llama-server / Typesafe AI / OpenRouter)
+    const res = await fetchFn(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: options.model,
+        temperature: 0,
+        max_tokens: 1,
+        logprobs: true,
+        top_logprobs: 10,
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw new Error(`Decision endpoint returned HTTP ${res.status}`);
+    const data = (await res.json()) as {
+      choices?: Array<{
+        message?: { content?: string };
+        logprobs?: {
+          content?: Array<{ top_logprobs?: Array<{ token: string; logprob: number }> }>;
+        };
+      }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+
+    const top = data.choices?.[0]?.logprobs?.content?.[0]?.top_logprobs;
+    let probability = top ? probabilityFromTopLogprobs(top) : null;
+    if (probability === null) {
+      const tok = (data.choices?.[0]?.message?.content ?? "").trim().toLowerCase();
+      if (tok.startsWith("n") || tok === "0" || tok === "false") probability = 0.05;
+      else probability = 0.95;
+    }
+
+    return {
+      probability,
+      usage: {
+        calls: 1,
+        tokens: (data.usage?.prompt_tokens ?? 0) + (data.usage?.completion_tokens ?? 0),
+        costUsd: 0,
+      },
+    };
+  };
+}
+
 // ── Built-in Deterministic Path-Rule Filter ─────────────────────────────────
 
 export interface PathRule {

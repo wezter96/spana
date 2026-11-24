@@ -306,11 +306,12 @@ Selective inspiration from AI-first E2E and agent tooling (`e2e-inc/e2e` and Sof
 - [x] **Verified Replay Cache (`.spana/cache/`) + `--strict-cache`** — `ReplaySession` & `ReplayCacheStore` replaying deterministic actions with zero LLM calls, verifying writes only after real assertions pass, and supporting self-healing handoff in `read-write` mode
 - [x] **Composable lazy fixtures & named setups** — `createFlowWithFixtures` + `defineSetup` (`{ session: "admin" }`) with lazy destructured dependency graphs, LIFO teardown, and automatic `spana-bridge` / Playwright storage injection
 - [x] **Inline failure-bundle runtime diagnostics, layout-tolerant visual diffing & GitHub PR reporter** — `runtimeDiagnostics` in `failure-bundle.json`, `mode: "layout-tolerant"` in `compareScreenshots`, and built-in `--reporter github` (`github-pr-summary.md` + `$GITHUB_STEP_SUMMARY`)
+- [x] **Performance pack & lightweight CDP/Lightpanda adapter** — built-in zero-setup `PlaywrightDomChannel` (1–2 ms DOM queries + fast non-input clicks without 48 ms rAF sleep), `webViewFrame` caching + 0-dump web viewport fast-path, warm persistent Chromium daemon (`warmBrowser`), CDP-direct `makeLightweightCdpDriver` (`engine: "cdp" | "lightpanda"`), native 1-token logprob decision judge (`createLogprobDecisionJudge`) with KV-cache prefix sharing, and Flashwright-inspired `instantAnimations`, `blockResources`, and longest-first parallel scheduling (`orderFlowsLongestFirst`)
 
 ### Remaining in Phase 12
 
 - [ ] Optional Perfetto / Xcode Instruments / Hermes profiling hooks for mobile render-regression diagnostics
-- [ ] Pluggable lightweight browser / cloud sandbox adapters (Lightpanda / remote CDP / hosted sandbox providers)
+- [ ] Hosted cloud sandbox providers (e.g. remote Lightpanda / Browserless / E2B managed pools)
 
 ---
 

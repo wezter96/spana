@@ -396,4 +396,75 @@ describe("Channel-hiding resolver & coordinate conversion", () => {
     expect(scrollCalls).toBe(1);
     expect(fake.taps[0]).toEqual({ x: 195, y: 423 });
   });
+
+  test("caches WebView frame across consecutive mobile taps and invalidates when viewport rotates", async () => {
+    const screen = { xml: IOS_WKWEBVIEW_LOGIN_XML };
+    let viewport = { width: 390, height: 751 };
+    const domChannel = createStubDomChannel({});
+    domChannel.query = async () => [
+      {
+        id: "sign-in",
+        tag: "button",
+        rect: { x: 24, y: 300, width: 342, height: 48 },
+        scrollX: 0,
+        scrollY: 0,
+        devicePixelRatio: 3,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+        visible: true,
+        enabled: true,
+        clickable: true,
+      },
+    ];
+
+    const fake = createFakeDriver(screen, domChannel);
+    const coord = createCoordinator(fake.driver, {
+      parse: parseIOSHierarchy,
+      platform: "ios",
+    });
+
+    await Effect.runPromise(coord.tap({ testID: "sign-in" }));
+    const dumpsAfterFirst = fake.dumps;
+    expect(dumpsAfterFirst).toBe(1);
+
+    // Second tap reuses cached WebView frame — 0 extra native hierarchy dumps!
+    await Effect.runPromise(coord.tap({ testID: "sign-in" }));
+    expect(fake.dumps).toBe(dumpsAfterFirst);
+
+    // Viewport rotation changes dimensions -> cache invalidates and refreshes once
+    viewport = { width: 751, height: 390 };
+    await Effect.runPromise(coord.tap({ testID: "sign-in" }));
+    expect(fake.dumps).toBe(dumpsAfterFirst + 1);
+  });
+
+  test("web platform DOM resolution uses viewport fast-path with zero dumpHierarchy calls", async () => {
+    const screen = { xml: "{}" };
+    const domChannel = createStubDomChannel({
+      "hero-cta": [
+        {
+          id: "hero-cta",
+          tag: "button",
+          text: "Get Started",
+          rect: { x: 100, y: 200, width: 160, height: 44 },
+          scrollX: 0,
+          scrollY: 0,
+          devicePixelRatio: 2,
+          viewportWidth: 1280,
+          viewportHeight: 720,
+          visible: true,
+          enabled: true,
+          clickable: true,
+        },
+      ],
+    });
+    const fake = createFakeDriver(screen, domChannel);
+    const coord = createCoordinator(fake.driver, {
+      parse: () => ({ bounds: { x: 0, y: 0, width: 1280, height: 720 }, children: [] }),
+      platform: "web",
+    });
+
+    await Effect.runPromise(coord.tap({ testID: "hero-cta" }));
+    expect(fake.dumps).toBe(0);
+    expect(fake.taps[0]).toEqual({ x: 180, y: 222 });
+  });
 });

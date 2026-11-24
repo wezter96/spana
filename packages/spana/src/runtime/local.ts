@@ -5,7 +5,13 @@ import type { EngineConfig } from "../core/engine.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { DiscoveredDevice } from "../device/discover.js";
 import type { RuntimeResult } from "./types.js";
-import { launchPlaywrightBrowser, makePlaywrightDriver } from "../drivers/playwright.js";
+import {
+  connectPlaywrightOverCDP,
+  ensureWarmBrowserDaemon,
+  launchPlaywrightBrowser,
+  makePlaywrightDriver,
+} from "../drivers/playwright.js";
+import { makeLightweightCdpDriver } from "../drivers/cdp-browser.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
 import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
@@ -97,16 +103,31 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
   const webExecution = config.execution?.web;
   const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
 
-  const rawDriver = await Effect.runPromise(
-    makePlaywrightDriver({
-      browser: webExecution?.browser,
-      headless: webExecution?.headless ?? true,
-      baseUrl: webUrl,
-      storageState: webExecution?.storageState,
-      verboseLogging: webExecution?.verboseLogging,
-      recordHar: Boolean(config.artifacts?.har),
-    }),
-  );
+  const rawDriver =
+    webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda"
+      ? await Effect.runPromise(
+          makeLightweightCdpDriver({
+            cdpUrl: webExecution.cdpUrl ?? "http://127.0.0.1:9222",
+            baseUrl: webUrl,
+            engineLabel: webExecution.engine,
+          }),
+        )
+      : await Effect.runPromise(
+          makePlaywrightDriver({
+            browser: webExecution?.browser,
+            headless: webExecution?.headless ?? true,
+            baseUrl: webUrl,
+            storageState: webExecution?.storageState,
+            verboseLogging: webExecution?.verboseLogging,
+            recordHar: Boolean(config.artifacts?.har),
+            waitUntil: webExecution?.waitUntil,
+            instantAnimations: webExecution?.instantAnimations,
+            blockResources: webExecution?.blockResources,
+            cdpEndpoint: webExecution?.cdpUrl,
+            warmBrowser:
+              webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
+          }),
+        );
   const driver = bridge ? { ...rawDriver, domChannel: bridge } : rawDriver;
   const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 
@@ -138,16 +159,25 @@ export async function buildWebRuntimePool(
   config: ProvConfig,
   workerCount: number,
 ): Promise<RuntimeResult[]> {
-  if (workerCount <= 1) {
+  const webExecution = config.execution?.web;
+  if (workerCount <= 1 || webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
     return [await buildWebRuntime(config)];
   }
 
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
-  const webExecution = config.execution?.web;
-  const sharedBrowser = await launchPlaywrightBrowser({
-    browser: webExecution?.browser,
-    headless: webExecution?.headless ?? true,
-  });
+  const useWarm =
+    (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
+    (webExecution?.browser ?? "chromium") === "chromium";
+  const ownsSharedBrowser = !useWarm && !webExecution?.cdpUrl;
+  const sharedBrowser = webExecution?.cdpUrl
+    ? connectPlaywrightOverCDP(webExecution.cdpUrl)
+    : useWarm
+      ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then((r) => r.browser)
+      : launchPlaywrightBrowser({
+          browser: webExecution?.browser,
+          headless: webExecution?.headless ?? true,
+        });
+  const resolvedBrowser = await sharedBrowser;
 
   let remaining = workerCount;
   const results: RuntimeResult[] = [];
@@ -160,8 +190,11 @@ export async function buildWebRuntimePool(
         baseUrl: webUrl,
         storageState: webExecution?.storageState,
         verboseLogging: webExecution?.verboseLogging,
-        sharedBrowser,
+        sharedBrowser: resolvedBrowser,
         recordHar: Boolean(config.artifacts?.har),
+        waitUntil: webExecution?.waitUntil,
+        instantAnimations: webExecution?.instantAnimations,
+        blockResources: webExecution?.blockResources,
       }),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
@@ -176,8 +209,8 @@ export async function buildWebRuntimePool(
             cleaned = true;
             await Effect.runPromise(driver.killApp(""));
             remaining -= 1;
-            if (remaining <= 0) {
-              await sharedBrowser.close();
+            if (remaining <= 0 && ownsSharedBrowser) {
+              await resolvedBrowser.close();
             }
           }),
         metadata: {

@@ -103,6 +103,8 @@ export interface ElectrobunAppConfig {
 }
 
 export type BrowserName = "chromium" | "firefox" | "webkit";
+export type WebBrowserEngine = "playwright" | "cdp" | "lightpanda";
+export type WebResourceBlockType = "image" | "font" | "media" | "stylesheet";
 
 export type StorybookValue = string | number | boolean | null;
 
@@ -115,7 +117,19 @@ export interface StorybookConfig {
 
 export interface WebExecutionConfig {
   browser?: BrowserName;
+  /** Browser engine backend: "playwright" (default), "cdp" (CDP-direct), or "lightpanda". */
+  engine?: WebBrowserEngine;
+  /** Connect to an existing CDP browser / Lightpanda endpoint (e.g. "http://127.0.0.1:9222"). */
+  cdpUrl?: string;
   headless?: boolean;
+  /** Navigation readiness event for launchApp/openLink (default: "load"). */
+  waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+  /** Collapse CSS transitions & animations to 0.001ms for faster deterministic runs. */
+  instantAnimations?: boolean;
+  /** Abort heavy asset requests ("image" | "font" | "media" | "stylesheet") during web runs. */
+  blockResources?: WebResourceBlockType[];
+  /** Reuse a persistent warm Chromium daemon across runs via CDP (chromium only). */
+  warmBrowser?: boolean;
   /** Optional Playwright storage state JSON file to preload for web runs */
   storageState?: string;
   /** Print verbose Playwright runtime events to stdout for local web debugging */
@@ -453,7 +467,13 @@ const appiumExecutionConfigSchema = z
 const webExecutionConfigSchema = z
   .object({
     browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+    engine: z.enum(["playwright", "cdp", "lightpanda"]).optional(),
+    cdpUrl: z.string().url().optional(),
     headless: z.boolean().optional(),
+    waitUntil: z.enum(["domcontentloaded", "load", "networkidle", "commit"]).optional(),
+    instantAnimations: z.boolean().optional(),
+    blockResources: z.array(z.enum(["image", "font", "media", "stylesheet"])).optional(),
+    warmBrowser: z.boolean().optional(),
     storageState: z.string().min(1).optional(),
     verboseLogging: z.boolean().optional(),
     storybook: storybookConfigSchema.optional(),
