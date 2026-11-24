@@ -1,16 +1,26 @@
 <p align="center">
-  <img src="./docs/assets/spana-hero.jpg" alt="spana — Web-first cross-platform E2E testing across 5 targets" width="100%" />
+  <img src="./docs/assets/spana-scout.jpg" alt="spana — Web-first cross-platform E2E testing across Web, iOS, Android, Electron, and Electrobun" width="420" />
 </p>
 
-# spana
+<h1 align="center">spana</h1>
 
-**Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — one `{ testID }` selector model, zero Appium required.**
+<p align="center">
+  <strong>Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS &amp; Android), Electron, and Electrobun — one <code>{ testID }</code> selector model, zero Appium required.</strong>
+</p>
 
-[![npm](https://img.shields.io/npm/v/spana-test?color=06b6d4&label=spana-test)](https://www.npmjs.com/package/spana-test)
-[![License](https://img.shields.io/badge/license-Apache--2.0-10b981)](./LICENSE)
-[![Targets](https://img.shields.io/badge/targets-Web%20%C2%B7%20iOS%20%C2%B7%20Android%20%C2%B7%20Electron%20%C2%B7%20Electrobun-38bdf8)](#platforms)
+<p align="center">
+  <a href="https://www.npmjs.com/package/spana-test"><img src="https://img.shields.io/npm/v/spana-test?color=06b6d4&label=spana-test" alt="npm" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-10b981" alt="License" /></a>
+  <a href="#platforms"><img src="https://img.shields.io/badge/targets-Web%20%C2%B7%20iOS%20%C2%B7%20Android%20%C2%B7%20Electron%20%C2%B7%20Electrobun-38bdf8" alt="Targets" /></a>
+</p>
 
-[Documentation](https://wezter96.github.io/spana/) · [Benchmarks](#benchmarks) · [Architecture](#architecture) · [MCP Server](#agent-integration--mcp-server) · [Live HTML Report](https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html)
+<p align="center">
+  <a href="https://wezter96.github.io/spana/">Documentation</a> ·
+  <a href="#benchmarks">Benchmarks</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#agent-integration--mcp-server">MCP Server</a> ·
+  <a href="https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html">Live HTML Report</a>
+</p>
 
 ---
 
@@ -601,6 +611,10 @@ See [ARCHITECTURE.md](https://github.com/wezter96/spana/blob/main/ARCHITECTURE.m
 ---
 
 ## Platforms
+
+<p align="center">
+  <img src="./docs/assets/spana-hero.jpg" alt="One selector model fanning out to Web, iOS, Android, Electron, and Electrobun" width="100%" />
+</p>
 
 | Platform      | Driver / DOM Channel                                                                  | Companion binary                                         |
 | ------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
