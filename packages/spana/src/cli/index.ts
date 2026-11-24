@@ -462,7 +462,7 @@ if (command === "test") {
 } else if (command === "devices") {
   const jsonMode = args.includes("--json");
   const { discoverDevices } = await import("../device/discover.js");
-  const devices = discoverDevices(["web", "android", "ios"]);
+  const devices = discoverDevices(["web", "android", "ios", "electron", "electrobun"]);
   if (jsonMode) {
     printMachinePayload(
       createMachineSuccess("devices", {
@@ -474,7 +474,27 @@ if (command === "test") {
     console.log("No devices found.");
   } else {
     for (const d of devices) {
-      console.log(`  ${d.platform.padEnd(8)} ${d.name.padEnd(30)} ${d.type.padEnd(10)} ${d.state}`);
+      console.log(
+        `  ${d.platform.padEnd(11)} ${d.name.padEnd(36)} ${d.type.padEnd(10)} ${d.state}`,
+      );
+    }
+  }
+} else if (command === "daemon") {
+  const sub = args[1] ?? "status";
+  const { listWarmDaemons, stopAllWarmDaemons } = await import("../runtime/daemon-manager.js");
+  if (sub === "stop") {
+    const count = stopAllWarmDaemons();
+    console.log(`Stopped ${count} warm daemon(s).`);
+  } else {
+    const daemons = listWarmDaemons();
+    if (daemons.length === 0) {
+      console.log("No warm daemons registered.");
+    } else {
+      for (const d of daemons) {
+        console.log(
+          `  ${d.kind.padEnd(14)} ${d.deviceId.padEnd(36)} ${d.host}:${d.port} (pid=${d.pid ?? "n/a"})`,
+        );
+      }
     }
   }
 } else if (command === "version" || args.includes("--version") || args.includes("-v")) {
@@ -493,10 +513,13 @@ if (command === "test") {
   console.log("  spana init                     Initialize a new spana project");
   console.log("  spana init-flow <name>         Generate a starter .flow.ts file");
   console.log("  spana devices                  List connected devices across platforms");
+  console.log("  spana daemon [status|stop]     Inspect or stop warm WDA/UiAutomator2 daemons");
   console.log("  spana version                  Show version");
   console.log("");
   console.log("Options:");
-  console.log("  --platform web,android,ios  Platforms to test (default: spana.config.ts or web)");
+  console.log(
+    "  --platform web,android,ios,electron,electrobun  Platforms to test (default: spana.config.ts or web)",
+  );
   console.log("  --tag smoke,auth           Filter by tags");
   console.log("  --grep login               Filter by name pattern");
   console.log(

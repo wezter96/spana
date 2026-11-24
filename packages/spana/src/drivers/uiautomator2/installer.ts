@@ -5,9 +5,17 @@ import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findADB, adbShell, adbInstall, adbForward } from "../../device/android.js";
 import { allocatePort, releasePort } from "../../core/port-allocator.js";
+import { getHealthyWarmDaemon, registerWarmDaemon } from "../../runtime/daemon-manager.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const require = createRequire(import.meta.url);
+
+export interface UiAutomator2SetupOptions {
+  /** Reuse a healthy warm UiAutomator2 server if already running, and leave it up between runs */
+  warm?: boolean;
+  /** Optional custom daemon registry file path */
+  daemonStateFile?: string;
+}
 
 function resolveOptionalPackageDir(packageName: string, subpath: string): string | null {
   try {
@@ -21,11 +29,8 @@ function resolveOptionalPackageDir(packageName: string, subpath: string): string
 /** Find the UiAutomator2 server APKs */
 function findUiAutomator2APK(): { serverApk: string; testApk: string } | null {
   const appiumServerApks = resolveOptionalPackageDir("appium-uiautomator2-server", "apks");
-  // Check in the current project first
   const projectDrivers = resolve(process.cwd(), "drivers/android");
-  // Check in spana's drivers/ directory as a fallback for development
   const provDrivers = resolve(__dirname, "../../../../drivers/android");
-  // Check in maestro-runner's drivers/ directory as fallback
   const maestroRunnerDrivers = resolve(
     __dirname,
     "../../../../../../maestro-runner/drivers/android",
@@ -79,9 +84,6 @@ export function startUiAutomator2Server(serial: string): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
 
-  // Start the instrumentation in the background.
-  // The server starts listening on port 6790 on the device.
-  // The command blocks while the server is running — timeout is expected.
   try {
     execSync(
       `${adb} -s ${serial} shell am instrument -w -e disableAnalytics true io.appium.uiautomator2.server.test/androidx.test.runner.AndroidJUnitRunner &`,
@@ -89,22 +91,40 @@ export function startUiAutomator2Server(serial: string): void {
     );
   } catch {
     // The command may timeout because it blocks — that's expected.
-    // The server is starting in the background.
   }
 }
 
-/** Full setup: install if needed, start server, forward port */
+/** Full setup: reuse warm daemon or install, start server, forward port */
 export async function setupUiAutomator2(
   serial: string,
   hostPort?: number,
-): Promise<{ host: string; port: number; cleanup: () => void }> {
+  options: UiAutomator2SetupOptions = {},
+): Promise<{ host: string; port: number; cleanup: () => void; reusedWarmDaemon?: boolean }> {
+  const warm = options.warm ?? process.env["SPANA_WARM_DAEMON"] === "1";
+
+  if (warm) {
+    const existing = await getHealthyWarmDaemon("uiautomator2", serial, {
+      stateFile: options.daemonStateFile,
+    });
+    if (existing) {
+      console.log(`Reusing warm UiAutomator2 daemon on ${existing.host}:${existing.port}`);
+      return {
+        host: existing.host,
+        port: existing.port,
+        reusedWarmDaemon: true,
+        cleanup: () => {
+          // Keep warm daemon alive between runs
+        },
+      };
+    }
+  }
+
   const port = hostPort ?? allocatePort(8200);
 
   if (!isUiAutomator2Installed(serial)) {
     installUiAutomator2(serial);
   }
 
-  // Clean up only our specific port forward (not all)
   const adb = findADB();
   if (adb) {
     try {
@@ -116,21 +136,31 @@ export async function setupUiAutomator2(
 
   startUiAutomator2Server(serial);
 
-  // Give the server a moment to start before forwarding
   await new Promise((r) => setTimeout(r, 2000));
 
-  // Forward device port to host
   const devicePort = 6790;
   adbForward(serial, port, devicePort);
 
-  // Poll until the server responds
   const maxRetries = 10;
   for (let i = 0; i < maxRetries; i++) {
     try {
       const res = await fetch(`http://localhost:${port}/status`);
       if (res.ok) {
         console.log(`UiAutomator2 server ready on port ${port}`);
+        if (warm) {
+          registerWarmDaemon(
+            {
+              kind: "uiautomator2",
+              deviceId: serial,
+              host: "localhost",
+              port,
+              startedAt: new Date().toISOString(),
+            },
+            options.daemonStateFile,
+          );
+        }
         const cleanup = () => {
+          if (warm) return;
           try {
             if (adb)
               execSync(`${adb} -s ${serial} forward --remove tcp:${port}`, { stdio: "ignore" });
@@ -139,7 +169,7 @@ export async function setupUiAutomator2(
           }
           releasePort(port);
         };
-        return { host: "localhost", port, cleanup };
+        return { host: "localhost", port, cleanup, reusedWarmDaemon: false };
       }
     } catch {
       // Not ready yet

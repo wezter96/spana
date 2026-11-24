@@ -18,7 +18,17 @@ function isCoordinateTap(step: StepResult): boolean {
   return false;
 }
 
+function isSystemUILabel(selector: unknown): boolean {
+  return (
+    selector !== null &&
+    typeof selector === "object" &&
+    "systemUI" in (selector as Record<string, unknown>) &&
+    (selector as Record<string, unknown>)["systemUI"] === true
+  );
+}
+
 function isTextSelector(selector: unknown): boolean {
+  if (isSystemUILabel(selector)) return false;
   if (typeof selector === "string") return true;
   if (selector && typeof selector === "object" && "text" in (selector as Record<string, unknown>)) {
     return true;

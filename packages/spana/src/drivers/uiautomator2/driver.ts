@@ -16,15 +16,48 @@ import { hasLaunchDeviceState } from "../launch-options.js";
 import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
 import { resolveNetworkConditions } from "../network-profiles.js";
 import { UiAutomator2Client } from "./client.js";
+import type { DomChannel } from "../../channels/dom-channel.js";
+import { createAndroidWebViewCdpChannel } from "../../channels/android-cdp.js";
+import { createCompositeDomChannel } from "../../channels/bridge-server.js";
+
+export interface UiAutomator2DriverOptions {
+  /** Optional pre-configured DOM channel (e.g. spana-bridge) */
+  domChannel?: DomChannel;
+  /** Optional explicit local TCP port for Android WebView CDP forwarding */
+  cdpPort?: number;
+  /** Whether to expose the direct Android WebView CDP channel (default: true) */
+  enableWebViewCdp?: boolean;
+}
 
 export function createUiAutomator2Driver(
   host: string,
   port: number,
   serial: string,
   packageName: string,
+  driverOptions?: UiAutomator2DriverOptions,
 ): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const client = new UiAutomator2Client(host, port);
+    let currentContext = "NATIVE_APP";
+
+    const cdpChannel =
+      driverOptions?.enableWebViewCdp === false
+        ? undefined
+        : createAndroidWebViewCdpChannel({
+            serial,
+            packageName: packageName || undefined,
+            localPort: driverOptions?.cdpPort,
+          });
+
+    const channels: DomChannel[] = [];
+    if (driverOptions?.domChannel) channels.push(driverOptions.domChannel);
+    if (cdpChannel) channels.push(cdpChannel);
+    const domChannel: DomChannel | undefined =
+      channels.length === 0
+        ? undefined
+        : channels.length === 1
+          ? channels[0]
+          : createCompositeDomChannel(channels);
 
     // Create session — must succeed before we can do anything
     yield* Effect.tryPromise({
@@ -36,6 +69,8 @@ export function createUiAutomator2Driver(
     });
 
     const service: RawDriverService = {
+      domChannel,
+
       // -----------------------------------------------------------------------
       // Hierarchy
       // -----------------------------------------------------------------------
@@ -214,6 +249,8 @@ export function createUiAutomator2Driver(
       killApp: (bundleId) =>
         Effect.tryPromise({
           try: async () => {
+            await domChannel?.disconnect().catch(() => {});
+            if (!bundleId) return;
             adbForceStop(serial, bundleId);
           },
           catch: (e) => new DriverError({ message: `Kill app failed: ${e}` }),
@@ -222,10 +259,52 @@ export function createUiAutomator2Driver(
       clearAppState: (bundleId) =>
         Effect.tryPromise({
           try: async () => {
+            if (domChannel?.isConnected() && domChannel.clearStorage) {
+              await domChannel.clearStorage({
+                localStorage: true,
+                sessionStorage: true,
+                cookies: true,
+                indexedDB: true,
+                capacitorPreferences: true,
+              });
+              if (domChannel.reload) {
+                await domChannel.reload();
+              }
+              return;
+            }
             adbForceStop(serial, bundleId);
             adbClearApp(serial, bundleId);
           },
           catch: (e) => new DriverError({ message: `Clear app state failed: ${e}` }),
+        }),
+
+      resetFast: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!domChannel) {
+              throw new Error("resetFast() requires a connected DOM channel (spana-bridge or CDP)");
+            }
+            if (domChannel.clearStorage) {
+              await domChannel.clearStorage({
+                localStorage: true,
+                sessionStorage: true,
+                cookies: true,
+                indexedDB: true,
+                capacitorPreferences: true,
+              });
+            } else {
+              await domChannel.evaluate(`(() => {
+                try { localStorage.clear(); } catch {}
+                try { sessionStorage.clear(); } catch {}
+              })()`);
+            }
+            if (domChannel.reload) {
+              await domChannel.reload();
+            } else {
+              await domChannel.evaluate("window.location.reload()");
+            }
+          },
+          catch: (e) => new DriverError({ message: `Fast reset failed: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------
@@ -247,32 +326,152 @@ export function createUiAutomator2Driver(
           catch: (e) => new DriverError({ message: `Back failed: ${e}` }),
         }),
 
+      // -----------------------------------------------------------------------
+      // Direct DOM evaluation via spana-bridge or Android WebView CDP,
+      // falling back to UiAutomator2 /execute/sync when no DOM channel attaches.
+      // -----------------------------------------------------------------------
       evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
         Effect.tryPromise({
-          try: () =>
-            client.executeScript(
+          try: async () => {
+            if (domChannel) {
+              try {
+                return await domChannel.evaluate<T>(script, ...args);
+              } catch (domErr) {
+                // Fall back to UiAutomator2 executeScript if direct CDP/bridge isn't reachable
+                if (typeof client.executeScript === "function") {
+                  try {
+                    return (await client.executeScript(
+                      typeof script === "function" ? `return (${script})(...arguments)` : script,
+                      args,
+                    )) as T;
+                  } catch {
+                    throw domErr;
+                  }
+                }
+                throw domErr;
+              }
+            }
+            return (await client.executeScript(
               typeof script === "function" ? `return (${script})(...arguments)` : script,
               args,
-            ) as Promise<T>,
+            )) as T;
+          },
           catch: (e) => new DriverError({ message: `evaluate() failed: ${e}` }),
         }),
 
       getContexts: () =>
         Effect.tryPromise({
-          try: () => client.getContexts(),
+          try: async () => {
+            const contexts = new Set<string>(["NATIVE_APP"]);
+            if (domChannel?.listTargets) {
+              try {
+                const targets = await domChannel.listTargets();
+                for (const target of targets) {
+                  contexts.add(`WEBVIEW_${target.id}`);
+                }
+              } catch {
+                // Ignore if no debuggable webview is active
+              }
+            }
+            if (typeof client.getContexts === "function") {
+              try {
+                const uaContexts = await client.getContexts();
+                for (const ctx of uaContexts) contexts.add(ctx);
+              } catch {
+                // Direct UiAutomator2 server may not implement /contexts
+              }
+            }
+            return Array.from(contexts);
+          },
           catch: (e) => new DriverError({ message: `getContexts failed: ${e}` }),
         }),
 
       getCurrentContext: () =>
         Effect.tryPromise({
-          try: () => client.getCurrentContext(),
+          try: async () => {
+            if (currentContext !== "NATIVE_APP") return currentContext;
+            if (typeof client.getCurrentContext === "function") {
+              try {
+                return await client.getCurrentContext();
+              } catch {
+                return currentContext;
+              }
+            }
+            return currentContext;
+          },
           catch: (e) => new DriverError({ message: `getCurrentContext failed: ${e}` }),
         }),
 
       setContext: (contextId: string) =>
         Effect.tryPromise({
-          try: () => client.setContext(contextId),
+          try: async () => {
+            if (contextId === "NATIVE_APP") {
+              currentContext = "NATIVE_APP";
+              if (typeof client.setContext === "function") {
+                await client.setContext("NATIVE_APP").catch(() => {});
+              }
+              return;
+            }
+            if (contextId.startsWith("WEBVIEW_") && domChannel) {
+              const targetId = contextId.slice("WEBVIEW_".length);
+              if (domChannel.selectTarget) {
+                try {
+                  await domChannel.selectTarget(targetId);
+                  currentContext = contextId;
+                  return;
+                } catch {
+                  // Fall through to client.setContext
+                }
+              }
+            }
+            await client.setContext(contextId);
+            currentContext = contextId;
+          },
           catch: (e) => new DriverError({ message: `setContext failed: ${e}` }),
+        }),
+
+      mockNetwork: (matcher, response) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!domChannel?.mockNetwork) {
+              throw new Error("mockNetwork() on Android requires spana-bridge");
+            }
+            await domChannel.mockNetwork(matcher, response);
+          },
+          catch: (e) => new DriverError({ message: `mockNetwork failed: ${e}` }),
+        }),
+
+      blockNetwork: (matcher) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!domChannel?.blockNetwork) {
+              throw new Error("blockNetwork() on Android requires spana-bridge");
+            }
+            await domChannel.blockNetwork(matcher);
+          },
+          catch: (e) => new DriverError({ message: `blockNetwork failed: ${e}` }),
+        }),
+
+      clearNetworkMocks: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (domChannel?.clearNetworkMocks) {
+              await domChannel.clearNetworkMocks();
+            }
+          },
+          catch: (e) => new DriverError({ message: `clearNetworkMocks failed: ${e}` }),
+        }),
+
+      getConsoleLogs: () =>
+        Effect.tryPromise({
+          try: async () => (domChannel?.getConsoleLogs ? domChannel.getConsoleLogs() : []),
+          catch: (e) => new DriverError({ message: `getConsoleLogs failed: ${e}` }),
+        }),
+
+      getJSErrors: () =>
+        Effect.tryPromise({
+          try: async () => (domChannel?.getJSErrors ? domChannel.getJSErrors() : []),
+          catch: (e) => new DriverError({ message: `getJSErrors failed: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------

@@ -25,6 +25,11 @@ import {
 import { waitForElement, type WaitOptions } from "../smart/auto-wait.js";
 import type { StepRecorder } from "../core/step-recorder.js";
 import { buildStorybookUrl, type StorybookOpenOptions } from "./storybook.js";
+import type {
+  DomClearStorageOptions,
+  DomIdleOptions,
+  DomStorageEntries,
+} from "../channels/dom-channel.js";
 
 export type {
   BackUntilVisibleOptions,
@@ -103,16 +108,26 @@ export interface PromiseApp<T extends string = string, R extends string = string
   isVisible(selector: ExtendedSelector<T>, opts?: { timeout?: number }): Promise<boolean>;
   isEnabled(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<boolean>;
 
-  // WebView / hybrid context switching
-  /** List available contexts (e.g. ["NATIVE_APP", "WEBVIEW_com.example.app"]). */
+  // Web-first bridge & fast state helpers (works across web, Capacitor, Electron, Electrobun)
+  /** Wait for in-flight fetch/XHR, animations, and framework renders to settle via spana-bridge. */
+  waitForIdle(opts?: DomIdleOptions): Promise<void>;
+  /** Inject storage/auth state directly through the DOM bridge (avoids slow UI login flows). */
+  setStorage(entries: DomStorageEntries): Promise<void>;
+  /** Clear localStorage, sessionStorage, cookies, IndexedDB, and Capacitor Preferences. */
+  clearStorage(opts?: DomClearStorageOptions): Promise<void>;
+  /** Fast reset: clear storage via bridge and reload in milliseconds (avoids uninstall/reinstall). */
+  resetFast(): Promise<void>;
+
+  // WebView / hybrid context switching (low-level escape hatches — normal flows hide channels)
+  /** @internal Low-level escape hatch: list available contexts (e.g. ["NATIVE_APP", "WEBVIEW_..."]). */
   getContexts(): Promise<string[]>;
-  /** Get the current context ID. */
+  /** @internal Low-level escape hatch: get the current context ID. */
   getCurrentContext(): Promise<string>;
-  /** Switch to a specific context by ID. */
+  /** @internal Low-level escape hatch: switch to a specific context by ID. */
   switchToContext(contextId: string): Promise<void>;
-  /** Switch to the first available WebView context. */
+  /** @internal Low-level escape hatch: switch to the first available WebView context. */
   switchToWebView(): Promise<void>;
-  /** Switch back to the native app context. */
+  /** @internal Low-level escape hatch: switch back to the native app context. */
   switchToNativeApp(): Promise<void>;
 }
 
@@ -411,7 +426,90 @@ export function createPromiseApp<T extends string = string, R extends string = s
     isEnabled: (selector, opts) =>
       runStep("isEnabled", () => run(coord.isElementEnabled(selector, opts)), { selector }),
 
-    // WebView / hybrid context switching
+    // Web-first bridge & fast state helpers
+    waitForIdle: (opts) =>
+      runStep("waitForIdle", async () => {
+        if (driver.domChannel?.waitForIdle) {
+          await driver.domChannel.waitForIdle(opts);
+        }
+      }),
+
+    setStorage: (entries) =>
+      runStep("setStorage", async () => {
+        if (driver.domChannel?.setStorage) {
+          await driver.domChannel.setStorage(entries);
+          return;
+        }
+        const serialized = JSON.stringify(entries);
+        await run(
+          driver.evaluate(
+            `((payload) => {
+              if (payload.localStorage) {
+                for (const [k, v] of Object.entries(payload.localStorage)) {
+                  window.localStorage.setItem(k, v);
+                }
+              }
+              if (payload.sessionStorage) {
+                for (const [k, v] of Object.entries(payload.sessionStorage)) {
+                  window.sessionStorage.setItem(k, v);
+                }
+              }
+              if (payload.cookies) {
+                for (const c of payload.cookies) {
+                  const path = c.path ? '; path=' + c.path : '; path=/';
+                  const domain = c.domain ? '; domain=' + c.domain : '';
+                  document.cookie = encodeURIComponent(c.name) + '=' + encodeURIComponent(c.value) + path + domain;
+                }
+              }
+            })(${serialized})`,
+          ),
+        );
+      }),
+
+    clearStorage: (opts) =>
+      runStep("clearStorage", async () => {
+        if (driver.domChannel?.clearStorage) {
+          await driver.domChannel.clearStorage(opts);
+          return;
+        }
+        const serialized = JSON.stringify(opts ?? {});
+        await run(
+          driver.evaluate(
+            `((clearOpts) => {
+              if (clearOpts.localStorage !== false) {
+                try { window.localStorage.clear(); } catch {}
+              }
+              if (clearOpts.sessionStorage !== false) {
+                try { window.sessionStorage.clear(); } catch {}
+              }
+            })(${serialized})`,
+          ),
+        );
+      }),
+
+    resetFast: () =>
+      runStep("resetFast", async () => {
+        if (driver.resetFast) {
+          await run(driver.resetFast());
+          return;
+        }
+        if (driver.domChannel?.clearStorage) {
+          await driver.domChannel.clearStorage({
+            localStorage: true,
+            sessionStorage: true,
+            cookies: true,
+            indexedDB: true,
+            capacitorPreferences: true,
+          });
+          if (driver.domChannel.reload) {
+            await driver.domChannel.reload();
+          }
+          return;
+        }
+        await run(driver.clearAppState(appId));
+      }),
+
+    // WebView / hybrid context switching (low-level escape hatches)
     getContexts: () =>
       runStep("getContexts", () =>
         run((driver.getContexts ?? (() => Effect.succeed(["NATIVE_APP"] as string[])))()),

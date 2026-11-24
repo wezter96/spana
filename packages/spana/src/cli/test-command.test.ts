@@ -243,6 +243,34 @@ function registerCliMocks(): void {
         flowTimeout: 60_000,
       },
     }),
+    buildElectronRuntime: async () => ({
+      runtime: {
+        driver: {},
+        cleanup: async () => {},
+        metadata: { platform: "electron", mode: "local", deviceId: "electron" },
+      },
+      engineConfig: {
+        appId: "electron",
+        platform: "electron",
+        coordinatorConfig: { parse: () => null, defaults: {} },
+        autoLaunch: true,
+        flowTimeout: 60_000,
+      },
+    }),
+    buildElectrobunRuntime: async () => ({
+      runtime: {
+        driver: {},
+        cleanup: async () => {},
+        metadata: { platform: "electrobun", mode: "local", deviceId: "electrobun" },
+      },
+      engineConfig: {
+        appId: "electrobun",
+        platform: "electrobun",
+        coordinatorConfig: { parse: () => null, defaults: {} },
+        autoLaunch: true,
+        flowTimeout: 60_000,
+      },
+    }),
   }));
   mock.module("../runtime/appium.js", () => ({
     buildAppiumAndroidRuntime: async (

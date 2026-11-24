@@ -1,17 +1,19 @@
 import { Duration, Effect } from "effect";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { Element } from "../schemas/element.js";
-import type { ExtendedSelector } from "../schemas/selector.js";
+import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/selector.js";
 import type { WaitTimeoutError } from "../errors.js";
 import { DriverError, ElementNotFoundError, TextMismatchError } from "../errors.js";
 import { splitGraphemes } from "../core/graphemes.js";
-import { centerOf, findElementExtended, formatSelector } from "./element-matcher.js";
+import { centerOf, formatSelector } from "./element-matcher.js";
 import {
   waitForActionElement,
   waitForElement,
   waitForNotVisible,
+  waitForResolvedElementResult,
   type WaitOptions,
 } from "./auto-wait.js";
+import { resolveElementAcrossChannels } from "./channel-resolver.js";
 import {
   createHierarchyCache,
   type HierarchyCacheConfig,
@@ -83,6 +85,10 @@ export interface CoordinatorConfig {
   hierarchyCacheTtl?: number;
   /** Default output directory for screenshot diffs. */
   outputDir?: string;
+  /** Default tap mode ("native" real touch, or "dom" fast synthetic click). */
+  tapMode?: TapMode;
+  /** Platform hint for DOM-to-screen coordinate conversion. */
+  platform?: Platform;
 }
 
 export function createCoordinator<T extends string = string, R extends string = string>(
@@ -101,10 +107,16 @@ export function createCoordinator<T extends string = string, R extends string = 
     return ms && ms > 0 ? Effect.sleep(Duration.millis(ms)) : Effect.void;
   };
 
-  /** Invalidate cache after any mutation action */
+  /** Invalidate cache after any mutation action, waiting for bridge.idle() when available */
   const afterMutation = (): Effect.Effect<void> =>
     Effect.gen(function* () {
       cache.invalidate();
+      if (driver.domChannel?.isConnected() && driver.domChannel.waitForIdle) {
+        yield* Effect.tryPromise({
+          try: () => driver.domChannel!.waitForIdle!({ timeout: 2500 }),
+          catch: () => undefined,
+        }).pipe(Effect.catchAll(() => Effect.void));
+      }
       yield* idleWait();
     });
 
@@ -212,9 +224,11 @@ export function createCoordinator<T extends string = string, R extends string = 
 
       while (Date.now() - start < timeout) {
         if (cache) cache.invalidate();
-        const raw = yield* driver.dumpHierarchy();
-        const root = parse(raw);
-        const element = findElementExtended(root, selector);
+        const resolved = yield* resolveElementAcrossChannels(driver, selector, parse, cache, {
+          forAction: false,
+          platform: config.platform,
+        });
+        const element = resolved?.element;
         if (element) {
           const result = check(element);
           if (result.matched) return;
@@ -794,14 +808,32 @@ export function createCoordinator<T extends string = string, R extends string = 
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
-        const element = yield* waitForActionElement(
+        const effectiveTapMode: TapMode = opts?.tapMode ?? config.tapMode ?? "native";
+        const mergedOpts: WaitOptions = {
+          ...defaults,
+          ...opts,
+          tapMode: effectiveTapMode,
+          platform: opts?.platform ?? config.platform,
+        };
+        const resolved = yield* waitForResolvedElementResult(
           driver,
           selector,
           parse,
-          { ...defaults, ...opts },
+          true,
+          mergedOpts,
           cache,
         );
-        const { x, y } = centerOf(element);
+        if (resolved.channel === "dom" && effectiveTapMode === "dom" && driver.domChannel) {
+          const tapped = yield* Effect.tryPromise({
+            try: () => driver.domChannel!.tapDom(selector as Selector),
+            catch: (e) => new DriverError({ message: `DOM tap failed: ${e}` }),
+          });
+          if (tapped) {
+            yield* afterMutation();
+            return;
+          }
+        }
+        const { x, y } = centerOf(resolved.element);
         yield* driver.tapAtCoordinate(x, y);
         yield* afterMutation();
       }),

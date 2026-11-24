@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { hasLaunchDeviceState } from "../launch-options.js";
-import type { RawDriverService, LaunchOptions } from "../raw-driver.js";
+import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
 import { WDAClient } from "./client.js";
 import {
   installedUrlSchemesOnSimulator,
@@ -13,8 +13,21 @@ import {
   pfctlSetThrottle,
   pfctlResetNetwork,
 } from "../../device/ios.js";
-import type { NetworkConditions } from "../raw-driver.js";
 import { resolveNetworkConditions } from "../network-profiles.js";
+import type { DomChannel } from "../../channels/dom-channel.js";
+import { createWebKitInspectorChannel } from "../../channels/webkit-inspector.js";
+import { createCompositeDomChannel } from "../../channels/bridge-server.js";
+
+export interface WDADriverOptions {
+  /** Optional pre-configured DOM channel (e.g. spana-bridge or custom inspector) */
+  domChannel?: DomChannel;
+  /** WebKit Remote Inspector proxy URL (e.g. http://127.0.0.1:9221) */
+  webkitInspectorUrl?: string;
+  /** WebKit Remote Inspector proxy port (default: 9221) */
+  webkitInspectorPort?: number;
+  /** Auto-start ios_webkit_debug_proxy when available */
+  autoStartInspectorProxy?: boolean;
+}
 
 /**
  * Converts a millisecond duration (spana convention) to seconds (WDA convention).
@@ -50,9 +63,23 @@ export function createWDADriver(
   bundleId: string,
   simulatorUdid?: string,
   snapshotMaxDepth = 100,
+  driverOptions?: WDADriverOptions,
 ): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const client = new WDAClient(host, port);
+    let currentContext = "NATIVE_APP";
+
+    const inspectorChannel = createWebKitInspectorChannel({
+      endpointUrl: driverOptions?.webkitInspectorUrl,
+      port: driverOptions?.webkitInspectorPort,
+      udid: simulatorUdid,
+      bundleId: bundleId || undefined,
+      autoStartProxy: driverOptions?.autoStartInspectorProxy ?? false,
+    });
+
+    const domChannel: DomChannel = driverOptions?.domChannel
+      ? createCompositeDomChannel([driverOptions.domChannel, inspectorChannel])
+      : inspectorChannel;
 
     const createSessionWithRetry = async (targetBundleId?: string) => {
       let lastError: unknown;
@@ -199,6 +226,8 @@ export function createWDADriver(
     });
 
     const service: RawDriverService = {
+      domChannel,
+
       // -----------------------------------------------------------------------
       // Hierarchy
       // -----------------------------------------------------------------------
@@ -427,13 +456,15 @@ export function createWDADriver(
 
       killApp: (appBundleId) =>
         Effect.tryPromise({
-          try: () => {
+          try: async () => {
+            await domChannel.disconnect().catch(() => {});
+            if (!appBundleId) return;
             if (simulatorUdid) {
               terminateOnSimulator(simulatorUdid, appBundleId);
-              return Promise.resolve();
+              return;
             }
 
-            return client.terminateApp(appBundleId);
+            await client.terminateApp(appBundleId);
           },
           catch: (e) => new DriverError({ message: `Kill app failed: ${e}` }),
         }),
@@ -441,16 +472,53 @@ export function createWDADriver(
       clearAppState: (appBundleId) =>
         Effect.tryPromise({
           try: async () => {
+            if (domChannel.isConnected() && domChannel.clearStorage) {
+              await domChannel.clearStorage({
+                localStorage: true,
+                sessionStorage: true,
+                cookies: true,
+                indexedDB: true,
+                capacitorPreferences: true,
+              });
+              if (domChannel.reload) {
+                await domChannel.reload();
+              }
+              return;
+            }
             if (simulatorUdid) {
               terminateOnSimulator(simulatorUdid, appBundleId);
               return;
             }
 
             await client.terminateApp(appBundleId);
-            // Full state clear (data + keychain) requires simctl / idb, which
-            // are outside the scope of the HTTP-only client.
           },
           catch: (e) => new DriverError({ message: `Clear app state failed: ${e}` }),
+        }),
+
+      resetFast: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (domChannel.clearStorage) {
+              await domChannel.clearStorage({
+                localStorage: true,
+                sessionStorage: true,
+                cookies: true,
+                indexedDB: true,
+                capacitorPreferences: true,
+              });
+            } else {
+              await domChannel.evaluate(`(() => {
+                try { localStorage.clear(); } catch {}
+                try { sessionStorage.clear(); } catch {}
+              })()`);
+            }
+            if (domChannel.reload) {
+              await domChannel.reload();
+            } else {
+              await domChannel.evaluate("window.location.reload()");
+            }
+          },
+          catch: (e) => new DriverError({ message: `Fast reset failed: ${e}` }),
         }),
 
       // -----------------------------------------------------------------------
@@ -477,33 +545,114 @@ export function createWDADriver(
           catch: (e) => new DriverError({ message: `Back failed: ${e}` }),
         }),
 
-      evaluate: () =>
-        Effect.fail(
-          new DriverError({
-            message:
-              "evaluate() requires a WebView context. Use Appium mode (--driver appium) for iOS WebView support.",
-          }),
-        ),
+      // -----------------------------------------------------------------------
+      // Direct DOM evaluation via spana-bridge or WebKit Remote Inspector
+      // (no Appium required)
+      // -----------------------------------------------------------------------
+      evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
+        Effect.tryPromise({
+          try: () => domChannel.evaluate<T>(script, ...args),
+          catch: (e) =>
+            new DriverError({
+              message:
+                `iOS direct WDA evaluate() failed via ${domChannel.kind}: ${e instanceof Error ? e.message : e}. ` +
+                `Ensure WKWebView.isInspectable = true (iOS 16.4+) with ios_webkit_debug_proxy running, or include spana-bridge in test builds.`,
+            }),
+        }),
 
       getContexts: () =>
-        Effect.fail(
-          new DriverError({
-            message:
-              "WebView context switching requires Appium mode. Use --driver appium with an Appium server that supports XCUITest.",
-          }),
-        ),
+        Effect.tryPromise({
+          try: async () => {
+            const contexts = ["NATIVE_APP"];
+            if (domChannel.listTargets) {
+              try {
+                const targets = await domChannel.listTargets();
+                for (const target of targets) {
+                  contexts.push(`WEBVIEW_${target.id}`);
+                }
+              } catch {
+                // No inspectable webviews right now
+              }
+            }
+            if (domChannel.isConnected() && contexts.length === 1) {
+              contexts.push(`WEBVIEW_${domChannel.kind}`);
+            }
+            return contexts;
+          },
+          catch: (e) => new DriverError({ message: `getContexts failed: ${e}` }),
+        }),
 
-      getCurrentContext: () => Effect.succeed("NATIVE_APP"),
+      getCurrentContext: () => Effect.succeed(currentContext),
 
       setContext: (contextId: string) =>
-        contextId === "NATIVE_APP"
-          ? Effect.void
-          : Effect.fail(
-              new DriverError({
-                message:
-                  "WebView context switching requires Appium mode. Use --driver appium with an Appium server that supports XCUITest.",
-              }),
-            ),
+        Effect.tryPromise({
+          try: async () => {
+            if (contextId === "NATIVE_APP") {
+              currentContext = "NATIVE_APP";
+              return;
+            }
+            if (contextId.startsWith("WEBVIEW_")) {
+              const targetId = contextId.slice("WEBVIEW_".length);
+              if (
+                domChannel.selectTarget &&
+                targetId !== "bridge" &&
+                targetId !== "webkit-inspector"
+              ) {
+                await domChannel.selectTarget(targetId);
+              } else {
+                await domChannel.connect();
+              }
+              currentContext = contextId;
+              return;
+            }
+            throw new Error(`Unknown context "${contextId}"`);
+          },
+          catch: (e) => new DriverError({ message: `setContext failed: ${e}` }),
+        }),
+
+      mockNetwork: (matcher, response) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!domChannel.mockNetwork) {
+              throw new Error("mockNetwork() on iOS requires spana-bridge");
+            }
+            await domChannel.mockNetwork(matcher, response);
+          },
+          catch: (e) => new DriverError({ message: `mockNetwork failed: ${e}` }),
+        }),
+
+      blockNetwork: (matcher) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!domChannel.blockNetwork) {
+              throw new Error("blockNetwork() on iOS requires spana-bridge");
+            }
+            await domChannel.blockNetwork(matcher);
+          },
+          catch: (e) => new DriverError({ message: `blockNetwork failed: ${e}` }),
+        }),
+
+      clearNetworkMocks: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (domChannel.clearNetworkMocks) {
+              await domChannel.clearNetworkMocks();
+            }
+          },
+          catch: (e) => new DriverError({ message: `clearNetworkMocks failed: ${e}` }),
+        }),
+
+      getConsoleLogs: () =>
+        Effect.tryPromise({
+          try: async () => (domChannel.getConsoleLogs ? domChannel.getConsoleLogs() : []),
+          catch: (e) => new DriverError({ message: `getConsoleLogs failed: ${e}` }),
+        }),
+
+      getJSErrors: () =>
+        Effect.tryPromise({
+          try: async () => (domChannel.getJSErrors ? domChannel.getJSErrors() : []),
+          catch: (e) => new DriverError({ message: `getJSErrors failed: ${e}` }),
+        }),
 
       // -----------------------------------------------------------------------
       // Network simulation

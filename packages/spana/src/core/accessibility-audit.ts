@@ -68,7 +68,9 @@ export function normalizeRole(
   attributes: Record<string, string> = {},
 ): string {
   switch (platform) {
-    case "web": {
+    case "web":
+    case "electron":
+    case "electrobun": {
       if (attributes["role"]) return attributes["role"];
       return WEB_TAG_ROLE_MAP[elementType.toLowerCase()] ?? elementType;
     }
@@ -100,7 +102,9 @@ export function isFocusable(
   context: A11yPlatformContext,
 ): boolean {
   switch (context.platform) {
-    case "web": {
+    case "web":
+    case "electron":
+    case "electrobun": {
       const tag =
         typeof element["tag"] === "string"
           ? element["tag"].toLowerCase()

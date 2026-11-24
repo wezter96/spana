@@ -48,6 +48,8 @@ const driverNames: Record<Platform, string> = {
   web: "Playwright",
   android: "UiAutomator2",
   ios: "WebDriverAgent",
+  electron: "Electron",
+  electrobun: "Electrobun",
 };
 
 function printA11yViolations(result: FlowResult): void {

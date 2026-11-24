@@ -162,7 +162,7 @@
     },
     "packages/spana": {
       "name": "spana-test",
-      "version": "0.2.0",
+      "version": "0.4.0",
       "bin": {
         "spana": "dist/cli.js",
       },
@@ -206,6 +206,14 @@
         "@cucumber/gherkin",
         "@cucumber/messages",
       ],
+    },
+    "packages/spana-bridge": {
+      "name": "spana-bridge",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.7.2",
+      },
     },
     "packages/ui": {
       "name": "@spana/ui",
@@ -3162,6 +3170,8 @@
     "source-map-support": ["source-map-support@0.5.21", "", { "dependencies": { "buffer-from": "^1.0.0", "source-map": "^0.6.0" } }, "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w=="],
 
     "space-separated-tokens": ["space-separated-tokens@2.0.2", "", {}, "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q=="],
+
+    "spana-bridge": ["spana-bridge@workspace:packages/spana-bridge"],
 
     "spana-test": ["spana-test@workspace:packages/spana"],
 

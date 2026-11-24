@@ -1,5 +1,6 @@
 import { Effect } from "effect";
-import type { ProvConfig } from "../schemas/config.js";
+import type { BridgeConfig, ProvConfig } from "../schemas/config.js";
+import type { Platform } from "../schemas/selector.js";
 import type { EngineConfig } from "../core/engine.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { DiscoveredDevice } from "../device/discover.js";
@@ -10,6 +11,8 @@ import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
 import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
 import { createWDADriver } from "../drivers/wda/driver.js";
 import { parseIOSHierarchy } from "../drivers/wda/pagesource.js";
+import { makeElectronDriver } from "../drivers/electron.js";
+import { makeElectrobunDriver } from "../drivers/electrobun.js";
 import { ensureAndroidDevice } from "../device/android.js";
 import {
   ensureIOSSimulator,
@@ -20,6 +23,7 @@ import {
 import { setupUiAutomator2 } from "../drivers/uiautomator2/installer.js";
 import { setupWDA } from "../drivers/wda/installer.js";
 import { allocatePort } from "../core/port-allocator.js";
+import { createSpanaBridgeChannel, type SpanaBridgeChannel } from "../channels/bridge-server.js";
 
 async function safeCleanup(...fns: Array<() => Promise<unknown>>): Promise<void> {
   for (const fn of fns) {
@@ -31,9 +35,27 @@ async function safeCleanup(...fns: Array<() => Promise<unknown>>): Promise<void>
   }
 }
 
+async function maybeStartBridge(
+  appBridge?: BridgeConfig,
+  globalBridge?: BridgeConfig,
+): Promise<SpanaBridgeChannel | undefined> {
+  const merged = appBridge ?? globalBridge;
+  if (!merged) return undefined;
+  const enabled = merged.enabled ?? Boolean(merged.port || merged.url);
+  if (!enabled) return undefined;
+
+  const channel = createSpanaBridgeChannel({
+    host: merged.host ?? "127.0.0.1",
+    port: merged.port ?? 9333,
+    connectTimeoutMs: merged.connectTimeout ?? 5000,
+  });
+  await channel.start();
+  return channel;
+}
+
 function buildEngineConfig(
   appId: string,
-  platform: "web" | "android" | "ios",
+  platform: Platform,
   parseFn: CoordinatorConfig["parse"],
   config: ProvConfig,
   screenSize?: { width: number; height: number },
@@ -48,12 +70,16 @@ function buildEngineConfig(
         pollInterval: config.defaults?.pollInterval,
         settleTimeout: config.defaults?.settleTimeout,
         initialPollInterval: config.defaults?.initialPollInterval,
+        tapMode: config.defaults?.tapMode,
+        platform,
       },
       waitForIdleTimeout: config.defaults?.waitForIdleTimeout,
       typingDelay: config.defaults?.typingDelay,
       hierarchyCacheTtl: config.defaults?.hierarchyCacheTtl,
       screenWidth: screenSize?.width,
       screenHeight: screenSize?.height,
+      tapMode: config.defaults?.tapMode,
+      platform,
     },
     autoLaunch: true,
     flowTimeout: config.defaults?.waitTimeout ? config.defaults.waitTimeout * 10 : 60_000,
@@ -68,7 +94,9 @@ function buildEngineConfig(
 export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult> {
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
   const webExecution = config.execution?.web;
-  const driver = await Effect.runPromise(
+  const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
+
+  const rawDriver = await Effect.runPromise(
     makePlaywrightDriver({
       browser: webExecution?.browser,
       headless: webExecution?.headless ?? true,
@@ -77,12 +105,17 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
       verboseLogging: webExecution?.verboseLogging,
     }),
   );
+  const driver = bridge ? { ...rawDriver, domChannel: bridge } : rawDriver;
   const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 
   return {
     runtime: {
       driver,
-      cleanup: () => safeCleanup(() => Effect.runPromise(driver.killApp(""))),
+      cleanup: () =>
+        safeCleanup(
+          () => Effect.runPromise(driver.killApp("")),
+          () => bridge?.disconnect() ?? Promise.resolve(),
+        ),
       metadata: {
         platform: "web",
         mode: "local",
@@ -92,6 +125,116 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
       width: deviceInfo.screenWidth,
       height: deviceInfo.screenHeight,
     }),
+  };
+}
+
+export async function buildElectronRuntime(
+  config: ProvConfig,
+  resolveFromConfig: (p: string) => string,
+): Promise<RuntimeResult> {
+  const electronCfg = config.apps?.electron ?? {};
+  const bridge = await maybeStartBridge(electronCfg.bridge, config.execution?.bridge);
+
+  const driver = await Effect.runPromise(
+    makeElectronDriver({
+      entry: electronCfg.entry ? resolveFromConfig(electronCfg.entry) : undefined,
+      executablePath: electronCfg.executablePath
+        ? resolveFromConfig(electronCfg.executablePath)
+        : undefined,
+      args: electronCfg.args,
+      cwd: electronCfg.cwd ? resolveFromConfig(electronCfg.cwd) : undefined,
+      env: {
+        ...electronCfg.env,
+        ...(bridge?.url ? { SPANA_BRIDGE: "1", SPANA_BRIDGE_URL: bridge.url } : {}),
+      },
+      cdpUrl: electronCfg.cdpUrl,
+      cdpPort: electronCfg.cdpPort,
+      url: electronCfg.url,
+      domChannel: bridge,
+    }),
+  );
+  const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+
+  return {
+    runtime: {
+      driver,
+      cleanup: () =>
+        safeCleanup(
+          () => Effect.runPromise(driver.killApp("")),
+          () => bridge?.disconnect() ?? Promise.resolve(),
+        ),
+      metadata: {
+        platform: "electron",
+        mode: "local",
+        deviceId: deviceInfo.deviceId,
+      },
+    },
+    engineConfig: buildEngineConfig(
+      electronCfg.url ?? electronCfg.entry ?? "electron",
+      "electron",
+      parseWebHierarchy,
+      config,
+      {
+        width: deviceInfo.screenWidth,
+        height: deviceInfo.screenHeight,
+      },
+    ),
+  };
+}
+
+export async function buildElectrobunRuntime(
+  config: ProvConfig,
+  resolveFromConfig: (p: string) => string,
+): Promise<RuntimeResult> {
+  const electrobunCfg = config.apps?.electrobun ?? {};
+  const bridge = await maybeStartBridge(electrobunCfg.bridge, config.execution?.bridge);
+
+  const driver = await Effect.runPromise(
+    makeElectrobunDriver({
+      executablePath: electrobunCfg.executablePath
+        ? resolveFromConfig(electrobunCfg.executablePath)
+        : undefined,
+      appDir: electrobunCfg.appDir ? resolveFromConfig(electrobunCfg.appDir) : undefined,
+      args: electrobunCfg.args,
+      cwd: electrobunCfg.cwd ? resolveFromConfig(electrobunCfg.cwd) : undefined,
+      env: {
+        ...electrobunCfg.env,
+        ...(bridge?.url ? { SPANA_BRIDGE: "1", SPANA_BRIDGE_URL: bridge.url } : {}),
+      },
+      renderer: electrobunCfg.renderer,
+      cdpUrl: electrobunCfg.cdpUrl,
+      cdpPort: electrobunCfg.cdpPort,
+      webkitInspectorPort: electrobunCfg.webkitInspectorPort,
+      url: electrobunCfg.url,
+      domChannel: bridge,
+    }),
+  );
+  const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+
+  return {
+    runtime: {
+      driver,
+      cleanup: () =>
+        safeCleanup(
+          () => Effect.runPromise(driver.killApp("")),
+          () => bridge?.disconnect() ?? Promise.resolve(),
+        ),
+      metadata: {
+        platform: "electrobun",
+        mode: "local",
+        deviceId: deviceInfo.deviceId,
+      },
+    },
+    engineConfig: buildEngineConfig(
+      electrobunCfg.url ?? electrobunCfg.executablePath ?? "electrobun",
+      "electrobun",
+      parseWebHierarchy,
+      config,
+      {
+        width: deviceInfo.screenWidth,
+        height: deviceInfo.screenHeight,
+      },
+    ),
   };
 }
 
@@ -129,10 +272,19 @@ export async function buildLocalAndroidRuntime(
     }
   }
   const hostPort = allocatePort(8200);
+  const warmDaemons = config.execution?.warmDaemons;
+  const bridge = await maybeStartBridge(config.apps?.android?.bridge, config.execution?.bridge);
+
   try {
-    const conn = await setupUiAutomator2(device.serial, hostPort);
+    const conn = await setupUiAutomator2(device.serial, hostPort, {
+      warm: warmDaemons?.enabled,
+      daemonStateFile: warmDaemons?.stateFile,
+    });
     const driver = await Effect.runPromise(
-      createUiAutomator2Driver(conn.host, conn.port, device.serial, packageName),
+      createUiAutomator2Driver(conn.host, conn.port, device.serial, packageName, {
+        domChannel: bridge,
+        cdpPort: config.apps?.android?.cdpPort,
+      }),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 
@@ -142,6 +294,7 @@ export async function buildLocalAndroidRuntime(
         cleanup: () =>
           safeCleanup(
             () => Effect.runPromise(driver.killApp("")),
+            () => bridge?.disconnect() ?? Promise.resolve(),
             () => conn.cleanup?.() ?? Promise.resolve(),
           ),
         metadata: {
@@ -156,6 +309,7 @@ export async function buildLocalAndroidRuntime(
       }),
     };
   } catch (e) {
+    await bridge?.disconnect().catch(() => {});
     console.log(`Android setup failed on ${device.serial}: ${e instanceof Error ? e.message : e}`);
     return null;
   }
@@ -170,6 +324,8 @@ export async function buildLocalIOSRuntime(
   const iosAppPath = config.apps?.ios?.appPath;
   const signing = config.apps?.ios?.signing;
   const snapshotMaxDepth = config.defaults?.snapshotMaxDepth ?? 100;
+  const warmDaemons = config.execution?.warmDaemons;
+  const bridge = await maybeStartBridge(config.apps?.ios?.bridge, config.execution?.bridge);
 
   const createIOSRuntime = async (
     deviceId: string,
@@ -177,7 +333,12 @@ export async function buildLocalIOSRuntime(
     simulatorUdid?: string,
   ): Promise<RuntimeResult> => {
     const driver = await Effect.runPromise(
-      createWDADriver(conn.host, conn.port, bundleId, simulatorUdid, snapshotMaxDepth),
+      createWDADriver(conn.host, conn.port, bundleId, simulatorUdid, snapshotMaxDepth, {
+        domChannel: bridge,
+        webkitInspectorUrl: config.apps?.ios?.webkitInspectorUrl,
+        webkitInspectorPort: config.apps?.ios?.webkitInspectorPort,
+        autoStartInspectorProxy: true,
+      }),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 
@@ -187,6 +348,7 @@ export async function buildLocalIOSRuntime(
         cleanup: () =>
           safeCleanup(
             () => Effect.runPromise(driver.killApp("")),
+            () => bridge?.disconnect() ?? Promise.resolve(),
             () => conn.cleanup?.() ?? Promise.resolve(),
           ),
         metadata: {
@@ -227,6 +389,7 @@ export async function buildLocalIOSRuntime(
           wdaPort,
           signing.teamId,
           signing.signingIdentity,
+          { warm: warmDaemons?.enabled, daemonStateFile: warmDaemons?.stateFile },
         );
       } else {
         conn = connectPhysicalDevice(physicalDevice.udid);
@@ -245,6 +408,7 @@ export async function buildLocalIOSRuntime(
       }
 
       if (!allowSimulatorFallback) {
+        await bridge?.disconnect().catch(() => {});
         console.log(
           `iOS setup failed for device ${physicalDevice.udid}: ${e instanceof Error ? e.message : e}`,
         );
@@ -270,9 +434,13 @@ export async function buildLocalIOSRuntime(
     }
     const wdaPort = allocatePort(8100);
     try {
-      const conn = await setupWDA(targetDevice.id, wdaPort);
+      const conn = await setupWDA(targetDevice.id, wdaPort, {
+        warm: warmDaemons?.enabled,
+        daemonStateFile: warmDaemons?.stateFile,
+      });
       return await createIOSRuntime(targetDevice.id, conn, targetDevice.id);
     } catch (e) {
+      await bridge?.disconnect().catch(() => {});
       console.log(
         `iOS setup failed for device ${targetDevice.id}: ${e instanceof Error ? e.message : e}`,
       );
@@ -296,6 +464,7 @@ export async function buildLocalIOSRuntime(
   // Fall back to simulator
   const simulator = ensureIOSSimulator(bundleId);
   if (!simulator) {
+    await bridge?.disconnect().catch(() => {});
     console.log("No iOS simulator or physical device available. Skipping ios platform.");
     return null;
   }
@@ -309,9 +478,13 @@ export async function buildLocalIOSRuntime(
   }
   const wdaPort = allocatePort(8100);
   try {
-    const conn = await setupWDA(simulator.udid, wdaPort);
+    const conn = await setupWDA(simulator.udid, wdaPort, {
+      warm: warmDaemons?.enabled,
+      daemonStateFile: warmDaemons?.stateFile,
+    });
     return await createIOSRuntime(simulator.udid, conn, simulator.udid);
   } catch (e) {
+    await bridge?.disconnect().catch(() => {});
     console.log(`iOS setup failed on ${simulator.name}: ${e instanceof Error ? e.message : e}`);
     return null;
   }

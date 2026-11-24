@@ -1,4 +1,4 @@
-// spana — TypeScript-native E2E testing for React Native + Web
+// spana — Web-first cross-platform E2E testing (Web, Capacitor iOS/Android, Electron, Electrobun)
 
 // User-facing API
 export {
@@ -24,17 +24,26 @@ export {
   type Sessions,
 } from "./core/session-manager.js";
 
-// Schemas
+// Schemas & selector helpers
 export {
+  systemUI,
+  isSystemUISelector,
+  isTestIDSelector,
   type Selector,
   type ExtendedSelector,
   type RelativeSelector,
   type Platform,
+  type TapMode,
 } from "./schemas/selector.js";
 export {
   defineConfig,
   type ProvConfig,
   type AppConfig,
+  type ElectronAppConfig,
+  type ElectrobunAppConfig,
+  type ElectrobunRenderer,
+  type BridgeConfig,
+  type WarmDaemonConfig,
   type BrowserName,
   type StorybookConfig,
   type StorybookValue,
@@ -55,6 +64,73 @@ export {
   type TouchAction,
   type TouchSequence,
 } from "./drivers/raw-driver.js";
+
+// Target × Channel Matrix & DOM Channels
+export {
+  TARGET_CHANNEL_MATRIX,
+  resolveTargetDescriptor,
+  resolveElectrobunEngine,
+  formatTargetMatrixTable,
+  type TargetShell,
+  type TargetEngine,
+  type TargetChannel,
+  type TargetDescriptor,
+  type HostOS,
+} from "./core/target-matrix.js";
+export {
+  type DomChannel,
+  type DomChannelKind,
+  type DomElementMatch,
+  type DomRect,
+  type DomIdleOptions,
+  type DomStorageEntries,
+  type DomClearStorageOptions,
+  type DomTargetInfo,
+} from "./channels/dom-channel.js";
+export {
+  createCdpDomChannel,
+  CdpDomChannel,
+  type CdpDomChannelOptions,
+} from "./channels/cdp-client.js";
+export {
+  createAndroidWebViewCdpChannel,
+  AndroidWebViewCdpChannel,
+  parseAndroidWebViewSockets,
+  type AndroidWebViewCdpOptions,
+} from "./channels/android-cdp.js";
+export {
+  createWebKitInspectorChannel,
+  WebKitInspectorChannel,
+  type WebKitInspectorOptions,
+} from "./channels/webkit-inspector.js";
+export {
+  createSpanaBridgeChannel,
+  createCompositeDomChannel,
+  SpanaBridgeChannel,
+  type SpanaBridgeServerOptions,
+} from "./channels/bridge-server.js";
+
+// Channel resolver & Desktop drivers
+export {
+  findWebViewFrame,
+  domRectToScreenBounds,
+  resolveElementAcrossChannels,
+  type ResolvedElementResult,
+} from "./smart/channel-resolver.js";
+export { makeElectronDriver, type ElectronDriverOptions } from "./drivers/electron.js";
+export {
+  makeElectrobunDriver,
+  resolveElectrobunLaunchPlan,
+  type ElectrobunDriverOptions,
+  type ElectrobunLaunchPlan,
+} from "./drivers/electrobun.js";
+export {
+  listWarmDaemons,
+  stopWarmDaemon,
+  stopAllWarmDaemons,
+  getHealthyWarmDaemon,
+  type WarmDaemonRecord,
+} from "./runtime/daemon-manager.js";
 
 // Cloud provider API — for custom cloud provider authors
 export { type CloudProvider, type CloudProviderHelper } from "./cloud/provider.js";

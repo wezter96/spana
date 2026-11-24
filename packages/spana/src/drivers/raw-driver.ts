@@ -2,6 +2,7 @@ import { Context, Effect } from "effect";
 import type { DriverError } from "../errors.js";
 import type { DeviceInfo } from "../schemas/device.js";
 import type { Selector } from "../schemas/selector.js";
+import type { DomChannel } from "../channels/dom-channel.js";
 
 export type RawHierarchy = string; // Raw XML (Android/iOS) or JSON (web) — parsed by platform-specific parsers
 
@@ -220,10 +221,15 @@ export interface RawDriverService<_T extends string = string, R extends string =
     ...args: unknown[]
   ) => Effect.Effect<T, DriverError>;
 
-  // WebView / hybrid context switching (mobile only)
+  // WebView / hybrid context switching (low-level escape hatch)
   readonly getContexts?: () => Effect.Effect<string[], DriverError>;
   readonly getCurrentContext?: () => Effect.Effect<string, DriverError>;
   readonly setContext?: (contextId: string) => Effect.Effect<void, DriverError>;
+
+  // Web-first DOM channel (spana-bridge, CDP, or WebKit Remote Inspector)
+  readonly domChannel?: DomChannel;
+  /** Fast reset via bridge storage clear + reload (avoids uninstall/reinstall) */
+  readonly resetFast?: () => Effect.Effect<void, DriverError>;
 
   // Network & browser state helpers
   readonly mockNetwork?: (
@@ -355,6 +361,8 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     getContexts: wrapOptionalMethod(logs, "getContexts", driver.getContexts),
     getCurrentContext: wrapOptionalMethod(logs, "getCurrentContext", driver.getCurrentContext),
     setContext: wrapOptionalMethod(logs, "setContext", driver.setContext),
+    domChannel: driver.domChannel,
+    resetFast: wrapOptionalMethod(logs, "resetFast", driver.resetFast),
     mockNetwork: wrapOptionalMethod(logs, "mockNetwork", driver.mockNetwork),
     blockNetwork: wrapOptionalMethod(logs, "blockNetwork", driver.blockNetwork),
     clearNetworkMocks: wrapOptionalMethod(logs, "clearNetworkMocks", driver.clearNetworkMocks),

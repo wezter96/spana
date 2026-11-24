@@ -12,6 +12,8 @@ import type {
 import type { Platform, Selector, ExtendedSelector } from "../schemas/selector.js";
 import type { Element } from "../schemas/element.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
+import { makeElectronDriver } from "../drivers/electron.js";
+import { makeElectrobunDriver } from "../drivers/electrobun.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
 import { createWDADriver } from "../drivers/wda/driver.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
@@ -51,6 +53,11 @@ export interface ConnectOptions {
   storageState?: string; // for web
   verboseLogging?: boolean; // for web
   storybook?: StorybookConfig; // for web
+  entry?: string; // for electron
+  executablePath?: string; // for electron / electrobun
+  cdpUrl?: string; // for electron / electrobun
+  cdpPort?: number; // for electron / electrobun
+  renderer?: "native" | "cef"; // for electrobun
 }
 
 export interface SuggestedSelector {
@@ -470,6 +477,38 @@ export async function connect(opts: ConnectOptions): Promise<Session> {
     }
 
     throw new Error("No iOS simulator or physical device available");
+  }
+
+  if (opts.platform === "electron") {
+    const driver = await Effect.runPromise(
+      makeElectronDriver({
+        entry: opts.entry,
+        executablePath: opts.executablePath,
+        cdpUrl: opts.cdpUrl,
+        cdpPort: opts.cdpPort,
+        url: opts.baseUrl,
+      }),
+    );
+    return new Session(
+      driver,
+      "electron",
+      parseWebHierarchy,
+      opts.baseUrl ?? opts.entry ?? "electron",
+      [],
+    );
+  }
+
+  if (opts.platform === "electrobun") {
+    const driver = await Effect.runPromise(
+      makeElectrobunDriver({
+        executablePath: opts.executablePath,
+        cdpUrl: opts.cdpUrl,
+        cdpPort: opts.cdpPort,
+        renderer: opts.renderer,
+        url: opts.baseUrl,
+      }),
+    );
+    return new Session(driver, "electrobun", parseWebHierarchy, opts.baseUrl ?? "electrobun", []);
   }
 
   throw new Error(`Unsupported platform: ${opts.platform}`);

@@ -6,7 +6,7 @@ export interface DiscoveredDevice {
   platform: Platform;
   id: string;
   name: string;
-  type: "emulator" | "simulator" | "device" | "browser";
+  type: "emulator" | "simulator" | "device" | "browser" | "desktop";
   state: string;
 }
 
@@ -20,6 +20,26 @@ export function discoverDevices(platforms: Platform[]): DiscoveredDevice[] {
       id: "playwright-chromium",
       name: "Chromium (Playwright)",
       type: "browser",
+      state: "available",
+    });
+  }
+
+  if (platforms.includes("electron")) {
+    devices.push({
+      platform: "electron",
+      id: "electron-local",
+      name: "Electron (Playwright _electron / CDP)",
+      type: "desktop",
+      state: "available",
+    });
+  }
+
+  if (platforms.includes("electrobun")) {
+    devices.push({
+      platform: "electrobun",
+      id: "electrobun-local",
+      name: "Electrobun (Native WebView / CEF)",
+      type: "desktop",
       state: "available",
     });
   }
@@ -72,6 +92,6 @@ export function firstDeviceForPlatform(platform: Platform): DiscoveredDevice | n
 
 /** Find a specific device by ID across all platforms */
 export function findDeviceById(id: string): DiscoveredDevice | null {
-  const devices = discoverDevices(["web", "android", "ios"]);
+  const devices = discoverDevices(["web", "android", "ios", "electron", "electrobun"]);
   return devices.find((d) => d.id === id) ?? null;
 }

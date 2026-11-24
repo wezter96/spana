@@ -1,4 +1,4 @@
-import type { Platform } from "./selector.js";
+import type { Platform, TapMode } from "./selector.js";
 import type { DeviceStateConfig, LaunchOptions } from "../drivers/raw-driver.js";
 import { z, type ZodError } from "zod";
 
@@ -11,6 +11,30 @@ export interface IOSSigningConfig {
   signingIdentity?: string;
 }
 
+export interface BridgeConfig {
+  /** Enable the in-app spana-bridge WebSocket server. Default: auto-detected when port/url is set. */
+  enabled?: boolean;
+  /** Port for the runner's spana-bridge WebSocket server (default: 9333). */
+  port?: number;
+  /** Host to bind the bridge server on (default: "127.0.0.1"). */
+  host?: string;
+  /** Explicit external bridge URL if already running (e.g. ws://127.0.0.1:9333). */
+  url?: string;
+  /** Connection timeout in ms when waiting for the app bridge to connect (default: 5000). */
+  connectTimeout?: number;
+}
+
+export interface WarmDaemonConfig {
+  /** Keep WDA / UiAutomator2 daemons alive across test runs and reuse them. Default: false. */
+  enabled?: boolean;
+  /** Reuse a single browser process across flows with fresh BrowserContexts. Default: true. */
+  reuseBrowserProcess?: boolean;
+  /** Reuse an active WDA/UiAutomator2 session across flows instead of recreating. Default: true when warm daemons enabled. */
+  reuseSession?: boolean;
+  /** Optional path to store warm daemon metadata. */
+  stateFile?: string;
+}
+
 export interface AppConfig {
   url?: string;
   packageName?: string;
@@ -19,6 +43,63 @@ export interface AppConfig {
   appPath?: string;
   /** iOS code signing config for physical devices */
   signing?: IOSSigningConfig;
+  /** Explicit WebKit Inspector URL or port for iOS WKWebView direct DOM access */
+  webkitInspectorUrl?: string;
+  webkitInspectorPort?: number;
+  /** Explicit CDP port for Android WebView or desktop targets */
+  cdpPort?: number;
+  /** Pin device locale (e.g. "en_US", "sv_SE") for predictable system UI labels */
+  locale?: string;
+  /** Optional spana-bridge override for this app target */
+  bridge?: BridgeConfig;
+}
+
+export interface ElectronAppConfig {
+  /** Path to Electron main entry file or app directory (passed to Playwright _electron.launch) */
+  entry?: string;
+  /** Path to a packaged Electron executable */
+  executablePath?: string;
+  /** Extra CLI arguments passed to Electron */
+  args?: string[];
+  /** Working directory for Electron launch */
+  cwd?: string;
+  /** Additional environment variables for Electron */
+  env?: Record<string, string>;
+  /** Attach to an already-running Electron app over CDP instead of launching */
+  cdpUrl?: string;
+  /** Remote debugging port when launching or attaching over CDP */
+  cdpPort?: number;
+  /** Optional URL to navigate to after launch */
+  url?: string;
+  /** Optional spana-bridge config */
+  bridge?: BridgeConfig;
+}
+
+export type ElectrobunRenderer = "native" | "cef";
+
+export interface ElectrobunAppConfig {
+  /** Path to Electrobun binary or packaged .app/.exe */
+  executablePath?: string;
+  /** Path to Electrobun project root (containing electrobun.config.ts) */
+  appDir?: string;
+  /** Extra CLI arguments passed to the Electrobun process */
+  args?: string[];
+  /** Working directory for launch */
+  cwd?: string;
+  /** Additional environment variables */
+  env?: Record<string, string>;
+  /** Renderer engine used by the Electrobun build: "native" (WKWebView/WebView2/WebKitGTK) or "cef" */
+  renderer?: ElectrobunRenderer;
+  /** Attach to an already-running Electrobun CEF/WebView2 app over CDP */
+  cdpUrl?: string;
+  /** Remote debugging port (ELECTROBUN_CDP_PORT / WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS) */
+  cdpPort?: number;
+  /** WebKit Inspector port for macOS WKWebView or Linux WebKitGTK */
+  webkitInspectorPort?: number;
+  /** Optional URL to navigate to after launch */
+  url?: string;
+  /** Optional spana-bridge config */
+  bridge?: BridgeConfig;
 }
 
 export type BrowserName = "chromium" | "firefox" | "webkit";
@@ -119,6 +200,10 @@ export interface ExecutionConfig {
   mode?: "local" | "appium";
   web?: WebExecutionConfig;
   appium?: AppiumExecutionConfig;
+  /** In-app spana-bridge configuration shared across webview targets */
+  bridge?: BridgeConfig;
+  /** Warm daemon & process reuse settings for fast repeated runs */
+  warmDaemons?: WarmDaemonConfig;
 }
 
 export interface ArtifactConfig {
@@ -146,6 +231,8 @@ export interface ProvConfig {
     web?: AppConfig;
     android?: AppConfig;
     ios?: AppConfig;
+    electron?: ElectronAppConfig;
+    electrobun?: ElectrobunAppConfig;
   };
   defaults?: {
     waitTimeout?: number;
@@ -166,6 +253,10 @@ export interface ProvConfig {
     retryDelay?: number;
     /** Max workers per platform when using --parallel. */
     workers?: number;
+    /** Default tap mode when a DOM channel resolves an element: "native" (real touch, default) or "dom" (fast synthetic click). */
+    tapMode?: TapMode;
+    /** Pin device locale across targets so system UI sheet labels stay deterministic. */
+    locale?: string;
   };
   platforms?: Platform[];
   /** Run platforms concurrently when they use independent resources. Default: false (serial). */
@@ -193,7 +284,7 @@ export interface ProvConfig {
   };
 }
 
-const platformSchema = z.enum(["web", "android", "ios"]);
+const platformSchema = z.enum(["web", "android", "ios", "electron", "electrobun"]);
 const reporterSchema = z.string().min(1);
 const hookSchema = z.custom<(...args: unknown[]) => Promise<void>>(
   (value) => typeof value === "function",
@@ -207,6 +298,25 @@ const iosSigningConfigSchema = z
   })
   .strict();
 
+const bridgeConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    port: z.number().int().positive().optional(),
+    host: z.string().min(1).optional(),
+    url: z.string().min(1).optional(),
+    connectTimeout: z.number().positive().optional(),
+  })
+  .strict();
+
+const warmDaemonConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    reuseBrowserProcess: z.boolean().optional(),
+    reuseSession: z.boolean().optional(),
+    stateFile: z.string().min(1).optional(),
+  })
+  .strict();
+
 const appConfigSchema = z
   .object({
     url: z.string().url().optional(),
@@ -214,6 +324,41 @@ const appConfigSchema = z
     bundleId: z.string().min(1).optional(),
     appPath: z.string().min(1).optional(),
     signing: iosSigningConfigSchema.optional(),
+    webkitInspectorUrl: z.string().min(1).optional(),
+    webkitInspectorPort: z.number().int().positive().optional(),
+    cdpPort: z.number().int().positive().optional(),
+    locale: z.string().min(1).optional(),
+    bridge: bridgeConfigSchema.optional(),
+  })
+  .strict();
+
+const electronAppConfigSchema = z
+  .object({
+    entry: z.string().min(1).optional(),
+    executablePath: z.string().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    cwd: z.string().min(1).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    cdpUrl: z.string().url().optional(),
+    cdpPort: z.number().int().positive().optional(),
+    url: z.string().url().optional(),
+    bridge: bridgeConfigSchema.optional(),
+  })
+  .strict();
+
+const electrobunAppConfigSchema = z
+  .object({
+    executablePath: z.string().min(1).optional(),
+    appDir: z.string().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    cwd: z.string().min(1).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    renderer: z.enum(["native", "cef"]).optional(),
+    cdpUrl: z.string().url().optional(),
+    cdpPort: z.number().int().positive().optional(),
+    webkitInspectorPort: z.number().int().positive().optional(),
+    url: z.string().url().optional(),
+    bridge: bridgeConfigSchema.optional(),
   })
   .strict();
 
@@ -309,6 +454,8 @@ const executionConfigSchema = z
     mode: z.enum(["local", "appium"]).optional(),
     web: webExecutionConfigSchema.optional(),
     appium: appiumExecutionConfigSchema.optional(),
+    bridge: bridgeConfigSchema.optional(),
+    warmDaemons: warmDaemonConfigSchema.optional(),
   })
   .strict();
 
@@ -351,6 +498,8 @@ export const provConfigSchema = z
         web: appConfigSchema.optional(),
         android: appConfigSchema.optional(),
         ios: appConfigSchema.optional(),
+        electron: electronAppConfigSchema.optional(),
+        electrobun: electrobunAppConfigSchema.optional(),
       })
       .strict()
       .optional(),
@@ -367,6 +516,8 @@ export const provConfigSchema = z
         snapshotMaxDepth: z.number().int().positive().optional(),
         retryDelay: z.number().nonnegative().optional(),
         workers: z.number().int().positive().optional(),
+        tapMode: z.enum(["native", "dom"]).optional(),
+        locale: z.string().min(1).optional(),
       })
       .strict()
       .optional(),

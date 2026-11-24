@@ -17,6 +17,8 @@ import { resolveCapabilities } from "../runtime/capabilities.js";
 import { loadConfig } from "./config-loader.js";
 import {
   buildWebRuntime,
+  buildElectronRuntime,
+  buildElectrobunRuntime,
   buildLocalAndroidRuntime,
   buildLocalIOSRuntime,
 } from "../runtime/local.js";
@@ -198,6 +200,30 @@ async function buildParallelPlatformConfigs(
           },
         });
       }
+    } else if (platform === "electron") {
+      const result = await buildElectronRuntime(config, resolveFromConfig);
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
+      });
+    } else if (platform === "electrobun") {
+      const result = await buildElectrobunRuntime(config, resolveFromConfig);
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
+      });
     } else if (platformDevices.length === 0) {
       console.log(`No ${platform} devices found. Skipping ${platform} platform.`);
     } else {
@@ -324,6 +350,30 @@ async function buildSerialPlatformConfigs(
     } else if (platform === "ios") {
       const result = await buildLocalIOSRuntime(config, targetDevice, resolveFromConfig);
       if (!result) continue;
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
+      });
+    } else if (platform === "electron") {
+      const result = await buildElectronRuntime(config, resolveFromConfig);
+      runtimes.push(result.runtime);
+      platformConfigs.push({
+        platform,
+        driver: result.runtime.driver,
+        engineConfig: {
+          ...result.engineConfig,
+          debugOnFailure: opts.debugOnFailure,
+          updateBaselines: opts.updateBaselines,
+        },
+      });
+    } else if (platform === "electrobun") {
+      const result = await buildElectrobunRuntime(config, resolveFromConfig);
       runtimes.push(result.runtime);
       platformConfigs.push({
         platform,

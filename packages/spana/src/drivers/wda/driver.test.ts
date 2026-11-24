@@ -331,4 +331,35 @@ describe("WDA driver adapter", () => {
       );
     }
   });
+
+  test("supports direct WDA evaluate() and getContexts() via attached DOM channel without Appium", async () => {
+    const { createWDADriver } = await importFreshDriver();
+    const fakeDomChannel = {
+      kind: "webkit-inspector" as const,
+      isConnected: () => true,
+      connect: async () => {},
+      disconnect: async () => {},
+      evaluate: async <T = unknown>(_script: string | ((...args: unknown[]) => T)) =>
+        "direct-wkwebview-result" as T,
+      query: async () => [],
+      tapDom: async () => true,
+      listTargets: async () => [{ id: "page-1", url: "capacitor://localhost" }],
+      selectTarget: async () => {},
+    };
+
+    const driver = await Effect.runPromise(
+      createWDADriver("127.0.0.1", 8100, "com.example.app", "SIM-1", 100, {
+        domChannel: fakeDomChannel,
+      }),
+    );
+
+    const evaluated = await Effect.runPromise(driver.evaluate<string>("document.title"));
+    expect(evaluated).toBe("direct-wkwebview-result");
+
+    const contexts = await Effect.runPromise(driver.getContexts!());
+    expect(contexts).toEqual(["NATIVE_APP", "WEBVIEW_page-1"]);
+
+    await Effect.runPromise(driver.setContext!("WEBVIEW_page-1"));
+    expect(await Effect.runPromise(driver.getCurrentContext!())).toBe("WEBVIEW_page-1");
+  });
 });
