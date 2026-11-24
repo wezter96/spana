@@ -13,7 +13,10 @@ Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS
 - **Dual-channel web-first engine (no Appium required):** ~1 ms DOM queries via `spana-bridge`, Android CDP, iOS WebKit Inspector, or Apple `webinspectord` (with Shadow DOM & same-origin `<iframe>` piercing), paired with direct UiAutomator2 / WebDriverAgent for real native touches and OS sheets (`systemUI()`)
 - **Built for speed:** persistent warm WDA/UiAutomator2 daemons (`spana daemon`), WDA session reuse, single-browser multi-context web worker pools, and in-page `spana-bridge` state injection (`setStorage`, `clearStorage`, `resetFast`, lazy `waitForIdle`)
 - Smart waits, retries, relative selectors, auto-scroll for offscreen DOM targets, and per-flow stability defaults
-- Reporters: console, JSON, JUnit XML, HTML, and Allure
+- Reporters: console, JSON, JUnit XML, HTML, Allure, and GitHub PR summary (`--reporter github`)
+- **CI Filters API (`--changed-since <ref>`):** pluggable `decisionFilter` / `pathRuleFilter` with fail-open safety defaults so PRs only run affected flows
+- **Model-free MCP server (`spana mcp`):** lets Claude Code, Codex, Cursor, and Antigravity drive live sessions across all 5 targets, inspect unified diagnostics, and emit verified `.flow.ts` code
+- **Composable lazy fixtures, named setups & verified replay cache:** `createFlowWithFixtures`, `defineSetup`, and `.spana/cache/` (`--strict-cache`) for zero-LLM CI gating
 - Artifacts on failure or success: screenshots, UI hierarchy dumps, structured failure bundles (`failure-bundle.json`), and per-step capture
 - App auto-install with `appPath`, iOS device signing, and optional Appium cloud mode (BrowserStack / Sauce Labs helpers)
 - CLI tooling for teams and agents: `doctor`, `daemon`, `validate`, `validate-config`, `init`, `init-flow`, `studio`, `selectors`, `hierarchy`, and `devices`

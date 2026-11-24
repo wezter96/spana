@@ -259,16 +259,16 @@ Spana's raw capability is now broad enough that the next big win is tightening t
 
 - [x] `spana doctor` environment readiness diagnostics (config, Android/iOS WebView inspection, WDA/UiAutomator2, Electron/Electrobun, `spana-bridge`)
 - [x] Opinionated `spana init` presets including `capacitor-web-first`
-- [x] Fast rerun modes: `spana test --last-failed` and `--watch`
-- [x] Structured failure bundles with selector alternatives, repro commands, and artifact references (`failure-bundle.json`)
+- [x] Fast rerun modes: `spana test --last-failed`, `--changed`, `--changed-since <ref>`, and `--watch`
+- [x] Versioned `--json` machine envelopes (`schemaVersion`, `errorCode`, `suggestedFix`, `docsUrl`) across `devices`, `validate`, `validate-config`, `selectors`, `hierarchy`, and `doctor`
+- [x] Reusable named setup states & composable lazy fixtures (`defineSetup`, `createFlowWithFixtures`)
+- [x] Structured failure bundles with selector alternatives, inline runtime diagnostics (`consoleLogs` / `jsErrors`), repro commands, and artifact references (`failure-bundle.json`)
 - [x] Runtime selector guardrails — advisory warnings for coordinate taps, text-heavy flows, and bare string selectors (with `systemUI()` exemption)
 - [x] Auto-generated `llms-full.txt` with all documentation inlined for agent context packaging
 
 ### Remaining in Phase 10
 
-- [ ] Versioned `--json` contracts (`schemaVersion`, `errorCode`, `suggestedFix`, `docsUrl`) across all CLI commands (`devices`, `validate`, `validate-config`, `selectors`, `hierarchy`, `doctor`)
-- [ ] First-class reusable named setup states / auth fixtures (`defineSetup` backed by `spana-bridge` `setStorage` + Playwright `storageState`)
-- [ ] `spana test --changed` (git-diff affected flow selection) and Studio starter `.flow.ts` generation from live screen state
+- [ ] Studio visual starter `.flow.ts` generation from live screen state (CLI/MCP flow generation already ships via `spana mcp`)
 
 ### Success criteria
 
@@ -295,16 +295,22 @@ One `{ testID }` + `systemUI()` selector model across **Web, Android (Capacitor/
 
 ---
 
-## Phase 12 — Agent-Native Workflows, CI Filters & Deep Inspection (Planned)
+## Phase 12 — Agent-Native Workflows, CI Filters & Deep Inspection (v1.8.0)
 
 Selective inspiration from AI-first E2E and agent tooling (`e2e-inc/e2e` and Software Mansion's `argent`), while keeping Spana's deterministic, zero-Appium, web-first speed advantage.
 
-- [ ] **Pluggable Filters API + `--changed-since <ref>`** — composable `{ name, filter(flows, ctx) }` hooks for CI test selection (deterministic path/tag rules + optional low-cost decision-model filter with safe fail-open defaults: always run changed test files, config/lockfile changes, large diffs, or low-confidence skips)
-- [ ] **`spana mcp` stdio MCP server** — let coding agents (Claude Code, Codex, Cursor, Antigravity) drive live web, mobile, and desktop sessions, inspect DOM + native + React trees, capture network/console logs, and emit verified `.flow.ts` lines back (no LLM required inside the server)
-- [ ] **Optional `agent.act()` + verified replay cache (`.spana/cache/`)** — record verified natural-language exploration into deterministic `{ testID }` / `systemUI()` steps with `--strict-cache` for zero-LLM, zero-cost CI gating
-- [ ] **Composable lazy fixtures** — `extend()` fixtures with automatic teardown and named `session` bindings layered onto `spana-bridge` `setStorage` / Playwright `storageState`
-- [ ] **Deep runtime diagnostics & OCR/font-aware visual diffs** — surface native/bridge network logs, optional Hermes/Perfetto/Instruments profiling hooks (Argent-inspired), and font/OCR-aware screenshot diffing alongside a GitHub PR comment reporter
-- [ ] **Pluggable lightweight browser / cloud sandbox adapters** — optional Lightpanda / remote CDP / hosted sandbox providers for ultra-fast CI fan-out
+### Delivered
+
+- [x] **Pluggable Filters API + `--changed-since <ref>`** — composable `{ name, filter(flows, ctx) }` hooks (`decisionFilter`, `pathRuleFilter`, `applyTestFilters`) with fail-open defaults (always runs changed test files, config/lockfile changes, diffs >60 kB, `alwaysRunTags`, and judge errors)
+- [x] **`spana mcp` stdio MCP server** — model-free MCP server letting coding agents drive live web, iOS, Android, Electron, and Electrobun sessions, inspect DOM/native + console/JS-error diagnostics, capture screenshots, run flows, and emit verified `.flow.ts` files
+- [x] **Verified Replay Cache (`.spana/cache/`) + `--strict-cache`** — `ReplaySession` & `ReplayCacheStore` replaying deterministic actions with zero LLM calls, verifying writes only after real assertions pass, and supporting self-healing handoff in `read-write` mode
+- [x] **Composable lazy fixtures & named setups** — `createFlowWithFixtures` + `defineSetup` (`{ session: "admin" }`) with lazy destructured dependency graphs, LIFO teardown, and automatic `spana-bridge` / Playwright storage injection
+- [x] **Inline failure-bundle runtime diagnostics, layout-tolerant visual diffing & GitHub PR reporter** — `runtimeDiagnostics` in `failure-bundle.json`, `mode: "layout-tolerant"` in `compareScreenshots`, and built-in `--reporter github` (`github-pr-summary.md` + `$GITHUB_STEP_SUMMARY`)
+
+### Remaining in Phase 12
+
+- [ ] Optional Perfetto / Xcode Instruments / Hermes profiling hooks for mobile render-regression diagnostics
+- [ ] Pluggable lightweight browser / cloud sandbox adapters (Lightpanda / remote CDP / hosted sandbox providers)
 
 ---
 

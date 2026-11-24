@@ -157,3 +157,75 @@ export {
   type FlowError,
   type FailureCategory,
 } from "./report/types.js";
+export {
+  createGitHubPrReporter,
+  formatGitHubPrMarkdown,
+  type GitHubPrReporterOptions,
+} from "./report/github-pr.js";
+
+// CI Filters API (--changed-since)
+export {
+  decisionFilter,
+  pathRuleFilter,
+  applyTestFilters,
+  collectGitChanges,
+  buildFilterCandidates,
+  formatFilterSummary,
+  type TestFilter,
+  type FilterCandidate,
+  type FilterContext,
+  type FilterDecisionOutput,
+  type FilterUsage,
+  type GitChanges,
+  type ChangedFile,
+  type DecisionModelJudge,
+  type DecisionFilterOptions,
+  type PathRule,
+  type PathRuleFilterOptions,
+  type AppliedFilterReport,
+  type ApplyFiltersResult,
+} from "./core/filters.js";
+
+// Composable lazy fixtures & named setup states
+export {
+  defineSetup,
+  applyNamedSetup,
+  createFlowWithFixtures,
+  extractDestructuredParamNames,
+  type NamedSetupDefinition,
+  type FixtureFn,
+  type FixtureDefinition,
+  type FixtureMap,
+  type ExtendedFlowConfig,
+  type CreateFixturesOptions,
+} from "./api/fixtures.js";
+
+// Verified Replay Cache (.spana/cache) & self-healing agent hook
+export {
+  ReplayCacheStore,
+  ReplaySession,
+  buildReplayCacheKey,
+  replayRecordedAction,
+  type RecordedAction,
+  type ReplayCacheEntry,
+  type ReplayCacheMode,
+  type CacheWriteStatus,
+  type ReplayStepOutcome,
+  type ReplayCacheSummary,
+  type AgentActExecutor,
+  type ReplaySessionOptions,
+} from "./core/replay-cache.js";
+
+// Stdio MCP Server (spana mcp)
+export {
+  SpanaMcpServer,
+  SPANA_MCP_TOOLS,
+  formatSelectorCode,
+  buildFlowFileFromLines,
+  type McpToolDefinition,
+  type McpContentBlock,
+  type McpToolResult,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type SpanaMcpServerOptions,
+} from "./mcp/server.js";

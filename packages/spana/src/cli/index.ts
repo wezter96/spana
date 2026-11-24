@@ -37,6 +37,8 @@ if (command === "test") {
   let verbose = false;
   let lastFailed = false;
   let changed = false;
+  let changedSince: string | undefined;
+  let strictCache = false;
   let watch = false;
   let updateBaselines = false;
 
@@ -109,6 +111,10 @@ if (command === "test") {
       lastFailed = true;
     } else if (arg === "--changed") {
       changed = true;
+    } else if (arg === "--changed-since" && args[i + 1]) {
+      changedSince = args[++i];
+    } else if (arg === "--strict-cache") {
+      strictCache = true;
     } else if (arg === "--watch") {
       watch = true;
     } else if (arg === "--update-baselines") {
@@ -145,6 +151,8 @@ if (command === "test") {
     verbose,
     lastFailed,
     changed,
+    changedSince,
+    strictCache,
     watch,
     updateBaselines,
   });
@@ -497,18 +505,25 @@ if (command === "test") {
       }
     }
   }
+} else if (command === "mcp") {
+  const { SpanaMcpServer } = await import("../mcp/server.js");
+  const server = new SpanaMcpServer();
+  await server.runStdio();
 } else if (command === "version" || args.includes("--version") || args.includes("-v")) {
-  console.log("spana v0.2.0");
+  console.log("spana v0.4.0");
 } else {
-  console.log("spana — TypeScript-native E2E testing for React Native + Web");
+  console.log(
+    "spana — Web-first, TypeScript-native E2E testing across Web, Capacitor/RN, Electron & Electrobun",
+  );
   console.log("");
   console.log("Commands:");
   console.log("  spana test [path]              Run test flows");
+  console.log("  spana mcp                      Start stdio MCP server for coding agents");
   console.log("  spana hierarchy --platform <p> Dump element hierarchy as JSON");
   console.log("  spana selectors --platform <p> List actionable elements with suggested selectors");
   console.log("  spana validate [path]          Validate flow files without device connection");
   console.log("  spana validate-config [path]   Validate spana.config.ts without running flows");
-  console.log("  spana doctor                  Check environment readiness before running tests");
+  console.log("  spana doctor                   Check environment readiness before running tests");
   console.log("  spana studio                   Launch Spana Studio UI");
   console.log("  spana init                     Initialize a new spana project");
   console.log("  spana init-flow <name>         Generate a starter .flow.ts file");
@@ -523,14 +538,16 @@ if (command === "test") {
   console.log("  --tag smoke,auth           Filter by tags");
   console.log("  --grep login               Filter by name pattern");
   console.log(
-    "  --reporter console|json|junit Reporter format (default: spana.config.ts or console)",
+    "  --reporter console|json|junit|html|allure|github Reporter format (default: console)",
   );
   console.log("  --retries <n>              Retry failed flows n times (flake detection)");
-  console.log("  --shard <current>/<total> Distribute flows across CI jobs");
+  console.log("  --shard <current>/<total>  Distribute flows across CI jobs");
   console.log("  --bail <n>                 Abort after N failures");
   console.log("  --debug-on-failure         Open an interactive REPL on the first failed flow");
   console.log("  --last-failed              Rerun only flows that failed in the last Spana run");
   console.log("  --changed                  Run only changed flow files from git");
+  console.log("  --changed-since <ref>      Run configured CI test filters against git base ref");
+  console.log("  --strict-cache             Fail on replay cache mismatch without calling an LLM");
   console.log("  --watch                    Rerun automatically when flow/config files change");
   console.log("  --quiet, -q                Only show failures and final summary");
   console.log("  --device <id>              Target a specific device by ID");

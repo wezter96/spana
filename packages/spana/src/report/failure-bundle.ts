@@ -10,6 +10,14 @@ export interface BundleStep {
   error?: string;
 }
 
+export interface RuntimeDiagnosticsSummary {
+  consoleErrorCount: number;
+  consoleWarnCount: number;
+  recentConsoleErrors: string[];
+  jsErrorCount: number;
+  recentJsErrors: string[];
+}
+
 export interface FailureBundle {
   schemaVersion: number;
   flow: string;
@@ -27,6 +35,8 @@ export interface FailureBundle {
     attempted: unknown;
     nearbyAlternatives: string[];
   };
+  /** Argent-inspired inline runtime diagnostics (console errors + JS exceptions) for rapid agent triage. */
+  runtimeDiagnostics?: RuntimeDiagnosticsSummary;
   artifacts: Record<string, string>;
   reproCommand: string;
   durationMs: number;
@@ -226,6 +236,71 @@ export function createFailureBundle(
   const flowFile = flowPath ?? `flows/${flowName.replaceAll(" ", "-")}.flow.ts`;
   const reproCommand = `spana test ${flowFile} --platform ${platform} --grep '${flowName}'`;
 
+  // Inline runtime diagnostics (console errors & JS exceptions) when captured in artifactDir
+  let runtimeDiagnostics: RuntimeDiagnosticsSummary | undefined;
+  const consolePath = join(artifactDir, "console-logs.json");
+  const jsErrPath = join(artifactDir, "js-errors.json");
+  if (existsSync(consolePath) || existsSync(jsErrPath)) {
+    let consoleErrorCount = 0;
+    let consoleWarnCount = 0;
+    const recentConsoleErrors: string[] = [];
+    let jsErrorCount = 0;
+    const recentJsErrors: string[] = [];
+
+    if (existsSync(consolePath)) {
+      try {
+        const logs = JSON.parse(readFileSync(consolePath, "utf-8")) as Array<{
+          type?: string;
+          level?: string;
+          text?: string;
+          message?: string;
+        }>;
+        if (Array.isArray(logs)) {
+          for (const entry of logs) {
+            const lvl = (entry.type ?? entry.level ?? "").toLowerCase();
+            const text = entry.text ?? entry.message ?? "";
+            if (lvl === "error") {
+              consoleErrorCount++;
+              if (text) recentConsoleErrors.push(text);
+            } else if (lvl === "warn" || lvl === "warning") {
+              consoleWarnCount++;
+            }
+          }
+        }
+      } catch {
+        // Ignore malformed console log artifact
+      }
+    }
+
+    if (existsSync(jsErrPath)) {
+      try {
+        const errs = JSON.parse(readFileSync(jsErrPath, "utf-8")) as Array<{
+          message?: string;
+          text?: string;
+        }>;
+        if (Array.isArray(errs)) {
+          jsErrorCount = errs.length;
+          for (const e of errs.slice(-5)) {
+            const msg = e.message ?? e.text ?? String(e);
+            if (msg) recentJsErrors.push(msg);
+          }
+        }
+      } catch {
+        // Ignore malformed js error artifact
+      }
+    }
+
+    if (consoleErrorCount > 0 || consoleWarnCount > 0 || jsErrorCount > 0) {
+      runtimeDiagnostics = {
+        consoleErrorCount,
+        consoleWarnCount,
+        recentConsoleErrors: recentConsoleErrors.slice(-5),
+        jsErrorCount,
+        recentJsErrors,
+      };
+    }
+  }
+
   const bundle: FailureBundle = {
     schemaVersion: 1,
     flow: flowName,
@@ -240,6 +315,7 @@ export function createFailureBundle(
       errorCode: error.errorCode,
     },
     selectorContext,
+    ...(runtimeDiagnostics ? { runtimeDiagnostics } : {}),
     artifacts: buildArtifactMap(attachments),
     reproCommand,
     durationMs: steps.reduce((sum, s) => sum + s.durationMs, 0),

@@ -63,6 +63,10 @@ export interface TestCommandOptions {
   verbose?: boolean;
   lastFailed?: boolean;
   changed?: boolean;
+  /** Git base ref for pluggable CI test filters (e.g. `origin/main`). */
+  changedSince?: string;
+  /** Enforce deterministic replay cache without invoking LLM executors. */
+  strictCache?: boolean;
   watch?: boolean;
   updateBaselines?: boolean;
 }
@@ -391,7 +395,7 @@ async function buildSerialPlatformConfigs(
   return platformConfigs;
 }
 
-const BUILTIN_REPORTERS = new Set(["console", "json", "junit", "html", "allure"]);
+const BUILTIN_REPORTERS = new Set(["console", "json", "junit", "html", "allure", "github"]);
 
 /**
  * Load a custom reporter from a module path.
@@ -437,6 +441,7 @@ async function setupReporters(
   resolveFromConfig: (p: string) => string,
   appiumUrl: string | undefined,
   opts: Pick<TestCommandOptions, "quiet">,
+  filterSummaries: string[] = [],
 ) {
   const { createRedactor, registerUrlSecrets } = await import("../report/redact.js");
   const redactor = createRedactor();
@@ -447,6 +452,7 @@ async function setupReporters(
   const { createJUnitReporter } = await import("../report/junit.js");
   const { createHtmlReporter } = await import("../report/html.js");
   const { createAllureReporter } = await import("../report/allure.js");
+  const { createGitHubPrReporter } = await import("../report/github-pr.js");
 
   const resolvedOutputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
   const reporters: Reporter[] = [];
@@ -468,6 +474,9 @@ async function setupReporters(
           break;
         case "allure":
           reporters.push(createAllureReporter());
+          break;
+        case "github":
+          reporters.push(createGitHubPrReporter({ outputDir: resolvedOutputDir, filterSummaries }));
           break;
         default:
           reporters.push(createConsoleReporter({ quiet: opts.quiet }));
@@ -611,6 +620,8 @@ interface FlowDiscoveryInput {
   shard?: ShardOptions;
   lastFailed?: boolean;
   changed?: boolean;
+  changedSince?: string;
+  filters?: import("../core/filters.js").TestFilter[];
   outputDir: string;
 }
 
@@ -619,6 +630,7 @@ interface FlowDiscoverySuccess {
   selectedLoadedFlows: LoadedFlowSource[];
   selectedFlows: import("../api/flow.js").FlowDefinition[];
   watchRoots: string[];
+  filterSummaries: string[];
 }
 
 interface FlowDiscoveryEarlyExit {
@@ -703,6 +715,42 @@ async function discoverAndFilterFlows(
   );
   const allowedFlows = new Set(filteredFlows);
   let filteredLoadedFlows = loadedFlows.filter((l) => allowedFlows.has(l.flow));
+  let filterSummaries: string[] = [];
+
+  // Handle --changed-since <ref> with pluggable CI filters (fail-open)
+  if (
+    input.changedSince &&
+    input.filters &&
+    input.filters.length > 0 &&
+    filteredLoadedFlows.length > 0
+  ) {
+    const { applyTestFilters, buildFilterCandidates, collectGitChanges, formatFilterSummary } =
+      await import("../core/filters.js");
+    try {
+      const cwd = process.cwd();
+      const changes = collectGitChanges(input.changedSince, cwd);
+      const candidates = buildFilterCandidates(filteredLoadedFlows, cwd);
+      const result = await applyTestFilters(filteredLoadedFlows, candidates, input.filters, {
+        cwd,
+        changes,
+        configPath: input.configPath,
+        platforms: input.platforms,
+      });
+      filterSummaries = formatFilterSummary(result.reports);
+      for (const line of filterSummaries) {
+        console.log(line);
+      }
+      filteredLoadedFlows = result.kept;
+      if (filteredLoadedFlows.length === 0) {
+        console.log("All flows were filtered out by --changed-since filters.");
+        return { ok: false, success: true, watchRoots };
+      }
+    } catch (err) {
+      console.log(
+        `Warning: --changed-since ${input.changedSince} failed (${err instanceof Error ? err.message : String(err)}) — failing open and running all flows.`,
+      );
+    }
+  }
 
   // Handle --last-failed flag
   if (input.lastFailed) {
@@ -751,7 +799,7 @@ async function discoverAndFilterFlows(
     );
   }
 
-  return { ok: true, selectedLoadedFlows, selectedFlows, watchRoots };
+  return { ok: true, selectedLoadedFlows, selectedFlows, watchRoots, filterSummaries };
 }
 
 function createResultHandler(
@@ -887,10 +935,12 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     shard: opts.shard,
     lastFailed: opts.lastFailed,
     changed: opts.changed,
+    changedSince: opts.changedSince,
+    filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
     outputDir,
   });
   if (!flowResult.ok) return { success: flowResult.success, watchRoots: flowResult.watchRoots };
-  const { selectedLoadedFlows, selectedFlows, watchRoots } = flowResult;
+  const { selectedLoadedFlows, selectedFlows, watchRoots, filterSummaries } = flowResult;
 
   console.log(`Running ${selectedFlows.length} flow(s) on ${platforms.join(", ")}...\n`);
 
@@ -991,6 +1041,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       resolveFromConfig,
       appiumUrl,
       opts,
+      filterSummaries,
     );
 
     // Set flow count for progress display

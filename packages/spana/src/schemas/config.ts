@@ -281,6 +281,17 @@ export interface ProvConfig {
     threshold?: number;
     maxDiffPixelRatio?: number;
     baselinesDir?: string;
+    mode?: "pixel" | "layout-tolerant";
+  };
+  /** Pluggable CI filters evaluated when `--changed-since <ref>` is passed. */
+  filters?: Array<{
+    name: string;
+    filter: (flows: any[], context: any) => Promise<any> | any;
+  }>;
+  /** Verified replay cache settings for optional agentic steps (`.spana/cache/`). */
+  replayCache?: {
+    mode?: "read-write" | "strict" | "off";
+    dir?: string;
   };
 }
 
@@ -542,7 +553,27 @@ export const provConfigSchema = z
         threshold: z.number().min(0).max(1).optional(),
         maxDiffPixelRatio: z.number().min(0).max(1).optional(),
         baselinesDir: z.string().optional(),
+        mode: z.enum(["pixel", "layout-tolerant"]).optional(),
       })
+      .optional(),
+    filters: z
+      .array(
+        z.custom<{ name: string; filter: (...args: unknown[]) => unknown }>(
+          (value) =>
+            typeof value === "object" &&
+            value !== null &&
+            typeof (value as Record<string, unknown>).name === "string" &&
+            typeof (value as Record<string, unknown>).filter === "function",
+          { message: "Expected TestFilter ({ name, filter })" },
+        ),
+      )
+      .optional(),
+    replayCache: z
+      .object({
+        mode: z.enum(["read-write", "strict", "off"]).optional(),
+        dir: z.string().min(1).optional(),
+      })
+      .strict()
       .optional(),
   })
   .strict();
