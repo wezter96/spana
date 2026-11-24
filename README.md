@@ -1,26 +1,72 @@
+<p align="center">
+  <img src="./docs/assets/spana-hero.jpg" alt="spana — Web-first cross-platform E2E testing across 5 targets" width="100%" />
+</p>
+
 # spana
 
-Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — one `{ testID }` selector model, zero Appium required.
+**Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — one `{ testID }` selector model, zero Appium required.**
 
-[Documentation](https://wezter96.github.io/spana/) | [GitHub](https://github.com/wezter96/spana) | [npm](https://www.npmjs.com/package/spana-test) | [E2E Test Report](https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html)
+[![npm](https://img.shields.io/npm/v/spana-test?color=06b6d4&label=spana-test)](https://www.npmjs.com/package/spana-test)
+[![License](https://img.shields.io/badge/license-Apache--2.0-10b981)](./LICENSE)
+[![Targets](https://img.shields.io/badge/targets-Web%20%C2%B7%20iOS%20%C2%B7%20Android%20%C2%B7%20Electron%20%C2%B7%20Electrobun-38bdf8)](#platforms)
+
+[Documentation](https://wezter96.github.io/spana/) · [Benchmarks](#benchmarks) · [Architecture](#architecture) · [MCP Server](#agent-integration--mcp-server) · [Live HTML Report](https://htmlpreview.github.io/?https://github.com/wezter96/spana/blob/main/docs/e2e-report.html)
 
 ---
 
 ## Features
 
-- Pure TypeScript flows, plus optional Gherkin / BDD `.feature` support
-- **5 targets from one suite:** Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun
-- **Dual-channel web-first engine (no Appium required):** ~1 ms DOM queries via `spana-bridge`, Android CDP, iOS WebKit Inspector, or Apple `webinspectord` (with Shadow DOM & same-origin `<iframe>` piercing), paired with direct UiAutomator2 / WebDriverAgent for real native touches and OS sheets (`systemUI()`)
-- **Built for speed:** persistent warm WDA/UiAutomator2 daemons (`spana daemon`), WDA session reuse, single-browser multi-context web worker pools, and in-page `spana-bridge` state injection (`setStorage`, `clearStorage`, `resetFast`, lazy `waitForIdle`)
-- Smart waits, retries, relative selectors, auto-scroll for offscreen DOM targets, and per-flow stability defaults
-- Reporters: console, JSON, JUnit XML, HTML, Allure, and GitHub PR summary (`--reporter github`)
-- **CI Filters API (`--changed-since <ref>`):** pluggable `decisionFilter` / `pathRuleFilter` with fail-open safety defaults so PRs only run affected flows
-- **Model-free MCP server (`spana mcp`):** lets Claude Code, Codex, Cursor, and Antigravity drive live sessions across all 5 targets, inspect unified diagnostics, and emit verified `.flow.ts` code
-- **Composable lazy fixtures, named setups & verified replay cache:** `createFlowWithFixtures`, `defineSetup`, and `.spana/cache/` (`--strict-cache`) for zero-LLM CI gating
-- Artifacts on failure or success: screenshots, UI hierarchy dumps, structured failure bundles (`failure-bundle.json`), and per-step capture
-- App auto-install with `appPath`, iOS device signing, and optional Appium cloud mode (BrowserStack / Sauce Labs helpers)
-- CLI tooling for teams and agents: `doctor`, `daemon`, `validate`, `validate-config`, `init`, `init-flow`, `studio`, `selectors`, `hierarchy`, and `devices`
-- Execution controls for targeted and CI runs: `--parallel`, `--workers`, `--device`, `--devices`, `--shard`, `--bail`, `--last-failed`, `--watch`, `--debug-on-failure`
+- **5 targets from one suite:** Web (Playwright, warm Chromium daemon, or CDP-direct Lightpanda), Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun
+- **Dual-channel web-first engine (zero Appium required):** ~1 ms DOM queries via built-in `PlaywrightDomChannel`, `spana-bridge`, Android CDP, iOS WebKit Inspector, or Apple `webinspectord` (with Shadow DOM & same-origin `<iframe>` piercing), paired with direct UiAutomator2 / WebDriverAgent for real native touches and OS sheets (`systemUI()`)
+- **Engineered for raw speed:** `MutationObserver` reactive DOM waits + optional `failFastWhenIdle`, speculative CLI browser pre-launch, persistent warm Chromium / WDA / UiAutomator2 daemons (`spana daemon`), single-browser multi-context worker pools, `instantAnimations` / `blockResources`, auto-persisted longest-first `--parallel` scheduling, and byte-identical screenshot short-circuiting
+- **Pluggable CI Filters API (`--changed-since <ref>`):** `decisionFilter` (including native 1-token KV-cache logprob judge `createLogprobDecisionJudge` and local Ollama batch judge `createOllamaDecisionJudge`) + `pathRuleFilter` with fail-open safety defaults so PRs only run affected flows
+- **Model-free MCP server (`spana mcp`):** lets Claude Code, Codex, Cursor, and Antigravity drive live sessions across all 5 targets at sub-5 ms tool latency, inspect unified diagnostics, and export verified `.flow.ts` code
+- **Composable lazy fixtures, named setups & Verified Replay Cache:** `createFlowWithFixtures`, `defineSetup`, and `.spana/cache/` (`--strict-cache`) for 0-LLM deterministic CI replay
+- **Pure TypeScript flows + optional Gherkin / BDD `.feature` parity** with smart waits, relative selectors, auto-scroll for offscreen DOM targets, and `layout-tolerant` visual diffing
+- **Rich reporters & diagnostics:** console, JSON, JUnit XML, HTML, Allure, and GitHub PR summary (`--reporter github`), plus self-contained `failure-bundle.json` with inline console logs & JS errors
+- **Built-in cloud device farms:** direct W3C Appium client with first-class **BrowserStack** and **Sauce Labs** helpers (no WebdriverIO required)
+
+---
+
+## Benchmarks
+
+All benchmarks are reproducible directly from this repository on Apple M4 Pro (Bun 1.4.5, Headless Chrome).
+
+### 20-Flow × 14-Step Chromium Suite (280 Interactions) & Mobile Hybrid
+
+<p align="center">
+  <img src="./docs/assets/benchmark-20flows.svg" alt="Spana vs Playwright vs WebdriverIO 20-flow benchmark" width="100%" />
+</p>
+
+| Strategy                                        | Flows | Filter (ms) | Total (ms) | Speedup            |
+| ----------------------------------------------- | ----: | ----------: | ---------: | ------------------ |
+| WebdriverIO (W3C HTTP, UI login)                |    20 |           0 |     10,901 | baseline (WDIO)    |
+| Playwright (`storageState`, 1 worker)           |    20 |           0 |      9,231 | baseline (PW 1w)   |
+| Playwright (4 parallel workers)                 |    20 |           0 |      6,309 | baseline (PW 4w)   |
+| **Spana + `spana-bridge` (1 worker)**           |    20 |           0 |  **2,965** | **3.1× vs PW 1w**  |
+| **Spana Shared Pool (4 workers)**               |    20 |           0 |  **1,239** | **5.1× vs PW 4w**  |
+| **Spana + `pathRuleFilter` + Pool (4 workers)** |     5 |           1 |    **706** | **8.9× vs PW 4w**  |
+| Spana + Local `qwen2.5:1.5b` Filter + Pool (4w) |     2 |       2,931 |      3,340 | 1.9× vs PW 4w ($0) |
+
+- **Verified Replay Cache (`--strict-cache`) vs Live LLM:** `1,433 ms` → **`6 ms`** (**238.8× faster**, 0 LLM calls)
+- **Capacitor Mobile Hybrid (5 flows, zero Appium):** iOS `28.4 s` (WDIO/Appium) → **`1.52 s`** (**18.7× faster**) · Android `22.9 s` → **`1.27 s`** (**18.0× faster**)
+
+```bash
+bun run benchmarks/framework-comparison/benchmark.ts
+```
+
+### MCP Server Tool Latency & Live Agent Performance
+
+<p align="center">
+  <img src="./docs/assets/benchmark-mcp.svg" alt="Spana MCP tool latency and agent benchmark" width="100%" />
+</p>
+
+Benchmark Spana's stdio MCP server with **any** local Ollama, OpenAI-compatible, or hosted model:
+
+```bash
+bun run benchmarks/mcp-agent-bench/benchmark.ts --model ollama/qwen2.5:1.5b
+bun run benchmarks/mcp-agent-bench/benchmark.ts --base-url http://127.0.0.1:8000/v1 --model openai/qwen3.8-27b
+```
 
 ---
 
@@ -163,19 +209,21 @@ Feature: Login
 
 ## CLI Commands
 
-| Command                        | Description                                       |
-| ------------------------------ | ------------------------------------------------- |
-| `spana test [path]`            | Run test flows (default: `./flows`)               |
-| `spana hierarchy`              | Dump full element hierarchy as JSON               |
-| `spana selectors`              | List actionable elements with suggested selectors |
-| `spana validate [path]`        | Validate flow files without a device connection   |
-| `spana validate-config [path]` | Validate `spana.config.ts` without running flows  |
-| `spana doctor`                 | Check environment readiness before a run          |
-| `spana studio`                 | Launch Spana Studio                               |
-| `spana init`                   | Scaffold a new Spana project                      |
-| `spana init-flow <name>`       | Generate a starter `.flow.ts` file                |
-| `spana devices`                | List connected devices across all platforms       |
-| `spana version`                | Show version                                      |
+| Command                        | Description                                         |
+| ------------------------------ | --------------------------------------------------- |
+| `spana test [path]`            | Run test flows (default: `./flows`)                 |
+| `spana mcp`                    | Start the model-free stdio MCP server for agents    |
+| `spana daemon [status\|stop]`  | Manage persistent warm Chromium / WDA / UA2 daemons |
+| `spana hierarchy`              | Dump full element hierarchy as JSON                 |
+| `spana selectors`              | List actionable elements with suggested selectors   |
+| `spana validate [path]`        | Validate flow files without a device connection     |
+| `spana validate-config [path]` | Validate `spana.config.ts` without running flows    |
+| `spana doctor`                 | Check environment readiness before a run            |
+| `spana studio`                 | Launch Spana Studio                                 |
+| `spana init`                   | Scaffold a new Spana project                        |
+| `spana init-flow <name>`       | Generate a starter `.flow.ts` file                  |
+| `spana devices`                | List connected devices across all platforms         |
+| `spana version`                | Show version                                        |
 
 ### test options
 
@@ -184,7 +232,9 @@ spana test flows/login.flow.ts                   # run a single file
 spana test --platform android,ios               # target platforms
 spana test --device emulator-5554               # target a specific local device
 spana test --tag smoke --grep "log in"          # filter flows
-spana test --reporter html,allure               # choose reporters
+spana test --changed-since origin/main          # run only PR-affected flows via CI filters
+spana test --strict-cache                       # fail on replay cache miss (0 LLM calls in CI)
+spana test --reporter html,allure,github        # choose reporters (incl. GitHub PR summary)
 spana test --retries 2 --shard 1/3 --bail 5     # CI-friendly execution
 spana test --last-failed                        # rerun only previous failures
 spana test --watch                              # rerun automatically on changes
@@ -229,7 +279,11 @@ export default defineConfig({
   execution: {
     web: {
       browser: "chromium",
+      engine: "playwright", // or "cdp" / "lightpanda" with cdpUrl
       headless: true,
+      warmBrowser: true, // reuse warm headless Chromium across runs
+      instantAnimations: true, // collapse CSS transitions to 0.001ms
+      blockResources: ["image", "font", "media"], // optional asset blocking
       storageState: "./auth/web-user.json",
       storybook: {
         url: "http://localhost:6006",
@@ -400,23 +454,39 @@ Spana ships a few built-in workflows that are easy to miss from the minimal quic
 
 ---
 
-## Agent Integration
+## Agent Integration & MCP Server
 
-`spana` is designed for AI agent workflows:
+`spana` is built for coding agents and CI automation out of the box:
 
-- `spana selectors --platform android` returns JSON with element details and suggested selectors
-- `spana hierarchy --platform web --pretty` dumps the accessibility tree as structured JSON
-- `spana validate` exits non-zero on invalid flows, which works well as a preflight step
-- `--reporter json` emits structured JSON events to stdout for downstream analysis
+- **`spana mcp`** starts a model-free stdio MCP server (`spana_session_start`, `spana_observe`, `spana_tap`, `spana_input_text`, `spana_assert_visible`, `spana_diagnostics`, `spana_screenshot`, `spana_export_flow`, etc.) that works with Claude Code, Codex, Cursor, and Antigravity across all 5 targets
+- **CI Filters (`--changed-since <ref>`):** plug in `decisionFilter` with `createLogprobDecisionJudge()` (1-token calibrated logprobs with shared git-diff KV-cache prefix for OpenJev / JevK5 / Decider / Typesafe AI Jev) or `createOllamaDecisionJudge()`, plus deterministic `pathRuleFilter`
+- **Verified Replay Cache (`.spana/cache/`):** `ReplaySession` records actions only after real assertions pass and replays them deterministically with `--strict-cache` (0 LLM calls in CI)
+- **Structured CLI JSON:** `spana selectors`, `spana hierarchy`, `spana doctor`, and `spana validate` emit versioned JSON envelopes
 
-Example agent loop:
+```ts
+// spana.config.ts — PR-aware CI test filtering with a 1-token logprob decision model
+import { defineConfig, decisionFilter, createLogprobDecisionJudge } from "spana-test";
+
+export default defineConfig({
+  filters: [
+    decisionFilter({
+      alwaysRunTags: ["smoke"],
+      judge: createLogprobDecisionJudge({
+        provider: "openai",
+        baseUrl: "http://127.0.0.1:8000/v1",
+        model: "typesafe-ai/jev",
+      }),
+    }),
+  ],
+});
+```
 
 ```bash
-# 1. discover what's on screen
-spana selectors --platform web | jq '.[] | select(.testID != null)'
+# Run only affected flows on a PR (fail-open on config/lockfile/large diffs)
+spana test --changed-since origin/main --parallel --workers 4 --reporter console,github
 
-# 2. run a specific flow with JSON output
-spana test flows/login.flow.ts --reporter json 2>&1 | jq '.results'
+# Start the stdio MCP server for an AI coding agent
+spana mcp
 ```
 
 ---
@@ -513,9 +583,18 @@ Reporters can also be pinned in `spana.config.ts` via the `reporters` array.
 
 ## Architecture
 
-spana uses a layered architecture: CLI -> TestRunner -> PlatformOrchestrator -> SmartLayer -> RawDriver.
+<p align="center">
+  <img src="./docs/assets/architecture-dual-channel.svg" alt="Spana Dual-Channel Web-First Architecture Diagram" width="100%" />
+</p>
 
-Raw drivers are thin HTTP clients. All selector matching, auto-wait, retry, and element resolution lives in the TypeScript smart layer instead of companion binaries.
+<p align="center">
+  <img src="./docs/assets/spana-dual-channel.jpg" alt="Dual-channel web-first optical circuit — 1ms DOM fast lane paired with direct native touch" width="100%" />
+</p>
+
+Spana separates **selector resolution** from **input dispatch** across a layered TypeScript core (`CLI -> TestRunner -> PlatformOrchestrator -> SmartLayer -> Dual-Channel Resolver -> RawDriver`):
+
+- **Fast DOM Lane (~1 ms):** `{ testID }` queries pierce Shadow DOM and same-origin `<iframe>`s through `PlaywrightDomChannel`, `spana-bridge`, Android CDP, Lightpanda CDP, iOS WebKit Inspector, or Apple `webinspectord`, paired with `MutationObserver` reactive waits.
+- **Native & System UI Lane:** Real OS touches and out-of-process system sheets (`systemUI()`) go straight to persistent warm UiAutomator2 / WebDriverAgent daemons (or Appium cloud hubs like BrowserStack / Sauce Labs) — with zero Appium required locally.
 
 See [ARCHITECTURE.md](https://github.com/wezter96/spana/blob/main/ARCHITECTURE.md) for details.
 
@@ -525,13 +604,13 @@ See [ARCHITECTURE.md](https://github.com/wezter96/spana/blob/main/ARCHITECTURE.m
 
 | Platform      | Driver / DOM Channel                                                                  | Companion binary                                         |
 | ------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Web / RN Web  | Playwright (shared multi-context pool) + optional `spana-bridge`                      | None — Playwright is a dev dependency                    |
+| Web / RN Web  | Playwright (`PlaywrightDomChannel`, warm daemon, shared pool) or CDP / Lightpanda     | None — Playwright is bundled, Lightpanda optional        |
 | Android       | Direct UiAutomator2 + Android CDP / `spana-bridge` (`adb reverse`)                    | Appium UiAutomator2 server APK (bundled, warm daemon)    |
 | iOS Simulator | Direct WDA (warm session reuse) + WebKit Inspector / `webinspectord` / `spana-bridge` | WDA XCTest bundle (bundled unsigned)                     |
 | iOS Device    | Same WDA bundle + `iproxy` + WebKit / `spana-bridge`                                  | Re-signed with `codesign`; requires `iproxy`             |
 | Electron      | Electron CDP (`--remote-debugging-port`) + `spana-bridge`                             | App binary / entry point                                 |
 | Electrobun    | CEF / WebView2 CDP / WebKit Inspector + `spana-bridge`                                | App binary / entry point                                 |
-| Appium cloud  | Appium 2 / 3 compatible hub                                                           | BrowserStack, Sauce Labs, or another W3C-compatible grid |
+| Appium cloud  | Direct W3C Appium client (no WebdriverIO required)                                    | BrowserStack, Sauce Labs, or another W3C-compatible grid |
 
 ---
 
