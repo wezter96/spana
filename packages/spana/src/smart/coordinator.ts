@@ -107,16 +107,10 @@ export function createCoordinator<T extends string = string, R extends string = 
     return ms && ms > 0 ? Effect.sleep(Duration.millis(ms)) : Effect.void;
   };
 
-  /** Invalidate cache after any mutation action, waiting for bridge.idle() when available */
+  /** Invalidate cache after any mutation action (and apply explicit waitForIdleTimeout if configured) */
   const afterMutation = (): Effect.Effect<void> =>
     Effect.gen(function* () {
       cache.invalidate();
-      if (driver.domChannel?.isConnected() && driver.domChannel.waitForIdle) {
-        yield* Effect.tryPromise({
-          try: () => driver.domChannel!.waitForIdle!({ timeout: 2500 }),
-          catch: () => undefined,
-        }).pipe(Effect.catchAll(() => Effect.void));
-      }
       yield* idleWait();
     });
 

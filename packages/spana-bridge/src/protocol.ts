@@ -29,6 +29,8 @@ export interface BridgeElementMatch {
   clickable: boolean;
   focused?: boolean;
   attributes?: Record<string, string>;
+  inShadowDom?: boolean;
+  inIframe?: boolean;
 }
 
 export interface BridgeStorageEntries {

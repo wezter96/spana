@@ -33,6 +33,10 @@ export interface DomElementMatch {
   clickable: boolean;
   focused?: boolean;
   attributes?: Record<string, string>;
+  /** True when the matched element lives inside a ShadowRoot */
+  inShadowDom?: boolean;
+  /** True when the matched element lives inside a same-origin iframe */
+  inIframe?: boolean;
 }
 
 export interface DomIdleOptions {
@@ -79,6 +83,8 @@ export interface DomChannel {
   evaluate<T = unknown>(script: string | ((...args: any[]) => T), ...args: any[]): Promise<T>;
   query(selector: Selector): Promise<DomElementMatch[]>;
   tapDom(selector: Selector): Promise<boolean>;
+  /** Scroll a DOM element into the viewport center and return its updated bounding rect. */
+  scrollIntoView?(selector: Selector): Promise<DomElementMatch | null>;
   dispatch?(
     selector: Selector,
     eventType: string,
@@ -136,7 +142,6 @@ export function buildEvaluateExpression(
     return `(${script.toString()})(${serializedArgs})`;
   }
   const trimmed = script.trim();
-  // Support `return ...` style scripts passed from WebDriver-style callers
   if (/\breturn\b/.test(trimmed) && !trimmed.startsWith("(") && !trimmed.startsWith("async")) {
     const serializedArgs = args.map((arg) => JSON.stringify(arg)).join(", ");
     return `(function(){ ${trimmed} })(${serializedArgs})`;
@@ -145,126 +150,192 @@ export function buildEvaluateExpression(
 }
 
 /**
+ * Shared in-page helper snippet that recursively pierces open Shadow DOM
+ * (`el.shadowRoot`, essential for Ionic/Capacitor `ion-button`/`ion-input`)
+ * and accessible same-origin `<iframe>`s (accumulating top-level viewport
+ * offsets so native tap coordinates remain pixel-accurate).
+ */
+const SHARED_DOM_TRAVERSAL_HELPERS = `
+  function collectRoots(root, offsetX, offsetY, inShadow, inIframe, out) {
+    if (!root) return;
+    out.push({ root: root, offsetX: offsetX, offsetY: offsetY, inShadow: inShadow, inIframe: inIframe });
+    var nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el.shadowRoot) {
+        collectRoots(el.shadowRoot, offsetX, offsetY, true, inIframe, out);
+      }
+      if (el.tagName === "IFRAME") {
+        try {
+          var frameDoc = el.contentDocument;
+          if (frameDoc) {
+            var frameRect = el.getBoundingClientRect();
+            collectRoots(frameDoc, offsetX + frameRect.left, offsetY + frameRect.top, inShadow, true, out);
+          }
+        } catch (e) {}
+      }
+    }
+  }
+  function findAcrossRoots(sel) {
+    var roots = [];
+    collectRoots(document, 0, 0, false, false, roots);
+    var hits = [];
+    var seen = typeof Set !== "undefined" ? new Set() : null;
+    function pushHit(el, ctx) {
+      if (seen) {
+        if (seen.has(el)) return;
+        seen.add(el);
+      }
+      hits.push({ el: el, offsetX: ctx.offsetX, offsetY: ctx.offsetY, inShadow: ctx.inShadow, inIframe: ctx.inIframe });
+    }
+    if (typeof sel === "object" && sel !== null && "point" in sel) {
+      var atPt = document.elementFromPoint(sel.point.x, sel.point.y);
+      if (atPt) pushHit(atPt, { offsetX: 0, offsetY: 0, inShadow: false, inIframe: false });
+      return hits;
+    }
+    var esc = function(v) {
+      return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
+    };
+    for (var r = 0; r < roots.length; r++) {
+      var ctx = roots[r];
+      var root = ctx.root;
+      if (!root.querySelectorAll) continue;
+      if (typeof sel === "object" && sel !== null && "testID" in sel) {
+        var tid = esc(sel.testID);
+        var found = root.querySelectorAll('[data-testid="' + tid + '"], [testID="' + tid + '"]');
+        for (var i = 0; i < found.length; i++) pushHit(found[i], ctx);
+      } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
+        var lbl = esc(sel.accessibilityLabel);
+        var foundLbl = root.querySelectorAll('[aria-label="' + lbl + '"]');
+        for (var j = 0; j < foundLbl.length; j++) pushHit(foundLbl[j], ctx);
+      } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
+        var needle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
+        var all = root.querySelectorAll("*");
+        for (var k = 0; k < all.length; k++) {
+          var node = all[k];
+          var directText = "";
+          for (var c = 0; c < node.childNodes.length; c++) {
+            if (node.childNodes[c].nodeType === 3) directText += node.childNodes[c].textContent || "";
+          }
+          var trimmedDirect = directText.trim().toLowerCase();
+          var inputVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").toLowerCase() : "";
+          if ((trimmedDirect && trimmedDirect.includes(needle)) || (inputVal && inputVal.includes(needle))) {
+            pushHit(node, ctx);
+          }
+        }
+      }
+    }
+    return hits;
+  }
+  function isClickable(el) {
+    var tag = el.tagName;
+    if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return true;
+    var role = el.getAttribute && el.getAttribute("role");
+    if (role === "button" || role === "link" || role === "tab" || role === "checkbox" || role === "switch") return true;
+    if (typeof el.onclick === "function") return true;
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var cursor = win.getComputedStyle(el).cursor;
+    return cursor === "pointer";
+  }
+  function isVisible(el, rect) {
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var style = win.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) return false;
+    return true;
+  }
+  function toMatch(hit) {
+    var el = hit.el;
+    var rect = el.getBoundingClientRect();
+    var attrs = {};
+    if (el.attributes) {
+      for (var i = 0; i < el.attributes.length; i++) {
+        attrs[el.attributes[i].name] = el.attributes[i].value;
+      }
+    }
+    var tag = el.tagName ? el.tagName.toLowerCase() : undefined;
+    var val = (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")
+      ? String(el.value ?? "")
+      : undefined;
+    var text = (el.innerText || el.textContent || "").trim() || undefined;
+    return {
+      id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
+      tag: tag,
+      text: text,
+      value: val,
+      accessibilityLabel: el.getAttribute("aria-label") || undefined,
+      rect: { x: rect.x + hit.offsetX, y: rect.y + hit.offsetY, width: rect.width, height: rect.height },
+      scrollX: window.scrollX || window.pageXOffset || 0,
+      scrollY: window.scrollY || window.pageYOffset || 0,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      viewportWidth: (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0,
+      viewportHeight: (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0,
+      visible: isVisible(el, rect),
+      enabled: !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
+      clickable: isClickable(el),
+      focused: document.activeElement === el,
+      attributes: attrs,
+      inShadowDom: hit.inShadow || undefined,
+      inIframe: hit.inIframe || undefined
+    };
+  }
+`;
+
+/**
  * Self-contained DOM query script evaluated over CDP / WebKit Inspector when
- * `spana-bridge` is not injected. Mirrors `spana-bridge`'s `query(selector)`
- * return shape (`DomElementMatch[]`).
+ * `spana-bridge` is not injected. Pierces open Shadow DOM & same-origin iframes.
  */
 export function buildDomQueryScript(selector: Selector): string {
   const serialized = JSON.stringify(selector);
   return `(function(sel) {
-    function isClickable(el) {
-      var tag = el.tagName;
-      if (tag === "BUTTON" || tag === "A" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return true;
-      var role = el.getAttribute && el.getAttribute("role");
-      if (role === "button" || role === "link" || role === "tab" || role === "checkbox" || role === "switch") return true;
-      if (typeof el.onclick === "function") return true;
-      var cursor = window.getComputedStyle(el).cursor;
-      return cursor === "pointer";
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    return findAcrossRoots(sel).map(toMatch);
+  })(${serialized})`;
+}
+
+/**
+ * Self-contained DOM scroll-into-view script that centers the matched element
+ * in the viewport and returns its fresh post-scroll `DomElementMatch`.
+ */
+export function buildDomScrollIntoViewScript(selector: Selector): string {
+  const serialized = JSON.stringify(selector);
+  return `(function(sel) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return null;
+    var hit = hits[hits.length - 1];
+    if (typeof hit.el.scrollIntoView === "function") {
+      try { hit.el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); }
+      catch (e) { try { hit.el.scrollIntoView(true); } catch (e2) {} }
     }
-    function isVisible(el, rect) {
-      if (rect.width <= 0 || rect.height <= 0) return false;
-      var style = window.getComputedStyle(el);
-      if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) return false;
-      return true;
-    }
-    function toMatch(el) {
-      var rect = el.getBoundingClientRect();
-      var attrs = {};
-      if (el.attributes) {
-        for (var i = 0; i < el.attributes.length; i++) {
-          attrs[el.attributes[i].name] = el.attributes[i].value;
-        }
-      }
-      var tag = el.tagName ? el.tagName.toLowerCase() : undefined;
-      var val = (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")
-        ? String(el.value ?? "")
-        : undefined;
-      var text = (el.innerText || el.textContent || "").trim() || undefined;
-      return {
-        id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
-        tag: tag,
-        text: text,
-        value: val,
-        accessibilityLabel: el.getAttribute("aria-label") || undefined,
-        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-        scrollX: window.scrollX || window.pageXOffset || 0,
-        scrollY: window.scrollY || window.pageYOffset || 0,
-        devicePixelRatio: window.devicePixelRatio || 1,
-        viewportWidth: (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0,
-        viewportHeight: (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0,
-        visible: isVisible(el, rect),
-        enabled: !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
-        clickable: isClickable(el),
-        focused: document.activeElement === el,
-        attributes: attrs
-      };
-    }
-    var candidates = [];
-    if (typeof sel === "object" && sel !== null && "testID" in sel) {
-      var esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(sel.testID) : sel.testID.replace(/"/g, '\\\\"');
-      candidates = Array.from(document.querySelectorAll('[data-testid="' + esc + '"], [testID="' + esc + '"]'));
-    } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
-      var escLabel = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(sel.accessibilityLabel) : sel.accessibilityLabel.replace(/"/g, '\\\\"');
-      candidates = Array.from(document.querySelectorAll('[aria-label="' + escLabel + '"]'));
-    } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
-      var needle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
-      var all = Array.from(document.querySelectorAll("*"));
-      for (var j = 0; j < all.length; j++) {
-        var node = all[j];
-        var directText = "";
-        for (var k = 0; k < node.childNodes.length; k++) {
-          if (node.childNodes[k].nodeType === 3) directText += node.childNodes[k].textContent || "";
-        }
-        var trimmedDirect = directText.trim().toLowerCase();
-        var inputVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").toLowerCase() : "";
-        if ((trimmedDirect && trimmedDirect.includes(needle)) || (inputVal && inputVal.includes(needle))) {
-          candidates.push(node);
-        }
-      }
-    } else if (typeof sel === "object" && sel !== null && "point" in sel) {
-      var atPt = document.elementFromPoint(sel.point.x, sel.point.y);
-      if (atPt) candidates = [atPt];
-    }
-    return candidates.map(toMatch);
+    return toMatch(hit);
   })(${serialized})`;
 }
 
 /**
  * Self-contained DOM synthetic tap script for `tapMode: "dom"`.
+ * Pierces open Shadow DOM & same-origin iframes.
  */
 export function buildDomTapScript(selector: Selector): string {
   const serialized = JSON.stringify(selector);
   return `(function(sel) {
-    var el = null;
-    if (typeof sel === "object" && sel !== null && "testID" in sel) {
-      var esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(sel.testID) : sel.testID.replace(/"/g, '\\\\"');
-      el = document.querySelector('[data-testid="' + esc + '"], [testID="' + esc + '"]');
-    } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
-      var escLabel = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(sel.accessibilityLabel) : sel.accessibilityLabel.replace(/"/g, '\\\\"');
-      el = document.querySelector('[aria-label="' + escLabel + '"]');
-    } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
-      var needle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
-      var all = Array.from(document.querySelectorAll("button, a, input, [role=button], *"));
-      for (var i = 0; i < all.length; i++) {
-        var txt = (all[i].innerText || all[i].textContent || "").trim().toLowerCase();
-        if (txt && txt.includes(needle)) { el = all[i]; break; }
-      }
-    } else if (typeof sel === "object" && sel !== null && "point" in sel) {
-      el = document.elementFromPoint(sel.point.x, sel.point.y);
-    }
-    if (!el) return false;
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return false;
+    var hit = hits[hits.length - 1];
+    var el = hit.el;
     if (typeof el.scrollIntoView === "function") {
-      try { el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch {}
+      try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
     }
     var rect = el.getBoundingClientRect();
     var cx = rect.left + rect.width / 2;
     var cy = rect.top + rect.height / 2;
     var init = { bubbles: true, cancelable: true, composed: true, clientX: cx, clientY: cy };
-    try { el.dispatchEvent(new PointerEvent("pointerdown", init)); } catch {}
-    try { el.dispatchEvent(new MouseEvent("mousedown", init)); } catch {}
-    if (typeof el.focus === "function") { try { el.focus(); } catch {} }
-    try { el.dispatchEvent(new PointerEvent("pointerup", init)); } catch {}
-    try { el.dispatchEvent(new MouseEvent("mouseup", init)); } catch {}
+    try { el.dispatchEvent(new PointerEvent("pointerdown", init)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", init)); } catch (e) {}
+    if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
+    try { el.dispatchEvent(new PointerEvent("pointerup", init)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", init)); } catch (e) {}
     if (typeof el.click === "function") { el.click(); }
     else { el.dispatchEvent(new MouseEvent("click", init)); }
     return true;

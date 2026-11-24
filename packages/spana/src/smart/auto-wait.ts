@@ -80,9 +80,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
 
   return Effect.gen(function* () {
     const start = Date.now();
-    // If spana-bridge is connected, wait for app idle before starting retry loops
-    yield* maybeWaitForBridgeIdle(driver, timeout);
-
+    let waitedForIdle = false;
     let isFirstPoll = true;
     while (Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
@@ -108,6 +106,18 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
           return resolved;
         }
       }
+
+      // If the element isn't in the DOM yet and spana-bridge is connected,
+      // wait once for in-flight network/animations/renders to settle instead of blind polling.
+      if (!waitedForIdle) {
+        waitedForIdle = true;
+        const remaining = Math.max(0, timeout - (Date.now() - start));
+        if (remaining > 0) {
+          yield* maybeWaitForBridgeIdle(driver, Math.min(remaining, 1500));
+          continue;
+        }
+      }
+
       const elapsed = Date.now() - start;
       const interval = nextInterval(elapsed, timeout, initialPollInterval, pollInterval);
       yield* Effect.sleep(Duration.millis(interval));
@@ -179,8 +189,7 @@ export function waitForNotVisible<T extends string = string, R extends string = 
 
   return Effect.gen(function* () {
     const start = Date.now();
-    yield* maybeWaitForBridgeIdle(driver, timeout);
-
+    let waitedForIdle = false;
     let isFirstPoll = true;
     while (Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
@@ -191,6 +200,15 @@ export function waitForNotVisible<T extends string = string, R extends string = 
         platform: opts?.platform,
       });
       if (!resolved) return;
+
+      if (!waitedForIdle) {
+        waitedForIdle = true;
+        const remaining = Math.max(0, timeout - (Date.now() - start));
+        if (remaining > 0) {
+          yield* maybeWaitForBridgeIdle(driver, Math.min(remaining, 1500));
+          continue;
+        }
+      }
 
       const elapsed = Date.now() - start;
       const interval = nextInterval(elapsed, timeout, initialPollInterval, pollInterval);

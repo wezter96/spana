@@ -1,6 +1,7 @@
 import type { Selector } from "../schemas/selector.js";
 import {
   buildDomQueryScript,
+  buildDomScrollIntoViewScript,
   buildDomTapScript,
   buildEvaluateExpression,
   type DomChannel,
@@ -298,6 +299,13 @@ export class CdpDomChannel implements DomChannel {
   async tapDom(selector: Selector): Promise<boolean> {
     const result = await this.evaluate<boolean>(buildDomTapScript(selector));
     return Boolean(result);
+  }
+
+  async scrollIntoView(selector: Selector): Promise<DomElementMatch | null> {
+    const result = await this.evaluate<DomElementMatch | null>(
+      buildDomScrollIntoViewScript(selector),
+    );
+    return result ?? null;
   }
 
   async reload(): Promise<void> {

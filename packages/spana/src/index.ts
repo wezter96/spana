@@ -104,6 +104,14 @@ export {
   type WebKitInspectorOptions,
 } from "./channels/webkit-inspector.js";
 export {
+  AppleWebInspectorClient,
+  encodeWebInspectorPacket,
+  decodeWebInspectorFrames,
+  parseWebInspectorXmlFrame,
+  findSimulatorWebInspectorSocket,
+  type WebInspectorListingPage,
+} from "./channels/apple-webinspector.js";
+export {
   createSpanaBridgeChannel,
   createCompositeDomChannel,
   SpanaBridgeChannel,
@@ -114,9 +122,11 @@ export {
 export {
   findWebViewFrame,
   domRectToScreenBounds,
+  isOffscreenInViewport,
   resolveElementAcrossChannels,
   type ResolvedElementResult,
 } from "./smart/channel-resolver.js";
+export { launchPlaywrightBrowser } from "./drivers/playwright.js";
 export { makeElectronDriver, type ElectronDriverOptions } from "./drivers/electron.js";
 export {
   makeElectrobunDriver,
@@ -129,6 +139,7 @@ export {
   stopWarmDaemon,
   stopAllWarmDaemons,
   getHealthyWarmDaemon,
+  updateWarmDaemonSession,
   type WarmDaemonRecord,
 } from "./runtime/daemon-manager.js";
 

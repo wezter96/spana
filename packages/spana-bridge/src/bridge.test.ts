@@ -138,6 +138,7 @@ describe("spana-bridge client", () => {
 describe("Capacitor & Electron spana-bridge wrappers", () => {
   test("resolves 10.0.2.2 on Android Capacitor and hooks Preferences storage", async () => {
     expect(resolveCapacitorBridgeHost("android")).toBe("10.0.2.2");
+    expect(resolveCapacitorBridgeHost("android", "10.0.2.2", true)).toBe("127.0.0.1");
     expect(resolveCapacitorBridgeHost("ios")).toBe("127.0.0.1");
     expect(resolveCapacitorBridgeHost("web")).toBe("127.0.0.1");
 
@@ -192,5 +193,65 @@ describe("Capacitor & Electron spana-bridge wrappers", () => {
     expect(handle!.url).toBe("ws://127.0.0.1:9445");
     expect((exposed["__spanaBridgeMeta"] as any).url).toBe("ws://127.0.0.1:9445");
     handle!.destroy();
+  });
+
+  test("pierces open Shadow DOM and same-origin iframes with accumulated viewport offsets", () => {
+    const env = createFakeEnv();
+    const shadowButton = {
+      tagName: "BUTTON",
+      textContent: "Ion Sign In",
+      innerText: "Ion Sign In",
+      childNodes: [{ nodeType: 3, textContent: "Ion Sign In" }],
+      attributes: [{ name: "data-testid", value: "ion-sign-in" }],
+      getAttribute: (n: string) => (n === "data-testid" ? "ion-sign-in" : null),
+      hasAttribute: () => false,
+      getBoundingClientRect: () => ({ x: 16, y: 120, left: 16, top: 120, width: 200, height: 44 }),
+    };
+    const shadowHost = {
+      tagName: "ION-BUTTON",
+      shadowRoot: {
+        querySelectorAll: (sel: string) =>
+          sel === "*" || sel.includes("ion-sign-in") ? [shadowButton] : [],
+      },
+    };
+
+    const iframeInput = {
+      tagName: "INPUT",
+      value: "4242",
+      childNodes: [],
+      attributes: [{ name: "data-testid", value: "card-number" }],
+      getAttribute: (n: string) => (n === "data-testid" ? "card-number" : null),
+      hasAttribute: () => false,
+      getBoundingClientRect: () => ({ x: 10, y: 15, left: 10, top: 15, width: 180, height: 36 }),
+    };
+    const iframeHost = {
+      tagName: "IFRAME",
+      getBoundingClientRect: () => ({ x: 20, y: 300, left: 20, top: 300, width: 350, height: 100 }),
+      contentDocument: {
+        querySelectorAll: (sel: string) =>
+          sel === "*" || sel.includes("card-number") ? [iframeInput] : [],
+      },
+    };
+
+    env.fakeDoc.querySelectorAll = (sel: string) => (sel === "*" ? [shadowHost, iframeHost] : []);
+
+    const bridge = initSpanaBridge({
+      reconnectDelayMs: 0,
+      WebSocketImpl: undefined,
+      env: { window: env.fakeWin, document: env.fakeDoc },
+    });
+
+    const shadowMatches = bridge.query({ testID: "ion-sign-in" });
+    expect(shadowMatches).toHaveLength(1);
+    expect(shadowMatches[0]!.inShadowDom).toBe(true);
+    expect(shadowMatches[0]!.rect).toEqual({ x: 16, y: 120, width: 200, height: 44 });
+
+    const iframeMatches = bridge.query({ testID: "card-number" });
+    expect(iframeMatches).toHaveLength(1);
+    expect(iframeMatches[0]!.inIframe).toBe(true);
+    // Accumulated iframe offset: (20+10=30, 300+15=315)
+    expect(iframeMatches[0]!.rect).toEqual({ x: 30, y: 315, width: 180, height: 36 });
+
+    bridge.destroy();
   });
 });

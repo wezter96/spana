@@ -115,10 +115,7 @@ describe("iOS network helpers (pfctl/dnctl)", () => {
     ios.pfctlResetNetwork();
 
     const commands = netState.execSyncCalls.map((c) => c.command);
-    expect(commands).toEqual([
-      "sudo pfctl -a com.spana.network -F all",
-      "sudo dnctl -q flush",
-    ]);
+    expect(commands).toEqual(["sudo pfctl -a com.spana.network -F all", "sudo dnctl -q flush"]);
   });
 
   test("pfctlResetNetwork ignores all errors", async () => {

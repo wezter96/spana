@@ -4,6 +4,7 @@ import {
   chromium,
   firefox,
   webkit,
+  type Browser,
   type BrowserContext,
   type CDPSession,
   type Download,
@@ -47,6 +48,22 @@ export interface PlaywrightConfig {
   baseUrl?: string;
   storageState?: string;
   verboseLogging?: boolean;
+  /** Optional pre-launched Browser instance shared across parallel BrowserContext workers. */
+  sharedBrowser?: Browser;
+  /** Optional browser channel (e.g. "chrome") or explicit executable path. */
+  channel?: string;
+  executablePath?: string;
+}
+
+export async function launchPlaywrightBrowser(
+  config: Pick<PlaywrightConfig, "browser" | "headless" | "channel" | "executablePath"> = {},
+): Promise<Browser> {
+  const browserName = config.browser ?? "chromium";
+  return browserLaunchers[browserName].launch({
+    headless: config.headless ?? true,
+    ...(config.channel ? { channel: config.channel } : {}),
+    ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+  });
 }
 
 const browserLaunchers = {
@@ -162,10 +179,18 @@ export function makePlaywrightDriver(
 ): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const browserName = config.browser ?? "chromium";
-    const browser = yield* Effect.tryPromise({
-      try: () => browserLaunchers[browserName].launch({ headless: config.headless ?? true }),
-      catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
-    });
+    const ownsBrowser = !config.sharedBrowser;
+    const browser = config.sharedBrowser
+      ? config.sharedBrowser
+      : yield* Effect.tryPromise({
+          try: () =>
+            browserLaunchers[browserName].launch({
+              headless: config.headless ?? true,
+              ...(config.channel ? { channel: config.channel } : {}),
+              ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+            }),
+          catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
+        });
 
     let context!: BrowserContext;
     let page!: Page;
@@ -476,8 +501,7 @@ export function makePlaywrightDriver(
       await context.setOffline(resolved.offline);
 
       const shouldUseCDP =
-        browserName === "chromium" &&
-        (needsThrottling || cdpSession !== undefined);
+        browserName === "chromium" && (needsThrottling || cdpSession !== undefined);
 
       if (!shouldUseCDP) {
         return;
@@ -667,7 +691,9 @@ export function makePlaywrightDriver(
             // Ensure focus is set for input elements (React Native Web needs explicit focus).
             // React concurrent renders can steal focus back to <body> after our click, so
             // we wait for a rAF + microtask flush, then re-focus if needed, retrying once.
-            await page.evaluate(`
+            // Ignore execution-context destruction when the click triggered a page navigation.
+            await page
+              .evaluate(`
               new Promise(resolve => {
                 function tryFocus() {
                   var el = document.elementFromPoint(${x}, ${y});
@@ -680,7 +706,8 @@ export function makePlaywrightDriver(
                   setTimeout(() => { tryFocus(); resolve(); }, 16);
                 }));
               })
-            `);
+            `)
+              .catch(() => {});
           },
           catch: (e) => new DriverError({ message: `Failed to tap at (${x}, ${y}): ${e}` }),
         }),
@@ -814,7 +841,11 @@ export function makePlaywrightDriver(
       killApp: (_id) =>
         Effect.tryPromise({
           try: async () => {
-            await Promise.allSettled([page.close(), context.close(), browser.close()]);
+            await Promise.allSettled([
+              page.close(),
+              context.close(),
+              ...(ownsBrowser ? [browser.close()] : []),
+            ]);
           },
           catch: (e) => new DriverError({ message: `Failed to kill app: ${e}` }),
         }),

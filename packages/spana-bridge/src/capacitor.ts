@@ -15,19 +15,30 @@ export interface CapacitorBridgeOptions extends Omit<SpanaBridgeClientOptions, "
   preferences?: CapacitorPreferencesLike;
   /** Only initialize in test builds. Default: true (caller guards with `if (import.meta.env.MODE === 'test')`). */
   enabled?: boolean;
+  /**
+   * When true, Android connects to `127.0.0.1` via Spana's automatic
+   * `adb reverse tcp:<port> tcp:<port>` tunnel (works on physical USB phones
+   * AND emulators). Default: false (uses `10.0.2.2` on Android emulator).
+   */
+  useAdbReverse?: boolean;
   /** Host for Android emulator reverse/host loopback. Default: `"10.0.2.2"` on Android, `"127.0.0.1"` elsewhere. */
   androidEmulatorHost?: string;
 }
 
 /**
  * Resolve the runner host automatically for Capacitor apps:
- * - Android emulator uses `10.0.2.2` to reach host `127.0.0.1` (unless overridden or `adb reverse` is used)
+ * - When `useAdbReverse` is true (physical Android USB devices + emulators), uses `127.0.0.1`
+ * - Otherwise Android emulator uses `10.0.2.2` to reach host `127.0.0.1`
  * - iOS simulator and Web reach host `127.0.0.1` directly
  */
 export function resolveCapacitorBridgeHost(
   platform?: string,
   androidEmulatorHost = "10.0.2.2",
+  useAdbReverse = false,
 ): string {
+  if (useAdbReverse) {
+    return "127.0.0.1";
+  }
   const detected =
     platform ??
     (typeof window !== "undefined" ? (window as any)?.Capacitor?.getPlatform?.() : undefined);
@@ -53,7 +64,12 @@ export function initCapacitorSpanaBridge(
   const win = options.env?.window ?? (typeof window !== "undefined" ? window : undefined);
   const capacitorPlatform: string | undefined = win?.Capacitor?.getPlatform?.();
   const host =
-    options.host ?? resolveCapacitorBridgeHost(capacitorPlatform, options.androidEmulatorHost);
+    options.host ??
+    resolveCapacitorBridgeHost(
+      capacitorPlatform,
+      options.androidEmulatorHost,
+      options.useAdbReverse ?? false,
+    );
 
   const storageAdapter: BridgeStorageAdapter = {
     async setPreferences(entries) {

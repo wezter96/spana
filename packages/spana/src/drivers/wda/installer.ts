@@ -262,7 +262,13 @@ export async function setupWDAForDevice(
   teamId: string,
   signingIdentity?: string,
   options: WDASetupOptions = {},
-): Promise<{ host: string; port: number; cleanup: () => void; reusedWarmDaemon?: boolean }> {
+): Promise<{
+  host: string;
+  port: number;
+  cleanup: () => void;
+  reusedWarmDaemon?: boolean;
+  warmSessionId?: string;
+}> {
   const warm = options.warm ?? process.env["SPANA_WARM_DAEMON"] === "1";
 
   if (warm) {
@@ -275,6 +281,7 @@ export async function setupWDAForDevice(
         host: existing.host,
         port: existing.port,
         reusedWarmDaemon: true,
+        warmSessionId: existing.sessionId,
         cleanup: () => {
           // Intentionally keep warm daemon running across runs
         },
@@ -355,7 +362,13 @@ export async function setupWDA(
   simulatorUDID: string,
   port?: number,
   options: WDASetupOptions = {},
-): Promise<{ host: string; port: number; cleanup: () => void; reusedWarmDaemon?: boolean }> {
+): Promise<{
+  host: string;
+  port: number;
+  cleanup: () => void;
+  reusedWarmDaemon?: boolean;
+  warmSessionId?: string;
+}> {
   const warm = options.warm ?? process.env["SPANA_WARM_DAEMON"] === "1";
 
   if (warm) {
@@ -368,6 +381,7 @@ export async function setupWDA(
         host: existing.host,
         port: existing.port,
         reusedWarmDaemon: true,
+        warmSessionId: existing.sessionId,
         cleanup: () => {
           // Keep warm daemon alive between runs
         },

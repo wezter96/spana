@@ -27,6 +27,10 @@ export interface WDADriverOptions {
   webkitInspectorPort?: number;
   /** Auto-start ios_webkit_debug_proxy when available */
   autoStartInspectorProxy?: boolean;
+  /** Optional warm session ID to reattach to without paying POST /session latency */
+  warmSessionId?: string;
+  /** Callback fired when a new WDA session is created so callers can persist it */
+  onSessionCreated?: (sessionId: string) => void;
 }
 
 /**
@@ -207,23 +211,37 @@ export function createWDADriver(
       throw lastError ?? new Error(`Failed to open URL: ${url}`);
     };
 
-    // Create session — must succeed before we can do anything
-    yield* Effect.tryPromise({
-      try: () => createSessionWithRetry(bundleId || undefined),
-      catch: (e) => new DriverError({ message: `Failed to create WDA session: ${e}` }),
-    });
+    // Reuse a warm WDA session if provided and still alive (~1-3s faster than POST /session)
+    let reusedWarmSession = false;
+    if (driverOptions?.warmSessionId && typeof client.attachSession === "function") {
+      client.attachSession(driverOptions.warmSessionId);
+      const alive = yield* Effect.tryPromise({
+        try: () => client.isSessionAlive(),
+        catch: () => false,
+      }).pipe(Effect.catchAll(() => Effect.succeed(false)));
+      reusedWarmSession = alive;
+    }
 
-    // Disable quiescence to prevent XCTest crashes on animated UIs
-    yield* Effect.tryPromise({
-      try: () => client.disableQuiescence(),
-      catch: (e) => new DriverError({ message: `Failed to disable quiescence: ${e}` }),
-    });
+    if (!reusedWarmSession) {
+      // Create session — must succeed before we can do anything
+      const createdId = yield* Effect.tryPromise({
+        try: () => createSessionWithRetry(bundleId || undefined),
+        catch: (e) => new DriverError({ message: `Failed to create WDA session: ${e}` }),
+      });
+      driverOptions?.onSessionCreated?.(createdId);
 
-    // Set snapshot depth to support deep React Native trees
-    yield* Effect.tryPromise({
-      try: () => client.setSnapshotMaxDepth(snapshotMaxDepth),
-      catch: (e) => new DriverError({ message: `Failed to set snapshot depth: ${e}` }),
-    });
+      // Disable quiescence to prevent XCTest crashes on animated UIs
+      yield* Effect.tryPromise({
+        try: () => client.disableQuiescence(),
+        catch: (e) => new DriverError({ message: `Failed to disable quiescence: ${e}` }),
+      });
+
+      // Set snapshot depth to support deep React Native trees
+      yield* Effect.tryPromise({
+        try: () => client.setSnapshotMaxDepth(snapshotMaxDepth),
+        catch: (e) => new DriverError({ message: `Failed to set snapshot depth: ${e}` }),
+      });
+    }
 
     const service: RawDriverService = {
       domChannel,

@@ -1,0 +1,1099 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spana vs Playwright vs WebdriverIO — E2E Performance Comparison</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+        color: var(--foreground);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        width: 100%;
+      }
+
+      /* KPI Row */
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+      @media (max-width: 560px) {
+        .kpi-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .kpi-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .kpi-value {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.15;
+      }
+      .kpi-value.accent {
+        color: var(--chart-1);
+      }
+      .kpi-value.success {
+        color: var(--success);
+      }
+      .kpi-value.info {
+        color: var(--chart-2);
+      }
+      .kpi-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--foreground);
+      }
+      .kpi-sub {
+        font-size: 10.5px;
+        color: var(--muted-foreground);
+      }
+
+      /* Section Cards */
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+      }
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .panel-title {
+        font-size: 14px;
+        font-weight: 700;
+        margin: 0;
+        color: var(--foreground);
+      }
+      .panel-subtitle {
+        font-size: 11.5px;
+        color: var(--muted-foreground);
+        margin: 2px 0 0 0;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: var(--font-mono, monospace);
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--secondary);
+        color: var(--secondary-foreground);
+        white-space: nowrap;
+      }
+      .badge.live {
+        background: var(--accent-surface, var(--secondary));
+        color: var(--success);
+        border-color: var(--success);
+      }
+      .badge.calibrated {
+        background: var(--warning-surface, var(--secondary));
+        color: var(--warning);
+        border-color: var(--warning);
+      }
+
+      /* Horizontal Bar Rows */
+      .bars {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .bar-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 230px) 1fr 112px;
+        align-items: center;
+        gap: 10px;
+      }
+      @media (max-width: 540px) {
+        .bar-row {
+          grid-template-columns: 1fr auto;
+          gap: 4px 8px;
+        }
+        .bar-row .bar-track {
+          grid-column: 1 / -1;
+        }
+      }
+      .bar-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--foreground);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .dot.wdio {
+        background: var(--chart-5, var(--warning));
+      }
+      .dot.pw {
+        background: var(--chart-2, var(--info));
+      }
+      .dot.spana {
+        background: var(--chart-1, var(--success));
+      }
+      .dot.spana-alt {
+        background: var(--chart-4, var(--primary));
+      }
+
+      .bar-track {
+        position: relative;
+        height: 22px;
+        background: var(--muted);
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        border-radius: 5px;
+        display: flex;
+        align-items: center;
+        padding-left: 8px;
+        font-size: 10.5px;
+        font-weight: 600;
+        font-family: var(--font-mono, monospace);
+        color: var(--primary-foreground, var(--background));
+        white-space: nowrap;
+      }
+      .bar-fill.wdio {
+        background: var(--chart-5, var(--warning));
+      }
+      .bar-fill.pw {
+        background: var(--chart-2, var(--info));
+      }
+      .bar-fill.spana {
+        background: var(--chart-1, var(--success));
+      }
+      .bar-fill.spana-alt {
+        background: var(--chart-4, var(--primary));
+      }
+      .bar-fill.na {
+        background: transparent;
+        border: 1px dashed var(--destructive);
+        color: var(--destructive);
+        width: 100%;
+        justify-content: center;
+        padding: 0;
+      }
+
+      .bar-stat {
+        text-align: right;
+        font-family: var(--font-mono, monospace);
+        font-size: 11.5px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .bar-stat strong {
+        color: var(--foreground);
+        font-weight: 700;
+      }
+      .bar-stat .sub {
+        display: block;
+        font-size: 10px;
+        color: var(--muted-foreground);
+      }
+      .speedup-pill {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: var(--accent-surface, var(--secondary));
+        color: var(--success);
+        margin-left: 4px;
+      }
+
+      /* Legend */
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--muted-foreground);
+      }
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* Two-column Mobile Grid */
+      .two-col {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @media (max-width: 580px) {
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+      }
+      .sub-box {
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) - 2px);
+        padding: 12px;
+        background: var(--code-background, var(--secondary));
+      }
+      .sub-box-title {
+        font-size: 12px;
+        font-weight: 700;
+        margin: 0 0 10px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .mini-bar-row {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        margin-bottom: 8px;
+      }
+      .mini-bar-row:last-child {
+        margin-bottom: 0;
+      }
+      .mini-bar-top {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+      }
+      .mini-bar-top .val {
+        font-family: var(--font-mono, monospace);
+        font-weight: 700;
+      }
+      .mini-track {
+        height: 14px;
+        background: var(--muted);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+
+      /* 5-Target Vertical SVG Chart */
+      .chart-wrap {
+        width: 100%;
+        height: 220px;
+      }
+      .chart-wrap svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      /* Architecture Diagram */
+      .arch-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .arch-row {
+        border: 1px solid var(--border);
+        border-radius: calc(var(--radius) - 2px);
+        padding: 10px 12px;
+        background: var(--code-background, var(--secondary));
+      }
+      .arch-row.highlight {
+        border-color: var(--chart-1, var(--success));
+      }
+      .arch-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 7px;
+        flex-wrap: wrap;
+      }
+      .arch-name {
+        font-weight: 700;
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .arch-meta {
+        font-family: var(--font-mono, monospace);
+        font-size: 10.5px;
+        color: var(--muted-foreground);
+      }
+      .hops {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 5px;
+        font-family: var(--font-mono, monospace);
+        font-size: 10.5px;
+      }
+      .hop {
+        padding: 3px 7px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--foreground);
+      }
+      .hop.slow {
+        border-color: var(--chart-5, var(--warning));
+        color: var(--warning);
+      }
+      .hop.fast {
+        border-color: var(--chart-1, var(--success));
+        color: var(--success);
+      }
+      .hop.missing {
+        border-style: dashed;
+        border-color: var(--destructive);
+        color: var(--destructive);
+      }
+      .arrow {
+        color: var(--muted-foreground);
+        font-weight: 700;
+      }
+      .dual-tracks {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .footnote {
+        font-size: 10.5px;
+        color: var(--muted-foreground);
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stack">
+      <!-- KPI Summary Strip -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-value success">2.49×</div>
+          <div class="kpi-label">vs WebdriverIO (Web)</div>
+          <div class="kpi-sub">718ms vs 1,786ms live Chrome</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value accent">1.95×</div>
+          <div class="kpi-label">vs Playwright (Web)</div>
+          <div class="kpi-sub">718ms vs 1,397ms storageState</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value info">18.7×</div>
+          <div class="kpi-label">vs WDIO+Appium (iOS)</div>
+          <div class="kpi-sub">1.52s vs 28.4s (calibrated)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value">5 Targets</div>
+          <div class="kpi-label">One Selector Model</div>
+          <div class="kpi-sub">Web · Android · iOS · Electron · Electrobun</div>
+        </div>
+      </div>
+
+      <!-- Diagram 1: Live Real-Chromium 5-Flow Suite -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">1. Live Chromium 5-Flow E2E Suite (Exact Same App)</h2>
+            <p class="panel-subtitle">
+              Flow 1 full OAuth + Flows 2–5 authenticated dashboard, 35ms async /api/tasks fetch,
+              input &amp; assertion · Lower is faster
+            </p>
+          </div>
+          <span class="badge live">LIVE MEASURED · Chrome Headless · Bun 1.4.5</span>
+        </div>
+
+        <div class="bars">
+          <div class="bar-row">
+            <div class="bar-label">
+              <span class="dot wdio"></span>WebdriverIO (W3C HTTP, UI login)
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill wdio" style="width: 100%">80 HTTP calls</div>
+            </div>
+            <div class="bar-stat">
+              <strong>1,786 ms</strong><span class="sub">357 ms/flow</span>
+            </div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label"><span class="dot pw"></span>Playwright (UI login, 1 worker)</div>
+            <div class="bar-track">
+              <div class="bar-fill pw" style="width: 79.1%">newContext × 5</div>
+            </div>
+            <div class="bar-stat">
+              <strong>1,412 ms</strong><span class="sub">282 ms/flow</span>
+            </div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label"><span class="dot pw"></span>Playwright (storageState, 1w)</div>
+            <div class="bar-track">
+              <div class="bar-fill pw" style="width: 78.2%">newContext × 5</div>
+            </div>
+            <div class="bar-stat">
+              <strong>1,397 ms</strong><span class="sub">279 ms/flow</span>
+            </div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label">
+              <span class="dot wdio"></span>WebdriverIO (W3C HTTP, inject)
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill wdio" style="width: 61.8%">72 HTTP calls</div>
+            </div>
+            <div class="bar-stat">
+              <strong>1,103 ms</strong><span class="sub">221 ms/flow</span>
+            </div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label"><span class="dot pw"></span>Playwright (4 parallel workers)</div>
+            <div class="bar-track">
+              <div class="bar-fill pw" style="width: 52.1%">4 contexts</div>
+            </div>
+            <div class="bar-stat"><strong>931 ms</strong><span class="sub">186 ms/flow</span></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label">
+              <span class="dot spana-alt"></span>Spana Shared Pool (4 parallel)
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill spana-alt" style="width: 42.2%">1.23× vs PW 4w</div>
+            </div>
+            <div class="bar-stat"><strong>754 ms</strong><span class="sub">151 ms/flow</span></div>
+          </div>
+
+          <div class="bar-row">
+            <div class="bar-label">
+              <span class="dot spana"></span><strong>Spana + spana-bridge (1w)</strong>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill spana" style="width: 40.2%">2.49× faster</div>
+            </div>
+            <div class="bar-stat"><strong>718 ms</strong><span class="sub">144 ms/flow</span></div>
+          </div>
+        </div>
+
+        <div class="legend">
+          <span class="legend-item"
+            ><span class="dot spana"></span>Spana + spana-bridge (persistent WS + in-page
+            reset)</span
+          >
+          <span class="legend-item"
+            ><span class="dot spana-alt"></span>Spana Shared Browser Pool (4 pre-warmed
+            contexts)</span
+          >
+          <span class="legend-item"><span class="dot pw"></span>Playwright (playwright-core)</span>
+          <span class="legend-item"
+            ><span class="dot wdio"></span>WebdriverIO (W3C WebDriver HTTP)</span
+          >
+        </div>
+      </section>
+
+      <!-- Diagram 2: Mobile Hybrid Capacitor Comparison -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">
+              2. Mobile Hybrid Capacitor 5-Flow Suite (WebView + Native OAuth Sheet)
+            </h2>
+            <p class="panel-subtitle">
+              Same 5-flow app inside iOS WKWebView + SFSafariViewController &amp; Android WebView +
+              Chrome Custom Tabs
+            </p>
+          </div>
+          <span class="badge calibrated">CALIBRATED MODEL · Direct WDA/UiA2 vs Appium</span>
+        </div>
+
+        <div class="two-col">
+          <div class="sub-box">
+            <div class="sub-box-title">
+              <span>iOS Capacitor (WKWebView)</span>
+              <span class="speedup-pill">18.7× faster</span>
+            </div>
+
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <span>WebdriverIO + Appium</span><span class="val">28.40 s</span>
+              </div>
+              <div class="mini-track"><div class="bar-fill wdio" style="width: 100%"></div></div>
+            </div>
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <span>Playwright</span
+                ><span class="val" style="color: var(--destructive)">Not supported</span>
+              </div>
+              <div class="mini-track">
+                <div class="bar-fill na">No native WKWebView / SFSafariViewController</div>
+              </div>
+            </div>
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <span>Spana Direct WDA (UI login × 5)</span><span class="val">6.82 s</span>
+              </div>
+              <div class="mini-track">
+                <div class="bar-fill spana-alt" style="width: 24%"></div>
+              </div>
+            </div>
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <strong>Spana Warm WDA + spana-bridge</strong
+                ><span class="val" style="color: var(--success)">1.52 s</span>
+              </div>
+              <div class="mini-track"><div class="bar-fill spana" style="width: 5.4%"></div></div>
+            </div>
+          </div>
+
+          <div class="sub-box">
+            <div class="sub-box-title">
+              <span>Android Capacitor (WebView)</span>
+              <span class="speedup-pill">18.0× faster</span>
+            </div>
+
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <span>WebdriverIO + Appium</span><span class="val">22.90 s</span>
+              </div>
+              <div class="mini-track"><div class="bar-fill wdio" style="width: 100%"></div></div>
+            </div>
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <span>Playwright</span
+                ><span class="val" style="color: var(--destructive)">Not supported</span>
+              </div>
+              <div class="mini-track">
+                <div class="bar-fill na">No native WebView / Chrome Custom Tabs</div>
+              </div>
+            </div>
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <span>Spana Direct UiA2 (UI login × 5)</span><span class="val">5.45 s</span>
+              </div>
+              <div class="mini-track">
+                <div class="bar-fill spana-alt" style="width: 23.8%"></div>
+              </div>
+            </div>
+            <div class="mini-bar-row">
+              <div class="mini-bar-top">
+                <strong>Spana Warm UiA2 + spana-bridge</strong
+                ><span class="val" style="color: var(--success)">1.27 s</span>
+              </div>
+              <div class="mini-track"><div class="bar-fill spana" style="width: 5.5%"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Diagram 3: 5-Target Sign-In Journey Speedup -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">3. Spana 5-Target Sign-In Journey: UI OAuth vs spana-bridge</h2>
+            <p class="panel-subtitle">
+              Same test file across all 5 targets · 0 native XML dumps on bridge-injected flows (vs
+              2 dumps on UI OAuth)
+            </p>
+          </div>
+          <span class="badge">HARNESS · 5 Targets</span>
+        </div>
+
+        <div class="chart-wrap">
+          <svg viewBox="0 0 680 220" role="img" aria-label="5-Target Sign-In Journey comparison">
+            <!-- Horizontal grid lines -->
+            <line x1="56" y1="24" x2="660" y2="24" stroke="var(--border)" stroke-dasharray="3 3" />
+            <line x1="56" y1="68" x2="660" y2="68" stroke="var(--border)" stroke-dasharray="3 3" />
+            <line
+              x1="56"
+              y1="112"
+              x2="660"
+              y2="112"
+              stroke="var(--border)"
+              stroke-dasharray="3 3"
+            />
+            <line
+              x1="56"
+              y1="156"
+              x2="660"
+              y2="156"
+              stroke="var(--border)"
+              stroke-dasharray="3 3"
+            />
+            <line x1="56" y1="178" x2="660" y2="178" stroke="var(--border)" />
+
+            <!-- Y-axis ticks (max 1400ms => y=24 is 1400, y=178 is 0 => 154px range, 0.11 px/ms) -->
+            <text
+              x="48"
+              y="28"
+              text-anchor="end"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              1400ms
+            </text>
+            <text
+              x="48"
+              y="72"
+              text-anchor="end"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              1000ms
+            </text>
+            <text
+              x="48"
+              y="116"
+              text-anchor="end"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              600ms
+            </text>
+            <text
+              x="48"
+              y="160"
+              text-anchor="end"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              200ms
+            </text>
+            <text
+              x="48"
+              y="182"
+              text-anchor="end"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              0
+            </text>
+
+            <!-- Group 1: Web (142ms vs 22ms, 6.5x) -->
+            <rect
+              x="82"
+              y="162"
+              width="34"
+              height="16"
+              rx="3"
+              fill="var(--chart-5, var(--warning))"
+            />
+            <text
+              x="99"
+              y="157"
+              text-anchor="middle"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              142
+            </text>
+            <rect
+              x="120"
+              y="174"
+              width="34"
+              height="4"
+              rx="2"
+              fill="var(--chart-1, var(--success))"
+            />
+            <text
+              x="137"
+              y="169"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              22
+            </text>
+            <text
+              x="118"
+              y="196"
+              text-anchor="middle"
+              fill="var(--foreground)"
+              font-size="11.5"
+              font-weight="600"
+            >
+              Web
+            </text>
+            <text
+              x="118"
+              y="211"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10.5"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              6.5× faster
+            </text>
+
+            <!-- Group 2: Android (1073ms vs 41ms, 26.2x) -->
+            <rect
+              x="202"
+              y="60"
+              width="34"
+              height="118"
+              rx="3"
+              fill="var(--chart-5, var(--warning))"
+            />
+            <text
+              x="219"
+              y="54"
+              text-anchor="middle"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              1073
+            </text>
+            <rect
+              x="240"
+              y="173"
+              width="34"
+              height="5"
+              rx="2"
+              fill="var(--chart-1, var(--success))"
+            />
+            <text
+              x="257"
+              y="168"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              41
+            </text>
+            <text
+              x="238"
+              y="196"
+              text-anchor="middle"
+              fill="var(--foreground)"
+              font-size="11.5"
+              font-weight="600"
+            >
+              Android
+            </text>
+            <text
+              x="238"
+              y="211"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10.5"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              26.2× faster
+            </text>
+
+            <!-- Group 3: iOS (1312ms vs 41ms, 32.0x) -->
+            <rect
+              x="322"
+              y="34"
+              width="34"
+              height="144"
+              rx="3"
+              fill="var(--chart-5, var(--warning))"
+            />
+            <text
+              x="339"
+              y="28"
+              text-anchor="middle"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              1312
+            </text>
+            <rect
+              x="360"
+              y="173"
+              width="34"
+              height="5"
+              rx="2"
+              fill="var(--chart-1, var(--success))"
+            />
+            <text
+              x="377"
+              y="168"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              41
+            </text>
+            <text
+              x="358"
+              y="196"
+              text-anchor="middle"
+              fill="var(--foreground)"
+              font-size="11.5"
+              font-weight="600"
+            >
+              iOS
+            </text>
+            <text
+              x="358"
+              y="211"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10.5"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              32.0× faster
+            </text>
+
+            <!-- Group 4: Electron (165ms vs 26ms, 6.3x) -->
+            <rect
+              x="442"
+              y="160"
+              width="34"
+              height="18"
+              rx="3"
+              fill="var(--chart-5, var(--warning))"
+            />
+            <text
+              x="459"
+              y="155"
+              text-anchor="middle"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              165
+            </text>
+            <rect
+              x="480"
+              y="174"
+              width="34"
+              height="4"
+              rx="2"
+              fill="var(--chart-1, var(--success))"
+            />
+            <text
+              x="497"
+              y="169"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              26
+            </text>
+            <text
+              x="478"
+              y="196"
+              text-anchor="middle"
+              fill="var(--foreground)"
+              font-size="11.5"
+              font-weight="600"
+            >
+              Electron
+            </text>
+            <text
+              x="478"
+              y="211"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10.5"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              6.3× faster
+            </text>
+
+            <!-- Group 5: Electrobun (157ms vs 25ms, 6.3x) -->
+            <rect
+              x="562"
+              y="161"
+              width="34"
+              height="17"
+              rx="3"
+              fill="var(--chart-5, var(--warning))"
+            />
+            <text
+              x="579"
+              y="156"
+              text-anchor="middle"
+              fill="var(--muted-foreground)"
+              font-size="10"
+              font-family="var(--font-mono, monospace)"
+            >
+              157
+            </text>
+            <rect
+              x="600"
+              y="174"
+              width="34"
+              height="4"
+              rx="2"
+              fill="var(--chart-1, var(--success))"
+            />
+            <text
+              x="617"
+              y="169"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              25
+            </text>
+            <text
+              x="598"
+              y="196"
+              text-anchor="middle"
+              fill="var(--foreground)"
+              font-size="11.5"
+              font-weight="600"
+            >
+              Electrobun
+            </text>
+            <text
+              x="598"
+              y="211"
+              text-anchor="middle"
+              fill="var(--success)"
+              font-size="10.5"
+              font-weight="700"
+              font-family="var(--font-mono, monospace)"
+            >
+              6.3× faster
+            </text>
+          </svg>
+        </div>
+
+        <div class="legend">
+          <span class="legend-item"><span class="dot wdio"></span>Full UI OAuth Sign-In (ms)</span>
+          <span class="legend-item"
+            ><span class="dot spana"></span>spana-bridge State Inject + Reload (ms)</span
+          >
+        </div>
+      </section>
+
+      <!-- Diagram 4: Architecture & Protocol Hop Comparison -->
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">4. Why Spana Wins: Protocol &amp; Architecture Comparison</h2>
+            <p class="panel-subtitle">
+              Eliminating Appium context-switching hops on mobile while matching/beating Playwright
+              on web
+            </p>
+          </div>
+        </div>
+
+        <div class="arch-list">
+          <div class="arch-row">
+            <div class="arch-head">
+              <div class="arch-name"><span class="dot wdio"></span>WebdriverIO + Appium</div>
+              <div class="arch-meta">
+                ~600–2,500 ms/step on mobile · 72–80 HTTP calls / 5 web flows
+              </div>
+            </div>
+            <div class="hops">
+              <span class="hop">Test</span><span class="arrow">→</span>
+              <span class="hop slow">W3C HTTP</span><span class="arrow">→</span>
+              <span class="hop slow">Appium Server</span><span class="arrow">→</span>
+              <span class="hop slow">switchContext()</span><span class="arrow">→</span>
+              <span class="hop slow">Chromedriver / XCUITest</span><span class="arrow">→</span>
+              <span class="hop">Device</span>
+            </div>
+          </div>
+
+          <div class="arch-row">
+            <div class="arch-head">
+              <div class="arch-name"><span class="dot pw"></span>Playwright</div>
+              <div class="arch-meta">~1–5 ms/step on web · Browser-only (no native OS sheets)</div>
+            </div>
+            <div class="hops">
+              <span class="hop">Test</span><span class="arrow">→</span>
+              <span class="hop">CDP / WebSocket</span><span class="arrow">→</span>
+              <span class="hop">BrowserContext (new per flow)</span><span class="arrow">→</span>
+              <span class="hop missing">✕ iOS WKWebView / Native OAuth</span>
+            </div>
+          </div>
+
+          <div class="arch-row highlight">
+            <div class="arch-head">
+              <div class="arch-name">
+                <span class="dot spana"></span>Spana (Web-First Dual-Channel)
+              </div>
+              <div class="arch-meta">
+                ~1 ms DOM queries · 0 Appium · Same test across all 5 targets
+              </div>
+            </div>
+            <div class="dual-tracks">
+              <div class="hops">
+                <span class="hop fast">{ testID }</span><span class="arrow">→</span>
+                <span class="hop fast">Channel Resolver</span><span class="arrow">→</span>
+                <span class="hop fast">DOM Channel (bridge / CDP / WebKit)</span
+                ><span class="arrow">→</span>
+                <span class="hop fast">Shadow DOM + iframe (~1 ms)</span>
+              </div>
+              <div class="hops">
+                <span class="hop fast">systemUI()</span><span class="arrow">→</span>
+                <span class="hop fast">WebView Frame Map</span><span class="arrow">→</span>
+                <span class="hop fast">Warm WDA / UiA2 (no Appium)</span
+                ><span class="arrow">→</span>
+                <span class="hop fast">Real Touch + OS Sheets</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="footnote">
+          Measured 2026-11-24 on Apple Silicon macOS (darwin/arm64, Bun 1.4.5, Google Chrome
+          headless). Mobile hybrid figures are calibrated from direct WDA/UiAutomator2 +
+          spana-bridge vs Appium context-switch overhead on the same 5-flow journey.
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

@@ -203,6 +203,13 @@ export class AndroidWebViewCdpChannel implements DomChannel {
     return this.cdp!.tapDom(selector);
   }
 
+  async scrollIntoView(selector: Selector): Promise<DomElementMatch | null> {
+    if (!this.isConnected()) {
+      await this.connect();
+    }
+    return this.cdp!.scrollIntoView(selector);
+  }
+
   async listTargets(): Promise<DomTargetInfo[]> {
     if (!this.cdp) {
       await this.connect();

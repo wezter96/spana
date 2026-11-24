@@ -86,40 +86,28 @@ describe("android network helpers", () => {
   test("adbSetWifi enable/disable", async () => {
     const android = await importFresh();
     android.adbSetWifi("dev-1", true);
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s dev-1 shell svc wifi enable",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s dev-1 shell svc wifi enable");
 
     networkState.execSyncCalls = [];
     android.adbSetWifi("dev-1", false);
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s dev-1 shell svc wifi disable",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s dev-1 shell svc wifi disable");
   });
 
   test("adbSetData enable/disable", async () => {
     const android = await importFresh();
     android.adbSetData("dev-1", true);
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s dev-1 shell svc data enable",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s dev-1 shell svc data enable");
 
     networkState.execSyncCalls = [];
     android.adbSetData("dev-1", false);
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s dev-1 shell svc data disable",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s dev-1 shell svc data disable");
   });
 
   test("adbSetNetworkProfile sends speed and delay commands", async () => {
     const android = await importFresh();
     android.adbSetNetworkProfile("emu-5554", "3g");
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s emu-5554 emu network speed umts",
-    );
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s emu-5554 emu network delay umts",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s emu-5554 emu network speed umts");
+    expect(networkState.execSyncCalls).toContain("adb -s emu-5554 emu network delay umts");
   });
 
   test("adbSetNetworkProfile throws on unknown profile", async () => {
@@ -132,23 +120,15 @@ describe("android network helpers", () => {
   test("adbSetCustomNetwork sends speed and delay with custom values", async () => {
     const android = await importFresh();
     android.adbSetCustomNetwork("emu-5554", 500, 200, 100);
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s emu-5554 emu network speed 500:200",
-    );
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s emu-5554 emu network delay 100:100",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s emu-5554 emu network speed 500:200");
+    expect(networkState.execSyncCalls).toContain("adb -s emu-5554 emu network delay 100:100");
   });
 
   test("adbResetNetwork resets speed, delay, and disables airplane mode", async () => {
     const android = await importFresh();
     android.adbResetNetwork("emu-5554");
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s emu-5554 emu network speed full",
-    );
-    expect(networkState.execSyncCalls).toContain(
-      "adb -s emu-5554 emu network delay none",
-    );
+    expect(networkState.execSyncCalls).toContain("adb -s emu-5554 emu network speed full");
+    expect(networkState.execSyncCalls).toContain("adb -s emu-5554 emu network delay none");
     expect(networkState.execSyncCalls).toContain(
       "adb -s emu-5554 shell cmd connectivity airplane-mode disable",
     );

@@ -215,6 +215,21 @@ function registerCliMocks(): void {
         flowTimeout: 60_000,
       },
     }),
+    buildWebRuntimePool: async (_config: unknown, count: number) =>
+      Array.from({ length: count }, () => ({
+        runtime: {
+          driver: {},
+          cleanup: async () => {},
+          metadata: { platform: "web", mode: "local" },
+        },
+        engineConfig: {
+          appId: "http://localhost:3000",
+          platform: "web",
+          coordinatorConfig: { parse: () => null, defaults: {} },
+          autoLaunch: true,
+          flowTimeout: 60_000,
+        },
+      })),
     buildLocalAndroidRuntime: async () => ({
       runtime: {
         driver: {},

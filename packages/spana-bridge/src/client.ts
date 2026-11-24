@@ -43,6 +43,7 @@ export interface SpanaBridgeHandle {
   readonly url: string;
   isConnected(): boolean;
   query(selector: BridgeSelector): BridgeElementMatch[];
+  scrollIntoView(selector: BridgeSelector): BridgeElementMatch | null;
   evaluate<T = unknown>(script: string, isFunction?: boolean, args?: unknown[]): Promise<T>;
   dispatch(
     selector: BridgeSelector,
@@ -100,47 +101,136 @@ async function evaluateScript<T = unknown>(
   return (await runner()) as T;
 }
 
-function findDomElements(doc: any, selector: BridgeSelector): any[] {
+interface SearchRootContext {
+  root: any;
+  offsetX: number;
+  offsetY: number;
+  inShadow: boolean;
+  inIframe: boolean;
+}
+
+interface DomHit {
+  el: any;
+  offsetX: number;
+  offsetY: number;
+  inShadow: boolean;
+  inIframe: boolean;
+}
+
+function collectSearchRoots(
+  root: any,
+  offsetX: number,
+  offsetY: number,
+  inShadow: boolean,
+  inIframe: boolean,
+  out: SearchRootContext[],
+): void {
+  if (!root) return;
+  out.push({ root, offsetX, offsetY, inShadow, inIframe });
+  if (typeof root.querySelectorAll !== "function") return;
+  const nodes = Array.from(root.querySelectorAll("*")) as any[];
+  for (const el of nodes) {
+    if (el?.shadowRoot) {
+      collectSearchRoots(el.shadowRoot, offsetX, offsetY, true, inIframe, out);
+    }
+    if (el?.tagName === "IFRAME") {
+      try {
+        const frameDoc = el.contentDocument;
+        if (frameDoc) {
+          const frameRect =
+            typeof el.getBoundingClientRect === "function"
+              ? el.getBoundingClientRect()
+              : { left: 0, top: 0 };
+          collectSearchRoots(
+            frameDoc,
+            offsetX + (frameRect.left ?? frameRect.x ?? 0),
+            offsetY + (frameRect.top ?? frameRect.y ?? 0),
+            inShadow,
+            true,
+            out,
+          );
+        }
+      } catch {
+        // Cross-origin iframe — cannot pierce from JS
+      }
+    }
+  }
+}
+
+function findDomHits(doc: any, selector: BridgeSelector): DomHit[] {
   if (!doc) return [];
-  if (typeof selector === "object" && selector !== null && "testID" in selector) {
-    const escaped = escapeAttrValue(selector.testID);
-    return Array.from(doc.querySelectorAll(`[data-testid="${escaped}"], [testID="${escaped}"]`));
-  }
-  if (typeof selector === "object" && selector !== null && "accessibilityLabel" in selector) {
-    const escaped = escapeAttrValue(selector.accessibilityLabel);
-    return Array.from(doc.querySelectorAll(`[aria-label="${escaped}"]`));
-  }
   if (typeof selector === "object" && selector !== null && "point" in selector) {
     const el =
       typeof doc.elementFromPoint === "function"
         ? doc.elementFromPoint(selector.point.x, selector.point.y)
         : null;
-    return el ? [el] : [];
+    return el ? [{ el, offsetX: 0, offsetY: 0, inShadow: false, inIframe: false }] : [];
   }
-  const needle = (typeof selector === "string" ? selector : selector.text).toLowerCase();
-  const all = Array.from(doc.querySelectorAll("*")) as any[];
-  const results: any[] = [];
-  for (const node of all) {
-    let directText = "";
-    const children = node.childNodes ?? [];
-    for (let i = 0; i < children.length; i++) {
-      if (children[i]?.nodeType === 3) {
-        directText += children[i].textContent ?? "";
+
+  const roots: SearchRootContext[] = [];
+  collectSearchRoots(doc, 0, 0, false, false, roots);
+
+  const hits: DomHit[] = [];
+  const seen = new Set<any>();
+  const pushHit = (el: any, ctx: SearchRootContext) => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    hits.push({
+      el,
+      offsetX: ctx.offsetX,
+      offsetY: ctx.offsetY,
+      inShadow: ctx.inShadow,
+      inIframe: ctx.inIframe,
+    });
+  };
+
+  for (const ctx of roots) {
+    const root = ctx.root;
+    if (typeof root.querySelectorAll !== "function") continue;
+
+    if (typeof selector === "object" && selector !== null && "testID" in selector) {
+      const escaped = escapeAttrValue(selector.testID);
+      for (const el of Array.from(
+        root.querySelectorAll(`[data-testid="${escaped}"], [testID="${escaped}"]`),
+      )) {
+        pushHit(el, ctx);
+      }
+    } else if (
+      typeof selector === "object" &&
+      selector !== null &&
+      "accessibilityLabel" in selector
+    ) {
+      const escaped = escapeAttrValue(selector.accessibilityLabel);
+      for (const el of Array.from(root.querySelectorAll(`[aria-label="${escaped}"]`))) {
+        pushHit(el, ctx);
+      }
+    } else {
+      const needle = (typeof selector === "string" ? selector : selector.text).toLowerCase();
+      const all = Array.from(root.querySelectorAll("*")) as any[];
+      for (const node of all) {
+        let directText = "";
+        const children = node.childNodes ?? [];
+        for (let i = 0; i < children.length; i++) {
+          if (children[i]?.nodeType === 3) {
+            directText += children[i].textContent ?? "";
+          }
+        }
+        const trimmed = directText.trim().toLowerCase();
+        const inputVal =
+          node.tagName === "INPUT" || node.tagName === "BUTTON"
+            ? String(node.value ?? "").toLowerCase()
+            : "";
+        if ((trimmed && trimmed.includes(needle)) || (inputVal && inputVal.includes(needle))) {
+          pushHit(node, ctx);
+        }
       }
     }
-    const trimmed = directText.trim().toLowerCase();
-    const inputVal =
-      node.tagName === "INPUT" || node.tagName === "BUTTON"
-        ? String(node.value ?? "").toLowerCase()
-        : "";
-    if ((trimmed && trimmed.includes(needle)) || (inputVal && inputVal.includes(needle))) {
-      results.push(node);
-    }
   }
-  return results;
+  return hits;
 }
 
-function elementToMatch(win: any, doc: any, el: any): BridgeElementMatch {
+function hitToMatch(win: any, doc: any, hit: DomHit): BridgeElementMatch {
+  const el = hit.el;
   const rect =
     typeof el.getBoundingClientRect === "function"
       ? el.getBoundingClientRect()
@@ -196,8 +286,8 @@ function elementToMatch(win: any, doc: any, el: any): BridgeElementMatch {
       (typeof el.getAttribute === "function" ? el.getAttribute("aria-label") : undefined) ||
       undefined,
     rect: {
-      x: rect.x ?? rect.left ?? 0,
-      y: rect.y ?? rect.top ?? 0,
+      x: (rect.x ?? rect.left ?? 0) + hit.offsetX,
+      y: (rect.y ?? rect.top ?? 0) + hit.offsetY,
       width: rect.width ?? 0,
       height: rect.height ?? 0,
     },
@@ -215,6 +305,8 @@ function elementToMatch(win: any, doc: any, el: any): BridgeElementMatch {
     clickable,
     focused: doc?.activeElement === el,
     attributes: Object.keys(attrs).length > 0 ? attrs : undefined,
+    ...(hit.inShadow ? { inShadowDom: true } : {}),
+    ...(hit.inIframe ? { inIframe: true } : {}),
   };
 }
 
@@ -379,7 +471,23 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
 
   // ── Core bridge operations ────────────────────────────────────────────
   const query = (selector: BridgeSelector): BridgeElementMatch[] => {
-    return findDomElements(doc, selector).map((el) => elementToMatch(win, doc, el));
+    return findDomHits(doc, selector).map((hit) => hitToMatch(win, doc, hit));
+  };
+
+  const scrollIntoView = (selector: BridgeSelector): BridgeElementMatch | null => {
+    const hits = findDomHits(doc, selector);
+    if (hits.length === 0) return null;
+    const hit = hits[hits.length - 1]!;
+    if (typeof hit.el.scrollIntoView === "function") {
+      try {
+        hit.el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+      } catch {
+        try {
+          hit.el.scrollIntoView(true);
+        } catch {}
+      }
+    }
+    return hitToMatch(win, doc, hit);
   };
 
   const evaluate = evaluateScript;
@@ -389,7 +497,8 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
     eventType: string,
     eventInit: Record<string, unknown> = {},
   ): boolean => {
-    const el = findDomElements(doc, selector)[0];
+    const hit = findDomHits(doc, selector)[0];
+    const el = hit?.el;
     if (!el || typeof el.dispatchEvent !== "function") return false;
     const EventCtor = win?.CustomEvent ?? win?.Event ?? Event;
     const evt = new EventCtor(eventType, { bubbles: true, cancelable: true, ...eventInit });
@@ -397,7 +506,8 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
   };
 
   const tap = (selector: BridgeSelector): boolean => {
-    const el = findDomElements(doc, selector)[0];
+    const hits = findDomHits(doc, selector);
+    const el = hits[hits.length - 1]?.el;
     if (!el) return false;
     if (typeof el.scrollIntoView === "function") {
       try {
@@ -596,6 +706,9 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
         case "query":
           result = query(params["selector"]);
           break;
+        case "scrollIntoView":
+          result = scrollIntoView(params["selector"]);
+          break;
         case "evaluate":
           result = await evaluate(
             params["script"],
@@ -619,7 +732,7 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
           break;
         case "reload":
           send({ id: req.id, result: true });
-          win?.location?.reload?.();
+          setTimeout(() => win?.location?.reload?.(), 5);
           return;
         case "idle":
           await idle({ timeout: params["timeout"], quietPeriodMs: params["quietPeriodMs"] });
@@ -752,6 +865,7 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
     url,
     isConnected: () => connected,
     query,
+    scrollIntoView,
     evaluate,
     dispatch,
     tap,

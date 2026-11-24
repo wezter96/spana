@@ -5,7 +5,7 @@ import type { EngineConfig } from "../core/engine.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { DiscoveredDevice } from "../device/discover.js";
 import type { RuntimeResult } from "./types.js";
-import { makePlaywrightDriver } from "../drivers/playwright.js";
+import { launchPlaywrightBrowser, makePlaywrightDriver } from "../drivers/playwright.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
 import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
@@ -13,7 +13,8 @@ import { createWDADriver } from "../drivers/wda/driver.js";
 import { parseIOSHierarchy } from "../drivers/wda/pagesource.js";
 import { makeElectronDriver } from "../drivers/electron.js";
 import { makeElectrobunDriver } from "../drivers/electrobun.js";
-import { ensureAndroidDevice } from "../device/android.js";
+import { adbReverse, adbReverseRemove, ensureAndroidDevice } from "../device/android.js";
+import { updateWarmDaemonSession } from "./daemon-manager.js";
 import {
   ensureIOSSimulator,
   firstIOSPhysicalDevice,
@@ -126,6 +127,71 @@ export async function buildWebRuntime(config: ProvConfig): Promise<RuntimeResult
       height: deviceInfo.screenHeight,
     }),
   };
+}
+
+/**
+ * Launch ONE shared Playwright browser process and create `workerCount`
+ * isolated BrowserContext runtimes on top of it (faster startup, lower RAM).
+ */
+export async function buildWebRuntimePool(
+  config: ProvConfig,
+  workerCount: number,
+): Promise<RuntimeResult[]> {
+  if (workerCount <= 1) {
+    return [await buildWebRuntime(config)];
+  }
+
+  const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
+  const webExecution = config.execution?.web;
+  const sharedBrowser = await launchPlaywrightBrowser({
+    browser: webExecution?.browser,
+    headless: webExecution?.headless ?? true,
+  });
+
+  let remaining = workerCount;
+  const results: RuntimeResult[] = [];
+
+  for (let i = 0; i < workerCount; i++) {
+    const driver = await Effect.runPromise(
+      makePlaywrightDriver({
+        browser: webExecution?.browser,
+        headless: webExecution?.headless ?? true,
+        baseUrl: webUrl,
+        storageState: webExecution?.storageState,
+        verboseLogging: webExecution?.verboseLogging,
+        sharedBrowser,
+      }),
+    );
+    const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+    let cleaned = false;
+
+    results.push({
+      runtime: {
+        driver,
+        cleanup: () =>
+          safeCleanup(async () => {
+            if (cleaned) return;
+            cleaned = true;
+            await Effect.runPromise(driver.killApp(""));
+            remaining -= 1;
+            if (remaining <= 0) {
+              await sharedBrowser.close();
+            }
+          }),
+        metadata: {
+          platform: "web",
+          mode: "local",
+          deviceId: `playwright-context-${i + 1}`,
+        },
+      },
+      engineConfig: buildEngineConfig(webUrl, "web", parseWebHierarchy, config, {
+        width: deviceInfo.screenWidth,
+        height: deviceInfo.screenHeight,
+      }),
+    });
+  }
+
+  return results;
 }
 
 export async function buildElectronRuntime(
@@ -275,6 +341,17 @@ export async function buildLocalAndroidRuntime(
   const warmDaemons = config.execution?.warmDaemons;
   const bridge = await maybeStartBridge(config.apps?.android?.bridge, config.execution?.bridge);
 
+  // Automatically reverse-forward the bridge port over USB/ADB so both physical
+  // Android phones and emulators can connect directly to ws://127.0.0.1:<port>.
+  const reversedBridgePort = bridge?.port ?? null;
+  if (reversedBridgePort !== null) {
+    try {
+      adbReverse(device.serial, reversedBridgePort, reversedBridgePort);
+    } catch {
+      // Best-effort — emulators still reach host via 10.0.2.2
+    }
+  }
+
   try {
     const conn = await setupUiAutomator2(device.serial, hostPort, {
       warm: warmDaemons?.enabled,
@@ -295,6 +372,12 @@ export async function buildLocalAndroidRuntime(
           safeCleanup(
             () => Effect.runPromise(driver.killApp("")),
             () => bridge?.disconnect() ?? Promise.resolve(),
+            () => {
+              if (reversedBridgePort !== null) {
+                adbReverseRemove(device.serial, reversedBridgePort);
+              }
+              return Promise.resolve();
+            },
             () => conn.cleanup?.() ?? Promise.resolve(),
           ),
         metadata: {
@@ -329,15 +412,21 @@ export async function buildLocalIOSRuntime(
 
   const createIOSRuntime = async (
     deviceId: string,
-    conn: { host: string; port: number; cleanup?: () => void },
+    conn: { host: string; port: number; cleanup?: () => void; warmSessionId?: string },
     simulatorUdid?: string,
   ): Promise<RuntimeResult> => {
+    const reuseSession = warmDaemons?.enabled && warmDaemons.reuseSession !== false;
     const driver = await Effect.runPromise(
       createWDADriver(conn.host, conn.port, bundleId, simulatorUdid, snapshotMaxDepth, {
         domChannel: bridge,
         webkitInspectorUrl: config.apps?.ios?.webkitInspectorUrl,
         webkitInspectorPort: config.apps?.ios?.webkitInspectorPort,
         autoStartInspectorProxy: true,
+        warmSessionId: reuseSession ? conn.warmSessionId : undefined,
+        onSessionCreated: reuseSession
+          ? (sessionId) =>
+              updateWarmDaemonSession("wda", deviceId, sessionId, bundleId, warmDaemons?.stateFile)
+          : undefined,
       }),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());

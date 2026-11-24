@@ -1,0 +1,103 @@
+{
+  "measuredAt": "2026-11-24T19:43:13.950Z",
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "runtime": "Bun 1.4.5",
+    "browser": "Google Chrome (headless)",
+    "flowCount": 5
+  },
+  "liveWeb5Flows": {
+    "webdriverioHttpUiLogin": {
+      "totalMs": 1786,
+      "avgFlowMs": 357,
+      "httpCalls": 80
+    },
+    "webdriverioHttpStateInject": {
+      "totalMs": 1103,
+      "avgFlowMs": 221,
+      "httpCalls": 72
+    },
+    "playwrightUiLogin": {
+      "totalMs": 1412,
+      "avgFlowMs": 282
+    },
+    "playwrightStorageState": {
+      "totalMs": 1397,
+      "avgFlowMs": 279
+    },
+    "playwrightParallel4": {
+      "totalMs": 931,
+      "avgFlowMs": 186
+    },
+    "spanaBridgeSerial": {
+      "totalMs": 718,
+      "avgFlowMs": 144
+    },
+    "spanaSharedPoolParallel4": {
+      "totalMs": 754,
+      "avgFlowMs": 151
+    }
+  },
+  "fiveTargetSignIn": [
+    {
+      "platform": "web",
+      "mode": "harness",
+      "uiSignInMs": 142,
+      "bridgeSignInMs": 22,
+      "speedup": 6.5,
+      "nativeDumpsUI": 2,
+      "nativeDumpsBridge": 0
+    },
+    {
+      "platform": "android",
+      "mode": "harness",
+      "uiSignInMs": 1073,
+      "bridgeSignInMs": 41,
+      "speedup": 26.2,
+      "nativeDumpsUI": 2,
+      "nativeDumpsBridge": 0
+    },
+    {
+      "platform": "ios",
+      "mode": "harness",
+      "uiSignInMs": 1312,
+      "bridgeSignInMs": 41,
+      "speedup": 32,
+      "nativeDumpsUI": 2,
+      "nativeDumpsBridge": 0
+    },
+    {
+      "platform": "electron",
+      "mode": "harness",
+      "uiSignInMs": 165,
+      "bridgeSignInMs": 26,
+      "speedup": 6.3,
+      "nativeDumpsUI": 2,
+      "nativeDumpsBridge": 0
+    },
+    {
+      "platform": "electrobun",
+      "mode": "harness",
+      "uiSignInMs": 157,
+      "bridgeSignInMs": 25,
+      "speedup": 6.3,
+      "nativeDumpsUI": 2,
+      "nativeDumpsBridge": 0
+    }
+  ],
+  "mobileHybridComparison": {
+    "iosCapacitor5Flows": {
+      "webdriverioAppiumMs": 28400,
+      "playwrightMs": null,
+      "spanaDirectUiLoginMs": 6820,
+      "spanaDirectBridgeMs": 1520
+    },
+    "androidCapacitor5Flows": {
+      "webdriverioAppiumMs": 22900,
+      "playwrightMs": null,
+      "spanaDirectUiLoginMs": 5450,
+      "spanaDirectBridgeMs": 1270
+    }
+  }
+}

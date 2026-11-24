@@ -126,6 +126,19 @@ export function domRectToScreenBounds(
 }
 
 /**
+ * Returns true if the element's center lies outside the visible WebView viewport
+ * so we know to auto-scroll it into view before issuing a native coordinate tap.
+ */
+export function isOffscreenInViewport(match: DomElementMatch): boolean {
+  if (match.viewportWidth <= 0 || match.viewportHeight <= 0) return false;
+  const centerX = match.rect.x + match.rect.width / 2;
+  const centerY = match.rect.y + match.rect.height / 2;
+  return (
+    centerX < 0 || centerY < 0 || centerX > match.viewportWidth || centerY > match.viewportHeight
+  );
+}
+
+/**
  * Select the best visible match returned by `DomChannel.query()`.
  * Mirrors Spana's native matcher: prefer visible, in-bounds, clickable, deepest.
  */
@@ -225,16 +238,29 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
           };
         }
 
+        // Auto-scroll offscreen DOM elements into the viewport before mapping
+        // coordinates for a native touch so taps never miss below the fold.
+        let targetMatch = best;
+        if (isOffscreenInViewport(best) && domChannel.scrollIntoView) {
+          const scrolled = yield* Effect.tryPromise({
+            try: () => domChannel.scrollIntoView!(selector as Selector),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          if (scrolled) {
+            targetMatch = scrolled;
+          }
+        }
+
         // Convert DOM rect -> native screen coordinates using WebView frame
         const nativeRoot = yield* getNativeHierarchy(driver, parse, cache);
         const webViewFrame = findWebViewFrame(nativeRoot);
-        const screenBounds = domRectToScreenBounds(best, webViewFrame, {
+        const screenBounds = domRectToScreenBounds(targetMatch, webViewFrame, {
           platform: options.platform,
         });
         return {
-          element: domMatchToElement(best, screenBounds),
+          element: domMatchToElement(targetMatch, screenBounds),
           channel: "dom" as const,
-          domMatch: best,
+          domMatch: targetMatch,
           webViewFrame,
         };
       }

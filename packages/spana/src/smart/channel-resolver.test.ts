@@ -352,4 +352,48 @@ describe("Channel-hiding resolver & coordinate conversion", () => {
     ]);
     expect(warnings.filter((w) => w.rule === "text-heavy")).toHaveLength(0);
   });
+
+  test("auto-scrolls offscreen DOM elements into viewport before converting coordinates for native tap", async () => {
+    const screen = { xml: IOS_WKWEBVIEW_LOGIN_XML };
+    let scrollCalls = 0;
+
+    const offscreenMatch: DomElementMatch = {
+      id: "footer-submit",
+      tag: "button",
+      text: "Submit",
+      rect: { x: 24, y: 1450, width: 342, height: 48 },
+      scrollX: 0,
+      scrollY: 0,
+      devicePixelRatio: 3,
+      viewportWidth: 390,
+      viewportHeight: 751,
+      visible: true,
+      enabled: true,
+      clickable: true,
+    };
+
+    const scrolledMatch: DomElementMatch = {
+      ...offscreenMatch,
+      rect: { x: 24, y: 340, width: 342, height: 48 },
+      scrollY: 1110,
+    };
+
+    const domChannel: DomChannel = {
+      ...createStubDomChannel({ "footer-submit": [offscreenMatch] }),
+      scrollIntoView: async () => {
+        scrollCalls += 1;
+        return scrolledMatch;
+      },
+    };
+
+    const fake = createFakeDriver(screen, domChannel);
+    const coord = createCoordinator(fake.driver, {
+      parse: parseIOSHierarchy,
+      platform: "ios",
+    });
+
+    await Effect.runPromise(coord.tap({ testID: "footer-submit" }));
+    expect(scrollCalls).toBe(1);
+    expect(fake.taps[0]).toEqual({ x: 195, y: 423 });
+  });
 });

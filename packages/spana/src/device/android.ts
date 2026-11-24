@@ -176,6 +176,28 @@ export function adbForward(serial: string, hostPort: number, devicePort: number)
   execSync(`${adb} -s ${serial} forward tcp:${hostPort} tcp:${devicePort}`);
 }
 
+/**
+ * Reverse-forward a port from device localhost to host localhost via adb.
+ * Allows both physical USB Android phones and emulators to reach Spana's
+ * `spana-bridge` WebSocket server at `ws://127.0.0.1:<port>` with zero config.
+ */
+export function adbReverse(serial: string, devicePort: number, hostPort = devicePort): void {
+  const adb = findADB();
+  if (!adb) throw new Error("adb not found");
+  execSync(`${adb} -s ${serial} reverse tcp:${devicePort} tcp:${hostPort}`, { stdio: "ignore" });
+}
+
+/** Remove an adb reverse port mapping (best-effort). */
+export function adbReverseRemove(serial: string, devicePort: number): void {
+  const adb = findADB();
+  if (!adb) return;
+  try {
+    execSync(`${adb} -s ${serial} reverse --remove tcp:${devicePort}`, { stdio: "ignore" });
+  } catch {
+    // mapping may already be removed
+  }
+}
+
 /** Run adb shell command on device */
 export function adbShell(serial: string, command: string): string {
   const adb = findADB();
@@ -229,7 +251,9 @@ export const ADB_PROFILE_MAP: Record<string, { speed: string; delay: string }> =
 export function adbSetAirplaneMode(serial: string, enable: boolean): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} shell cmd connectivity airplane-mode ${enable ? "enable" : "disable"}`);
+  execSync(
+    `${adb} -s ${serial} shell cmd connectivity airplane-mode ${enable ? "enable" : "disable"}`,
+  );
 }
 
 /** Toggle Wi-Fi on/off */
@@ -257,7 +281,12 @@ export function adbSetNetworkProfile(serial: string, profile: string): void {
 }
 
 /** Apply custom network throttling (emulator only) */
-export function adbSetCustomNetwork(serial: string, downloadKbps: number, uploadKbps: number, delayMs: number): void {
+export function adbSetCustomNetwork(
+  serial: string,
+  downloadKbps: number,
+  uploadKbps: number,
+  delayMs: number,
+): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
   execSync(`${adb} -s ${serial} emu network speed ${downloadKbps}:${uploadKbps}`);

@@ -12,6 +12,9 @@ export interface WarmDaemonRecord {
   pid?: number;
   tunnelPid?: number;
   xctestrunPath?: string;
+  /** Optional reusable WDA/UiAutomator2 session ID persisted across runs */
+  sessionId?: string;
+  bundleId?: string;
   startedAt: string;
 }
 
@@ -58,6 +61,22 @@ export function registerWarmDaemon(
 ): void {
   const registry = loadDaemonRegistry(stateFile);
   registry.daemons[daemonKey(record.kind, record.deviceId)] = record;
+  saveDaemonRegistry(registry, stateFile);
+}
+
+/** Persist a warm WDA/UiAutomator2 session ID on an existing daemon record for cross-run reuse. */
+export function updateWarmDaemonSession(
+  kind: WarmDaemonKind,
+  deviceId: string,
+  sessionId: string,
+  bundleId?: string,
+  stateFile = defaultDaemonStatePath(),
+): void {
+  const registry = loadDaemonRegistry(stateFile);
+  const key = daemonKey(kind, deviceId);
+  const existing = registry.daemons[key];
+  if (!existing) return;
+  registry.daemons[key] = { ...existing, sessionId, ...(bundleId ? { bundleId } : {}) };
   saveDaemonRegistry(registry, stateFile);
 }
 

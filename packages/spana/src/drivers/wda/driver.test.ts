@@ -42,6 +42,15 @@ mock.module("./client.js", () => ({
       wdaState.events.push(["deleteSession"]);
     }
 
+    attachSession(id: string) {
+      wdaState.events.push(["attachSession", id]);
+    }
+
+    async isSessionAlive() {
+      wdaState.events.push(["isSessionAlive"]);
+      return true;
+    }
+
     async disableQuiescence() {
       wdaState.events.push(["disableQuiescence"]);
     }
@@ -361,5 +370,18 @@ describe("WDA driver adapter", () => {
 
     await Effect.runPromise(driver.setContext!("WEBVIEW_page-1"));
     expect(await Effect.runPromise(driver.getCurrentContext!())).toBe("WEBVIEW_page-1");
+  });
+
+  test("reattaches to a healthy warmSessionId without creating a new WDA session", async () => {
+    const { createWDADriver } = await importFreshDriver();
+    await Effect.runPromise(
+      createWDADriver("127.0.0.1", 8100, "com.example.app", "SIM-1", 100, {
+        warmSessionId: "warm-sess-42",
+      }),
+    );
+
+    expect(wdaState.events).toContainEqual(["attachSession", "warm-sess-42"]);
+    expect(wdaState.events).toContainEqual(["isSessionAlive"]);
+    expect(wdaState.events.filter(([type]) => type === "createSession")).toHaveLength(0);
   });
 });

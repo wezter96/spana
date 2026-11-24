@@ -3,12 +3,14 @@ import type { Selector } from "../schemas/selector.js";
 import type { MinimalWebSocket, WebSocketFactory } from "./cdp-client.js";
 import {
   buildDomQueryScript,
+  buildDomScrollIntoViewScript,
   buildDomTapScript,
   buildEvaluateExpression,
   type DomChannel,
   type DomElementMatch,
   type DomTargetInfo,
 } from "./dom-channel.js";
+import { AppleWebInspectorClient, findSimulatorWebInspectorSocket } from "./apple-webinspector.js";
 
 export interface WebKitInspectorTarget {
   id: string;
@@ -137,6 +139,7 @@ export class WebKitInspectorChannel implements DomChannel {
   private readonly createWebSocket: WebSocketFactory;
 
   private ws: MinimalWebSocket | null = null;
+  private nativeInspector: AppleWebInspectorClient | null = null;
   private proxyProcess: ChildProcess | null = null;
   private connected = false;
   private nextId = 1;
@@ -156,7 +159,10 @@ export class WebKitInspectorChannel implements DomChannel {
   }
 
   isConnected(): boolean {
-    return this.connected && this.ws !== null && this.ws.readyState === WS_OPEN;
+    return (
+      (this.connected && this.ws !== null && this.ws.readyState === WS_OPEN) ||
+      (this.nativeInspector?.isConnected() ?? false)
+    );
   }
 
   private async ensureProxyIfNeeded(): Promise<void> {
@@ -240,16 +246,33 @@ export class WebKitInspectorChannel implements DomChannel {
     let wsUrl = this.explicitWsUrl;
     if (!wsUrl) {
       await this.ensureProxyIfNeeded();
-      const targets = await this.fetchTargets();
-      const chosen = selectWebKitTarget(targets, this.bundleId);
-      if (!chosen?.webSocketDebuggerUrl) {
-        throw new Error(
-          `WebKit Inspector: no inspectable WKWebView page found at ${this.endpointUrl}. ` +
-            `Verify webView.isInspectable = true on iOS 16.4+.`,
-        );
+      try {
+        const targets = await this.fetchTargets();
+        const chosen = selectWebKitTarget(targets, this.bundleId);
+        if (!chosen?.webSocketDebuggerUrl) {
+          throw new Error(
+            `WebKit Inspector: no inspectable WKWebView page found at ${this.endpointUrl}. ` +
+              `Verify webView.isInspectable = true on iOS 16.4+.`,
+          );
+        }
+        this.currentTargetId = chosen.id;
+        wsUrl = chosen.webSocketDebuggerUrl;
+      } catch (proxyErr) {
+        // Zero-dependency fallback: connect directly to Apple's simulator
+        // `com.apple.webinspector` Unix socket when ios_webkit_debug_proxy is absent.
+        const nativeSock = findSimulatorWebInspectorSocket(this.udid);
+        if (!nativeSock) {
+          throw proxyErr;
+        }
+        this.nativeInspector = new AppleWebInspectorClient({
+          socketPath: nativeSock,
+          bundleId: this.bundleId,
+          timeoutMs: this.timeoutMs,
+        });
+        await this.nativeInspector.connect();
+        await this.nativeInspector.ensurePageAttached();
+        return;
       }
-      this.currentTargetId = chosen.id;
-      wsUrl = chosen.webSocketDebuggerUrl;
     }
 
     await this.openSocket(wsUrl);
@@ -339,6 +362,9 @@ export class WebKitInspectorChannel implements DomChannel {
     if (!this.isConnected()) {
       await this.connect();
     }
+    if (this.nativeInspector?.isConnected()) {
+      return this.nativeInspector.sendInspectorCommand<T>(method, params);
+    }
     const ws = this.ws!;
     const id = this.nextId++;
 
@@ -398,6 +424,13 @@ export class WebKitInspectorChannel implements DomChannel {
     return Boolean(result);
   }
 
+  async scrollIntoView(selector: Selector): Promise<DomElementMatch | null> {
+    const result = await this.evaluate<DomElementMatch | null>(
+      buildDomScrollIntoViewScript(selector),
+    );
+    return result ?? null;
+  }
+
   async reload(): Promise<void> {
     await this.sendCommand("Page.reload", { ignoreCache: false }).catch(async () => {
       await this.evaluate("window.location.reload()");
@@ -414,6 +447,10 @@ export class WebKitInspectorChannel implements DomChannel {
         // ignore
       }
       this.ws = null;
+    }
+    if (this.nativeInspector) {
+      await this.nativeInspector.disconnect();
+      this.nativeInspector = null;
     }
   }
 

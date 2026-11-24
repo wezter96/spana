@@ -79,10 +79,72 @@ export default flow(
 `;
 }
 
+function generateWebFirstPresetConfig(): string {
+  return `import { defineConfig } from "spana-test";
+
+export default defineConfig({
+  platforms: ["web", "android", "ios", "electron", "electrobun"],
+  flowDir: "./flows",
+  reporters: ["console"],
+  defaults: {
+    waitTimeout: 5_000,
+    tapMode: "native",
+    locale: "en_US",
+  },
+  execution: {
+    bridge: { enabled: true, port: 9333 },
+    warmDaemons: { enabled: true, reuseSession: true },
+  },
+  apps: {
+    web: { url: "http://localhost:5173" },
+    android: { packageName: "com.example.myapp" },
+    ios: { bundleId: "com.example.myapp" },
+    electron: { entry: "./dist-electron/main.js" },
+    electrobun: { executablePath: "./build/MyApp.app/Contents/MacOS/MyApp", renderer: "native" },
+  },
+});
+`;
+}
+
+function generateWebFirstExampleFlow(): string {
+  return `import { flow, systemUI } from "spana-test";
+
+export default flow(
+  "OAuth sign-in across web, Capacitor, Electron, and Electrobun",
+  { tags: ["smoke", "auth"], platforms: ["web", "android", "ios", "electron", "electrobun"] },
+  async ({ app, expect }) => {
+    // DOM channel finds data-testid (~1ms), native channel performs a real touch on mobile
+    await app.tap({ testID: "sign-in" });
+
+    // Out-of-process OAuth sheet (SFSafariViewController / Chrome Custom Tab)
+    await app.tap(systemUI({ text: "Continue" }));
+
+    // Back in the webview: resolved via DOM channel with zero native page-source dumps
+    await expect({ testID: "profile-id" }).toBeVisible();
+  },
+);
+`;
+}
+
 export async function runInitCommand(options: InitOptions): Promise<boolean> {
   if (existsSync("spana.config.ts") && !options.force) {
     console.log("\n  spana.config.ts already exists. Use --force to overwrite.\n");
     return false;
+  }
+
+  if (options.preset === "capacitor-web-first") {
+    writeFileSync("spana.config.ts", generateWebFirstPresetConfig());
+    if (!existsSync("flows")) {
+      mkdirSync("flows", { recursive: true });
+    }
+    if (!existsSync("flows/sign-in.flow.ts") || options.force) {
+      writeFileSync("flows/sign-in.flow.ts", generateWebFirstExampleFlow());
+    }
+    console.log("\n  Created web-first 5-target spana.config.ts and flows/sign-in.flow.ts");
+    console.log(
+      "  Install `spana-bridge` in test builds for instant DOM queries, idle(), and resetFast().\n",
+    );
+    return true;
   }
 
   console.log("\n  Setting up spana...\n");

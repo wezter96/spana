@@ -17,6 +17,7 @@ import { resolveCapabilities } from "../runtime/capabilities.js";
 import { loadConfig } from "./config-loader.js";
 import {
   buildWebRuntime,
+  buildWebRuntimePool,
   buildElectronRuntime,
   buildElectrobunRuntime,
   buildLocalAndroidRuntime,
@@ -155,14 +156,14 @@ async function buildParallelPlatformConfigs(
     if (platform === "web") {
       const webWorkers = maxWorkers ?? 1;
       if (webWorkers > 1) {
-        // Build primary web runtime
-        const primaryResult = await buildWebRuntime(config);
+        // Share ONE browser process with N isolated BrowserContexts
+        const pooledResults = await buildWebRuntimePool(config, webWorkers);
+        const primaryResult = pooledResults[0]!;
         runtimes.push(primaryResult.runtime);
 
-        // Build additional web contexts
         const additionalWorkers: DeviceWorkerConfig[] = [];
-        for (let i = 1; i < webWorkers; i++) {
-          const result = await buildWebRuntime(config);
+        for (let i = 1; i < pooledResults.length; i++) {
+          const result = pooledResults[i]!;
           runtimes.push(result.runtime);
           additionalWorkers.push({
             id: `web-context-${i + 1}`,

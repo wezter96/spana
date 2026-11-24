@@ -116,6 +116,11 @@ export class SpanaBridgeChannel implements DomChannel {
     if (this.activeConn && this.activeConn.isOpen) {
       return this.activeConn;
     }
+    return this.waitForNextClient(timeoutMs);
+  }
+
+  /** Wait for a brand-new bridge client connection (e.g. after a page navigation or reload). */
+  async waitForNextClient(timeoutMs = this.connectTimeoutMs): Promise<WsConnection> {
     return new Promise<WsConnection>((resolve, reject) => {
       const timer = setTimeout(() => {
         const idx = this.connectionWaiters.findIndex((w) => w.timer === timer);
@@ -206,6 +211,11 @@ export class SpanaBridgeChannel implements DomChannel {
     return Boolean(res);
   }
 
+  async scrollIntoView(selector: Selector): Promise<DomElementMatch | null> {
+    const res = await this.call<DomElementMatch | null>("scrollIntoView", { selector });
+    return res ?? null;
+  }
+
   async dispatch(
     selector: Selector,
     eventType: string,
@@ -231,7 +241,9 @@ export class SpanaBridgeChannel implements DomChannel {
   }
 
   async reload(): Promise<void> {
+    const nextConnPromise = this.waitForNextClient(this.connectTimeoutMs);
     await this.call("reload");
+    await nextConnPromise;
   }
 
   async mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void> {
@@ -330,6 +342,11 @@ export function createCompositeDomChannel(channels: DomChannel[]): DomChannel {
     tapDom: async (selector) => {
       const ch = await ensureOneConnected();
       return ch.tapDom(selector);
+    },
+    scrollIntoView: async (selector) => {
+      const ch = await ensureOneConnected();
+      if (ch.scrollIntoView) return ch.scrollIntoView(selector);
+      return null;
     },
     dispatch: async (selector, eventType, eventInit) => {
       const ch = await ensureOneConnected();

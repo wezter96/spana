@@ -151,6 +151,23 @@ export class WDAClient {
     return this.sessionId;
   }
 
+  /** Reattach to an existing warm WDA session ID without paying `POST /session` latency. */
+  attachSession(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  /** Probe whether the currently attached session still responds cleanly. */
+  async isSessionAlive(): Promise<boolean> {
+    if (!this.sessionId) return false;
+    try {
+      await this.getWindowSize();
+      return true;
+    } catch {
+      this.sessionId = null;
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Settings
   // ---------------------------------------------------------------------------

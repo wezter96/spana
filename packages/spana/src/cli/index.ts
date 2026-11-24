@@ -402,7 +402,7 @@ if (command === "test") {
   }
   if (preset && !isInitPreset(preset)) {
     console.log(
-      `Unknown init preset "${preset}". Use one of: local-web, local-react-native, browserstack, saucelabs.`,
+      `Unknown init preset "${preset}". Use one of: local-web, local-react-native, capacitor-web-first, browserstack, saucelabs.`,
     );
     process.exit(1);
   }

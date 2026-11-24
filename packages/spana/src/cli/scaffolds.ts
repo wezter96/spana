@@ -1,4 +1,10 @@
-const INIT_PRESETS = ["local-web", "local-react-native", "browserstack", "saucelabs"] as const;
+const INIT_PRESETS = [
+  "local-web",
+  "local-react-native",
+  "capacitor-web-first",
+  "browserstack",
+  "saucelabs",
+] as const;
 const FLOW_STUB_PRESETS = ["blank", "smoke", "auth"] as const;
 
 export type InitPreset = (typeof INIT_PRESETS)[number];
