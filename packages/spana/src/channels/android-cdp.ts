@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { allocatePort, releasePort } from "../core/port-allocator.js";
 import { findADB, adbShell } from "../device/android.js";
 import type { Selector } from "../schemas/selector.js";
+import type { BrowserMockResponse, BrowserRouteMatcher } from "../drivers/raw-driver.js";
 import { CdpDomChannel, type WebSocketFactory } from "./cdp-client.js";
 import type { DomChannel, DomElementMatch, DomTargetInfo } from "./dom-channel.js";
 
@@ -107,6 +108,15 @@ export class AndroidWebViewCdpChannel implements DomChannel {
   private allocatedByUs = false;
   private activeSocketName: string | null = null;
   private cdp: CdpDomChannel | null = null;
+  private readonly routes: Array<{
+    matches: (url: string) => boolean;
+    response?: {
+      responseCode: number;
+      responseHeaders: Array<{ name: string; value: string }>;
+      body: string;
+    };
+  }> = [];
+  private enableInterception?: Promise<unknown>;
 
   constructor(options: AndroidWebViewCdpOptions) {
     this.options = options;
@@ -178,7 +188,27 @@ export class AndroidWebViewCdpChannel implements DomChannel {
         fetchFn: this.options.fetchFn,
         createWebSocket: this.options.createWebSocket,
       });
+      const cdp = this.cdp;
+      cdp.onEvent("Fetch.requestPaused", (params, sessionId) => {
+        const requestId = params?.requestId;
+        if (typeof requestId !== "string") return;
+        const route = this.routes.findLast((candidate) =>
+          candidate.matches(String(params?.request?.url ?? "")),
+        );
+        const resume = () => cdp.sendCommand("Fetch.continueRequest", { requestId }, sessionId);
+        const operation = route
+          ? route.response
+            ? cdp.sendCommand("Fetch.fulfillRequest", { requestId, ...route.response }, sessionId)
+            : cdp.sendCommand(
+                "Fetch.failRequest",
+                { requestId, errorReason: "BlockedByClient" },
+                sessionId,
+              )
+          : resume();
+        void operation.catch(() => (route ? resume().catch(() => {}) : undefined));
+      });
       await this.cdp.connect();
+      if (this.routes.length) await this.ensureInterception();
     } catch (error) {
       await this.disconnect();
       throw error;
@@ -228,6 +258,81 @@ export class AndroidWebViewCdpChannel implements DomChannel {
       await this.connect();
     }
     await this.cdp!.selectTarget(targetId);
+    this.enableInterception = undefined;
+    if (this.routes.length) await this.ensureInterception();
+  }
+
+  private async ensureInterception(): Promise<void> {
+    this.enableInterception ??= this.cdp!.sendCommand("Fetch.enable", {
+      patterns: [{ urlPattern: "*" }],
+    });
+    try {
+      await this.enableInterception;
+    } catch (error) {
+      this.enableInterception = undefined;
+      throw error;
+    }
+  }
+
+  private async addRoute(
+    matcher: BrowserRouteMatcher,
+    response?: AndroidWebViewCdpChannel["routes"][number]["response"],
+  ): Promise<void> {
+    if (!this.isConnected()) await this.connect();
+    await this.ensureInterception();
+    const regex =
+      typeof matcher === "string"
+        ? matcher.includes("*")
+          ? new RegExp(
+              matcher
+                .split(/(\*\*|\*)/)
+                .map((part) =>
+                  part === "**"
+                    ? ".*"
+                    : part === "*"
+                      ? "[^/]*"
+                      : part.replaceAll(/[.+?^${}()|[\]\\]/g, "\\$&"),
+                )
+                .join(""),
+            )
+          : undefined
+        : new RegExp(matcher.source, matcher.flags.replaceAll(/[gy]/g, ""));
+    this.routes.push({
+      matches: regex ? (url) => regex.test(url) : (url) => url.includes(matcher as string),
+      response,
+    });
+  }
+
+  async mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void> {
+    if (response.body !== undefined && response.json !== undefined) {
+      throw new Error("mockNetwork() response cannot include both body and json.");
+    }
+    const headers = { ...response.headers };
+    const type =
+      response.contentType ?? (response.json === undefined ? undefined : "application/json");
+    if (type && !Object.keys(headers).some((key) => key.toLowerCase() === "content-type")) {
+      headers["content-type"] = type;
+    }
+    await this.addRoute(matcher, {
+      responseCode: response.status ?? 200,
+      responseHeaders: Object.entries(headers).map(([name, value]) => ({ name, value })),
+      body: Buffer.from(
+        response.json !== undefined ? JSON.stringify(response.json) : (response.body ?? ""),
+      ).toString("base64"),
+    });
+  }
+
+  async blockNetwork(matcher: BrowserRouteMatcher): Promise<void> {
+    await this.addRoute(matcher);
+  }
+
+  async clearNetworkMocks(): Promise<void> {
+    this.routes.length = 0;
+    if (this.enableInterception && this.isConnected()) {
+      await this.enableInterception;
+      await this.cdp!.sendCommand("Fetch.disable");
+      this.enableInterception = undefined;
+    }
   }
 
   async reload(): Promise<void> {
@@ -238,6 +343,7 @@ export class AndroidWebViewCdpChannel implements DomChannel {
   }
 
   async disconnect(): Promise<void> {
+    this.enableInterception = undefined;
     if (this.cdp) {
       await this.cdp.disconnect();
       this.cdp = null;

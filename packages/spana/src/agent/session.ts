@@ -304,7 +304,9 @@ export class Session {
     const effect =
       this.driver.mockNetwork?.(matcher, response) ??
       Effect.fail(
-        new DriverError({ message: "mockNetwork() is only supported on the web platform" }),
+        new DriverError({
+          message: `mockNetwork() is not supported on ${this.platform} with the current driver`,
+        }),
       );
     await Effect.runPromise(effect);
   }
@@ -313,7 +315,9 @@ export class Session {
     const effect =
       this.driver.blockNetwork?.(matcher) ??
       Effect.fail(
-        new DriverError({ message: "blockNetwork() is only supported on the web platform" }),
+        new DriverError({
+          message: `blockNetwork() is not supported on ${this.platform} with the current driver`,
+        }),
       );
     await Effect.runPromise(effect);
   }

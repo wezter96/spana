@@ -18,7 +18,10 @@ function createFakeRpcSocket(
     method: string;
     params?: Record<string, unknown>;
   }) => Record<string, unknown>,
-): MinimalWebSocket & { sent: string[] } {
+): MinimalWebSocket & {
+  sent: string[];
+  event(method: string, params: Record<string, unknown>): void;
+} {
   const listeners = new Map<string, Array<(e: any) => void>>();
   const sent: string[] = [];
   const emit = (type: string, event: any = {}) => {
@@ -27,6 +30,9 @@ function createFakeRpcSocket(
   return {
     readyState: 1,
     sent,
+    event(method, params) {
+      emit("message", { data: JSON.stringify({ method, params }) });
+    },
     addEventListener(type, listener) {
       const list = listeners.get(type) ?? [];
       list.push(listener);
@@ -209,6 +215,37 @@ describe("Android WebView CDP channel", () => {
     expect(adbCalls).toContain(
       "-s emulator-5554 forward tcp:9444 localabstract:webview_devtools_remote_7777",
     );
+
+    await channel.mockNetwork("**/api/orders", { status: 201, json: { order: 42 } });
+    await channel.blockNetwork(/tracking/);
+    fakeSocket.event("Fetch.requestPaused", {
+      requestId: "mock",
+      request: { url: "https://app.test/v1/api/orders" },
+    });
+    fakeSocket.event("Fetch.requestPaused", {
+      requestId: "block",
+      request: { url: "https://app.test/tracking" },
+    });
+    fakeSocket.event("Fetch.requestPaused", {
+      requestId: "continue",
+      request: { url: "https://app.test/assets" },
+    });
+    await channel.clearNetworkMocks();
+    const requests = fakeSocket.sent.map((raw) => JSON.parse(raw));
+    expect(requests.find((request) => request.method === "Fetch.fulfillRequest")?.params).toEqual({
+      requestId: "mock",
+      responseCode: 201,
+      responseHeaders: [{ name: "content-type", value: "application/json" }],
+      body: Buffer.from('{"order":42}').toString("base64"),
+    });
+    expect(
+      requests.find((request) => request.method === "Fetch.failRequest")?.params.requestId,
+    ).toBe("block");
+    expect(
+      requests.find((request) => request.method === "Fetch.continueRequest")?.params.requestId,
+    ).toBe("continue");
+    expect(requests.filter((request) => request.method === "Fetch.enable")).toHaveLength(1);
+    expect(requests.at(-1)?.method).toBe("Fetch.disable");
 
     await channel.disconnect();
     expect(adbCalls).toContain("-s emulator-5554 forward --remove tcp:9444");

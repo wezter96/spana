@@ -304,12 +304,15 @@ export function createSpanaBridgeChannel(
 export function createCompositeDomChannel(channels: DomChannel[]): DomChannel {
   const active = (): DomChannel | undefined => channels.find((c) => c.isConnected()) ?? channels[0];
 
-  const ensureOneConnected = async (): Promise<DomChannel> => {
-    const already = channels.find((c) => c.isConnected());
+  const ensureOneConnected = async (
+    candidates = channels,
+    unavailableMessage = "No DOM channel available",
+  ): Promise<DomChannel> => {
+    const already = candidates.find((c) => c.isConnected());
     if (already) return already;
 
     let lastError: unknown;
-    for (const ch of channels) {
+    for (const ch of candidates) {
       try {
         await ch.connect();
         return ch;
@@ -317,7 +320,7 @@ export function createCompositeDomChannel(channels: DomChannel[]): DomChannel {
         lastError = err;
       }
     }
-    throw lastError ?? new Error("No DOM channel available");
+    throw lastError ?? new Error(unavailableMessage);
   };
 
   return {
@@ -379,20 +382,25 @@ export function createCompositeDomChannel(channels: DomChannel[]): DomChannel {
       }
     },
     mockNetwork: async (matcher, response) => {
-      const ch = await ensureOneConnected();
-      if (!ch.mockNetwork)
-        throw new Error(`DOM channel "${ch.kind}" does not support mockNetwork()`);
-      await ch.mockNetwork(matcher, response);
+      const ch = await ensureOneConnected(
+        channels.filter((c) => c.mockNetwork),
+        "mockNetwork() requires a WebView with spana-bridge or Android WebView debugging enabled",
+      );
+      await ch.mockNetwork!(matcher, response);
     },
     blockNetwork: async (matcher) => {
-      const ch = await ensureOneConnected();
-      if (!ch.blockNetwork)
-        throw new Error(`DOM channel "${ch.kind}" does not support blockNetwork()`);
-      await ch.blockNetwork(matcher);
+      const ch = await ensureOneConnected(
+        channels.filter((c) => c.blockNetwork),
+        "blockNetwork() requires a WebView with spana-bridge or Android WebView debugging enabled",
+      );
+      await ch.blockNetwork!(matcher);
     },
     clearNetworkMocks: async () => {
-      const ch = await ensureOneConnected();
-      if (ch.clearNetworkMocks) await ch.clearNetworkMocks();
+      await Promise.all(
+        channels
+          .filter((ch) => ch.isConnected() || ch.kind === "cdp")
+          .map((ch) => ch.clearNetworkMocks?.()),
+      );
     },
     getConsoleLogs: async () => {
       const ch = await ensureOneConnected();

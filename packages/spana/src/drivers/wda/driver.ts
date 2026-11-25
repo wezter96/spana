@@ -696,7 +696,9 @@ export function createWDADriver(
         Effect.tryPromise({
           try: async () => {
             if (!domChannel.mockNetwork) {
-              throw new Error("mockNetwork() on iOS requires spana-bridge");
+              throw new Error(
+                "mockNetwork() is not supported on native iOS traffic; install spana-bridge in your WebView to intercept JavaScript requests",
+              );
             }
             await domChannel.mockNetwork(matcher, response);
           },
@@ -707,7 +709,9 @@ export function createWDADriver(
         Effect.tryPromise({
           try: async () => {
             if (!domChannel.blockNetwork) {
-              throw new Error("blockNetwork() on iOS requires spana-bridge");
+              throw new Error(
+                "blockNetwork() is not supported on native iOS traffic; install spana-bridge in your WebView to intercept JavaScript requests",
+              );
             }
             await domChannel.blockNetwork(matcher);
           },

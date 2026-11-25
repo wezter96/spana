@@ -492,7 +492,9 @@ export function createUiAutomator2Driver(
         Effect.tryPromise({
           try: async () => {
             if (!domChannel?.mockNetwork) {
-              throw new Error("mockNetwork() on Android requires spana-bridge");
+              throw new Error(
+                "mockNetwork() is not supported on native Android traffic; enable WebView debugging or install spana-bridge for WebView requests",
+              );
             }
             await domChannel.mockNetwork(matcher, response);
           },
@@ -503,7 +505,9 @@ export function createUiAutomator2Driver(
         Effect.tryPromise({
           try: async () => {
             if (!domChannel?.blockNetwork) {
-              throw new Error("blockNetwork() on Android requires spana-bridge");
+              throw new Error(
+                "blockNetwork() is not supported on native Android traffic; enable WebView debugging or install spana-bridge for WebView requests",
+              );
             }
             await domChannel.blockNetwork(matcher);
           },

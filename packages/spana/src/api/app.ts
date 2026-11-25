@@ -431,6 +431,13 @@ export function createPromiseApp<T extends string = string, R extends string = s
   ): ((...args: A) => Effect.Effect<Ret, DriverError>) =>
     method ?? ((..._args: A) => unsupportedWebFeature(name));
 
+  const unsupportedNetworkFeature = async (name: string): Promise<never> => {
+    const target = platform ?? (await run(driver.getDeviceInfo())).platform;
+    throw new DriverError({
+      message: `${name}() is not supported on ${target} with the current driver`,
+    });
+  };
+
   const runStep = <A>(
     command: string,
     action: () => Promise<A>,
@@ -782,7 +789,10 @@ export function createPromiseApp<T extends string = string, R extends string = s
     mockNetwork: (matcher, response) =>
       runStep(
         "mockNetwork",
-        () => run(optionalMethod("mockNetwork", driver.mockNetwork)(matcher, response)),
+        () =>
+          driver.mockNetwork
+            ? run(driver.mockNetwork(matcher, response))
+            : unsupportedNetworkFeature("mockNetwork"),
         {
           selector: { matcher: describeMatcher(matcher), response },
         },
@@ -790,14 +800,19 @@ export function createPromiseApp<T extends string = string, R extends string = s
     blockNetwork: (matcher) =>
       runStep(
         "blockNetwork",
-        () => run(optionalMethod("blockNetwork", driver.blockNetwork)(matcher)),
+        () =>
+          driver.blockNetwork
+            ? run(driver.blockNetwork(matcher))
+            : unsupportedNetworkFeature("blockNetwork"),
         {
           selector: { matcher: describeMatcher(matcher) },
         },
       ),
     clearNetworkMocks: () =>
       runStep("clearNetworkMocks", () =>
-        run(optionalMethod("clearNetworkMocks", driver.clearNetworkMocks)()),
+        driver.clearNetworkMocks
+          ? run(driver.clearNetworkMocks())
+          : unsupportedNetworkFeature("clearNetworkMocks"),
       ),
     setNetworkConditions: (conditions) =>
       runStep(
