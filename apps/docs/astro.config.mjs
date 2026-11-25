@@ -121,6 +121,7 @@ export default defineConfig({
             { label: "Remote Execution", slug: "guides/remote-execution" },
             { label: "Debugging", slug: "guides/debugging" },
             { label: "CI/CD Integration", slug: "guides/ci-integration" },
+            { label: "Fast TypeScript Toolchain", slug: "guides/fast-toolchain" },
           ],
         },
         {

@@ -1,0 +1,125 @@
+---
+title: Recommended Fast TypeScript Toolchain
+description: Opinionated guide to the fastest 2–3 tools in every TypeScript category — package managers, type-checkers, linters, formatters, bundlers, unit/component runners, and cross-platform E2E.
+---
+
+Fast E2E tests are only one part of a fast developer loop. If `install`, type-checking, linting,
+bundling, or unit tests take minutes, your team still waits on every push.
+
+Below are the **top 2–3 fastest TypeScript tools in every category**, organized by use case and
+trade-offs. Every pick focuses on real wall-clock speed without sacrificing ergonomics.
+
+:::tip[Opinionated, not dogmatic]
+Newer native tools (`tsgo`, `tsrs`, `turbo-dom`, `bun lint`, `bun fmt`) are moving rapidly. Each
+table notes when to pick the fastest native option vs. when to stay with a battle-tested default.
+:::
+
+---
+
+## 1. Runtime & Package Manager
+
+| Tool                                                | Best for                                          | Why it's fast / trade-offs                                                                                                                          |
+| --------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Bun](https://bun.sh)**                           | All-in-one TS apps, monorepos, CLI & test runners | Native Zig runtime + package manager + bundler + test runner + linter/formatter. Direct `.ts` execution with near-instant installs (`bun install`). |
+| **[pnpm](https://pnpm.io)**                         | Strict Node.js monorepos & enterprise CI          | Content-addressable global store + hard links save disk & install time while keeping 100% Node.js runtime compatibility.                            |
+| **[Node.js 24+ (strip-types)](https://nodejs.org)** | Conservative enterprise environments              | Native TypeScript type-stripping built in; pair with `pnpm` or Corepack when Bun isn't allowed in production.                                       |
+
+---
+
+## 2. Type-Checking
+
+| Tool                                                                                    | Best for                                    | Why it's fast / trade-offs                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`tsgo`](https://github.com/microsoft/typescript-go)** (`@typescript/native-preview`) | Official TypeScript 7 speedups              | Microsoft's native Go port of `tsc` — typically ~5–10× faster type-checking and lower memory across large monorepos.                                                                          |
+| **[`tsrs`](https://github.com/oxc-project)** (Oxc ecosystem)                            | Rust/WASM toolchains & ultra-low memory     | Rust port of the TypeScript compiler maintained in the Oxc ecosystem with WASM (`wasm32-wasip1`) support. Rapidly evolving — test against your repo before replacing `tsc` as the merge gate. |
+| **`tsc --noEmit --incremental`**                                                        | Codebases using TS language-service plugins | Still the source of truth when you rely on compiler/language-service plugins (e.g. `@effect/language-service`). Use `--incremental` + Turborepo caching to keep CI fast.                      |
+
+---
+
+## 3. Linting & Formatting
+
+| Tool                                          | Best for                                    | Why it's fast / trade-offs                                                                                                                                                                                                                                                                    |
+| --------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`bun lint` & `bun fmt`](https://bun.com)** | Zero-dependency Bun repos                   | Built directly into Bun. `bun lint` covers 1,000+ ESLint / `typescript-eslint` / React / unicorn / a11y rules (including type-aware rules) and reads existing ESLint/Oxlint configs; `bun fmt` is a Prettier-compatible native formatter across TS, JSX, CSS, HTML, JSON, YAML, and Markdown. |
+| **[Oxlint & Oxfmt](https://oxc.rs)**          | High-speed Node or Bun monorepos            | Rust-native linter (50–100× faster than ESLint) and formatter from VoidZero/Oxc — what Spana's own monorepo uses (`oxlint .` checks 347 files in ~40 ms).                                                                                                                                     |
+| **[Biome](https://biomejs.dev)**              | Single-binary lint + format with one config | Mature Rust linter + formatter in a single `biome.json` file; great drop-in replacement for ESLint + Prettier in standard JS/TS repos.                                                                                                                                                        |
+
+---
+
+## 4. Bundlers & Library Builds
+
+| Tool                                                                             | Best for                                     | Why it's fast / trade-offs                                                                                                  |
+| -------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **[Vite (Rolldown)](https://vite.dev) & [`tsdown`](https://tsdown.rolldown.rs)** | Web apps & npm TypeScript libraries          | Rust-backed Rollup-compatible bundling via Rolldown, keeping the full Vite plugin ecosystem with native build speeds.       |
+| **[`bun build`](https://bun.sh/docs/bundler)**                                   | CLIs, backend services & zero-config bundles | Built into Bun; single-file executables and sub-100 ms bundles with zero extra devDependencies.                             |
+| **[Rsbuild / Rspack](https://rsbuild.dev)**                                      | Large Webpack migrations                     | Rust drop-in compatible with Webpack configs/loaders when migrating legacy enterprise apps without rewriting build plugins. |
+
+---
+
+## 5. Monorepo Task Runners
+
+| Tool                                 | Best for                                        | Why it's fast / trade-offs                                                                        |
+| ------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **[Turborepo](https://turbo.build)** | Most TypeScript monorepos                       | Minimal `turbo.json` setup, content-hashed local + remote caching, parallel task graph execution. |
+| **[Nx](https://nx.dev)**             | Large orgs needing affected graphs & generators | Rich project-graph analysis, distributed CI task execution, and deep framework plugins.           |
+| **Bun Workspaces (`bun --filter`)**  | Small-to-medium repos (< 10 packages)           | Zero extra tooling; fast workspace filtering built directly into Bun.                             |
+
+---
+
+## 6. Unit & Component Testing (Below E2E)
+
+Keep business logic and UI component tests fast at the base of the pyramid, and save real-browser
+E2E for critical user journeys.
+
+| Tool                                                                                                                         | Best for                                         | Why it's fast / trade-offs                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`bun test`](https://bun.sh/docs/cli/test)**                                                                               | Pure TypeScript logic, API & driver unit tests   | Native Jest-compatible runner with instant startup (Spana runs 850+ tests in ~30 s including live Chrome specs).                                                                                                                                                        |
+| **[Vitest](https://vitest.dev)** + **[`@miaskiewicz/turbo-dom`](https://github.com/miaskiewicz/turbo-dom)** (or `happy-dom`) | React / Vue / Svelte component tests             | Mature Vite-native runner paired with **`turbo-dom`** — a Rust `html5ever`-backed drop-in DOM environment with **99.94% `html5lib` conformance** (vs `happy-dom` 37.35%, `jsdom` 97.03%) that runs Testing Library, `user-event`, Radix UI, and Headless UI unmodified. |
+| **[`turbo-test`](https://github.com/miaskiewicz/turbo-test)**                                                                | Maximum-speed Vitest-compatible component suites | Runs standard `*.test.ts(x)` directly in a native V8 + Rust `turbo-dom` process, bypassing Node + `jsdom` bottlenecks entirely.                                                                                                                                         |
+
+:::note[Why not use `turbo-dom` for E2E?]
+`@miaskiewicz/turbo-dom`'s npm runtime intentionally has **no CSS layout engine** (`top`/`left` are
+`0`, `@media` and `:hover` rules aren't evaluated). That makes it ideal for fast component tests,
+while real E2E tests belong in real browsers and WebViews.
+:::
+
+---
+
+## 7. E2E Testing (Web, Mobile & Desktop)
+
+Pick the E2E tool that matches your target matrix:
+
+### Cross-Platform (Web + iOS + Android + Electron + Electrobun)
+
+| Tool                                        | Best for                                                       | Strengths                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Spana](/getting-started/quick-start/)**  | One TypeScript suite across Web, Capacitor/RN Mobile & Desktop | Direct CDP on Chromium (1.5–1.7× faster than Playwright in strict fresh-context mode, up to 3.8× with `hot-cache`), direct WDA/UiAutomator2 on mobile (no Appium), composable selectors (`byRole`, `within`, `inFrame`), WebAuthn passkeys, `--processes` dynamic work-stealing queue, `--changed-since` CI filters, and built-in `spana mcp`. |
+| **[`e2e`](https://github.com/e2e-inc/e2e)** | Agent-native web + mobile workflows                            | Blends TypeScript steps with natural-language agent actions, built-in MCP server, and deterministic replay caching.                                                                                                                                                                                                                            |
+
+### Web-Only
+
+| Tool                                        | Best for                                                         | Strengths                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **[Spana](/getting-started/fastest-path/)** | Speed-first Chromium/WebKit/Firefox suites + MCP agent workflows | Direct CDP engine, `hot-cache` isolation, per-persona passkey store, and CI PR impact filtering. |
+| **[Playwright](https://playwright.dev)**    | Web-only teams wanting the largest ecosystem & Trace Viewer      | Battle-tested multi-language API, interactive `trace.zip` time-travel viewer, huge community.    |
+
+### React Native & Mobile-Focused
+
+| Tool                                                                                    | Best for                                                   | Strengths                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **[Spana](/guides/device-setup/)**                                                      | Shared Web + React Native / Capacitor suites in TypeScript | Single `.flow.ts` codebase across Web + iOS + Android, direct WDA/UiAutomator2 without Appium, plus BrowserStack / Sauce Labs cloud support.                                                                                               |
+| **[Argent (`@swmansion/argent`)](https://github.com/software-mansion/argent)**          | React Native-first teams & deep RN debugging               | Built by Software Mansion (core RN contributors). AI coding agents record flows into deterministic zero-AI YAML replays, with deep Hermes / React DevTools / Perfetto profiling, network/console capture, and physical USB device support. |
+| **[`e2e`](https://github.com/e2e-inc/e2e)** / **[Maestro](https://maestro.mobile.dev)** | Mobile flows with minimal boilerplate                      | `e2e` for agent-assisted TypeScript flows with replay cache; Maestro for simple YAML-first mobile scripts.                                                                                                                                 |
+
+---
+
+## Example: The "Zero-Wait" 2026 Stack
+
+If you are starting a fresh TypeScript monorepo targeting Web + Mobile:
+
+- **Runtime & installs:** `bun`
+- **Lint & format:** `bun lint` + `bun fmt` (or `oxlint` + `oxfmt`)
+- **Type-check:** `tsgo` (or `tsc --incremental` if using TS plugins)
+- **Bundler:** Vite (Rolldown) / `tsdown`
+- **Unit & component tests:** `bun test` + Vitest with `@miaskiewicz/turbo-dom`
+- **E2E tests:** **Spana** (`engine: "auto"`, `--workers 4 --processes 4`, `--changed-since origin/main`), paired with **Argent** if you want deep Hermes/RN performance profiling alongside your E2E runs.
