@@ -309,6 +309,8 @@ export interface ProvConfig {
     locale?: string;
     /** Fail web element waits early when the page is idle & readyState === "complete" instead of waiting full waitTimeout. */
     failFastWhenIdle?: boolean;
+    /** Consecutive stable animation frames required before pointer actions on web. Default: 2. Set 0 to disable. */
+    actionStableFrames?: number;
   };
   platforms?: Platform[];
   /** Run platforms concurrently when they use independent resources. Default: false (serial). */
@@ -612,6 +614,7 @@ export const provConfigSchema = z
         tapMode: z.enum(["native", "dom"]).optional(),
         locale: z.string().min(1).optional(),
         failFastWhenIdle: z.boolean().optional(),
+        actionStableFrames: z.number().int().nonnegative().optional(),
       })
       .strict()
       .optional(),

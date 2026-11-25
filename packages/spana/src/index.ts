@@ -22,9 +22,12 @@ export {
   type FrameScope,
 } from "./api/app.js";
 export {
-  type PollExpectation,
   type PromiseExpectation,
+  type NegatedPromiseExpectation,
   type PromiseExpectFn,
+  type ToPassExpectation,
+  type PollExpectation,
+  type PollMatchers,
   type RetryAssertionOptions,
 } from "./api/expect.js";
 
@@ -40,6 +43,7 @@ export {
   systemUI,
   byRole,
   byCss,
+  or,
   within,
   inFrame,
   nth,
@@ -134,6 +138,7 @@ export {
   buildDomWaitForHiddenScript,
   buildDomWaitForMatchScript,
   buildDomFillScript,
+  buildDomActionabilityDiagScript,
   SPANA_INJECTED_RUNTIME_SCRIPT,
   buildInjectedCallScript,
   type InjectedRuntimeMethod,
@@ -194,6 +199,7 @@ export {
 export {
   launchDirectCdpBrowser,
   makeLightweightCdpDriver,
+  UPLOAD_ATTACH_TIMEOUT_MS,
   type DirectCdpBrowserLaunchOptions,
   type DirectCdpBrowserHandle,
   type LightweightCdpDriverOptions,
@@ -207,9 +213,12 @@ export {
   type ElectrobunLaunchPlan,
 } from "./drivers/electrobun.js";
 export {
+  DEFAULT_WARM_DAEMON_IDLE_TTL_MS,
   listWarmDaemons,
   stopWarmDaemon,
   stopAllWarmDaemons,
+  reapIdleWarmDaemons,
+  sweepOrphanedSpanaBrowsers,
   getHealthyWarmDaemon,
   updateWarmDaemonSession,
   defaultDaemonStateDir,
@@ -348,6 +357,7 @@ export {
   planProcessPool,
   partitionFlowsAcrossProcesses,
   runMultiProcessPool,
+  writeWorkerProcessReport,
   startSharedFlowQueueServer,
   createRemoteFlowClaimer,
   type SharedFlowQueueServer,

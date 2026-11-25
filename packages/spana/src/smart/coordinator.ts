@@ -3,7 +3,10 @@ import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { Element } from "../schemas/element.js";
 import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/selector.js";
 import { isSystemUISelector } from "../schemas/selector.js";
-import type { DomWaitForMatchOptions } from "../channels/dom-channel.js";
+import {
+  buildDomActionabilityDiagScript,
+  type DomWaitForMatchOptions,
+} from "../channels/dom-channel.js";
 import type { WaitTimeoutError } from "../errors.js";
 import { DriverError, ElementNotFoundError, TextMismatchError } from "../errors.js";
 import { splitGraphemes } from "../core/graphemes.js";
@@ -218,6 +221,25 @@ export function createCoordinator<T extends string = string, R extends string = 
     return directionMap[direction];
   };
 
+  const normalizeWhitespace = (s: string): string => s.replaceAll(/\s+/g, " ").trim();
+
+  const collectContainerText = (el: Element): string => {
+    if (el.text) return el.text;
+    const parts: string[] = [];
+    const stack: Element[] = [...(el.children ?? [])].toReversed();
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      if (node.visible === false) continue;
+      if (node.text) parts.push(node.text);
+      if (node.children) {
+        for (let i = node.children.length - 1; i >= 0; i--) {
+          stack.push(node.children[i]!);
+        }
+      }
+    }
+    return parts.join(" ").trim();
+  };
+
   const pollUntilMatch = (
     selector: ExtendedSelector,
     opts: WaitOptions | undefined,
@@ -230,6 +252,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       expected: string;
     },
     domMatchSpec?: Omit<DomWaitForMatchOptions, "timeoutMs">,
+    negate: boolean = false,
   ): Effect.Effect<
     void,
     ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -254,6 +277,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           try: () =>
             domChannel.waitForMatch!(selector as Selector, {
               ...domMatchSpec,
+              ...(negate ? { negate: true } : {}),
               timeoutMs: timeout,
             }),
           catch: () => null,
@@ -281,7 +305,7 @@ export function createCoordinator<T extends string = string, R extends string = 
         const element = resolved?.element;
         if (element) {
           const result = check(element);
-          if (result.matched) return;
+          if (negate ? !result.matched : result.matched) return;
           lastActual = result.actual;
         }
         yield* Effect.sleep(Duration.millis(pollInterval));
@@ -380,45 +404,62 @@ export function createCoordinator<T extends string = string, R extends string = 
       selector: ExtendedSelector,
       expected: string,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
+    > => {
+      const normalizedExpected = normalizeWhitespace(expected);
+      return pollUntilMatch(
         selector,
         opts,
-        (el) => ({ matched: el.text === expected, actual: el.text }),
+        (el) => {
+          const raw = el.textContent ?? el.text;
+          const actual = raw !== undefined ? normalizeWhitespace(raw) : undefined;
+          return { matched: actual === normalizedExpected, actual };
+        },
         (actual, timeout) => ({
-          message: `Expected text "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-          expected,
+          message: negate
+            ? `Expected text NOT to be "${expected}" after ${timeout}ms`
+            : `Expected text "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+          expected: negate ? `not ${expected}` : expected,
         }),
         { kind: "text", expected },
-      ),
+        negate,
+      );
+    },
 
     assertContainsText: (
       selector: ExtendedSelector,
       expected: string,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
+    > => {
+      const normalizedExpected = normalizeWhitespace(expected).toLowerCase();
+      return pollUntilMatch(
         selector,
         opts,
         (el) => {
-          const actual = el.text ?? "";
+          const raw = el.textContent ?? el.text ?? "";
+          const actual = normalizeWhitespace(raw);
           return {
-            matched: actual.toLowerCase().includes(expected.toLowerCase()),
-            actual: el.text,
+            matched: actual.toLowerCase().includes(normalizedExpected),
+            actual,
           };
         },
         (actual, timeout) => ({
-          message: `Expected text to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-          expected,
+          message: negate
+            ? `Expected text NOT to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`
+            : `Expected text to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+          expected: negate ? `not containing ${expected}` : expected,
         }),
         { kind: "containsText", expected },
-      ),
+        negate,
+      );
+    },
 
     assertEnabled: (
       selector: ExtendedSelector,
@@ -445,10 +486,39 @@ export function createCoordinator<T extends string = string, R extends string = 
           driver,
           selector,
           parse,
-          { ...defaults, ...opts },
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
         );
-        return element.text ?? "";
+        return collectContainerText(element);
+      }),
+
+    count: (selector: ExtendedSelector, opts?: WaitOptions): Effect.Effect<number, DriverError> =>
+      Effect.gen(function* () {
+        cache.invalidate();
+        const domChannel = driver.domChannel;
+        if (
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          domChannel?.isConnected()
+        ) {
+          const matches = yield* Effect.tryPromise({
+            try: () => domChannel.query(selector as Selector),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          if (matches) {
+            return matches.filter((m) => m.visible).length;
+          }
+        }
+        const raw = yield* driver.dumpHierarchy();
+        const root = parse(raw);
+        if (isRelativeSelectorLike(selector)) {
+          const resolved = yield* resolveElementAcrossChannels(driver, selector, parse, cache, {
+            forAction: false,
+            platform: opts?.platform ?? config.platform,
+          });
+          return resolved ? 1 : 0;
+        }
+        return findElements(root, selector as Selector).filter((el) => el.visible !== false).length;
       }),
 
     isElementEnabled: (
@@ -460,7 +530,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           driver,
           selector,
           parse,
-          { ...defaults, ...opts },
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
         );
         return element.enabled !== false;
@@ -470,6 +540,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       selector: ExtendedSelector,
       expected: string | number,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -483,10 +554,13 @@ export function createCoordinator<T extends string = string, R extends string = 
           return { matched: actual === expectedStr, actual };
         },
         (actual, timeout) => ({
-          message: `Expected value "${expectedStr}" but got "${actual ?? "(no value)"}" after ${timeout}ms`,
-          expected: expectedStr,
+          message: negate
+            ? `Expected value NOT to be "${expectedStr}" after ${timeout}ms`
+            : `Expected value "${expectedStr}" but got "${actual ?? "(no value)"}" after ${timeout}ms`,
+          expected: negate ? `not ${expectedStr}` : expectedStr,
         }),
         { kind: "value", expected: expectedStr },
+        negate,
       );
     },
 
@@ -495,6 +569,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       name: string,
       expectedValue?: string,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -510,22 +585,34 @@ export function createCoordinator<T extends string = string, R extends string = 
           return { matched: actual === expectedValue, actual };
         },
         (actual, timeout) =>
-          expectedValue === undefined
-            ? {
-                message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
-                expected: name,
-              }
-            : {
-                message: `Expected attribute "${name}" to be "${expectedValue}" but got "${actual ?? "(not found)"}" after ${timeout}ms`,
-                expected: expectedValue,
-              },
+          negate
+            ? expectedValue === undefined
+              ? {
+                  message: `Expected attribute "${name}" NOT to exist but got "${actual ?? ""}" after ${timeout}ms`,
+                  expected: `not ${name}`,
+                }
+              : {
+                  message: `Expected attribute "${name}" NOT to be "${expectedValue}" after ${timeout}ms`,
+                  expected: `not ${expectedValue}`,
+                }
+            : expectedValue === undefined
+              ? {
+                  message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
+                  expected: name,
+                }
+              : {
+                  message: `Expected attribute "${name}" to be "${expectedValue}" but got "${actual ?? "(not found)"}" after ${timeout}ms`,
+                  expected: expectedValue,
+                },
         { kind: "attribute", attributeName: name, expected: expectedValue },
+        negate,
       ),
 
     assertMatchesText: (
       selector: ExtendedSelector,
       pattern: RegExp,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -534,14 +621,17 @@ export function createCoordinator<T extends string = string, R extends string = 
         selector,
         opts,
         (el) => {
-          const actual = el.text ?? "";
+          const actual = normalizeWhitespace(el.textContent ?? el.text ?? "");
           return { matched: pattern.test(actual), actual };
         },
         (actual, timeout) => ({
-          message: `Expected text to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-          expected: String(pattern),
+          message: negate
+            ? `Expected text NOT to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`
+            : `Expected text to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+          expected: negate ? `not ${String(pattern)}` : String(pattern),
         }),
         { kind: "matchesText", patternSource: pattern.source, patternFlags: pattern.flags },
+        negate,
       ),
 
     getAttribute: (
@@ -550,11 +640,43 @@ export function createCoordinator<T extends string = string, R extends string = 
       opts?: WaitOptions,
     ): Effect.Effect<string | undefined, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+        const domChannel = driver.domChannel;
+
+        // On web/DOM channels, allow reading attributes from any attached element
+        // (including display:none, <input type="hidden">, or zero-size elements without a layout box).
+        if (
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          domChannel?.isConnected()
+        ) {
+          const start = Date.now();
+          while (true) {
+            const matches = yield* Effect.tryPromise({
+              try: () => domChannel.query(selector as Selector),
+              catch: () => null,
+            }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+            if (matches && matches.length > 0) {
+              const target = matches[matches.length - 1]!;
+              return target.attributes?.[name];
+            }
+            if (Date.now() - start >= timeout) {
+              return yield* new ElementNotFoundError({
+                message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
+                selector,
+                timeoutMs: timeout,
+              });
+            }
+            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+          }
+        }
+
         const element = yield* waitForElement(
           driver,
           selector,
           parse,
-          { ...defaults, ...opts },
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
         );
         return element.attributes?.[name];
@@ -689,6 +811,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       selector: ExtendedSelector,
       expected: string | RegExp,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -703,8 +826,10 @@ export function createCoordinator<T extends string = string, R extends string = 
           return { matched, actual };
         },
         (actual, timeout) => ({
-          message: `Expected accessible name ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: String(expected),
+          message: negate
+            ? `Expected accessible name NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected accessible name ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? `not ${String(expected)}` : String(expected),
         }),
         expected instanceof RegExp
           ? {
@@ -713,11 +838,47 @@ export function createCoordinator<T extends string = string, R extends string = 
               patternFlags: expected.flags,
             }
           : { kind: "accessibleName", expected },
+        negate,
+      ),
+
+    assertAccessibleDescription: (
+      selector: ExtendedSelector,
+      expected: string | RegExp,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.accessibleDescription ?? el.attributes?.["aria-description"] ?? "";
+          const matched =
+            expected instanceof RegExp ? expected.test(actual) : actual.trim() === expected.trim();
+          return { matched, actual };
+        },
+        (actual, timeout) => ({
+          message: negate
+            ? `Expected accessible description NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected accessible description ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? `not ${String(expected)}` : String(expected),
+        }),
+        expected instanceof RegExp
+          ? {
+              kind: "accessibleDescription",
+              patternSource: expected.source,
+              patternFlags: expected.flags,
+            }
+          : { kind: "accessibleDescription", expected },
+        negate,
       ),
 
     assertFocused: (
       selector: ExtendedSelector,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -730,16 +891,20 @@ export function createCoordinator<T extends string = string, R extends string = 
           actual: el.focused ? "focused" : "not focused",
         }),
         (actual, timeout) => ({
-          message: `Expected element to be focused but it was "${actual ?? "not focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: "focused",
+          message: negate
+            ? `Expected element NOT to be focused but it was "${actual ?? "focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected element to be focused but it was "${actual ?? "not focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? "not focused" : "focused",
         }),
         { kind: "focused" },
+        negate,
       ),
 
     assertCount: (
       selector: ExtendedSelector,
       expectedCount: number,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<void, TextMismatchError | DriverError> =>
       Effect.gen(function* () {
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
@@ -760,6 +925,7 @@ export function createCoordinator<T extends string = string, R extends string = 
               domChannel.waitForMatch!(selector as Selector, {
                 kind: "count",
                 expectedCount,
+                ...(negate ? { negate: true } : {}),
                 timeoutMs: timeout,
               }),
             catch: () => null,
@@ -768,8 +934,10 @@ export function createCoordinator<T extends string = string, R extends string = 
           if (reactive) {
             if (reactive.matched) return;
             return yield* new TextMismatchError({
-              message: `Expected count ${expectedCount} but got ${reactive.actual ?? "0"} after ${timeout}ms — selector: ${formatSelector(selector)}`,
-              expected: String(expectedCount),
+              message: negate
+                ? `Expected count NOT to be ${expectedCount} after ${timeout}ms — selector: ${formatSelector(selector)}`
+                : `Expected count ${expectedCount} but got ${reactive.actual ?? "0"} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+              expected: negate ? `not ${expectedCount}` : String(expectedCount),
               actual: reactive.actual ?? "0",
               selector,
             });
@@ -790,7 +958,7 @@ export function createCoordinator<T extends string = string, R extends string = 
             if (matches) {
               const count = matches.filter((m) => m.visible).length;
               lastCount = count;
-              if (count === expectedCount) return;
+              if (negate ? count !== expectedCount : count === expectedCount) return;
               yield* Effect.sleep(Duration.millis(pollInterval));
               continue;
             }
@@ -802,13 +970,15 @@ export function createCoordinator<T extends string = string, R extends string = 
             (el) => el.visible !== false,
           ).length;
           lastCount = count;
-          if (count === expectedCount) return;
+          if (negate ? count !== expectedCount : count === expectedCount) return;
           yield* Effect.sleep(Duration.millis(pollInterval));
         }
 
         return yield* new TextMismatchError({
-          message: `Expected count ${expectedCount} but got ${lastCount >= 0 ? lastCount : 0} after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: String(expectedCount),
+          message: negate
+            ? `Expected count NOT to be ${expectedCount} after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected count ${expectedCount} but got ${lastCount >= 0 ? lastCount : 0} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? `not ${expectedCount}` : String(expectedCount),
           actual: String(lastCount >= 0 ? lastCount : 0),
           selector,
         });
@@ -817,6 +987,7 @@ export function createCoordinator<T extends string = string, R extends string = 
     waitForURL: (
       expected: string | RegExp,
       opts?: WaitOptions,
+      negate: boolean = false,
     ): Effect.Effect<void, TextMismatchError | DriverError> =>
       Effect.gen(function* () {
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
@@ -838,6 +1009,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 ...(expected instanceof RegExp
                   ? { patternSource: expected.source, patternFlags: expected.flags }
                   : { expected }),
+                ...(negate ? { negate: true } : {}),
                 timeoutMs: timeout,
               }),
             catch: () => null,
@@ -846,8 +1018,10 @@ export function createCoordinator<T extends string = string, R extends string = 
           if (reactive) {
             if (reactive.matched) return;
             return yield* new TextMismatchError({
-              message: `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`,
-              expected: String(expected),
+              message: negate
+                ? `Expected URL NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`
+                : `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`,
+              expected: negate ? `not ${String(expected)}` : String(expected),
               actual: reactive.actual ?? "",
               selector: "url",
             });
@@ -863,13 +1037,15 @@ export function createCoordinator<T extends string = string, R extends string = 
                 )
                 .pipe(Effect.catchAll(() => Effect.succeed("")));
           lastUrl = url;
-          if (matchesUrl(url)) return;
+          if (negate ? !matchesUrl(url) : matchesUrl(url)) return;
           yield* Effect.sleep(Duration.millis(pollInterval));
         }
 
         return yield* new TextMismatchError({
-          message: `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`,
-          expected: String(expected),
+          message: negate
+            ? `Expected URL NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`
+            : `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`,
+          expected: negate ? `not ${String(expected)}` : String(expected),
           actual: lastUrl,
           selector: "url",
         });
@@ -1099,7 +1275,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           driver,
           selector,
           parse,
-          { ...defaults, ...opts },
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
         );
         const { x, y } = centerOf(element);
@@ -1119,7 +1295,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           driver,
           selector,
           parse,
-          { ...defaults, ...opts },
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
         );
         const { x, y } = centerOf(element);
@@ -1218,11 +1394,13 @@ export function createCoordinator<T extends string = string, R extends string = 
           domChannel?.isConnected() &&
           domChannel.fillDom
         ) {
-          const filled = yield* Effect.tryPromise({
-            try: () => domChannel.fillDom!(selector as Selector, text, { timeoutMs: timeout }),
-            catch: (e) => new DriverError({ message: `DOM fill failed: ${e}` }),
-          });
-          if (filled) {
+          const fillAttempt = yield* Effect.either(
+            Effect.tryPromise({
+              try: () => domChannel.fillDom!(selector as Selector, text, { timeoutMs: timeout }),
+              catch: (e) => new DriverError({ message: `DOM fill failed: ${e}` }),
+            }),
+          );
+          if (fillAttempt._tag === "Right" && fillAttempt.right) {
             yield* afterMutation();
             return;
           }
@@ -1256,6 +1434,32 @@ export function createCoordinator<T extends string = string, R extends string = 
             }
             yield* afterMutation();
             return;
+          }
+
+          const actionDiag = yield* Effect.tryPromise({
+            try: () =>
+              domChannel.evaluate<{
+                found?: boolean;
+                visible?: boolean;
+                enabled?: boolean;
+                obstructedBy?: string;
+              }>(buildDomActionabilityDiagScript(selector as Selector)),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (actionDiag?.found && actionDiag.obstructedBy) {
+            return yield* new ElementNotFoundError({
+              message: `Element is covered by ${actionDiag.obstructedBy} (not fillable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+              selector,
+              timeoutMs: timeout,
+            });
+          }
+          if (actionDiag?.found && actionDiag.visible && actionDiag.enabled === false) {
+            return yield* new ElementNotFoundError({
+              message: `Element is disabled (not fillable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+              selector,
+              timeoutMs: timeout,
+            });
           }
 
           return yield* new ElementNotFoundError({

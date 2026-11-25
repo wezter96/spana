@@ -11,8 +11,10 @@ export type Bounds = typeof Bounds.Type;
 export const Element = Schema.Struct({
   id: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String),
+  textContent: Schema.optional(Schema.String),
   value: Schema.optional(Schema.String),
   accessibilityLabel: Schema.optional(Schema.String),
+  accessibleDescription: Schema.optional(Schema.String),
   resourceId: Schema.optional(Schema.String),
   elementType: Schema.optional(Schema.String),
   bounds: Bounds,

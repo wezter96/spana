@@ -12,7 +12,7 @@ import { formatSelector } from "./element-matcher.js";
 import type { HierarchyCache } from "./hierarchy-cache.js";
 import { diagnoseElementNotFound, formatDiagnostic } from "./diagnostics.js";
 import { resolveElementAcrossChannels, type ResolvedElementResult } from "./channel-resolver.js";
-import { domMatchToElement } from "../channels/dom-channel.js";
+import { buildDomActionabilityDiagScript, domMatchToElement } from "../channels/dom-channel.js";
 
 export interface WaitOptions {
   timeout?: number; // default 5000ms
@@ -28,6 +28,8 @@ export interface WaitOptions {
   failFastWhenIdle?: boolean;
   /** Quiet window in ms before failFastWhenIdle resolves empty. Default: 250. */
   idleQuietMs?: number;
+  /** Consecutive stable animation frames required before pointer actions on web. Default: 2. */
+  actionStableFrames?: number;
 }
 
 const DEFAULT_TIMEOUT = 5000;
@@ -126,6 +128,9 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
             forAction,
             failFastWhenIdle: opts?.failFastWhenIdle,
             idleQuietMs: opts?.idleQuietMs,
+            ...(opts?.actionStableFrames !== undefined
+              ? { stableFrames: opts.actionStableFrames }
+              : {}),
           }),
         catch: () => null,
       }).pipe(Effect.catchAll(() => Effect.succeed(null)));
@@ -142,8 +147,36 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
       if (
         Array.isArray(reactiveMatches) &&
         reactiveMatches.length === 0 &&
-        (opts?.failFastWhenIdle || Date.now() - start >= timeout)
+        (forAction || opts?.failFastWhenIdle || Date.now() - start >= timeout)
       ) {
+        // Never silently fall back to an unobstructed click on web when forAction hit-test/stability failed!
+        if (forAction) {
+          const actionDiag = yield* Effect.tryPromise({
+            try: () =>
+              initialDomChannel.evaluate<{
+                found?: boolean;
+                visible?: boolean;
+                enabled?: boolean;
+                obstructedBy?: string;
+              }>(buildDomActionabilityDiagScript(selector as Selector)),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (actionDiag?.found && actionDiag.obstructedBy) {
+            return yield* new ElementNotFoundError({
+              message: `Element is covered by ${actionDiag.obstructedBy} (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+              selector,
+              timeoutMs: timeout,
+            });
+          }
+          if (actionDiag?.found && actionDiag.visible && actionDiag.enabled === false) {
+            return yield* new ElementNotFoundError({
+              message: `Element is disabled (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+              selector,
+              timeoutMs: timeout,
+            });
+          }
+        }
         if (cache) cache.invalidate();
         const diagRoot = yield* getHierarchy(driver, parse, cache);
         const diagnostic = diagnoseElementNotFound(diagRoot, selector);
@@ -194,6 +227,9 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
                 forAction,
                 failFastWhenIdle: opts?.failFastWhenIdle,
                 idleQuietMs: opts?.idleQuietMs,
+                ...(opts?.actionStableFrames !== undefined
+                  ? { stableFrames: opts.actionStableFrames }
+                  : {}),
               }),
             catch: () => null,
           }).pipe(Effect.catchAll(() => Effect.succeed(null)));

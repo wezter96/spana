@@ -322,21 +322,23 @@ export class CdpDomChannel implements DomChannel {
     method: InjectedRuntimeMethod,
     args: unknown[],
     fallbackScript: () => string,
+    timeoutMs?: number,
   ): Promise<T> {
     if (!this.useInjectedRuntime) {
-      return this.evaluateOnSession<T>(sessionId, fallbackScript());
+      return this.evaluateOnSessionWithTimeout<T>(sessionId, fallbackScript(), timeoutMs);
     }
     const callExpr = buildInjectedCallScript(method, ...args);
-    const res = await this.evaluateOnSession<T | typeof SPANA_RUNTIME_MISSING_SENTINEL>(
+    const res = await this.evaluateOnSessionWithTimeout<T | typeof SPANA_RUNTIME_MISSING_SENTINEL>(
       sessionId,
       callExpr,
+      timeoutMs,
     );
     if (res !== SPANA_RUNTIME_MISSING_SENTINEL) {
       return res as T;
     }
     // Runtime wasn't present on this execution context yet (e.g. already-loaded page) — install once & retry
-    await this.evaluateOnSession(sessionId, SPANA_INJECTED_RUNTIME_SCRIPT);
-    return this.evaluateOnSession<T>(sessionId, callExpr);
+    await this.evaluateOnSessionWithTimeout(sessionId, SPANA_INJECTED_RUNTIME_SCRIPT, timeoutMs);
+    return this.evaluateOnSessionWithTimeout<T>(sessionId, callExpr, timeoutMs);
   }
 
   setFrameOffsetResolver(resolver: CdpFrameOffsetResolver | undefined): void {
@@ -378,6 +380,7 @@ export class CdpDomChannel implements DomChannel {
     method: string,
     params: Record<string, unknown> = {},
     sessionId?: string | null,
+    timeoutMs?: number,
   ): Promise<T> {
     if (!this.isConnected()) {
       await this.connect();
@@ -385,12 +388,13 @@ export class CdpDomChannel implements DomChannel {
     const ws = this.ws!;
     const id = this.nextId++;
     const resolvedSessionId = sessionId === undefined ? this.activeSessionId : sessionId;
+    const effectiveTimeout = timeoutMs ?? this.timeoutMs;
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`CDP command "${method}" timed out after ${this.timeoutMs}ms`));
-      }, this.timeoutMs);
+        reject(new Error(`CDP command "${method}" timed out after ${effectiveTimeout}ms`));
+      }, effectiveTimeout);
 
       this.pending.set(id, { resolve, reject, timer });
       const payload: Record<string, unknown> = { id, method, params };
@@ -401,10 +405,11 @@ export class CdpDomChannel implements DomChannel {
     });
   }
 
-  async evaluateOnSession<T = unknown>(
+  private async evaluateOnSessionWithTimeout<T = unknown>(
     sessionId: string | null | undefined,
     script: string | ((...args: any[]) => T),
-    ...args: any[]
+    timeoutMs?: number,
+    args: any[] = [],
   ): Promise<T> {
     const expression = buildEvaluateExpression(script, args);
     const response = await this.sendCommand<{
@@ -419,6 +424,7 @@ export class CdpDomChannel implements DomChannel {
         awaitPromise: true,
       },
       sessionId,
+      timeoutMs,
     );
 
     if (response?.exceptionDetails) {
@@ -435,6 +441,14 @@ export class CdpDomChannel implements DomChannel {
     }
 
     return response?.result?.value as T;
+  }
+
+  async evaluateOnSession<T = unknown>(
+    sessionId: string | null | undefined,
+    script: string | ((...args: any[]) => T),
+    ...args: any[]
+  ): Promise<T> {
+    return this.evaluateOnSessionWithTimeout<T>(sessionId, script, undefined, args);
   }
 
   async evaluate<T = unknown>(
@@ -491,6 +505,7 @@ export class CdpDomChannel implements DomChannel {
     selector: Selector,
     opts?: DomWaitForSelectorOptions,
   ): Promise<DomElementMatch[]> {
+    const rpcTimeout = Math.max((opts?.timeoutMs ?? 5000) + 5000, this.timeoutMs);
     const fallback = () => buildDomWaitForSelectorScript(selector, opts);
     if (this.childSessions.size === 0) {
       const result = await this.invokeDom<DomElementMatch[]>(
@@ -498,6 +513,7 @@ export class CdpDomChannel implements DomChannel {
         "waitForSelector",
         [selector, opts ?? {}],
         fallback,
+        rpcTimeout,
       );
       return Array.isArray(result) ? result : [];
     }
@@ -514,6 +530,7 @@ export class CdpDomChannel implements DomChannel {
         "waitForSelector",
         [selector, opts ?? {}],
         fallback,
+        rpcTimeout,
       ).catch(() => []),
       ...Array.from(this.childSessions.values()).map(async (child) => {
         const res = await this.invokeDom<DomElementMatch[]>(
@@ -521,6 +538,7 @@ export class CdpDomChannel implements DomChannel {
           "waitForSelector",
           [selector, opts ?? {}],
           fallback,
+          rpcTimeout,
         ).catch(() => []);
         return Array.isArray(res) && res.length > 0 ? this.applyChildOffset(res, child) : [];
       }),
@@ -548,9 +566,16 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async waitForHidden(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean> {
+    const rpcTimeout = Math.max((opts?.timeoutMs ?? 5000) + 5000, this.timeoutMs);
     const fallback = () => buildDomWaitForHiddenScript(selector, opts);
     const mainHidden = Boolean(
-      await this.invokeDom<boolean>(undefined, "waitForHidden", [selector, opts ?? {}], fallback),
+      await this.invokeDom<boolean>(
+        undefined,
+        "waitForHidden",
+        [selector, opts ?? {}],
+        fallback,
+        rpcTimeout,
+      ),
     );
     if (!mainHidden || this.childSessions.size === 0) return mainHidden;
     for (const child of this.childSessions.values()) {
@@ -560,6 +585,7 @@ export class CdpDomChannel implements DomChannel {
           "waitForHidden",
           [selector, opts ?? {}],
           fallback,
+          rpcTimeout,
         ).catch(() => true),
       );
       if (!ok) return false;
@@ -571,12 +597,14 @@ export class CdpDomChannel implements DomChannel {
     selector: Selector,
     opts: DomWaitForMatchOptions,
   ): Promise<DomWaitForMatchResult> {
+    const rpcTimeout = Math.max((opts?.timeoutMs ?? 5000) + 5000, this.timeoutMs);
     const fallback = () => buildDomWaitForMatchScript(selector, opts);
     const result = await this.invokeDom<DomWaitForMatchResult>(
       undefined,
       "waitForMatch",
       [selector, opts],
       fallback,
+      rpcTimeout,
     );
     if (result && typeof result === "object" && result.matched) return result;
     if (this.childSessions.size > 0) {
@@ -586,6 +614,7 @@ export class CdpDomChannel implements DomChannel {
           "waitForMatch",
           [selector, opts],
           fallback,
+          rpcTimeout,
         ).catch(() => ({ matched: false }));
         if (childRes?.matched) return childRes;
       }
@@ -594,9 +623,16 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async fillDom(selector: Selector, value: string, opts?: DomFillOptions): Promise<boolean> {
+    const rpcTimeout = Math.max((opts?.timeoutMs ?? 5000) + 5000, this.timeoutMs);
     const fallback = () => buildDomFillScript(selector, value, opts);
     const mainFilled = Boolean(
-      await this.invokeDom<boolean>(undefined, "fill", [selector, value, opts ?? {}], fallback),
+      await this.invokeDom<boolean>(
+        undefined,
+        "fill",
+        [selector, value, opts ?? {}],
+        fallback,
+        rpcTimeout,
+      ),
     );
     if (mainFilled || this.childSessions.size === 0) return mainFilled;
     for (const child of this.childSessions.values()) {
@@ -606,6 +642,7 @@ export class CdpDomChannel implements DomChannel {
           "fill",
           [selector, value, opts ?? {}],
           fallback,
+          rpcTimeout,
         ).catch(() => false),
       );
       if (ok) return true;

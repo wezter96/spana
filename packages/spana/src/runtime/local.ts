@@ -86,6 +86,7 @@ function buildEngineConfig(
         tapMode: config.defaults?.tapMode,
         platform,
         failFastWhenIdle: config.defaults?.failFastWhenIdle,
+        actionStableFrames: config.defaults?.actionStableFrames,
       },
       waitForIdleTimeout: config.defaults?.waitForIdleTimeout,
       typingDelay: config.defaults?.typingDelay,

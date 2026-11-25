@@ -52,6 +52,8 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
   } else if ("css" in selector) {
     // Native hierarchy fallback cannot evaluate arbitrary CSS; DOM channel handles `{ css }`.
     baseMatch = false;
+  } else if ("anyOf" in selector && Array.isArray(selector.anyOf)) {
+    baseMatch = selector.anyOf.some((branch) => matchesSelector(element, branch));
   } else if ("point" in selector) {
     const { x, y } = selector.point;
     const b = element.bounds;
@@ -75,6 +77,14 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
           ? selector.hasNotText.test(text)
           : text.toLowerCase().includes(selector.hasNotText.toLowerCase());
       if (bad) return false;
+    }
+    if (selector.has !== undefined) {
+      const descendants = flattenElements(element).slice(1);
+      if (!descendants.some((d) => matchesSelector(d, selector.has!))) return false;
+    }
+    if (selector.hasNot !== undefined) {
+      const descendants = flattenElements(element).slice(1);
+      if (descendants.some((d) => matchesSelector(d, selector.hasNot!))) return false;
     }
   }
 
@@ -201,11 +211,16 @@ function formatSimpleSelector(sel: Selector): string {
   else if ("text" in sel) base = `text: "${sel.text}"`;
   else if ("accessibilityLabel" in sel) base = `accessibilityLabel: "${sel.accessibilityLabel}"`;
   else if ("role" in sel) {
-    base =
-      sel.name !== undefined
-        ? `role: "${sel.role}", name: ${sel.name instanceof RegExp ? sel.name.toString() : JSON.stringify(sel.name)}`
-        : `role: "${sel.role}"`;
+    const parts = [`role: "${sel.role}"`];
+    if (sel.name !== undefined) {
+      parts.push(
+        `name: ${sel.name instanceof RegExp ? sel.name.toString() : JSON.stringify(sel.name)}`,
+      );
+    }
+    if (sel.level !== undefined) parts.push(`level: ${sel.level}`);
+    base = parts.join(", ");
   } else if ("css" in sel) base = `css: "${sel.css}"`;
+  else if ("anyOf" in sel) base = `or(${sel.anyOf.map(formatSimpleSelector).join(", ")})`;
   else if ("point" in sel) return `point: (${sel.point.x}, ${sel.point.y})`;
   else return JSON.stringify(sel);
 
@@ -222,6 +237,8 @@ function formatSimpleSelector(sel: Selector): string {
       `hasNotText(${sel.hasNotText instanceof RegExp ? sel.hasNotText.toString() : JSON.stringify(sel.hasNotText)})`,
     );
   }
+  if (sel.has !== undefined) mods.push(`has(${formatSimpleSelector(sel.has)})`);
+  if (sel.hasNot !== undefined) mods.push(`hasNot(${formatSimpleSelector(sel.hasNot)})`);
   if (sel.first) mods.push("first");
   else if (sel.last) mods.push("last");
   else if (sel.nth !== undefined) mods.push(`nth(${sel.nth})`);

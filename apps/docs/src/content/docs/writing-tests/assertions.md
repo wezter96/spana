@@ -115,7 +115,9 @@ await expect(async () => {
 }).toPass({ timeout: 3000, intervals: [100, 250] });
 ```
 
-Soft assertions still wait for their matchers. If they fail, the flow continues and reports the collected failures at the end of the attempt. `poll` compares a callback's return value; `toPass` retries a callback until it stops throwing or rejecting. Use idempotent callbacks, since they can run more than once. After the interval list is exhausted, its last interval repeats.
+Soft assertions still wait for their matchers, including negated selector assertions such as `expect.soft(selector).not.toBeVisible()`. If they fail, the flow continues and reports the collected failures at the end of the attempt.
+
+`poll` compares a callback's return value and supports negation (for example, `expect.poll(fn).not.toBe(0)`). `toPass` retries a callback until it stops throwing or rejecting. Both stop waiting at the configured timeout, even if a callback is still running. Use idempotent callbacks, since they can run more than once. The default retry intervals are 50, 100, 250, and 500 ms; after the interval list is exhausted, its last interval repeats.
 
 ## ARIA snapshots
 

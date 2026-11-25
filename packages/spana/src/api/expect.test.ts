@@ -131,7 +131,7 @@ test("poll retries an asynchronous probe and records the final result as one ste
     .poll(async () => ({ ready: ++attempts === 3 }), { intervals: [1] })
     .toEqual({ ready: true });
   expect(attempts).toBe(3);
-  expect(stepCalls.map((step) => step.command)).toEqual(["expect.poll.toEqual"]);
+  expect(stepCalls.map((step) => step.command)).toEqual(['expect.poll.toEqual({"ready":true})']);
 });
 
 test("toPass retries throwing callbacks and reports the last failure at the deadline", async () => {
@@ -147,6 +147,52 @@ test("toPass retries throwing callbacks and reports the last failure at the dead
       throw new Error("still not ready");
     }).toPass({ timeout: 20, intervals: [1] }),
   ).rejects.toThrow("Assertion timed out after 20ms: still not ready");
+});
+
+test("negated polling and toPass record no inner steps across attempts", async () => {
+  const { driver } = createDriver([createElement()]);
+  const { recorder, stepCalls } = createRecorder();
+  const browserExpect = createPromiseExpect(driver, { parse }, recorder);
+  let attempts = 0;
+  await browserExpect(async () => {
+    await browserExpect.poll(() => ++attempts).not.toBeUndefined();
+    if (attempts < 2) throw new Error("not ready");
+  }).toPass({ timeout: 100, intervals: [1] });
+  expect(attempts).toBe(2);
+  expect(stepCalls.map((step) => step.command)).toEqual(["expect.toPass"]);
+
+  let polls = 0;
+  await browserExpect.poll(() => ++polls, { intervals: [1] }).not.toBe(1);
+  expect(polls).toBe(2);
+  expect(stepCalls.map((step) => step.command)).toEqual([
+    "expect.toPass",
+    "expect.poll.not.toBe(1)",
+  ]);
+});
+
+test("poll and toPass enforce the deadline even when a callback stalls", async () => {
+  const { driver } = createDriver([createElement()]);
+  const browserExpect = createPromiseExpect(driver, { parse });
+  const stall = () => new Promise<number>(() => {});
+  await expect(browserExpect(stall).toPass({ timeout: 20 })).rejects.toThrow(
+    "Assertion timed out after 20ms",
+  );
+  await expect(browserExpect.poll(stall, { timeout: 20 }).not.toBe(1)).rejects.toThrow(
+    "Assertion timed out after 20ms",
+  );
+});
+
+test("soft negated assertions record the failure instead of throwing", async () => {
+  const { driver } = createDriver([createElement({ text: "Ready" })]);
+  const failures: unknown[] = [];
+  const browserExpect = createPromiseExpect(driver, { parse }, undefined, {
+    flowFilePath: "",
+    flowName: "soft",
+    platform: "web",
+    recordSoftFailure: (failure) => failures.push(failure),
+  });
+  await browserExpect.soft({ text: "Ready" }).not.toHaveText("Ready", { timeout: 20 });
+  expect(failures).toHaveLength(1);
 });
 
 let tempDir = "";

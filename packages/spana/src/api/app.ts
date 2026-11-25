@@ -145,6 +145,8 @@ export interface FrameScope<T extends string = string> {
   ): Promise<string | undefined>;
   isVisible(selector: Selector<T>, opts?: { timeout?: number }): Promise<boolean>;
   isEnabled(selector: Selector<T>, opts?: WaitOptions): Promise<boolean>;
+  /** Count visible elements matching `selector` inside this frame (returns `0` when none exist). */
+  count(selector: Selector<T>, opts?: WaitOptions): Promise<number>;
   expect(selector: Selector<T>): PromiseExpectation<T>;
 }
 
@@ -267,6 +269,8 @@ export interface PromiseApp<T extends string = string, R extends string = string
   ): Promise<string | undefined>;
   isVisible(selector: ExtendedSelector<T>, opts?: { timeout?: number }): Promise<boolean>;
   isEnabled(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<boolean>;
+  /** Return the number of currently visible elements matching `selector` (returns `0` without throwing when none exist). */
+  count(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<number>;
 
   // Web-first bridge & fast state helpers (works across web, Capacitor, Electron, Electrobun)
   /** Wait for in-flight fetch/XHR, animations, and framework renders to settle via spana-bridge. */
@@ -937,6 +941,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
         getAttribute: (sel, name, opts) => appObj.getAttribute(scoped(sel), name, opts),
         isVisible: (sel, opts) => appObj.isVisible(scoped(sel), opts),
         isEnabled: (sel, opts) => appObj.isEnabled(scoped(sel), opts),
+        count: (sel, opts) => appObj.count(scoped(sel), opts),
         expect: (sel) => appExpect(scoped(sel)),
       };
     },
@@ -1056,6 +1061,8 @@ export function createPromiseApp<T extends string = string, R extends string = s
     },
     isEnabled: (selector, opts) =>
       runStep("isEnabled", () => run(coord.isElementEnabled(selector, opts)), { selector }),
+    count: (selector, opts) =>
+      runStep("count", () => run(coord.count(selector, opts)), { selector }),
 
     // Web-first bridge & fast state helpers
     waitForIdle: (opts) =>

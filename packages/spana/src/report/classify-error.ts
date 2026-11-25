@@ -2,6 +2,23 @@ import type { FailureCategory, FlowError } from "./types.js";
 import { extractCodeFrame } from "./code-frame.js";
 
 const TAG_KEY = "_tag";
+const FIBER_FAILURE_CAUSE_SYMBOL = Symbol.for("effect/Runtime/FiberFailure/Cause");
+
+function unwrapTaggedError(error: unknown): TaggedLike {
+  if (!error || typeof error !== "object") return {};
+  const obj = error as Record<PropertyKey, unknown>;
+  if (typeof obj[TAG_KEY] === "string") {
+    return obj as unknown as TaggedLike;
+  }
+  const cause = obj[FIBER_FAILURE_CAUSE_SYMBOL] as Record<string, unknown> | undefined;
+  if (cause && typeof cause === "object") {
+    const inner = (cause["error"] ?? cause["defect"]) as Record<string, unknown> | undefined;
+    if (inner && typeof inner === "object" && typeof inner[TAG_KEY] === "string") {
+      return inner as unknown as TaggedLike;
+    }
+  }
+  return obj as unknown as TaggedLike;
+}
 
 interface TaggedLike {
   [TAG_KEY]?: string;
@@ -255,7 +272,7 @@ const heuristicRules: readonly PatternRule[] = [
       "The operation timed out. Try increasing `defaults.waitTimeout` in spana.config.ts.",
   },
   {
-    pattern: /not found|not visible/,
+    pattern: /not found|not visible|not fillable|covered by/,
     category: (msg: string) => categorizeElementFailure(msg),
     suggestion: (_error, msg) => {
       if (msg.includes("scroll(s) toward")) {
@@ -326,13 +343,13 @@ export function classifyError(
   error: Error,
   opts?: { flowFilePath?: string; fallbackStack?: string },
 ): FlowError {
-  const tagged = error as unknown as TaggedLike;
+  const tagged = unwrapTaggedError(error);
   const { category, suggestion } = categorize(tagged);
   const extracted =
     extractCodeFrame(error.stack, opts?.flowFilePath) ??
     extractCodeFrame(opts?.fallbackStack, opts?.flowFilePath);
   return {
-    message: error.message,
+    message: tagged.message ?? error.message,
     stack: error.stack,
     category,
     suggestion,

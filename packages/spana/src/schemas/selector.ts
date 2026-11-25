@@ -18,6 +18,10 @@ export interface SelectorModifiers<T extends string = string> {
   hasText?: string | RegExp;
   /** Exclude matches whose text contains this string or matches this RegExp (`.filter({ hasNotText })`). */
   hasNotText?: string | RegExp;
+  /** Keep only matches containing a descendant matching this selector (`.filter({ has })`). */
+  has?: Selector<T>;
+  /** Exclude matches containing a descendant matching this selector (`.filter({ hasNot })`). */
+  hasNot?: Selector<T>;
   /** Select the 0-based Nth match (negative values count from the end, e.g. `-1` for last). */
   nth?: number;
   /** Shorthand for `nth: 0` (`.first()`). */
@@ -43,6 +47,8 @@ const _RoleSelectorSchema = Schema.Struct({
   role: Schema.String,
   name: Schema.optional(Schema.String),
   exact: Schema.optional(Schema.Boolean),
+  level: Schema.optional(Schema.Number),
+  includeHidden: Schema.optional(Schema.Boolean),
 });
 const _CssSelectorSchema = Schema.Struct({
   css: Schema.String,
@@ -65,8 +71,15 @@ export type ObjectSelector<T extends string = string> =
   | ({ testID: T } & SelectorModifiers<T>)
   | ({ text: string; systemUI?: boolean; exact?: boolean } & SelectorModifiers<T>)
   | ({ accessibilityLabel: string; systemUI?: boolean } & SelectorModifiers<T>)
-  | ({ role: string; name?: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
+  | ({
+      role: string;
+      name?: string | RegExp;
+      exact?: boolean;
+      level?: number;
+      includeHidden?: boolean;
+    } & SelectorModifiers<T>)
   | ({ css: string } & SelectorModifiers<T>)
+  | ({ anyOf: Selector<T>[] } & SelectorModifiers<T>)
   | { point: { x: number; y: number } };
 
 /**
@@ -114,23 +127,33 @@ function toObjectSelector<T extends string = string>(sel: Selector<T>): ObjectSe
   return sel;
 }
 
-/** Build an ARIA role selector (`getByRole(role, { name, exact })` or shorthand `byRole(role, name, opts)`). */
+/** Build an ARIA role selector (`getByRole(role, { name, exact, level, includeHidden })` or shorthand `byRole(role, name, opts)`). */
 export function byRole<T extends string = string>(
   role: string,
-  opts?: { name?: string | RegExp; exact?: boolean } & SelectorModifiers<T>,
+  opts?: {
+    name?: string | RegExp;
+    exact?: boolean;
+    level?: number;
+    includeHidden?: boolean;
+  } & SelectorModifiers<T>,
 ): ObjectSelector<T>;
 export function byRole<T extends string = string>(
   role: string,
   name: string | RegExp,
-  opts?: { exact?: boolean } & SelectorModifiers<T>,
+  opts?: { exact?: boolean; level?: number; includeHidden?: boolean } & SelectorModifiers<T>,
 ): ObjectSelector<T>;
 export function byRole<T extends string = string>(
   role: string,
   nameOrOpts?:
     | string
     | RegExp
-    | ({ name?: string | RegExp; exact?: boolean } & SelectorModifiers<T>),
-  opts?: { exact?: boolean } & SelectorModifiers<T>,
+    | ({
+        name?: string | RegExp;
+        exact?: boolean;
+        level?: number;
+        includeHidden?: boolean;
+      } & SelectorModifiers<T>),
+  opts?: { exact?: boolean; level?: number; includeHidden?: boolean } & SelectorModifiers<T>,
 ): ObjectSelector<T> {
   if (typeof nameOrOpts === "string" || nameOrOpts instanceof RegExp) {
     return { role, name: nameOrOpts, ...opts };
@@ -144,6 +167,33 @@ export function byCss<T extends string = string>(
   opts?: SelectorModifiers<T>,
 ): ObjectSelector<T> {
   return { css, ...opts };
+}
+
+/** Match elements satisfying ANY of the provided selectors (Playwright `locatorA.or(locatorB)`). */
+export function or<T extends string = string>(...selectors: Selector<T>[]): ObjectSelector<T> {
+  const flat: Selector<T>[] = [];
+  for (const s of selectors) {
+    if (
+      typeof s === "object" &&
+      s !== null &&
+      "anyOf" in s &&
+      Array.isArray(s.anyOf) &&
+      !("within" in s && s.within) &&
+      !("frame" in s && s.frame) &&
+      !("hasText" in s && s.hasText !== undefined) &&
+      !("hasNotText" in s && s.hasNotText !== undefined) &&
+      !("has" in s && s.has !== undefined) &&
+      !("hasNot" in s && s.hasNot !== undefined) &&
+      !("first" in s && s.first) &&
+      !("last" in s && s.last) &&
+      !("nth" in s && s.nth !== undefined)
+    ) {
+      flat.push(...s.anyOf);
+    } else {
+      flat.push(s);
+    }
+  }
+  return { anyOf: flat };
 }
 
 /** Scope `child` inside elements matching `parent` (`locator(parent).locator(child)`). */
@@ -188,10 +238,15 @@ export function last<T extends string = string>(sel: Selector<T>): ObjectSelecto
   return { ...obj, last: true, first: undefined, nth: undefined };
 }
 
-/** Filter a selector's matches by text (`locator.filter({ hasText, hasNotText })`). */
+/** Filter a selector's matches by text or descendant selector (`locator.filter({ hasText, hasNotText, has, hasNot })`). */
 export function filterSelector<T extends string = string>(
   sel: Selector<T>,
-  filter: { hasText?: string | RegExp; hasNotText?: string | RegExp },
+  filter: {
+    hasText?: string | RegExp;
+    hasNotText?: string | RegExp;
+    has?: Selector<NoInfer<T>>;
+    hasNot?: Selector<NoInfer<T>>;
+  },
 ): ObjectSelector<T> {
   const obj = toObjectSelector(sel);
   if ("point" in obj) return obj;
@@ -223,7 +278,7 @@ export function isTestIDSelector<T extends string = string>(
   return typeof sel === "object" && sel !== null && "testID" in sel && !isRelativeSelector(sel);
 }
 
-/** True when a selector uses web/DOM-specific composition (role, css, within, frame, nth, filter). */
+/** True when a selector uses web/DOM-specific composition (role, css, anyOf, within, frame, nth, filter). */
 export function isComposableDomSelector<T extends string = string>(
   sel: ExtendedSelector<T>,
 ): boolean {
@@ -231,10 +286,13 @@ export function isComposableDomSelector<T extends string = string>(
   return (
     "role" in sel ||
     "css" in sel ||
+    "anyOf" in sel ||
     "within" in sel ||
     "frame" in sel ||
     "hasText" in sel ||
     "hasNotText" in sel ||
+    "has" in sel ||
+    "hasNot" in sel ||
     "nth" in sel ||
     "first" in sel ||
     "last" in sel

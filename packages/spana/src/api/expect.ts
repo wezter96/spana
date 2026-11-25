@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
-import { inspect, isDeepStrictEqual } from "node:util";
 import { Effect } from "effect";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import { isRelativeSelector, type ExtendedSelector } from "../schemas/selector.js";
@@ -15,6 +14,22 @@ export interface FlowContext {
   platform: string;
   updateBaselines?: boolean;
   recordSoftFailure?: (error: unknown) => void;
+}
+
+export interface NegatedPromiseExpectation {
+  toBeVisible(opts?: WaitOptions): Promise<void>;
+  toBeHidden(opts?: WaitOptions): Promise<void>;
+  toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
+  toMatchText(pattern: RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveValue(expected: string | number, opts?: WaitOptions): Promise<void>;
+  toHaveAttribute(name: string, value?: string, opts?: WaitOptions): Promise<void>;
+  toBeEnabled(opts?: WaitOptions): Promise<void>;
+  toBeDisabled(opts?: WaitOptions): Promise<void>;
+  toContainText(expected: string, opts?: WaitOptions): Promise<void>;
+  toHaveCount(expected: number, opts?: WaitOptions): Promise<void>;
+  toBeFocused(opts?: WaitOptions): Promise<void>;
+  toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveAccessibleDescription(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
 }
 
 export interface PromiseExpectation<T extends string = string> {
@@ -33,6 +48,10 @@ export interface PromiseExpectation<T extends string = string> {
   toBeFocused(opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element's computed accessible name matches string or RegExp. */
   toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element's computed accessible description matches string or RegExp. */
+  toHaveAccessibleDescription(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Negated assertion chain (`expect(selector).not.*`). */
+  readonly not: NegatedPromiseExpectation;
   toMatchAriaSnapshot(
     expected: string | { path: string },
     opts?: RetryAssertionOptions,
@@ -62,34 +81,98 @@ export interface PromiseExpectation<T extends string = string> {
 }
 
 export interface RetryAssertionOptions {
+  /** Total timeout in ms before failing. Default: 5000. */
   timeout?: number;
-  intervals?: readonly number[];
+  /** Backoff intervals in ms between retries. Default: [50, 100, 250, 500]. */
+  intervals?: number[];
 }
 
-export interface PollExpectation<T> {
-  toBe(expected: T): Promise<void>;
-  toEqual(expected: T): Promise<void>;
-  toBeTruthy(): Promise<void>;
-  toBeFalsy(): Promise<void>;
+export interface ToPassExpectation {
+  /** Retry the callback until it completes without throwing (Playwright `expect(fn).toPass()`). */
+  toPass(opts?: RetryAssertionOptions): Promise<void>;
+}
+
+export interface PollMatchers<V> {
+  toBe(expected: V): Promise<void>;
+  toEqual(expected: V): Promise<void>;
   toContain(expected: unknown): Promise<void>;
-  toMatch(expected: string | RegExp): Promise<void>;
+  toMatch(pattern: string | RegExp): Promise<void>;
   toBeGreaterThan(expected: number): Promise<void>;
   toBeLessThan(expected: number): Promise<void>;
+  toBeGreaterThanOrEqual(expected: number): Promise<void>;
+  toBeLessThanOrEqual(expected: number): Promise<void>;
+  toBeTruthy(): Promise<void>;
+  toBeFalsy(): Promise<void>;
+  toBeDefined(): Promise<void>;
+  toBeUndefined(): Promise<void>;
+  toHaveLength(expected: number): Promise<void>;
 }
 
+export interface PollExpectation<V> extends PollMatchers<V> {
+  readonly not: PollMatchers<V>;
+}
+
+/** Callable `expect(selector)` / `expect(fn).toPass()` helper with `expect.poll(...)` and `expect.toHaveURL(...)`. */
 export interface PromiseExpectFn<T extends string = string> {
   (selector: ExtendedSelector<T>): PromiseExpectation<T>;
-  (check: () => unknown): { toPass(options?: RetryAssertionOptions): Promise<void> };
+  (fn: () => unknown | Promise<unknown>): ToPassExpectation;
   soft: ((selector: ExtendedSelector<T>) => PromiseExpectation<T>) & {
     toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   };
-  poll<A>(probe: () => A, options?: RetryAssertionOptions): PollExpectation<Awaited<A>>;
   /** Assert that the current page URL matches a substring/exact string or RegExp. */
   toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Negated page-level matchers (`expect.not.toHaveURL(...)`). */
+  readonly not: {
+    toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  };
+  /** Poll an async/sync getter until the chained matcher passes (Playwright `expect.poll(fn)`). */
+  poll<V>(fn: () => V | Promise<V>, opts?: RetryAssertionOptions): PollExpectation<V>;
+}
+
+function selectorToCss<T extends string = string>(sel: ExtendedSelector<T>): string {
+  if (typeof sel === "string") return sel;
+  if (typeof sel === "object" && sel !== null && "css" in sel && sel.css) return sel.css;
+  if (typeof sel === "object" && sel !== null && "testID" in sel && sel.testID)
+    return `[data-testid="${sel.testID}"]`;
+  if (
+    typeof sel === "object" &&
+    sel !== null &&
+    "accessibilityLabel" in sel &&
+    sel.accessibilityLabel
+  )
+    return `[aria-label="${sel.accessibilityLabel}"]`;
+  return "";
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  if (a instanceof RegExp && b instanceof RegExp)
+    return a.source === b.source && a.flags === b.flags;
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const aKeys = Object.keys(a as Record<string, unknown>);
+  const bKeys = Object.keys(b as Record<string, unknown>);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const k of aKeys) {
+    if (
+      !Object.prototype.hasOwnProperty.call(b, k) ||
+      !deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 const retryScope = new AsyncLocalStorage<boolean>();
-const defaultRetryIntervals = [100, 250, 500, 1000] as const;
+const defaultRetryIntervals = [50, 100, 250, 500] as const;
 
 function normalizeAriaSnapshot(snapshot: string): string {
   const lines = snapshot.replaceAll("\r\n", "\n").trimEnd().split("\n");
@@ -154,21 +237,6 @@ async function retryAssertion(
   }
 }
 
-function selectorToCss<T extends string = string>(sel: ExtendedSelector<T>): string {
-  if (typeof sel === "string") return sel;
-  if (typeof sel === "object" && sel !== null && "css" in sel && sel.css) return sel.css;
-  if (typeof sel === "object" && sel !== null && "testID" in sel && sel.testID)
-    return `[data-testid="${sel.testID}"]`;
-  if (
-    typeof sel === "object" &&
-    sel !== null &&
-    "accessibilityLabel" in sel &&
-    sel.accessibilityLabel
-  )
-    return `[aria-label="${sel.accessibilityLabel}"]`;
-  return "";
-}
-
 export function createPromiseExpect<T extends string = string, R extends string = string>(
   driver: RawDriverService<T, R>,
   config: CoordinatorConfig,
@@ -187,13 +255,9 @@ export function createPromiseExpect<T extends string = string, R extends string 
   };
 
   const coord = createCoordinator<T, R>(driver, config);
+  const defaultTimeout = config.defaults?.timeout ?? 5000;
 
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
-
-  const record = (command: string, action: () => Promise<void>, selector?: ExtendedSelector<T>) =>
-    recorder && !retryScope.getStore()
-      ? recorder.runStep(command, action, { selector, captureScreenshot: false })
-      : action();
 
   const recordSoft = async (action: () => Promise<void>) => {
     if (!ctx.recordSoftFailure || retryScope.getStore()) return action();
@@ -204,17 +268,238 @@ export function createPromiseExpect<T extends string = string, R extends string 
     }
   };
 
-  const hardRunStep = (
+  const recordStep = (
+    command: string,
+    action: () => Promise<void>,
+    selector?: ExtendedSelector<T>,
+  ) =>
+    recorder && !retryScope.getStore()
+      ? recorder.runStep(command, action, { selector, captureScreenshot: false })
+      : action();
+
+  const runSelectorStep = (
     command: string,
     selector: ExtendedSelector<T>,
     action: () => Promise<void>,
-  ) => record(command, action, selector);
-  const softRunStep: typeof hardRunStep = (command, selector, action) =>
-    recordSoft(() => hardRunStep(command, selector, action));
+  ) => recordStep(command, action, selector);
+  const runSoftSelectorStep: typeof runSelectorStep = (command, selector, action) =>
+    recordSoft(() => runSelectorStep(command, selector, action));
 
-  const matchSelector = (
+  const buildNegatedExpectation = (
     selector: ExtendedSelector<T>,
-    runStep: typeof hardRunStep,
+    runStep: typeof runSelectorStep,
+  ): NegatedPromiseExpectation => ({
+    toBeVisible: (opts) =>
+      runStep("expect.not.toBeVisible", selector, () => run(coord.assertHidden(selector, opts))),
+    toBeHidden: (opts) =>
+      runStep("expect.not.toBeHidden", selector, () =>
+        run(coord.assertVisible(selector, opts)).then(() => {}),
+      ),
+    toHaveText: (expected, opts) =>
+      runStep(`expect.not.toHaveText(${JSON.stringify(expected)})`, selector, () =>
+        run(coord.assertText(selector, expected, opts, true)),
+      ),
+    toMatchText: (pattern, opts) =>
+      runStep(`expect.not.toMatchText(${pattern})`, selector, () =>
+        run(coord.assertMatchesText(selector, pattern, opts, true)),
+      ),
+    toHaveValue: (expected, opts) =>
+      runStep(`expect.not.toHaveValue(${JSON.stringify(expected)})`, selector, () =>
+        run(coord.assertValue(selector, expected, opts, true)),
+      ),
+    toHaveAttribute: (name, value, opts) =>
+      runStep(`expect.not.toHaveAttribute(${JSON.stringify(name)})`, selector, () =>
+        run(coord.assertAttribute(selector, name, value, opts, true)),
+      ),
+    toBeEnabled: (opts) =>
+      runStep("expect.not.toBeEnabled", selector, () => run(coord.assertDisabled(selector, opts))),
+    toBeDisabled: (opts) =>
+      runStep("expect.not.toBeDisabled", selector, () => run(coord.assertEnabled(selector, opts))),
+    toContainText: (expected, opts) =>
+      runStep(`expect.not.toContainText(${JSON.stringify(expected)})`, selector, () =>
+        run(coord.assertContainsText(selector, expected, opts, true)),
+      ),
+    toHaveCount: (expected, opts) =>
+      runStep(`expect.not.toHaveCount(${expected})`, selector, () =>
+        run(coord.assertCount(selector, expected, opts, true)),
+      ),
+    toBeFocused: (opts) =>
+      runStep("expect.not.toBeFocused", selector, () =>
+        run(coord.assertFocused(selector, opts, true)),
+      ),
+    toHaveAccessibleName: (expected, opts) =>
+      runStep(
+        `expect.not.toHaveAccessibleName(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertAccessibleName(selector, expected, opts, true)),
+      ),
+    toHaveAccessibleDescription: (expected, opts) =>
+      runStep(
+        `expect.not.toHaveAccessibleDescription(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertAccessibleDescription(selector, expected, opts, true)),
+      ),
+  });
+
+  const buildPollMatchers = <V>(
+    fn: () => V | Promise<V>,
+    opts: RetryAssertionOptions | undefined,
+    negate: boolean,
+  ): PollMatchers<V> => {
+    const check = (
+      label: string,
+      predicate: (val: V) => boolean,
+      describeFail: (val: V) => string,
+    ): Promise<void> =>
+      recordStep(`expect.poll.${negate ? "not." : ""}${label}`, () =>
+        retryAssertion(
+          async () => {
+            const val = await fn();
+            const ok = predicate(val);
+            if (negate ? ok : !ok) {
+              throw new Error(describeFail(val));
+            }
+          },
+          opts?.timeout ?? defaultTimeout,
+          opts?.intervals,
+        ),
+      );
+
+    return {
+      toBe: (expected) =>
+        check(
+          `toBe(${JSON.stringify(expected)})`,
+          (v) => Object.is(v, expected),
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be ${JSON.stringify(expected)}`
+              : `Expected polled value to be ${JSON.stringify(expected)}, received ${JSON.stringify(v)}`,
+        ),
+      toEqual: (expected) =>
+        check(
+          `toEqual(${JSON.stringify(expected)})`,
+          (v) => deepEqual(v, expected),
+          (v) =>
+            negate
+              ? `Expected polled value NOT to equal ${JSON.stringify(expected)}`
+              : `Expected polled value to equal ${JSON.stringify(expected)}, received ${JSON.stringify(v)}`,
+        ),
+      toContain: (expected) =>
+        check(
+          `toContain(${JSON.stringify(expected)})`,
+          (v) => {
+            if (typeof v === "string") return v.includes(String(expected));
+            if (Array.isArray(v)) return v.some((item) => deepEqual(item, expected));
+            return false;
+          },
+          (v) =>
+            negate
+              ? `Expected polled value NOT to contain ${JSON.stringify(expected)}, received ${JSON.stringify(v)}`
+              : `Expected polled value to contain ${JSON.stringify(expected)}, received ${JSON.stringify(v)}`,
+        ),
+      toMatch: (pattern) =>
+        check(
+          `toMatch(${pattern instanceof RegExp ? String(pattern) : JSON.stringify(pattern)})`,
+          (v) => {
+            const str = String(v ?? "");
+            return pattern instanceof RegExp ? pattern.test(str) : str.includes(pattern);
+          },
+          (v) =>
+            negate
+              ? `Expected polled value NOT to match ${String(pattern)}, received ${JSON.stringify(v)}`
+              : `Expected polled value to match ${String(pattern)}, received ${JSON.stringify(v)}`,
+        ),
+      toBeGreaterThan: (expected) =>
+        check(
+          `toBeGreaterThan(${expected})`,
+          (v) => typeof v === "number" && v > expected,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be > ${expected}, received ${String(v)}`
+              : `Expected polled value > ${expected}, received ${String(v)}`,
+        ),
+      toBeLessThan: (expected) =>
+        check(
+          `toBeLessThan(${expected})`,
+          (v) => typeof v === "number" && v < expected,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be < ${expected}, received ${String(v)}`
+              : `Expected polled value < ${expected}, received ${String(v)}`,
+        ),
+      toBeGreaterThanOrEqual: (expected) =>
+        check(
+          `toBeGreaterThanOrEqual(${expected})`,
+          (v) => typeof v === "number" && v >= expected,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be >= ${expected}, received ${String(v)}`
+              : `Expected polled value >= ${expected}, received ${String(v)}`,
+        ),
+      toBeLessThanOrEqual: (expected) =>
+        check(
+          `toBeLessThanOrEqual(${expected})`,
+          (v) => typeof v === "number" && v <= expected,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be <= ${expected}, received ${String(v)}`
+              : `Expected polled value <= ${expected}, received ${String(v)}`,
+        ),
+      toBeTruthy: () =>
+        check(
+          "toBeTruthy",
+          (v) => Boolean(v),
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be truthy, received ${JSON.stringify(v)}`
+              : `Expected polled value to be truthy, received ${JSON.stringify(v)}`,
+        ),
+      toBeFalsy: () =>
+        check(
+          "toBeFalsy",
+          (v) => !v,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be falsy, received ${JSON.stringify(v)}`
+              : `Expected polled value to be falsy, received ${JSON.stringify(v)}`,
+        ),
+      toBeDefined: () =>
+        check(
+          "toBeDefined",
+          (v) => v !== undefined,
+          () =>
+            negate
+              ? `Expected polled value to be undefined`
+              : `Expected polled value to be defined`,
+        ),
+      toBeUndefined: () =>
+        check(
+          "toBeUndefined",
+          (v) => v === undefined,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be undefined`
+              : `Expected polled value to be undefined, received ${JSON.stringify(v)}`,
+        ),
+      toHaveLength: (expected) =>
+        check(
+          `toHaveLength(${expected})`,
+          (v) =>
+            v !== null &&
+            v !== undefined &&
+            typeof (v as unknown as { length?: unknown }).length === "number" &&
+            (v as unknown as { length: number }).length === expected,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to have length ${expected}`
+              : `Expected polled value to have length ${expected}, received ${JSON.stringify(v)}`,
+        ),
+    };
+  };
+
+  const buildSelectorExpectation = (
+    selector: ExtendedSelector<T>,
+    runStep: typeof runSelectorStep,
   ): PromiseExpectation<T> => ({
     toBeVisible: (opts) =>
       runStep("expect.toBeVisible", selector, () =>
@@ -258,6 +543,13 @@ export function createPromiseExpect<T extends string = string, R extends string 
         selector,
         () => run(coord.assertAccessibleName(selector, expected, opts)),
       ),
+    toHaveAccessibleDescription: (expected, opts) =>
+      runStep(
+        `expect.toHaveAccessibleDescription(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertAccessibleDescription(selector, expected, opts)),
+      ),
+    not: buildNegatedExpectation(selector, runStep),
 
     toMatchAriaSnapshot: (expected, opts) =>
       runStep("expect.toMatchAriaSnapshot", selector, async () => {
@@ -268,7 +560,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
         }
         if (isRelativeSelector(selector))
           throw new Error("ARIA snapshots require a locator, not a relative selector");
-        const timeout = opts?.timeout ?? config.defaults?.timeout ?? 5000;
+        const timeout = opts?.timeout ?? defaultTimeout;
         const path =
           typeof expected === "string"
             ? undefined
@@ -348,89 +640,50 @@ export function createPromiseExpect<T extends string = string, R extends string 
       ),
   });
 
-  const expectFn = ((selector: ExtendedSelector<T> | (() => unknown)) =>
-    typeof selector === "function"
-      ? {
-          toPass: (options?: RetryAssertionOptions) =>
-            record("expect.toPass", () =>
-              retryAssertion(
-                selector,
-                options?.timeout ?? config.defaults?.timeout ?? 5000,
-                options?.intervals,
-              ),
-            ),
-        }
-      : matchSelector(selector, hardRunStep)) as PromiseExpectFn<T>;
+  const expectFn = ((
+    selectorOrFn: ExtendedSelector<T> | (() => unknown | Promise<unknown>),
+  ): PromiseExpectation<T> | ToPassExpectation => {
+    if (typeof selectorOrFn !== "function") {
+      return buildSelectorExpectation(selectorOrFn, runSelectorStep);
+    }
+    return {
+      toPass: (opts?: RetryAssertionOptions) =>
+        recordStep("expect.toPass", () =>
+          retryAssertion(selectorOrFn, opts?.timeout ?? defaultTimeout, opts?.intervals),
+        ),
+    };
+  }) as PromiseExpectFn<T>;
 
   const toHaveURL = (expected: string | RegExp, opts?: WaitOptions) => {
     const label = `expect.toHaveURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
-    return record(label, () => run(coord.waitForURL(expected, opts)));
+    return recordStep(label, () => run(coord.waitForURL(expected, opts)));
   };
   expectFn.toHaveURL = toHaveURL;
   expectFn.soft = Object.assign(
-    (selector: ExtendedSelector<T>) => matchSelector(selector, softRunStep),
+    (selector: ExtendedSelector<T>) => buildSelectorExpectation(selector, runSoftSelectorStep),
     {
       toHaveURL: (expected: string | RegExp, opts?: WaitOptions) =>
         recordSoft(() => toHaveURL(expected, opts)),
     },
   );
-  expectFn.poll = <A>(
-    probe: () => A,
-    options?: RetryAssertionOptions,
-  ): PollExpectation<Awaited<A>> => {
-    const match = (name: string, predicate: (actual: Awaited<A>) => boolean, expected?: unknown) =>
-      record(`expect.poll.${name}`, () =>
-        retryAssertion(
-          async () => {
-            const actual = await probe();
-            if (!predicate(actual)) {
-              throw new Error(`Expected ${inspect(actual)} ${name} ${inspect(expected)}`);
-            }
-          },
-          options?.timeout ?? config.defaults?.timeout ?? 5000,
-          options?.intervals,
-        ),
-      );
-    return {
-      toBe: (expected) => match("toBe", (actual) => Object.is(actual, expected), expected),
-      toEqual: (expected) =>
-        match("toEqual", (actual) => isDeepStrictEqual(actual, expected), expected),
-      toBeTruthy: () => match("toBeTruthy", Boolean),
-      toBeFalsy: () => match("toBeFalsy", (actual) => !actual),
-      toContain: (expected) =>
-        match(
-          "toContain",
-          (actual) =>
-            (typeof actual === "string" &&
-              typeof expected === "string" &&
-              actual.includes(expected)) ||
-            (Array.isArray(actual) && actual.includes(expected)),
-          expected,
-        ),
-      toMatch: (expected) =>
-        match(
-          "toMatch",
-          (actual) =>
-            typeof actual === "string" &&
-            (typeof expected === "string"
-              ? actual.includes(expected)
-              : new RegExp(expected).test(actual)),
-          expected,
-        ),
-      toBeGreaterThan: (expected) =>
-        match(
-          "toBeGreaterThan",
-          (actual) => typeof actual === "number" && actual > expected,
-          expected,
-        ),
-      toBeLessThan: (expected) =>
-        match(
-          "toBeLessThan",
-          (actual) => typeof actual === "number" && actual < expected,
-          expected,
-        ),
-    };
-  };
+
+  Object.defineProperty(expectFn, "not", {
+    enumerable: true,
+    value: {
+      toHaveURL: (expected: string | RegExp, opts?: WaitOptions) => {
+        const label = `expect.not.toHaveURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
+        return recordStep(label, () => run(coord.waitForURL(expected, opts, true)));
+      },
+    },
+  });
+
+  expectFn.poll = <V>(
+    fn: () => V | Promise<V>,
+    opts?: RetryAssertionOptions,
+  ): PollExpectation<V> => ({
+    ...buildPollMatchers(fn, opts, false),
+    not: buildPollMatchers(fn, opts, true),
+  });
 
   return expectFn;
 }

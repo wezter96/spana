@@ -410,12 +410,17 @@ function resolvePlaywrightLocator(
   }
 
   let locator: Locator;
-  if ("css" in selector) {
+  if ("anyOf" in selector) {
+    const branches = selector.anyOf.map((branch) => resolvePlaywrightLocator(scope, branch));
+    locator = branches.reduce((acc, next) => acc.or(next));
+  } else if ("css" in selector) {
     locator = scope.locator(selector.css);
   } else if ("role" in selector) {
     locator = scope.getByRole(selector.role as never, {
       ...(selector.name !== undefined ? { name: selector.name } : {}),
       ...(selector.exact !== undefined ? { exact: selector.exact } : {}),
+      ...(selector.level !== undefined ? { level: selector.level } : {}),
+      ...(selector.includeHidden !== undefined ? { includeHidden: selector.includeHidden } : {}),
     });
   } else if ("testID" in selector) {
     locator = scope.getByTestId(selector.testID);
@@ -430,6 +435,12 @@ function resolvePlaywrightLocator(
   }
   if (selector.hasNotText !== undefined) {
     locator = locator.filter({ hasNotText: selector.hasNotText });
+  }
+  if (selector.has !== undefined) {
+    locator = locator.filter({ has: resolvePlaywrightLocator(scope, selector.has) });
+  }
+  if (selector.hasNot !== undefined) {
+    locator = locator.filter({ hasNot: resolvePlaywrightLocator(scope, selector.hasNot) });
   }
   if (selector.first) {
     locator = locator.first();
@@ -1702,30 +1713,67 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             const timeout = waitOpts?.timeout ?? 15_000;
-            const response = await page.waitForResponse(
-              (res) => {
-                const info: BrowserResponseInfo = {
-                  url: res.url(),
-                  status: res.status(),
-                  statusText: res.statusText(),
-                  headers: res.headers(),
-                  method: res.request().method(),
-                };
-                if (typeof matcher === "function") return matcher(info);
-                if (matcher instanceof RegExp) return matcher.test(info.url);
-                return info.url.includes(matcher);
-              },
-              { timeout },
-            );
-            return {
-              url: response.url(),
-              status: response.status(),
-              statusText: response.statusText(),
-              headers: response.headers(),
-              method: response.request().method(),
-              body: () => response.text(),
-              json: <T = unknown>() => response.json() as Promise<T>,
+            const matches = (
+              res: import("playwright-core").Response,
+            ): BrowserResponseInfo | null => {
+              const info: BrowserResponseInfo = {
+                url: res.url(),
+                status: res.status(),
+                statusText: res.statusText(),
+                headers: res.headers(),
+                method: res.request().method(),
+                body: () => res.text(),
+                json: <T = unknown>() => res.json() as Promise<T>,
+              };
+              const ok =
+                typeof matcher === "function"
+                  ? matcher(info)
+                  : matcher instanceof RegExp
+                    ? matcher.test(info.url)
+                    : info.url.includes(matcher);
+              return ok ? info : null;
             };
+
+            return await new Promise<BrowserResponseInfo>((resolve, reject) => {
+              const watchedPages = new Set<Page>();
+              let settled = false;
+              const onResponse = (res: import("playwright-core").Response) => {
+                if (settled) return;
+                const hit = matches(res);
+                if (hit) {
+                  cleanup();
+                  resolve(hit);
+                }
+              };
+              const attachPage = (p: Page) => {
+                if (watchedPages.has(p)) return;
+                watchedPages.add(p);
+                p.on("response", onResponse);
+              };
+              const onNewPage = (p: Page) => {
+                if (!settled) attachPage(p);
+              };
+              const cleanup = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                context.off("page", onNewPage);
+                for (const p of watchedPages) {
+                  p.off("response", onResponse);
+                }
+                watchedPages.clear();
+              };
+              const timer = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timed out waiting for response after ${timeout}ms`));
+              }, timeout);
+
+              for (const existingPage of context.pages()) {
+                attachPage(existingPage);
+              }
+              attachPage(page);
+              context.on("page", onNewPage);
+            });
           },
           catch: (e) => new DriverError({ message: `waitForResponse() failed: ${e}` }),
         }),
