@@ -1,5 +1,6 @@
 {
   "name": "spana",
+  "version": "0.0.0",
   "private": true,
   "workspaces": {
     "packages": [
@@ -29,6 +30,7 @@
     "dev:tui": "turbo -F tui dev",
     "studio": "bun run --cwd packages/spana dist/cli.js studio",
     "test:e2e:framework-app": "bun run --cwd packages/spana test:e2e:framework-app",
+    "publish:spana": "cd packages/spana && bun run build && npm publish --access public",
     "check": "bun run lint && oxfmt --write"
   },
   "dependencies": {
