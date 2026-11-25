@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 510" width="920" height="510" role="img" aria-label="Spana vs Playwright vs WebdriverIO 20-flow benchmark chart">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 620" width="920" height="620" role="img" aria-label="Spana v0.7 vs Playwright vs WebdriverIO benchmark chart">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#0b1120"/>
@@ -7,6 +7,10 @@
     <linearGradient id="spanaBar" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#06b6d4"/>
       <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <linearGradient id="cdpBar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
     </linearGradient>
     <linearGradient id="filterBar" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#34d399"/>
@@ -23,109 +27,138 @@
   </defs>
 
   <!-- Card frame -->
-  <rect x="0" y="0" width="920" height="510" rx="16" fill="url(#bg)"/>
-  <rect x="1" y="1" width="918" height="508" rx="15" fill="none" stroke="#1e293b" stroke-width="1.5"/>
+  <rect x="0" y="0" width="920" height="620" rx="16" fill="url(#bg)"/>
+  <rect x="1" y="1" width="918" height="618" rx="15" fill="none" stroke="#1e293b" stroke-width="1.5"/>
 
   <!-- Header -->
-  <text x="32" y="40" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="20" font-weight="700">Live 20-Flow × 14-Step Chromium Suite (280 Interactions)</text>
-  <text x="32" y="62" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5">Lower is better (wall-clock ms) · Apple M4 Pro · Bun 1.4.5 · Headless Chrome · benchmarks/framework-comparison/results.json</text>
+  <text x="32" y="38" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="19.5" font-weight="700">Live 20-Flow × 14-Step Chromium Suite (280 Real Interactions)</text>
+  <text x="32" y="60" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12">Lower is better (wall-clock ms) · Apple M4 Pro · Bun 1.4.5 · Headless Chrome · benchmarks/framework-comparison/results.json</text>
 
   <!-- Legend -->
-  <g transform="translate(650, 26)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="11.5" fill="#cbd5e1">
-    <rect x="0" y="0" width="10" height="10" rx="2.5" fill="url(#spanaBar)"/>
-    <text x="15" y="9">Spana</text>
-    <rect x="68" y="0" width="10" height="10" rx="2.5" fill="url(#pwBar)"/>
-    <text x="83" y="9">Playwright</text>
-    <rect x="158" y="0" width="10" height="10" rx="2.5" fill="url(#wdioBar)"/>
-    <text x="173" y="9">WebdriverIO</text>
+  <g transform="translate(565, 24)" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="11" fill="#cbd5e1">
+    <rect x="0" y="0" width="10" height="10" rx="2.5" fill="url(#cdpBar)"/>
+    <text x="14" y="9">Spana CDP</text>
+    <rect x="84" y="0" width="10" height="10" rx="2.5" fill="url(#spanaBar)"/>
+    <text x="98" y="9">Spana Pool/Bridge</text>
+    <rect x="200" y="0" width="10" height="10" rx="2.5" fill="url(#pwBar)"/>
+    <text x="214" y="9">Playwright</text>
+    <rect x="278" y="0" width="10" height="10" rx="2.5" fill="url(#wdioBar)"/>
+    <text x="292" y="9">WDIO</text>
   </g>
 
-  <!-- Subtle vertical gridlines (bar area x=285..795 => 510px for 11500ms) -->
+  <!-- Vertical gridlines (bar area x=300..800 => 500px for 23000ms => 21.74px per 1000ms) -->
   <g stroke="#1e293b" stroke-width="1" stroke-dasharray="3,4">
-    <line x1="285" y1="84" x2="285" y2="386"/>
-    <line x1="396" y1="84" x2="396" y2="386"/>
-    <line x1="507" y1="84" x2="507" y2="386"/>
-    <line x1="618" y1="84" x2="618" y2="386"/>
-    <line x1="729" y1="84" x2="729" y2="386"/>
+    <line x1="300" y1="80" x2="300" y2="492"/>
+    <line x1="409" y1="80" x2="409" y2="492"/>
+    <line x1="517" y1="80" x2="517" y2="492"/>
+    <line x1="626" y1="80" x2="626" y2="492"/>
+    <line x1="735" y1="80" x2="735" y2="492"/>
   </g>
   <g fill="#64748b" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="middle">
-    <text x="285" y="402">0s</text>
-    <text x="396" y="402">2.5s</text>
-    <text x="507" y="402">5.0s</text>
-    <text x="618" y="402">7.5s</text>
-    <text x="729" y="402">10.0s</text>
+    <text x="300" y="508">0s</text>
+    <text x="409" y="508">5s</text>
+    <text x="517" y="508">10s</text>
+    <text x="626" y="508">15s</text>
+    <text x="735" y="508">20s</text>
   </g>
 
-  <!-- Row 1: WDIO UI Login (10901ms => 483px) -->
-  <g transform="translate(0, 96)">
-    <text x="272" y="18" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" text-anchor="end">WebdriverIO (W3C HTTP, UI login)</text>
-    <rect x="285" y="2" width="483" height="24" rx="6" fill="url(#wdioBar)"/>
-    <text x="778" y="18" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="600">10,901 ms</text>
+  <!-- Row 1: WDIO UI Login (22244ms => 484px) -->
+  <g transform="translate(0, 90)">
+    <text x="288" y="17" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" text-anchor="end">WebdriverIO (W3C HTTP, UI login)</text>
+    <rect x="300" y="2" width="484" height="22" rx="6" fill="url(#wdioBar)"/>
+    <text x="794" y="17" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="600">22,244 ms</text>
   </g>
 
-  <!-- Row 2: Playwright 1w (9231ms => 409px) -->
-  <g transform="translate(0, 138)">
-    <text x="272" y="18" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" text-anchor="end">Playwright (storageState, 1w)</text>
-    <rect x="285" y="2" width="409" height="24" rx="6" fill="url(#pwBar)"/>
-    <text x="704" y="18" fill="#c7d2fe" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="600">9,231 ms</text>
+  <!-- Row 2: WDIO inject (16265ms => 354px) -->
+  <g transform="translate(0, 130)">
+    <text x="288" y="17" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" text-anchor="end">WebdriverIO (W3C HTTP, state inject)</text>
+    <rect x="300" y="2" width="354" height="22" rx="6" fill="url(#wdioBar)"/>
+    <text x="664" y="17" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="600">16,265 ms</text>
   </g>
 
-  <!-- Row 3: WDIO inject (8400ms => 372px) -->
-  <g transform="translate(0, 180)">
-    <text x="272" y="18" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" text-anchor="end">WebdriverIO (W3C HTTP, inject)</text>
-    <rect x="285" y="2" width="372" height="24" rx="6" fill="url(#wdioBar)"/>
-    <text x="667" y="18" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="600">8,400 ms</text>
+  <!-- Row 3: Playwright 1w (14619ms => 318px) -->
+  <g transform="translate(0, 170)">
+    <text x="288" y="17" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" text-anchor="end">Playwright (storageState, 1w)</text>
+    <rect x="300" y="2" width="318" height="22" rx="6" fill="url(#pwBar)"/>
+    <text x="628" y="17" fill="#c7d2fe" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="600">14,619 ms</text>
   </g>
 
-  <!-- Row 4: Playwright 4w (6309ms => 280px) -->
-  <g transform="translate(0, 222)">
-    <text x="272" y="18" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" text-anchor="end">Playwright (4 parallel workers)</text>
-    <rect x="285" y="2" width="280" height="24" rx="6" fill="url(#pwBar)"/>
-    <text x="575" y="18" fill="#c7d2fe" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="600">6,309 ms</text>
+  <!-- Row 4: Playwright 4w (10744ms => 234px) -->
+  <g transform="translate(0, 210)">
+    <text x="288" y="17" fill="#cbd5e1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" text-anchor="end">Playwright (4 parallel workers)</text>
+    <rect x="300" y="2" width="234" height="22" rx="6" fill="url(#pwBar)"/>
+    <text x="544" y="17" fill="#c7d2fe" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="600">10,744 ms</text>
   </g>
 
-  <!-- Row 5: Spana + Bridge 1w (2965ms => 131px) -->
-  <g transform="translate(0, 264)">
-    <text x="272" y="18" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" font-weight="600" text-anchor="end">Spana + spana-bridge (1w)</text>
-    <rect x="285" y="2" width="131" height="24" rx="6" fill="url(#spanaBar)"/>
-    <text x="426" y="18" fill="#67e8f9" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="700">2,965 ms</text>
-    <rect x="498" y="4" width="118" height="20" rx="10" fill="#083344" stroke="#06b6d4" stroke-width="1"/>
-    <text x="557" y="17.5" fill="#67e8f9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">3.1× faster vs PW 1w</text>
+  <!-- Row 5: Spana Direct CDP 1w (8942ms => 194px) -->
+  <g transform="translate(0, 250)">
+    <text x="288" y="17" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="600" text-anchor="end">Spana Direct CDP (1w, fresh ctx)</text>
+    <rect x="300" y="2" width="194" height="22" rx="6" fill="url(#cdpBar)"/>
+    <text x="504" y="17" fill="#7dd3fc" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="700">8,942 ms</text>
+    <rect x="578" y="3" width="150" height="20" rx="10" fill="#082f49" stroke="#0ea5e9" stroke-width="1"/>
+    <text x="653" y="16.5" fill="#7dd3fc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">1.6× vs PW 1w · 2.5× WDIO</text>
   </g>
 
-  <!-- Row 6: Spana Shared Pool 4w (1239ms => 55px) -->
-  <g transform="translate(0, 306)">
-    <text x="272" y="18" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" font-weight="600" text-anchor="end">Spana Shared Pool (4w, 20 flows)</text>
-    <rect x="285" y="2" width="55" height="24" rx="6" fill="url(#spanaBar)"/>
-    <text x="350" y="18" fill="#34d399" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="700">1,239 ms</text>
-    <rect x="422" y="4" width="124" height="20" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="1"/>
-    <text x="484" y="17.5" fill="#6ee7b7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">5.1× faster vs PW 4w</text>
+  <!-- Row 6: Spana Direct CDP 4w (7658ms => 167px) -->
+  <g transform="translate(0, 290)">
+    <text x="288" y="17" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="600" text-anchor="end">Spana Direct CDP Pool (4w, fresh ctx)</text>
+    <rect x="300" y="2" width="167" height="22" rx="6" fill="url(#cdpBar)"/>
+    <text x="477" y="17" fill="#7dd3fc" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="700">7,658 ms</text>
+    <rect x="551" y="3" width="142" height="20" rx="10" fill="#082f49" stroke="#0ea5e9" stroke-width="1"/>
+    <text x="622" y="16.5" fill="#7dd3fc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">1.4× vs PW 4w (isolated)</text>
   </g>
 
-  <!-- Row 7: Spana + pathRuleFilter 4w (706ms => 31px) -->
-  <g transform="translate(0, 348)">
-    <text x="272" y="18" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12.5" font-weight="600" text-anchor="end">Spana + CI Filter + Pool (4w, 5/20)</text>
-    <rect x="285" y="2" width="31" height="24" rx="6" fill="url(#filterBar)"/>
-    <text x="326" y="18" fill="#6ee7b7" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="12" font-weight="700">706 ms</text>
-    <rect x="386" y="4" width="168" height="20" rx="10" fill="#064e3b" stroke="#34d399" stroke-width="1"/>
-    <text x="470" y="17.5" fill="#a7f3d0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">8.9× faster · 15.4× vs WDIO</text>
+  <!-- Row 7: Spana Direct CDP + Video Playback 4w (7161ms => 156px) -->
+  <g transform="translate(0, 330)">
+    <text x="288" y="17" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="600" text-anchor="end">Spana CDP + Video Playback (4w)</text>
+    <rect x="300" y="2" width="156" height="22" rx="6" fill="url(#cdpBar)"/>
+    <text x="466" y="17" fill="#67e8f9" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="700">7,161 ms</text>
+    <rect x="540" y="3" width="160" height="20" rx="10" fill="#083344" stroke="#06b6d4" stroke-width="1"/>
+    <text x="620" y="16.5" fill="#67e8f9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">1.5× vs PW 4w w/ recording</text>
+  </g>
+
+  <!-- Row 8: Spana + Bridge 1w (3923ms => 85px) -->
+  <g transform="translate(0, 370)">
+    <text x="288" y="17" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="600" text-anchor="end">Spana + spana-bridge (1w)</text>
+    <rect x="300" y="2" width="85" height="22" rx="6" fill="url(#spanaBar)"/>
+    <text x="395" y="17" fill="#34d399" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="700">3,923 ms</text>
+    <rect x="468" y="3" width="156" height="20" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="1"/>
+    <text x="546" y="16.5" fill="#6ee7b7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">3.7× vs PW 1w · 5.7× WDIO</text>
+  </g>
+
+  <!-- Row 9: Spana Shared Pool 4w (3041ms => 66px) -->
+  <g transform="translate(0, 410)">
+    <text x="288" y="17" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="600" text-anchor="end">Spana Shared Pool (4w, 20 flows)</text>
+    <rect x="300" y="2" width="66" height="22" rx="6" fill="url(#spanaBar)"/>
+    <text x="376" y="17" fill="#34d399" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="700">3,041 ms</text>
+    <rect x="450" y="3" width="156" height="20" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="1"/>
+    <text x="528" y="16.5" fill="#6ee7b7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">3.5× vs PW 4w · 7.3× WDIO</text>
+  </g>
+
+  <!-- Row 10: Spana Direct CDP + pathRuleFilter 4w (2149ms => 47px) -->
+  <g transform="translate(0, 450)">
+    <text x="288" y="17" fill="#f8fafc" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="12" font-weight="600" text-anchor="end">Spana CDP + CI Filter (4w, 5/20 PR)</text>
+    <rect x="300" y="2" width="47" height="22" rx="6" fill="url(#filterBar)"/>
+    <text x="357" y="17" fill="#6ee7b7" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" font-weight="700">2,149 ms</text>
+    <rect x="431" y="3" width="166" height="20" rx="10" fill="#064e3b" stroke="#34d399" stroke-width="1"/>
+    <text x="514" y="16.5" fill="#a7f3d0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600" text-anchor="middle">5.0× vs PW 4w · 10.4× WDIO</text>
   </g>
 
   <!-- Bottom KPI highlight strip -->
-  <g transform="translate(32, 424)">
-    <rect x="0" y="0" width="272" height="64" rx="10" fill="#111c33" stroke="#1e293b"/>
-    <text x="16" y="24" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600">VERIFIED REPLAY CACHE (--strict-cache)</text>
-    <text x="16" y="48" fill="#34d399" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" font-weight="700">238.8× faster</text>
-    <text x="256" y="48" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="end">1,433ms → 6ms</text>
+  <g transform="translate(32, 530)">
+    <rect x="0" y="0" width="272" height="66" rx="10" fill="#111c33" stroke="#1e293b"/>
+    <text x="16" y="24" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10" font-weight="600">RUST NATIVE VISUAL DIFF (1080P PNG)</text>
+    <text x="16" y="50" fill="#34d399" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" font-weight="700">11.0× faster</text>
+    <text x="256" y="50" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="end">168.4ms → 15.3ms</text>
 
-    <rect x="292" y="0" width="272" height="64" rx="10" fill="#111c33" stroke="#1e293b"/>
-    <text x="308" y="24" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600">CAPACITOR iOS (5 FLOWS, NO APPIUM)</text>
-    <text x="308" y="48" fill="#22d3ee" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" font-weight="700">18.7× faster</text>
-    <text x="548" y="48" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="end">28.4s → 1.52s</text>
+    <rect x="292" y="0" width="272" height="66" rx="10" fill="#111c33" stroke="#1e293b"/>
+    <text x="308" y="24" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10" font-weight="600">24-FLOW PILOT (4K DOM + OVERLAY, 4W)</text>
+    <text x="308" y="50" fill="#22d3ee" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" font-weight="700">1.60× faster</text>
+    <text x="548" y="50" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="end">11.70s → 7.29s</text>
 
-    <rect x="584" y="0" width="272" height="64" rx="10" fill="#111c33" stroke="#1e293b"/>
-    <text x="600" y="24" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10.5" font-weight="600">CAPACITOR ANDROID (5 FLOWS)</text>
-    <text x="600" y="48" fill="#22d3ee" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" font-weight="700">18.0× faster</text>
-    <text x="840" y="48" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="end">22.9s → 1.27s</text>
+    <rect x="584" y="0" width="272" height="66" rx="10" fill="#111c33" stroke="#1e293b"/>
+    <text x="600" y="24" fill="#94a3b8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="10" font-weight="600">VERIFIED REPLAY CACHE (--strict-cache)</text>
+    <text x="600" y="50" fill="#34d399" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" font-weight="700">2,171× faster</text>
+    <text x="840" y="50" fill="#cbd5e1" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="10.5" text-anchor="end">10.8s → 5ms</text>
   </g>
 </svg>

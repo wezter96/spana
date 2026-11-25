@@ -12,16 +12,18 @@ Full online docs & LLM reference: `https://spana.antonwester.se/llms-full.txt`
 
 When connected to `spana mcp` (`npx spana mcp` / `bunx spana mcp`), drive live sessions directly at sub-5 ms tool latency instead of shelling out repeatedly:
 
-| MCP Tool                                             | Purpose                                                                   |
-| ---------------------------------------------------- | ------------------------------------------------------------------------- |
-| `spana_session_start`                                | Start a live session (`web`, `android`, `ios`, `electron`, `electrobun`)  |
-| `spana_observe`                                      | Compact interactive element tree (~273 tokens avg) with `testID` & bounds |
-| `spana_tap` / `spana_input_text` / `spana_press_key` | Execute verified pointer/keyboard actions (2–4 ms on web)                 |
-| `spana_assert_visible` / `spana_assert_text`         | Run real auto-waiting assertions (~1 ms on web)                           |
-| `spana_diagnostics`                                  | Fetch browser console logs & uncaught JS errors (~0.8 ms)                 |
-| `spana_screenshot`                                   | Capture PNG screenshot when visual inspection is needed                   |
-| `spana_export_flow`                                  | Export the verified action trace as a deterministic `.flow.ts` file       |
-| `spana_run_flow` / `spana_session_stop`              | Execute existing `.flow.ts` files and cleanly tear down                   |
+| MCP Tool                                                            | Purpose                                                                            |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `spana_session_start`                                               | Start a live session (`web`, `android`, `ios`, `electron`, `electrobun`)           |
+| `spana_observe`                                                     | Compact interactive element tree (~273 tokens avg) with `testID` & bounds          |
+| `spana_tap` / `spana_fill` / `spana_input_text` / `spana_press_key` | Execute verified pointer/keyboard actions (1-RTT atomic `spana_fill` + 2–4 ms tap) |
+| `spana_assert_visible` / `spana_assert_text`                        | Run real auto-waiting assertions (~1 ms on web)                                    |
+| `spana_assert_accessible`                                           | Run live `axe-core` WCAG accessibility audit on the current screen                 |
+| `spana_assert_screenshot`                                           | Run Rust-accelerated visual regression diff against saved baselines                |
+| `spana_diagnostics`                                                 | Fetch browser console logs & uncaught JS errors (~0.8 ms)                          |
+| `spana_screenshot`                                                  | Capture PNG screenshot when visual inspection is needed                            |
+| `spana_export_flow`                                                 | Export the verified action trace as a deterministic `.flow.ts` file                |
+| `spana_run_flow` / `spana_session_stop`                             | Execute existing `.flow.ts` files and cleanly tear down                            |
 
 ---
 
@@ -171,10 +173,12 @@ export default defineConfig({
 
 ---
 
-## Failure Investigation Checklist
+## Failure Investigation & Fixing Application Bugs
 
-When a flow fails, inspect `.spana/artifacts/` (or `spana-output/`):
+When a flow fails, decide first whether the bug is in the **test** or in the **application under test** — never paper over real app bugs with `sleep()` or loosened assertions:
 
-1. Read `failure-bundle.json` — contains the failed step, attempted selector, nearby selector alternatives, inline `consoleLogs` & `jsErrors`, screenshot path, and exact repro command.
-2. Prefer fixing selectors to `{ testID }` over adding sleeps (Spana already uses `MutationObserver` reactive waits + adaptive polling).
-3. Always run `spana validate` before `spana test` after editing flows.
+1. **Inspect `failure-bundle.json` and `report.html` playback** in `.spana/artifacts/` (or `spana-output/`): check the visual timeline frames + click-ripple position, failed step, nearby selectors, inline `consoleLogs`, and uncaught `jsErrors`.
+2. **Fix missing `data-testid` / `testID` in the app** when an interactive control has no stable selector (`spana_observe` shows unlabelled buttons/inputs) — add `data-testid` to the component rather than relying on fragile text/coordinate selectors.
+3. **Fix hydration / overlay races in the app** when taps wait on obscured overlays or fire before client state boots — set `window.__SPANA_APP_READY__ = true` once hydration/auth settles (Spana automatically awaits it) and guard async tab/filter fetches with `AbortController` or a request sequence counter so stale responses cannot overwrite newer UI state.
+4. **Fix accessibility violations in the app** when `spana_assert_accessible` / `toPassAccessibilityAudit()` reports WCAG failures — repair missing `aria-label`s, `<label htmlFor>`, button semantics, and color contrast in the component source rather than excluding rules.
+5. **Eliminate flaky test setup** — use `app.fill()` (atomic 1-RTT clear+type), `definePersona()` / `PersonaAuthCache` / `createApiFixture()` instead of repeated UI login, `execution.web.engine: "auto"` (Direct CDP with automatic OOPIF iframe support), `artifacts.video: "retain-on-failure"` + `artifacts.playback: true` for visual debugging, and always run `spana validate` before `spana test`.
