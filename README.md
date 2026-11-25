@@ -33,6 +33,9 @@
 - **Model-free MCP server (`spana mcp`):** lets Claude Code, Codex, Cursor, and Antigravity drive live sessions across all 5 targets at sub-5 ms tool latency, inspect unified diagnostics, and export verified `.flow.ts` code
 - **Composable lazy fixtures, named setups & Verified Replay Cache:** `createFlowWithFixtures`, `defineSetup`, and `.spana/cache/` (`--strict-cache`) for 0-LLM deterministic CI replay
 - **Pure TypeScript flows + optional Gherkin / BDD `.feature` parity** with smart waits, relative selectors, auto-scroll for offscreen DOM targets, and `layout-tolerant` visual diffing
+- **Flow control and assertions:** per-flow `skip`, `only`, `fixme`, and retries; soft assertions and retryable checks with `expect.poll` and `toPass`
+- **Device testing:** geolocation, permissions, orientation, browser clock, and simulator biometrics or iOS push, with [platform-specific support](https://spana.antonwester.se/writing-tests/platform-specific/)
+- **Web diagnostics:** Playwright ARIA snapshots and opt-in Chromium JavaScript coverage (`--js-coverage`)
 - **Rich reporters & diagnostics:** console, JSON, JUnit XML, HTML, Allure, and GitHub PR summary (`--reporter github`), plus self-contained `failure-bundle.json` with inline console logs & JS errors
 - **Built-in cloud device farms:** direct W3C Appium client with first-class **BrowserStack** and **Sauce Labs** helpers (no WebdriverIO required)
 
@@ -391,7 +394,7 @@ export default flow("web dashboard", async ({ app, platform }) => {
 });
 ```
 
-`mockNetwork`, `blockNetwork`, `clearNetworkMocks`, `setNetworkConditions`, `saveCookies`, `loadCookies`, `saveAuthState`, `loadAuthState`, `getConsoleLogs`, and `getJSErrors` are web-only helpers backed by local Playwright runs. Latency and throughput throttling require Chromium. When artifact capture is enabled, web failures also include captured console logs and JavaScript errors in `spana-output/` and the HTML report.
+Network mocks also work in debuggable Android WebViews and in Android/iOS WebViews using `spana-bridge`. They do not intercept traffic from native HTTP clients. Auth-state helpers are for browser runs. When artifact capture is enabled, web failures also include captured console logs and JavaScript errors in `spana-output/` and the HTML report.
 
 ### Storybook component flows (web)
 

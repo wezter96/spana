@@ -120,8 +120,12 @@ export default testFlow(
 ### Common `app` & `expect` APIs
 
 - **Actions:** `app.tap()`, `app.doubleTap()`, `app.longPress()`, `app.inputText()`, `app.pressKey()`, `app.dismissKeyboard()`, `app.scrollUntilVisible()`, `app.backUntilVisible()`, `app.openLink()`, `app.takeScreenshot()`, `app.evaluate()`
-- **Web helpers:** `app.mockNetwork()`, `app.blockNetwork()`, `app.setNetworkConditions()`, `app.saveAuthState()`, `app.loadAuthState()`, `app.getConsoleLogs()`, `app.getJSErrors()`, `app.openStory()`
+- **Network mocks:** `app.mockNetwork()` and `app.blockNetwork()` work on the web, in debuggable Android WebViews, and in WebViews using `spana-bridge`. They do not intercept native HTTP clients.
+- **Web helpers:** `app.setNetworkConditions()`, `app.saveAuthState()`, `app.loadAuthState()`, `app.getConsoleLogs()`, `app.getJSErrors()`, `app.openStory()`
 - **Assertions (auto-waiting with MutationObserver reactive waits on web):** `toBeVisible()`, `toBeHidden()`, `toHaveText()`, `toContainText()`, `toMatchText()`, `toHaveValue()`, `toBeEnabled()`, `toBeDisabled()`, `toHaveAttribute()`, `toMatchScreenshot({ mode: "layout-tolerant" })`, `toPassAccessibilityAudit()`
+- **Flow modifiers:** use `skip` or `fixme` with `{ platform, reason }`, `flow.only()` to focus local runs, and `retries` to override the project or CLI repeat count.
+- **Custom checks:** `expect.soft(selector)` collects failures, `expect.poll(fn, options).toBe(value)` retries a returned value, and `expect(fn).toPass(options)` retries a throwing assertion callback. On Playwright web use `toMatchAriaSnapshot()` for ARIA YAML; use `--js-coverage` for Chromium coverage artifacts.
+- **Device emulation:** use `app.setGeolocation()`, `app.grantPermission()` / `app.denyPermission()`, and `app.setOrientation()` on supported targets. Use `app.setSystemTime()` on Playwright, `app.simulateBiometric()` on supported emulators/simulators, and `app.sendPushNotification()` on iOS simulators.
 
 ---
 

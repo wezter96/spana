@@ -44,7 +44,7 @@ spana test [path] [options]
 | `--changed`             | Run only changed flow files from git                                                                                       |
 | `--changed-since <ref>` | Run the `filters` from `spana.config.ts` against the git diff from `<ref>`. Without `filters`, it warns and runs all flows |
 | `--last-failed`         | Re-run only flows that failed in the last run                                                                              |
-| `--update-baselines`    | Rewrite screenshot baselines for visual regression                                                                         |
+| `--update-baselines`    | Rewrite screenshot and file-based ARIA snapshot baselines                                                                  |
 | `--strict-cache`        | Accepted for replay cache strict mode, but `spana test` does not use it yet (see [Replay Cache](/cli/agent-commands/))     |
 
 ### Output and configuration
@@ -52,6 +52,7 @@ spana test [path] [options]
 | Flag                 | Description                                                                                                                    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `--reporter <names>` | Comma-separated reporters: `console`, `json`, `junit`, `html`, `allure`, `github`, or a custom module path (default `console`) |
+| `--js-coverage`      | Save JavaScript coverage for Chromium web flows                                                                                |
 | `--config <path>`    | Use a non-default config file                                                                                                  |
 | `--validate-config`  | Validate config and exit before discovery                                                                                      |
 | `--quiet`, `-q`      | Suppress pass output and show failures plus summary                                                                            |

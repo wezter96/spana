@@ -324,7 +324,8 @@ For `spana test`, CLI flags win over config values.
 | `--device` / `--devices`                       | CLI-only device selection                            |
 | `--parallel`                                   | Enables concurrent execution                         |
 | `--watch` / `--changed` / `--last-failed`      | CLI-only iteration controls                          |
-| `--update-baselines`                           | CLI-only visual regression control                   |
+| `--update-baselines`                           | CLI-only screenshot and ARIA baseline control        |
+| `--js-coverage`                                | `artifacts.jsCoverage`                               |
 | `--shard` / `--bail`                           | CLI-only execution controls                          |
 | `--debug-on-failure` / `--verbose` / `--quiet` | CLI-only output and debugging controls               |
 
@@ -383,24 +384,28 @@ artifacts?: {
   consoleLogs?:      boolean;
   jsErrors?:         boolean;
   har?:              boolean;
+  jsCoverage?:       boolean;
   video?:            "off" | "on" | "retain-on-failure";
   playback?:         boolean;
 }
 ```
 
-| Option             | Default            | Description                                                                                    |
-| ------------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
-| `outputDir`        | `"./spana-output"` | Directory to write captured artifacts                                                          |
-| `captureOnFailure` | `true`             | Capture artifacts for failed flows                                                             |
-| `captureOnSuccess` | `false`            | Capture final artifacts for passed flows                                                       |
-| `captureSteps`     | `false`            | Capture screenshots after each recorded step                                                   |
-| `screenshot`       | `true`             | Include screenshots in captures                                                                |
-| `uiHierarchy`      | `true`             | Include UI hierarchy dumps                                                                     |
-| `consoleLogs`      | `true`             | Include captured browser console logs on web                                                   |
-| `jsErrors`         | `true`             | Include uncaught browser JavaScript errors on web                                              |
-| `har`              | `true`             | Include HAR network traces on web                                                              |
-| `video`            | `"off"`            | Record a video of each flow: `"on"`, or `"retain-on-failure"` to keep it only for failed flows |
-| `playback`         | `false`            | Keep a step-by-step visual playback timeline for the HTML report                               |
+| Option             | Default            | Description                                                                                     |
+| ------------------ | ------------------ | ----------------------------------------------------------------------------------------------- |
+| `outputDir`        | `"./spana-output"` | Directory to write captured artifacts                                                           |
+| `captureOnFailure` | `true`             | Capture artifacts for failed flows                                                              |
+| `captureOnSuccess` | `false`            | Capture final artifacts for passed flows                                                        |
+| `captureSteps`     | `false`            | Capture screenshots after each recorded step                                                    |
+| `screenshot`       | `true`             | Include screenshots in captures                                                                 |
+| `uiHierarchy`      | `true`             | Include UI hierarchy dumps                                                                      |
+| `consoleLogs`      | `true`             | Include captured browser console logs on web                                                    |
+| `jsErrors`         | `true`             | Include uncaught browser JavaScript errors on web                                               |
+| `har`              | `true`             | Include HAR network traces on web                                                               |
+| `jsCoverage`       | `false`            | Write `js-coverage.json` as a flow attachment for Chromium web tests (Playwright or direct CDP) |
+| `video`            | `"off"`            | Record a video of each flow: `"on"`, or `"retain-on-failure"` to keep it only for failed flows  |
+| `playback`         | `false`            | Keep a step-by-step visual playback timeline for the HTML report                                |
+
+JavaScript coverage is collected for the primary page from before app launch through the end of the flow, whether the flow passes or fails. Secondary tabs and contexts are not included. Each flow gets a raw V8 coverage file; Spana does not merge coverage or generate a source-mapped report. Use `spana test --js-coverage` for a single run, or set `artifacts: { jsCoverage: true }` in the project or flow configuration.
 
 ## `hooks`
 

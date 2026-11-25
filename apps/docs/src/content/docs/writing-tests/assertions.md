@@ -96,6 +96,42 @@ await expect({ testID: "login-button" }).toHaveMinTouchTarget(48);
 
 `toPassAccessibilityAudit()` is web-only. The other accessibility assertions are element-level checks that work across supported platforms.
 
+## Soft assertions and retrying custom checks
+
+```ts
+await expect.soft({ testID: "name" }).toHaveText("Ada");
+await expect.soft({ testID: "email" }).toContainText("@example.test");
+
+await expect
+  .poll(() => app.evaluate<number>("window.pendingRequests"), {
+    timeout: 3000,
+    intervals: [100, 250],
+  })
+  .toBe(0);
+
+await expect(async () => {
+  await expect({ testID: "ready" }).toBeVisible({ timeout: 200 });
+  await expect({ testID: "queue" }).toHaveText("Empty", { timeout: 200 });
+}).toPass({ timeout: 3000, intervals: [100, 250] });
+```
+
+Soft assertions still wait for their matchers. If they fail, the flow continues and reports the collected failures at the end of the attempt. `poll` compares a callback's return value; `toPass` retries a callback until it stops throwing or rejecting. Use idempotent callbacks, since they can run more than once. After the interval list is exhausted, its last interval repeats.
+
+## ARIA snapshots
+
+On the Playwright web engine, compare a locator's accessible roles, names, and hierarchy against Playwright's YAML snapshot output:
+
+```ts
+await expect({ css: "nav" }).toMatchAriaSnapshot(`
+  - navigation "Menu":
+    - link "Home"
+    - link "Settings"
+`);
+await expect({ css: "nav" }).toMatchAriaSnapshot({ path: "snapshots/menu.aria.yml" });
+```
+
+The assertion compares exact normalized YAML, ignoring leading indentation and surrounding blank lines. File paths are relative to the flow file. Run `spana test --update-baselines` to write or refresh file-based baselines; inline snapshots are edited by hand.
+
 ## Auto-wait behavior
 
 All assertions auto-wait. spana does not require manual `sleep()` calls.

@@ -68,6 +68,26 @@ spana test --platform android,ios
 
 CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["android"]` will not run if you pass `--platform web`, even if both are in your config.
 
+## Device emulation and OS events
+
+| API                                             | Playwright web                                                 | Android                                                      | iOS                                                                |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `setGeolocation({ latitude, longitude })`       | Yes; also grant location access                                | Local emulator or supported Appium driver                    | Simulator or supported Appium driver                               |
+| `setSystemTime(date)`                           | Yes; changes browser wall time without pausing timers          | —                                                            | —                                                                  |
+| `grantPermission(name)`, `denyPermission(name)` | Grant via Playwright, deny via Chromium; optional `{ origin }` | Runtime permission names such as `android.permission.CAMERA` | Simulator privacy services such as `location`                      |
+| `setOrientation("portrait" \| "landscape")`     | Swaps the viewport dimensions                                  | UiAutomator2 or Appium                                       | WDA or Appium                                                      |
+| `setBiometricEnrollment(enabled)`               | —                                                              | Enroll a test fingerprint in Android settings first          | Simulator                                                          |
+| `simulateBiometric(options)`                    | —                                                              | Emulator; `{ type: "fingerprint", fingerId: 1 }`             | Simulator; `{ type: "faceId", match: false }` or `type: "touchId"` |
+| `sendPushNotification(payload)`                 | —                                                              | —                                                            | Simulator; pass an APNs payload with an `aps` object               |
+
+```ts
+await app.setBiometricEnrollment(true);
+await app.simulateBiometric({ type: "faceId", match: true });
+await app.sendPushNotification({ aps: { alert: "Order shipped" }, orderId: "123" });
+```
+
+Guard calls by platform and target type. Appium support depends on the provider and driver version. Device changes can persist in reused devices or browser contexts; restore state explicitly where needed. Android system notifications posted by the shell do not deliver FCM messages to an app, so Android push simulation is not exposed.
+
 ## Common patterns
 
 ### System UI on mobile

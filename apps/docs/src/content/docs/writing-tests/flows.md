@@ -82,6 +82,10 @@ interface FlowConfig {
   artifacts?: ArtifactConfig;
   defaults?: FlowDefaults;
   when?: WhenCondition;
+  skip?: boolean | (WhenCondition & { reason?: string });
+  fixme?: boolean | (WhenCondition & { reason?: string });
+  only?: boolean;
+  retries?: number;
 }
 
 interface WhenCondition {
@@ -90,16 +94,33 @@ interface WhenCondition {
 }
 ```
 
-| Option          | Type             | Default                                 | Description                                                      |
-| --------------- | ---------------- | --------------------------------------- | ---------------------------------------------------------------- |
-| `tags`          | `string[]`       | —                                       | Tag strings for `--tag` filtering at the CLI                     |
-| `platforms`     | `Platform[]`     | all configured                          | Restrict this flow to specific platforms only                    |
-| `timeout`       | `number`         | `defaults.waitTimeout × 10`, or `60000` | Flow-level timeout in milliseconds                               |
-| `autoLaunch`    | `boolean`        | `true`                                  | Automatically launch the app before the flow starts              |
-| `launchOptions` | `LaunchOptions`  | config default                          | Override launch defaults for this flow and for manual app.launch |
-| `artifacts`     | `ArtifactConfig` | config default                          | Override capture behavior for this single flow                   |
-| `defaults`      | `FlowDefaults`   | config default                          | Override wait / typing / stability defaults per flow             |
-| `when`          | `WhenCondition`  | —                                       | Runtime conditions that control whether the flow runs            |
+| Option           | Type                 | Default                                 | Description                                                          |
+| ---------------- | -------------------- | --------------------------------------- | -------------------------------------------------------------------- |
+| `tags`           | `string[]`           | —                                       | Tag strings for `--tag` filtering at the CLI                         |
+| `platforms`      | `Platform[]`         | all configured                          | Restrict this flow to specific platforms only                        |
+| `timeout`        | `number`             | `defaults.waitTimeout × 10`, or `60000` | Flow-level timeout in milliseconds                                   |
+| `autoLaunch`     | `boolean`            | `true`                                  | Automatically launch the app before the flow starts                  |
+| `launchOptions`  | `LaunchOptions`      | config default                          | Override launch defaults for this flow and for manual app.launch     |
+| `artifacts`      | `ArtifactConfig`     | config default                          | Override capture behavior for this single flow                       |
+| `defaults`       | `FlowDefaults`       | config default                          | Override wait / typing / stability defaults per flow                 |
+| `when`           | `WhenCondition`      | —                                       | Runtime conditions that control whether the flow runs                |
+| `skip` / `fixme` | Boolean or condition | `false`                                 | Do not execute the flow; `fixme` identifies a known issue in reports |
+| `only`           | `boolean`            | `false`                                 | If any selected flow is focused, only focused flows run              |
+| `retries`        | `number`             | Project or CLI retry count              | Number of additional attempts after a failure; `0` disables retries  |
+
+### Skip, focus, or retry individual flows
+
+```ts
+export default flow(
+  "Updates device settings",
+  { fixme: { platform: "ios", reason: "Waiting for a simulator fix" }, retries: 1 },
+  async ({ app }) => {
+    await app.tap({ testID: "settings" });
+  },
+);
+```
+
+`skip` and `fixme` conditions are evaluated per target platform. If both `platform` and `env` are given, both must match (the environment variable must be nonempty). Reports count both as skipped and retain the modifier and optional reason. Use `flow.skip(name, fn)`, `flow.fixme(name, fn)`, or `flow.only(name, fn)` as shorthand; each also accepts a config argument. Remove `only` before committing so the rest of the suite runs in CI.
 
 ### Per-flow launch overrides
 
@@ -260,7 +281,7 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 | `getVirtualCredentials`      | `(id?) => Promise<VirtualCredential[]>`            | List credentials stored in the virtual authenticator                            |
 | `clearVirtualCredentials`    | `(id?) => Promise<void>`                           | Delete credentials stored in the virtual authenticator                          |
 
-These helpers are available on local web runs with the Playwright or direct CDP engine. `getHAR()` needs the Playwright engine. `mockNetwork`, `blockNetwork`, `getConsoleLogs`, and `getJSErrors` are also implemented for Electron, Electrobun, and mobile WebViews; on Android and iOS, network mocks need `spana-bridge`. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
+These helpers are available on local web runs with the Playwright or direct CDP engine. `getHAR()` needs the Playwright engine. `mockNetwork`, `blockNetwork`, `getConsoleLogs`, and `getJSErrors` are also implemented for Electron, Electrobun, and mobile WebViews. On Android, use a debuggable WebView or `spana-bridge`; on iOS, use `spana-bridge`. Bridge mocks intercept JavaScript fetch/XHR only. Neither option intercepts native HTTP clients. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
 
 #### `setNetworkConditions()`
 

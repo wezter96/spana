@@ -333,7 +333,7 @@ export async function executeFlow(
     if (!driver.startJSCoverage || !driver.stopJSCoverage) {
       return buildFailureResult(
         new Error(
-          "JavaScript coverage is not supported on web with the current driver; use Playwright Chromium",
+          "JavaScript coverage is not supported on web with the current driver; use Chromium with Playwright or direct CDP",
         ),
       );
     }
