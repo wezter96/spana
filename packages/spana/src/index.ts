@@ -91,12 +91,14 @@ export {
   type DomWaitForHiddenOptions,
   type DomWaitForMatchOptions,
   type DomWaitForMatchResult,
+  type DomFillOptions,
   type DomStorageEntries,
   type DomClearStorageOptions,
   type DomTargetInfo,
   buildDomWaitForSelectorScript,
   buildDomWaitForHiddenScript,
   buildDomWaitForMatchScript,
+  buildDomFillScript,
 } from "./channels/dom-channel.js";
 export {
   createCdpDomChannel,
@@ -260,6 +262,15 @@ export {
   type AgentActExecutor,
   type ReplaySessionOptions,
 } from "./core/replay-cache.js";
+
+export {
+  isNativeAcceleratorActive,
+  getNativeAcceleratorPath,
+  comparePngNative,
+  tokenizeXmlNative,
+  type NativePngCompareResult,
+  type NativeXmlRawNode,
+} from "./core/native-accel.js";
 
 // Stdio MCP Server (spana mcp)
 export {

@@ -57,6 +57,8 @@ export interface PromiseApp<T extends string = string, R extends string = string
   ): Promise<void>;
   longPressXY(x: number, y: number, opts?: { duration?: number }): Promise<void>;
   inputText(text: string): Promise<void>;
+  /** Atomic 1-round-trip form fill: waits for actionability, focuses, replaces value, and dispatches input/change. */
+  fill(selector: ExtendedSelector<T>, value: string, opts?: WaitOptions): Promise<void>;
   pressKey(key: string): Promise<void>;
   hideKeyboard(): Promise<void>;
   dismissKeyboard(opts?: DismissKeyboardOptions): Promise<void>;
@@ -217,6 +219,11 @@ export function createPromiseApp<T extends string = string, R extends string = s
       }),
     inputText: (text) =>
       runStep("inputText", () => run(coord.inputText(text)), { captureScreenshot: true }),
+    fill: (selector, value, opts) =>
+      runStep("fill", () => run(coord.fill(selector, value, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
     pressKey: (key) =>
       runStep(`pressKey(${key})`, () => run(coord.pressKey(key)), { captureScreenshot: true }),
     hideKeyboard: () =>

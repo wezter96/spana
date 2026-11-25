@@ -1,5 +1,6 @@
 import type { Selector } from "../schemas/selector.js";
 import {
+  buildDomFillScript,
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
@@ -9,6 +10,7 @@ import {
   buildEvaluateExpression,
   type DomChannel,
   type DomElementMatch,
+  type DomFillOptions,
   type DomTargetInfo,
   type DomWaitForHiddenOptions,
   type DomWaitForMatchOptions,
@@ -393,6 +395,11 @@ export class CdpDomChannel implements DomChannel {
       buildDomWaitForMatchScript(selector, opts),
     );
     return result && typeof result === "object" ? result : { matched: false };
+  }
+
+  async fillDom(selector: Selector, value: string, opts?: DomFillOptions): Promise<boolean> {
+    const result = await this.evaluate<boolean>(buildDomFillScript(selector, value, opts));
+    return Boolean(result);
   }
 
   async tapDom(selector: Selector): Promise<boolean> {

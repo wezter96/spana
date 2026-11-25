@@ -533,6 +533,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           message: `Expected text to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
           expected: String(pattern),
         }),
+        { kind: "matchesText", patternSource: pattern.source, patternFlags: pattern.flags },
       ),
 
     getAttribute: (
@@ -673,6 +674,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 message: `Expected accessibilityLabel "${expected}" but got "${actual ?? "(none)"}" after ${timeout}ms`,
                 expected,
               },
+        { kind: "accessibilityLabel", expected },
       ),
 
     assertFocusable: (
@@ -948,6 +950,54 @@ export function createCoordinator<T extends string = string, R extends string = 
         } else {
           yield* driver.inputText(text);
         }
+        yield* afterMutation();
+      }),
+
+    /**
+     * Atomic 1-round-trip form fill: on web/DOM channels, waits for actionability,
+     * focuses, clears, sets the React/Vue-safe value, and dispatches `input` + `change`
+     * in ONE single round trip (~1-2ms). Falls back to `tap` + `inputText` on native mobile.
+     */
+    fill: (
+      selector: ExtendedSelector,
+      text: string,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const domChannel = driver.domChannel;
+        if (
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          domChannel?.isConnected() &&
+          domChannel.fillDom
+        ) {
+          const filled = yield* Effect.tryPromise({
+            try: () => domChannel.fillDom!(selector as Selector, text, { timeoutMs: timeout }),
+            catch: (e) => new DriverError({ message: `DOM fill failed: ${e}` }),
+          });
+          if (filled) {
+            yield* afterMutation();
+            return;
+          }
+          return yield* new ElementNotFoundError({
+            message: `Element not fillable within ${timeout}ms — selector: ${formatSelector(selector)}`,
+            selector,
+            timeoutMs: timeout,
+          });
+        }
+
+        // Native mobile fallback: tap to focus, then input text
+        const element = yield* waitForActionElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        );
+        const { x, y } = centerOf(element);
+        yield* driver.tapAtCoordinate(x, y);
+        yield* driver.inputText(text);
         yield* afterMutation();
       }),
 

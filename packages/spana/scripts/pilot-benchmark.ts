@@ -39,6 +39,12 @@ function resolveChromePath(): string {
 }
 
 function buildPilotPageHtml(id: number): string {
+  // Include 4,000 realistic DOM table cells to verify O(1) Light-DOM fast-path performance
+  const rows = Array.from(
+    { length: 400 },
+    (_v, r) =>
+      `<tr><td>Row ${r}</td><td>Item ${r}</td><td>Active</td><td>${r * 10}</td><td>OK</td></tr>`,
+  ).join("");
   return `<!doctype html>
 <html>
 <head>
@@ -47,11 +53,12 @@ function buildPilotPageHtml(id: number): string {
   <style>
     body { font-family: system-ui, sans-serif; margin: 24px; background: #0b1220; color: #e2e8f0; }
     .card { max-width: 520px; padding: 20px; border-radius: 12px; background: #111b2e; border: 1px solid #24334d; }
-    input { padding: 8px 10px; width: 260px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; }
+    input { padding: 8px 10px; width: 260px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; margin-bottom: 6px; display: block; }
     button { padding: 8px 14px; border-radius: 6px; border: 0; background: #06b6d4; color: #04131c; font-weight: 700; cursor: pointer; }
     .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.65); display: flex; align-items: center; justify-content: center; z-index: 99; }
     .hidden { display: none !important; }
     .spacer { height: 760px; }
+    table { font-size: 11px; opacity: 0.6; }
   </style>
 </head>
 <body>
@@ -60,29 +67,31 @@ function buildPilotPageHtml(id: number): string {
     <h1 data-testid="heading">Workspace #${id}</h1>
     <div style="margin: 12px 0;">
       <input data-testid="item-input" placeholder="Item title" />
+      <input data-testid="item-notes" placeholder="Notes" />
     </div>
     <button data-testid="create-btn" type="button">Create Item</button>
     <p data-testid="status-text" style="margin-top: 12px;">Idle</p>
   </div>
+  <table><tbody>${rows}</tbody></table>
   <div class="spacer"></div>
   <button data-testid="footer-confirm" type="button">Confirm Footer</button>
   <p data-testid="footer-status">Pending</p>
 
   <script>
-    // Simulate real hydration overlay obscuring the CTA for 35ms
     setTimeout(() => {
       document.getElementById("overlay").classList.add("hidden");
     }, 35);
 
     document.querySelector('[data-testid="create-btn"]').addEventListener("click", async () => {
       const val = document.querySelector('[data-testid="item-input"]').value;
+      const notes = document.querySelector('[data-testid="item-notes"]').value;
       const res = await fetch("/api/items", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: ${id}, title: val })
+        body: JSON.stringify({ id: ${id}, title: val, notes })
       });
       const json = await res.json();
-      document.querySelector('[data-testid="status-text"]').textContent = "Saved: " + json.title;
+      document.querySelector('[data-testid="status-text"]').textContent = "Saved: " + json.title + " (" + json.notes + ")";
     });
 
     document.querySelector('[data-testid="footer-confirm"]').addEventListener("click", () => {
@@ -108,7 +117,13 @@ function startPilotAppServer(): Promise<{ url: string; close: () => Promise<void
           setTimeout(() => {
             const parsed = JSON.parse(body || "{}");
             res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ ok: true, title: parsed.title ?? "empty" }));
+            res.end(
+              JSON.stringify({
+                ok: true,
+                title: parsed.title ?? "empty",
+                notes: parsed.notes ?? "",
+              }),
+            );
           }, 18);
         });
         return;
@@ -176,13 +191,13 @@ async function runPlaywrightSuite(
         const page = await ctx.newPage();
         await page.goto(`${baseUrl}/flow/${id + 1}`);
         await page.getByTestId("loading-overlay").waitFor({ state: "hidden" });
-        await page.getByTestId("item-input").click();
-        await page.keyboard.insertText(`Task-${id + 1}`);
+        await page.getByTestId("item-input").fill(`Task-${id + 1}`);
+        await page.getByTestId("item-notes").fill(`Note-${id + 1}`);
         await page.getByTestId("create-btn").click();
         const status = page.getByTestId("status-text");
         await status.waitFor({ state: "visible" });
         const deadline = Date.now() + 5000;
-        while ((await status.textContent()) !== `Saved: Task-${id + 1}`) {
+        while ((await status.textContent()) !== `Saved: Task-${id + 1} (Note-${id + 1})`) {
           if (Date.now() > deadline) throw new Error("status text timeout");
           await new Promise((r) => setTimeout(r, 15));
         }
@@ -246,10 +261,10 @@ async function runSpanaSuite(
     flow(`pilot-flow-${i + 1}`, async ({ app, expect }) => {
       await app.openLink(`${baseUrl}/flow/${i + 1}`);
       await expect({ testID: "loading-overlay" }).toBeHidden();
-      await app.tap({ testID: "item-input" });
-      await app.inputText(`Task-${i + 1}`);
+      await app.fill({ testID: "item-input" }, `Task-${i + 1}`);
+      await app.fill({ testID: "item-notes" }, `Note-${i + 1}`);
       await app.tap({ testID: "create-btn" });
-      await expect({ testID: "status-text" }).toHaveText(`Saved: Task-${i + 1}`);
+      await expect({ testID: "status-text" }).toHaveText(`Saved: Task-${i + 1} (Note-${i + 1})`);
       await app.tap({ testID: "footer-confirm" });
       await expect({ testID: "footer-status" }).toHaveText(`Confirmed #${i + 1}`);
     }),

@@ -1,16 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "effect";
 import { DriverError } from "../errors.js";
 import { allocatePort } from "../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
+import { resolveNetworkConditions } from "./network-profiles.js";
+import type { Selector } from "../schemas/selector.js";
 import type {
   BrowserConsoleLog,
   BrowserJSError,
   BrowserMockResponse,
   BrowserRouteMatcher,
+  NetworkConditions,
   RawDriverService,
   RawHierarchy,
   VirtualAuthenticatorOptions,
@@ -155,9 +160,13 @@ export async function launchDirectCdpBrowser(
   execPath = resolveChromiumExecutable(execPath);
 
   const port = allocatePort(9350);
+  // Fresh throwaway profile: never expose the user's real Chrome profile (cookies, logins) over CDP.
+  const userDataDir = mkdtempSync(join(tmpdir(), "spana-cdp-profile-"));
   const chromeArgs = [
     ...(options.headless !== false ? ["--headless=new"] : []),
     `--remote-debugging-port=${port}`,
+    "--remote-debugging-address=127.0.0.1",
+    `--user-data-dir=${userDataDir}`,
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-background-networking",
@@ -210,6 +219,8 @@ export async function launchDirectCdpBrowser(
       } catch {
         // already exited
       }
+      await new Promise((r) => setTimeout(r, 200));
+      rmSync(userDataDir, { recursive: true, force: true });
     },
   };
 }
@@ -270,11 +281,18 @@ const CDP_DUMP_HIERARCHY_SCRIPT = `(() => {
   return document.body ? JSON.stringify(walk(document.body)) : JSON.stringify({ bounds: { x: 0, y: 0, width: 0, height: 0 }, children: [] });
 })()`;
 
+interface CdpTabEntry {
+  tabId: string;
+  targetId: string;
+  sessionId: string;
+}
+
 interface CdpContextSlot {
   browserContextId: string;
   targetId: string;
   sessionId: string;
   authenticatorId?: string;
+  tabs: CdpTabEntry[];
 }
 
 interface CdpRouteRule {
@@ -367,6 +385,33 @@ export function makeLightweightCdpDriver(
     const jsErrors: BrowserJSError[] = [];
     const routeRules: CdpRouteRule[] = [];
     let fetchInterceptEnabled = false;
+    let nextTabSeq = 1;
+    let downloadDir: string | undefined;
+    const completedDownloads: string[] = [];
+    const downloadWaiters: Array<{
+      resolve: (filePath: string) => void;
+      reject: (err: Error) => void;
+    }> = [];
+    const pendingDownloadGuids = new Map<string, string>();
+
+    cdpChannel.onEvent("Browser.downloadWillBegin", (params) => {
+      if (params?.guid && downloadDir) {
+        pendingDownloadGuids.set(String(params.guid), join(downloadDir, String(params.guid)));
+      }
+    });
+
+    cdpChannel.onEvent("Browser.downloadProgress", (params) => {
+      if (params?.state === "completed" && params?.guid) {
+        const filePath =
+          pendingDownloadGuids.get(String(params.guid)) ??
+          (downloadDir ? join(downloadDir, String(params.guid)) : "");
+        pendingDownloadGuids.delete(String(params.guid));
+        if (!filePath) return;
+        const waiter = downloadWaiters.shift();
+        if (waiter) waiter.resolve(filePath);
+        else completedDownloads.push(filePath);
+      }
+    });
 
     const loadStorageStateFile = async (
       path?: string,
@@ -511,11 +556,13 @@ export function makeLightweightCdpDriver(
         attachRes.sessionId,
         storageStatePath ?? options.storageState,
       );
+      const firstTabId = `tab-${nextTabSeq++}`;
       return {
         browserContextId: ctxRes.browserContextId,
         targetId: targetRes.targetId,
         sessionId: attachRes.sessionId,
         authenticatorId,
+        tabs: [{ tabId: firstTabId, targetId: targetRes.targetId, sessionId: attachRes.sessionId }],
       };
     };
 
@@ -863,6 +910,14 @@ export function makeLightweightCdpDriver(
                 ...backgroundDisposals,
               ]);
             }
+            if (downloadDir) {
+              try {
+                rmSync(downloadDir, { recursive: true, force: true });
+              } catch {
+                // ignore temp dir cleanup errors
+              }
+              downloadDir = undefined;
+            }
             await cdpChannel.disconnect();
           },
           catch: (e) => new DriverError({ message: `CDP disconnect failed: ${e}` }),
@@ -1062,6 +1117,182 @@ export function makeLightweightCdpDriver(
 
       getConsoleLogs: () => Effect.succeed([...consoleLogs]),
       getJSErrors: () => Effect.succeed([...jsErrors]),
+
+      setNetworkConditions: (conditions: NetworkConditions) =>
+        Effect.tryPromise({
+          try: async () => {
+            const resolved = resolveNetworkConditions(conditions);
+            await cdpChannel.sendCommand("Network.enable");
+            await cdpChannel.sendCommand("Network.emulateNetworkConditions", {
+              offline: resolved.offline,
+              latency: resolved.latencyMs,
+              downloadThroughput:
+                resolved.downloadThroughputKbps < 0
+                  ? -1
+                  : Math.max(Math.round((resolved.downloadThroughputKbps * 1024) / 8), 0),
+              uploadThroughput:
+                resolved.uploadThroughputKbps < 0
+                  ? -1
+                  : Math.max(Math.round((resolved.uploadThroughputKbps * 1024) / 8), 0),
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP setNetworkConditions failed: ${e}` }),
+        }),
+
+      uploadFile: (selector: Selector, filePath: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            const serialized = JSON.stringify(selector);
+            const expr = `(function(sel) {
+              if (typeof sel === "object" && sel !== null && "testID" in sel) {
+                return document.querySelector('[data-testid="' + sel.testID + '"], [testID="' + sel.testID + '"]');
+              }
+              if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
+                return document.querySelector('[aria-label="' + sel.accessibilityLabel + '"]');
+              }
+              return document.querySelector('input[type="file"]');
+            })(${serialized})`;
+            await cdpChannel.sendCommand("DOM.enable");
+            const evalRes = (await cdpChannel.sendCommand("Runtime.evaluate", {
+              expression: expr,
+              returnByValue: false,
+            })) as { result?: { objectId?: string } };
+            const objectId = evalRes?.result?.objectId;
+            if (!objectId) {
+              throw new Error(`No matching file input found for selector ${serialized}`);
+            }
+            const nodeRes = (await cdpChannel.sendCommand("DOM.requestNode", { objectId })) as {
+              nodeId?: number;
+            };
+            if (!nodeRes?.nodeId) {
+              throw new Error("Failed to resolve DOM nodeId for file input");
+            }
+            await cdpChannel.sendCommand("DOM.setFileInputFiles", {
+              nodeId: nodeRes.nodeId,
+              files: [filePath],
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP uploadFile failed: ${e}` }),
+        }),
+
+      downloadFile: (destPath: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!downloadDir) {
+              downloadDir = mkdtempSync(join(tmpdir(), "spana-cdp-dl-"));
+              await cdpChannel.sendCommand(
+                "Browser.setDownloadBehavior",
+                {
+                  behavior: "allowAndName",
+                  downloadPath: downloadDir,
+                  eventsEnabled: true,
+                  ...(activeSlot?.browserContextId
+                    ? { browserContextId: activeSlot.browserContextId }
+                    : {}),
+                },
+                null,
+              );
+            }
+            const downloaded =
+              completedDownloads.shift() ??
+              (await new Promise<string>((resolve, reject) => {
+                const timer = setTimeout(() => {
+                  reject(new Error("Timed out waiting for CDP file download"));
+                }, 15_000);
+                downloadWaiters.push({
+                  resolve: (fp) => {
+                    clearTimeout(timer);
+                    resolve(fp);
+                  },
+                  reject: (err) => {
+                    clearTimeout(timer);
+                    reject(err);
+                  },
+                });
+              }));
+            await copyFile(downloaded, destPath);
+          },
+          catch: (e) => new DriverError({ message: `CDP downloadFile failed: ${e}` }),
+        }),
+
+      newTab: (url?: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!activeSlot) {
+              throw new Error("newTab() requires browser-context mode (engine: 'cdp')");
+            }
+            const targetRes = (await cdpChannel.sendCommand(
+              "Target.createTarget",
+              {
+                url: url ? resolveUrl(url) : "about:blank",
+                browserContextId: activeSlot.browserContextId,
+                width,
+                height,
+              },
+              null,
+            )) as { targetId: string };
+            const attachRes = (await cdpChannel.sendCommand(
+              "Target.attachToTarget",
+              { targetId: targetRes.targetId, flatten: true },
+              null,
+            )) as { sessionId: string };
+            await configureSession(attachRes.sessionId, options.storageState);
+            const tabId = `tab-${nextTabSeq++}`;
+            activeSlot.tabs.push({
+              tabId,
+              targetId: targetRes.targetId,
+              sessionId: attachRes.sessionId,
+            });
+            activeSlot.targetId = targetRes.targetId;
+            activeSlot.sessionId = attachRes.sessionId;
+            cdpChannel.setSessionId(attachRes.sessionId);
+            return tabId;
+          },
+          catch: (e) => new DriverError({ message: `CDP newTab failed: ${e}` }),
+        }),
+
+      switchToTab: (index: number) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!activeSlot || !activeSlot.tabs[index]) {
+              throw new Error(`Tab index ${index} is out of range.`);
+            }
+            const target = activeSlot.tabs[index]!;
+            activeSlot.targetId = target.targetId;
+            activeSlot.sessionId = target.sessionId;
+            cdpChannel.setSessionId(target.sessionId);
+            await cdpChannel
+              .sendCommand("Target.activateTarget", { targetId: target.targetId }, null)
+              .catch(() => {});
+          },
+          catch: (e) => new DriverError({ message: `CDP switchToTab failed: ${e}` }),
+        }),
+
+      closeTab: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (!activeSlot) return;
+            if (activeSlot.tabs.length <= 1) {
+              await navigate("about:blank");
+              return;
+            }
+            const idx = activeSlot.tabs.findIndex((t) => t.sessionId === activeSlot!.sessionId);
+            const closing = activeSlot.tabs[idx >= 0 ? idx : activeSlot.tabs.length - 1]!;
+            activeSlot.tabs = activeSlot.tabs.filter((t) => t.sessionId !== closing.sessionId);
+            const fallback =
+              activeSlot.tabs[Math.max(0, Math.min(idx - 1, activeSlot.tabs.length - 1))]!;
+            activeSlot.targetId = fallback.targetId;
+            activeSlot.sessionId = fallback.sessionId;
+            cdpChannel.setSessionId(fallback.sessionId);
+            await cdpChannel
+              .sendCommand("Target.closeTarget", { targetId: closing.targetId }, null)
+              .catch(() => {});
+          },
+          catch: (e) => new DriverError({ message: `CDP closeTab failed: ${e}` }),
+        }),
+
+      getTabIds: () =>
+        Effect.sync(() => (activeSlot ? activeSlot.tabs.map((t) => t.tabId) : ["tab-1"])),
     };
 
     return service;

@@ -72,11 +72,22 @@ export interface DomWaitForMatchOptions {
   /** Max time to wait in ms. Default: 5000. */
   timeoutMs?: number;
   /** Assertion kind evaluated reactively inside the page via MutationObserver. */
-  kind: "text" | "containsText" | "value" | "attribute";
-  /** Expected value/substring (optional when `kind === "attribute"` checks presence). */
+  kind: "text" | "containsText" | "matchesText" | "value" | "attribute" | "accessibilityLabel";
+  /** Expected value/substring (optional when `kind === "attribute"` or `"accessibilityLabel"` checks presence). */
   expected?: string;
   /** Attribute name when `kind === "attribute"`. */
   attributeName?: string;
+  /** RegExp source when `kind === "matchesText"`. */
+  patternSource?: string;
+  /** RegExp flags when `kind === "matchesText"`. */
+  patternFlags?: string;
+}
+
+export interface DomFillOptions {
+  /** Max time to wait for an editable actionable target in ms. Default: 5000. */
+  timeoutMs?: number;
+  /** Verify center point via deep `elementFromPoint` before filling. Default: true. */
+  checkHitTest?: boolean;
 }
 
 export interface DomWaitForMatchResult {
@@ -129,6 +140,8 @@ export interface DomChannel {
   waitForHidden?(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean>;
   /** MutationObserver-reactive wait until text/value/attribute matches (zero runner-side polling). */
   waitForMatch?(selector: Selector, opts: DomWaitForMatchOptions): Promise<DomWaitForMatchResult>;
+  /** Atomic 1-round-trip actionability wait + focus + React/Vue-safe value fill + input/change dispatch. */
+  fillDom?(selector: Selector, value: string, opts?: DomFillOptions): Promise<boolean>;
   tapDom(selector: Selector): Promise<boolean>;
   /** Scroll a DOM element into the viewport center and return its updated bounding rect. */
   scrollIntoView?(selector: Selector): Promise<DomElementMatch | null>;
@@ -223,9 +236,44 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       }
     }
   }
+  function findTextInRoot(root, needle, ctx, pushHit) {
+    var doc = root.ownerDocument || (root.nodeType === 9 ? root : document);
+    if (doc && typeof doc.createTreeWalker === "function" && typeof NodeFilter !== "undefined") {
+      var walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      var txtNode;
+      while ((txtNode = walker.nextNode())) {
+        var val = (txtNode.nodeValue || "").trim().toLowerCase();
+        if (val && val.indexOf(needle) !== -1 && txtNode.parentElement) {
+          pushHit(txtNode.parentElement, ctx);
+        }
+      }
+      if (typeof root.querySelectorAll === "function") {
+        var inputs = root.querySelectorAll("input, button");
+        for (var ii = 0; ii < inputs.length; ii++) {
+          var inp = inputs[ii];
+          var inputVal = String(inp.value || "").toLowerCase();
+          if (inputVal && inputVal.indexOf(needle) !== -1) {
+            pushHit(inp, ctx);
+          }
+        }
+      }
+      return;
+    }
+    var all = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    for (var k = 0; k < all.length; k++) {
+      var node = all[k];
+      var directText = "";
+      for (var c = 0; c < node.childNodes.length; c++) {
+        if (node.childNodes[c].nodeType === 3) directText += node.childNodes[c].textContent || "";
+      }
+      var trimmedDirect = directText.trim().toLowerCase();
+      var inpVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").toLowerCase() : "";
+      if ((trimmedDirect && trimmedDirect.indexOf(needle) !== -1) || (inpVal && inpVal.indexOf(needle) !== -1)) {
+        pushHit(node, ctx);
+      }
+    }
+  }
   function findAcrossRoots(sel) {
-    var roots = [];
-    collectRoots(document, 0, 0, false, false, roots);
     var hits = [];
     var seen = typeof Set !== "undefined" ? new Set() : null;
     function pushHit(el, ctx) {
@@ -243,7 +291,33 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var esc = function(v) {
       return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
     };
-    for (var r = 0; r < roots.length; r++) {
+    var mainCtx = { root: document, offsetX: 0, offsetY: 0, inShadow: false, inIframe: false };
+    // O(1)-ish Light-DOM fast path: avoids scanning thousands of nodes with querySelectorAll("*")
+    // on large SPAs unless Shadow DOM / iframe piercing is actually needed!
+    if (document.querySelectorAll) {
+      if (typeof sel === "object" && sel !== null && "testID" in sel) {
+        var fastTid = esc(sel.testID);
+        var fastFound = document.querySelectorAll('[data-testid="' + fastTid + '"], [testID="' + fastTid + '"]');
+        if (fastFound.length > 0) {
+          for (var fi = 0; fi < fastFound.length; fi++) pushHit(fastFound[fi], mainCtx);
+          return hits;
+        }
+      } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
+        var fastLbl = esc(sel.accessibilityLabel);
+        var fastFoundLbl = document.querySelectorAll('[aria-label="' + fastLbl + '"]');
+        if (fastFoundLbl.length > 0) {
+          for (var fj = 0; fj < fastFoundLbl.length; fj++) pushHit(fastFoundLbl[fj], mainCtx);
+          return hits;
+        }
+      } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
+        var fastNeedle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
+        findTextInRoot(document, fastNeedle, mainCtx, pushHit);
+        if (hits.length > 0) return hits;
+      }
+    }
+    var roots = [];
+    collectRoots(document, 0, 0, false, false, roots);
+    for (var r = 1; r < roots.length; r++) {
       var ctx = roots[r];
       var root = ctx.root;
       if (!root.querySelectorAll) continue;
@@ -257,19 +331,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         for (var j = 0; j < foundLbl.length; j++) pushHit(foundLbl[j], ctx);
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
         var needle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
-        var all = root.querySelectorAll("*");
-        for (var k = 0; k < all.length; k++) {
-          var node = all[k];
-          var directText = "";
-          for (var c = 0; c < node.childNodes.length; c++) {
-            if (node.childNodes[c].nodeType === 3) directText += node.childNodes[c].textContent || "";
-          }
-          var trimmedDirect = directText.trim().toLowerCase();
-          var inputVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").toLowerCase() : "";
-          if ((trimmedDirect && trimmedDirect.includes(needle)) || (inputVal && inputVal.includes(needle))) {
-            pushHit(node, ctx);
-          }
-        }
+        findTextInRoot(root, needle, ctx, pushHit);
       }
     }
     return hits;
@@ -639,6 +701,16 @@ export function buildDomWaitForSelectorScript(
         armIdleTimer();
       }
 
+      var scheduled = false;
+      function scheduleAttempt() {
+        if (done || scheduled || checkingStability) return;
+        scheduled = true;
+        Promise.resolve().then(function() {
+          scheduled = false;
+          attempt();
+        });
+      }
+
       timeoutTimer = setTimeout(function() {
         var finalHit = checkActionableNow();
         finish(finalHit ? (forAction ? [finalHit.match] : finalHit) : []);
@@ -649,7 +721,7 @@ export function buildDomWaitForSelectorScript(
       if (typeof MutationObserver !== "undefined") {
         var root = document.documentElement || document.body || document;
         if (root) {
-          observer = new MutationObserver(attempt);
+          observer = new MutationObserver(scheduleAttempt);
           observer.observe(root, {
             childList: true,
             subtree: true,
@@ -741,10 +813,13 @@ export function buildDomWaitForMatchScript(
   const kind = JSON.stringify(opts.kind);
   const expected = JSON.stringify(opts.expected ?? null);
   const attributeName = JSON.stringify(opts.attributeName ?? null);
+  const patternSource = JSON.stringify(opts.patternSource ?? null);
+  const patternFlags = JSON.stringify(opts.patternFlags ?? "");
 
-  return `(function(sel, timeoutMs, kind, expected, attributeName) {
+  return `(function(sel, timeoutMs, kind, expected, attributeName, patternSource, patternFlags) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var lastActual = undefined;
+    var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
 
     function evaluateMatch() {
       var hits = findAcrossRoots(sel);
@@ -760,6 +835,12 @@ export function buildDomWaitForMatchScript(
           if (expected !== null && actual.toLowerCase().indexOf(String(expected).toLowerCase()) !== -1) {
             return { matched: true, actual: m.text };
           }
+        } else if (kind === "matchesText") {
+          var actualRe = m.text || "";
+          lastActual = m.text;
+          if (regex && regex.test(actualRe)) {
+            return { matched: true, actual: m.text };
+          }
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
           lastActual = val;
@@ -769,6 +850,12 @@ export function buildDomWaitForMatchScript(
           lastActual = attrVal;
           if (expected === null ? attrVal !== undefined : attrVal === expected) {
             return { matched: true, actual: attrVal };
+          }
+        } else if (kind === "accessibilityLabel") {
+          var lbl = m.accessibilityLabel;
+          lastActual = lbl;
+          if (expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected) {
+            return { matched: true, actual: lbl };
           }
         }
       }
@@ -783,6 +870,7 @@ export function buildDomWaitForMatchScript(
       var observer = null;
       var timeoutTimer = null;
       var fallbackInterval = null;
+      var scheduled = false;
 
       function finish(res) {
         if (done) return;
@@ -798,8 +886,14 @@ export function buildDomWaitForMatchScript(
       }
 
       function onChange() {
-        var res = evaluateMatch();
-        if (res) finish(res);
+        if (done || scheduled) return;
+        scheduled = true;
+        Promise.resolve().then(function() {
+          scheduled = false;
+          if (done) return;
+          var res = evaluateMatch();
+          if (res) finish(res);
+        });
       }
 
       timeoutTimer = setTimeout(function() {
@@ -827,5 +921,112 @@ export function buildDomWaitForMatchScript(
         }
       }
     });
-  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${attributeName})`;
+  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${attributeName}, ${patternSource}, ${patternFlags})`;
+}
+
+/**
+ * Atomic 1-round-trip in-page fill script: waits for an editable target to be visible,
+ * enabled, in-viewport, and unobstructed, then focuses it, sets the value via the native
+ * HTMLInputElement/HTMLTextAreaElement prototype setter (React/Vue/Svelte compatible),
+ * and dispatches `input` + `change` events.
+ */
+export function buildDomFillScript(
+  selector: Selector,
+  value: string,
+  opts: DomFillOptions = {},
+): string {
+  const serializedSel = JSON.stringify(selector);
+  const serializedVal = JSON.stringify(value);
+  const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
+  const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : true;
+
+  return `(function(sel, val, timeoutMs, checkHitTest) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    function applyFill(el) {
+      if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
+      var tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        var proto = tag === "TEXTAREA"
+          ? (window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype)
+          : (window.HTMLInputElement && window.HTMLInputElement.prototype);
+        var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+        if (desc && typeof desc.set === "function") {
+          desc.set.call(el, val);
+        } else {
+          el.value = val;
+        }
+      } else if (tag === "SELECT") {
+        el.value = val;
+      } else if (el.isContentEditable) {
+        el.textContent = val;
+      } else {
+        el.value = val;
+      }
+      try { el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: val, inputType: "insertText" })); }
+      catch (e) { el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true })); }
+      el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+      return true;
+    }
+
+    function tryNow() {
+      if (!isAppReady()) return false;
+      var hits = findAcrossRoots(sel);
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var h = hits[i];
+        var m = toMatch(h);
+        if (!m.visible || !m.enabled) continue;
+        ensureInViewport(h);
+        if (checkHitTest && !isHitTestClear(h)) continue;
+        return applyFill(h.el);
+      }
+      return false;
+    }
+
+    if (tryNow()) return true;
+
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+      var scheduled = false;
+
+      function finish(ok) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        resolve(ok);
+      }
+
+      function onChange() {
+        if (done || scheduled) return;
+        scheduled = true;
+        Promise.resolve().then(function() {
+          scheduled = false;
+          if (!done && tryNow()) finish(true);
+        });
+      }
+
+      timeoutTimer = setTimeout(function() {
+        finish(tryNow());
+      }, timeoutMs);
+
+      fallbackInterval = setInterval(onChange, 40);
+
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(onChange);
+          observer.observe(root, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true
+          });
+        }
+      }
+    });
+  })(${serializedSel}, ${serializedVal}, ${timeoutMs}, ${checkHitTest})`;
 }

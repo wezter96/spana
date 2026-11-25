@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { Effect, Layer } from "effect";
 import {
+  buildDomFillScript,
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
@@ -1006,6 +1007,10 @@ export function makePlaywrightDriver(
               return res && typeof res === "object"
                 ? (res as DomWaitForMatchResult)
                 : { matched: false };
+            },
+            fillDom: async (selector, value, opts) => {
+              const res = await page.evaluate(buildDomFillScript(selector, value, opts));
+              return Boolean(res);
             },
             scrollIntoView: async (selector) => {
               const res = await page.evaluate(buildDomScrollIntoViewScript(selector));

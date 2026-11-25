@@ -108,18 +108,39 @@ function buildEngineConfig(
 export interface PrelaunchedWebBrowser {
   browserPromise: Promise<Browser>;
   ownsBrowser: boolean;
+  /** Populated when `execution.web.engine === "cdp"` speculatively launches direct Chromium. */
+  cdpBrowserPromise?: Promise<DirectCdpBrowserHandle>;
 }
 
 /**
- * Start launching (or connecting to a warm/CDP) Playwright browser immediately
+ * Start launching (or connecting to a warm/CDP) browser immediately
  * so browser boot overlaps with flow discovery and TypeScript imports.
  */
 export function speculativelyPrelaunchWebBrowser(
   config: ProvConfig,
 ): PrelaunchedWebBrowser | undefined {
   const webExecution = config.execution?.web;
-  if (webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
+  if (webExecution?.engine === "lightpanda") {
     return undefined;
+  }
+
+  if (webExecution?.engine === "cdp") {
+    if (webExecution.cdpUrl) return undefined;
+    const useWarm = webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
+    const cdpBrowserPromise = launchDirectCdpBrowser({
+      executablePath: webExecution.executablePath,
+      headless: webExecution.headless ?? true,
+      warmBrowser: useWarm,
+      warmBrowserScope: webExecution.warmBrowserScope
+        ? `${webExecution.warmBrowserScope}-w0`
+        : undefined,
+    });
+    cdpBrowserPromise.catch(() => {});
+    return {
+      browserPromise: Promise.resolve(undefined as unknown as Browser),
+      ownsBrowser: false,
+      cdpBrowserPromise,
+    };
   }
 
   const useWarm =
@@ -156,7 +177,8 @@ export async function buildWebRuntime(
   const webExecution = config.execution?.web;
   const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
 
-  const prelaunchedBrowser = prelaunched ? await prelaunched.browserPromise : undefined;
+  const prelaunchedBrowser =
+    prelaunched && !prelaunched.cdpBrowserPromise ? await prelaunched.browserPromise : undefined;
   let launchedDirectCdp: DirectCdpBrowserHandle | undefined;
 
   let rawDriver;
@@ -164,12 +186,17 @@ export async function buildWebRuntime(
     let targetCdpUrl = webExecution.cdpUrl;
     const useContexts = webExecution.engine === "cdp";
     if (!targetCdpUrl && webExecution.engine === "cdp") {
-      launchedDirectCdp = await launchDirectCdpBrowser({
-        executablePath: webExecution.executablePath,
-        headless: webExecution.headless ?? true,
-        warmBrowser: webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
-        warmBrowserScope: webExecution.warmBrowserScope,
-      });
+      launchedDirectCdp = prelaunched?.cdpBrowserPromise
+        ? await prelaunched.cdpBrowserPromise
+        : await launchDirectCdpBrowser({
+            executablePath: webExecution.executablePath,
+            headless: webExecution.headless ?? true,
+            warmBrowser:
+              webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
+            warmBrowserScope: webExecution.warmBrowserScope
+              ? `${webExecution.warmBrowserScope}-w0`
+              : undefined,
+          });
       targetCdpUrl = launchedDirectCdp.browserWsUrl;
     }
     rawDriver = await Effect.runPromise(
@@ -276,16 +303,18 @@ export async function buildWebRuntimePool(
     if (useExternalCdp) {
       handles.push({ cdpUrl: webExecution.cdpUrl!, remaining: workerCount });
     } else {
+      const useWarm = webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
+      const baseScope = webExecution.warmBrowserScope ?? "pool";
       const launched = await Promise.all(
         Array.from({ length: browserCount }, (_v, bIdx) =>
-          launchDirectCdpBrowser({
-            executablePath: webExecution.executablePath,
-            headless: webExecution.headless ?? true,
-            warmBrowser:
-              bIdx === 0 &&
-              (webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false),
-            warmBrowserScope: webExecution.warmBrowserScope,
-          }),
+          bIdx === 0 && prelaunched?.cdpBrowserPromise
+            ? prelaunched.cdpBrowserPromise
+            : launchDirectCdpBrowser({
+                executablePath: webExecution.executablePath,
+                headless: webExecution.headless ?? true,
+                warmBrowser: useWarm,
+                warmBrowserScope: `${baseScope}-w${bIdx}`,
+              }),
         ),
       );
       for (const h of launched) {

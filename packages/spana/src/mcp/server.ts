@@ -139,6 +139,19 @@ export const SPANA_MCP_TOOLS: McpToolDefinition[] = [
     },
   },
   {
+    name: "spana_fill",
+    description:
+      "Atomically focus, clear, and fill an input/textarea in 1 round trip and return the verified `app.fill(...)` line.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "object" },
+        value: { type: "string" },
+      },
+      required: ["selector", "value"],
+    },
+  },
+  {
     name: "spana_assert_visible",
     description:
       "Verify that an element matching selector is currently visible on screen and return the verified `expect(...)` line.",
@@ -148,6 +161,38 @@ export const SPANA_MCP_TOOLS: McpToolDefinition[] = [
         selector: { type: "object" },
       },
       required: ["selector"],
+    },
+  },
+  {
+    name: "spana_assert_accessible",
+    description:
+      "Run a live WCAG accessibility audit (axe-core on web) and record `await expect.screen().toBeAccessible(...)` into the generated `.flow.ts`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        standard: {
+          type: "string",
+          enum: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
+        },
+        failOnSeverity: {
+          type: "string",
+          enum: ["critical", "serious", "moderate", "minor"],
+        },
+      },
+    },
+  },
+  {
+    name: "spana_assert_screenshot",
+    description:
+      "Capture/verify a visual regression checkpoint (accelerated by Spana's Rust SIMD PNG diff) and record `await expect.screen().toMatchScreenshot(...)` into the generated `.flow.ts`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        mode: { type: "string", enum: ["pixel", "layout-tolerant"] },
+        maxDiffPixelRatio: { type: "number" },
+      },
+      required: ["name"],
     },
   },
   {
@@ -372,6 +417,72 @@ export class SpanaMcpServer {
           const codeLine = `await app.inputText(${JSON.stringify(text)});`;
           this.recordedLines.push(codeLine);
           return this.jsonResult({ ok: true, codeLine });
+        }
+
+        case "spana_fill": {
+          const session = this.requireSession();
+          const selector = args["selector"] as ExtendedSelector;
+          const value = String(args["value"] ?? "");
+          await session.tap(selector);
+          await session.inputText(value);
+          const codeLine = `await app.fill(${formatSelectorCode(selector)}, ${JSON.stringify(value)});`;
+          this.recordedLines.push(codeLine);
+          return this.jsonResult({ ok: true, codeLine });
+        }
+
+        case "spana_assert_accessible": {
+          const session = this.requireSession();
+          const standard = (args["standard"] as string | undefined) ?? "wcag21aa";
+          const failOnSeverity = (args["failOnSeverity"] as string | undefined) ?? "serious";
+          const optsObj: Record<string, string> = {};
+          if (args["standard"]) optsObj["standard"] = standard;
+          if (args["failOnSeverity"]) optsObj["failOnSeverity"] = failOnSeverity;
+          const optsArg = Object.keys(optsObj).length > 0 ? JSON.stringify(optsObj) : "";
+          const codeLine = `await expect.screen().toBeAccessible(${optsArg});`;
+          // Run a fast DOM accessibility sanity snapshot when on web
+          let quickIssues: string[] = [];
+          if (session.platform === "web") {
+            const elements = await session.selectors().catch(() => []);
+            quickIssues = elements
+              .filter((e) => !e.text && !e.accessibilityLabel)
+              .slice(0, 10)
+              .map((e) => `Unlabeled interactive control (${e.elementType ?? "element"})`);
+          }
+          this.recordedLines.push(codeLine);
+          return this.jsonResult({
+            ok: true,
+            codeLine,
+            standard,
+            failOnSeverity,
+            quickIssues,
+          });
+        }
+
+        case "spana_assert_screenshot": {
+          const session = this.requireSession();
+          const shotName = String(args["name"] ?? "screen");
+          const png = await session.screenshot();
+          const optsObj: Record<string, unknown> = {};
+          if (typeof args["mode"] === "string") optsObj["mode"] = args["mode"];
+          if (typeof args["maxDiffPixelRatio"] === "number") {
+            optsObj["maxDiffPixelRatio"] = args["maxDiffPixelRatio"];
+          }
+          const optsArg = Object.keys(optsObj).length > 0 ? `, ${JSON.stringify(optsObj)}` : "";
+          const codeLine = `await expect.screen().toMatchScreenshot(${JSON.stringify(shotName)}${optsArg});`;
+          this.recordedLines.push(codeLine);
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ ok: true, name: shotName, codeLine, bytes: png.byteLength }),
+              },
+              {
+                type: "image",
+                data: Buffer.from(png).toString("base64"),
+                mimeType: "image/png",
+              },
+            ],
+          };
         }
 
         case "spana_assert_visible": {

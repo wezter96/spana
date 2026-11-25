@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import {
+  buildDomFillScript,
   buildDomWaitForHiddenScript,
   buildDomWaitForMatchScript,
   buildDomWaitForSelectorScript,
@@ -15,6 +16,10 @@ import { makeLightweightCdpDriver } from "../drivers/cdp-browser.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import { applyShard } from "./runner.js";
 import { deterministicImpactFilter, type FilterCandidate } from "./filters.js";
+import { compareScreenshots } from "./screenshot-compare.js";
+import { isNativeAcceleratorActive } from "./native-accel.js";
+import { tokenizeXML } from "../drivers/common/xml-tokenizer.js";
+import { PNG } from "pngjs";
 import {
   createApiClient,
   createApiFixture,
@@ -62,7 +67,7 @@ function createBaseDriver(domChannel?: DomChannel): RawDriverService {
 }
 
 describe("in-page actionability & zero-polling DOM waits", () => {
-  test("buildDomWaitForSelectorScript includes app-ready, hit-test, scrollIntoView, and 2-rAF stability", () => {
+  test("buildDomWaitForSelectorScript uses light-DOM fast path, TreeWalker, and full actionability", () => {
     const script = buildDomWaitForSelectorScript({ testID: "submit" }, { forAction: true });
     expect(script).toContain("__SPANA_APP_READY__");
     expect(script).toContain("deepElementFromPoint");
@@ -70,6 +75,12 @@ describe("in-page actionability & zero-polling DOM waits", () => {
     expect(script).toContain("ensureInViewport");
     expect(script).toContain("requestAnimationFrame");
     expect(script).toContain("__spana_instant_anim");
+    expect(script).toContain("createTreeWalker");
+    expect(script).toContain("fastTid");
+
+    const fillScript = buildDomFillScript({ testID: "email" }, "alice@example.com");
+    expect(fillScript).toContain("HTMLInputElement");
+    expect(fillScript).toContain("alice@example.com");
   });
 
   test("buildDomWaitForHiddenScript and buildDomWaitForMatchScript emit reactive MutationObserver scripts", () => {
@@ -140,10 +151,44 @@ describe("in-page actionability & zero-polling DOM waits", () => {
 
     await Effect.runPromise(coord.assertText({ testID: "h1" }, "Welcome"));
     await Effect.runPromise(coord.assertContainsText({ testID: "h1" }, "Wel"));
+    await Effect.runPromise(coord.assertMatchesText({ testID: "h1" }, /^Wel/));
     await Effect.runPromise(coord.assertValue({ testID: "email" }, "a@b.co"));
     await Effect.runPromise(coord.assertAttribute({ testID: "btn" }, "data-state", "ready"));
+    await Effect.runPromise(coord.assertAccessibilityLabel({ testID: "btn" }, "Save"));
 
-    expect(seenKinds).toEqual(["text", "containsText", "value", "attribute"]);
+    expect(seenKinds).toEqual([
+      "text",
+      "containsText",
+      "matchesText",
+      "value",
+      "attribute",
+      "accessibilityLabel",
+    ]);
+  });
+
+  test("coordinator.fill uses atomic 1-RTT domChannel.fillDom on web", async () => {
+    const filled: Array<{ sel: unknown; val: string }> = [];
+    const domChannel: DomChannel = {
+      kind: "cdp",
+      isConnected: () => true,
+      connect: async () => {},
+      disconnect: async () => {},
+      evaluate: async () => undefined as any,
+      query: async () => [],
+      fillDom: async (sel, val) => {
+        filled.push({ sel, val });
+        return true;
+      },
+      tapDom: async () => true,
+    };
+    const driver = createBaseDriver(domChannel);
+    const coord = createCoordinator(driver, {
+      parse: (raw) => JSON.parse(raw) as Element,
+      platform: "web",
+    });
+
+    await Effect.runPromise(coord.fill({ testID: "email" }, "hello@spana.dev"));
+    expect(filled).toEqual([{ sel: { testID: "email" }, val: "hello@spana.dev" }]);
   });
 });
 
@@ -239,10 +284,21 @@ describe("direct CDP driver isolated browser contexts, prefetch & WebAuthn", () 
     await Effect.runPromise(driver.beginFlow!("flow-2"));
     expect((driver.getRawPage!() as any).sessionId).toBe("sid-2");
 
+    // Multi-tab management & network conditions over direct CDP
+    const tab2 = await Effect.runPromise(driver.newTab!("https://example.com"));
+    expect(tab2).toMatch(/^tab-/);
+    const tabIds = await Effect.runPromise(driver.getTabIds!());
+    expect(tabIds).toHaveLength(2);
+    await Effect.runPromise(driver.switchToTab!(0));
+    await Effect.runPromise(driver.closeTab!());
+    expect(await Effect.runPromise(driver.getTabIds!())).toHaveLength(1);
+    await Effect.runPromise(driver.setNetworkConditions!({ profile: "3g" }));
+
     await Effect.runPromise(driver.killApp(""));
     expect(sent.some((m) => m.method === "Target.createBrowserContext")).toBe(true);
     expect(sent.some((m) => m.method === "Target.disposeBrowserContext")).toBe(true);
     expect(sent.some((m) => m.method === "WebAuthn.addVirtualAuthenticator")).toBe(true);
+    expect(sent.some((m) => m.method === "Network.emulateNetworkConditions")).toBe(true);
   });
 });
 
@@ -427,5 +483,43 @@ describe("LPT balanced sharding & deterministic zero-AI impact filter", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Rust native accelerator (visual regression PNG diff & quick-xml tokenizer)", () => {
+  function makeSolidPng(width: number, height: number, r: number, g: number, b: number): Buffer {
+    const png = new PNG({ width, height });
+    for (let i = 0; i < width * height * 4; i += 4) {
+      png.data[i] = r;
+      png.data[i + 1] = g;
+      png.data[i + 2] = b;
+      png.data[i + 3] = 255;
+    }
+    return PNG.sync.write(png);
+  }
+
+  test("loads Rust native library when built and performs fast PNG diff + XML tokenization", () => {
+    expect(typeof isNativeAcceleratorActive()).toBe("boolean");
+
+    const red = makeSolidPng(64, 64, 220, 40, 40);
+    const blue = makeSolidPng(64, 64, 40, 80, 220);
+
+    const same = compareScreenshots(red, red);
+    expect(same.match).toBe(true);
+    expect(same.diffPixelCount).toBe(0);
+
+    const diff = compareScreenshots(red, blue, { threshold: 0.2, maxDiffPixelRatio: 0.01 });
+    expect(diff.match).toBe(false);
+    expect(diff.diffPixelCount).toBe(64 * 64);
+    expect(diff.diffPixelRatio).toBeCloseTo(1, 2);
+    expect(diff.diffImage).toBeDefined();
+    expect(diff.diffImage!.byteLength).toBeGreaterThan(50);
+
+    const xml = `<?xml version="1.0"?><hierarchy><android.widget.FrameLayout bounds="[0,0][1080,2400]" enabled="true"><android.widget.Button text="Continue" resource-id="btn-ok" enabled="true" /></android.widget.FrameLayout></hierarchy>`;
+    const nodes = tokenizeXML(xml, "hierarchy");
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]!.tagName).toBe("android.widget.FrameLayout");
+    expect(nodes[0]!.children).toHaveLength(1);
+    expect(nodes[0]!.children[0]!.attrs["resource-id"]).toBe("btn-ok");
   });
 });
