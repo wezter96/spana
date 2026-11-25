@@ -20,7 +20,7 @@ flow(name: string, config: FlowConfig, fn: FlowFn): FlowDefinition
 ### Basic flow
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });

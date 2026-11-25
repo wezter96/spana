@@ -1,4 +1,4 @@
-import { flow } from "spana";
+import { flow } from "spana-test";
 import { navigateToPlaygroundScreen } from "./support/navigation.js";
 
 export default flow(

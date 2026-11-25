@@ -161,7 +161,7 @@
       },
     },
     "packages/spana": {
-      "name": "spana",
+      "name": "spana-test",
       "version": "0.8.0",
       "bin": {
         "spana": "dist/cli.js",
@@ -3135,9 +3135,9 @@
 
     "space-separated-tokens": ["space-separated-tokens@2.0.2", "", {}, "sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q=="],
 
-    "spana": ["spana@workspace:packages/spana"],
-
     "spana-bridge": ["spana-bridge@workspace:packages/spana-bridge"],
+
+    "spana-test": ["spana-test@workspace:packages/spana"],
 
     "spdx-correct": ["spdx-correct@3.2.0", "", { "dependencies": { "spdx-expression-parse": "^3.0.0", "spdx-license-ids": "^3.0.0" } }, "sha512-kN9dJbvnySHULIluDHy32WHRUu3Og7B9sbY7tsFLctQkIqnMh3hErYgdMjTYuqmcXX+lK5T1lnUt3G7zNswmZA=="],
 

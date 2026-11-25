@@ -1,4 +1,4 @@
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 const WEB_BASE_URL = "http://127.0.0.1:8081";
 

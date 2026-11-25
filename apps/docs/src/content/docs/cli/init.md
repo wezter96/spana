@@ -40,7 +40,7 @@ Then it creates:
 ## Generated config
 
 ```ts title="spana.config.ts"
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -59,7 +59,7 @@ export default defineConfig({
 ## Generated flow
 
 ```ts title="flows/example.flow.ts"
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow(
   "Example - app loads successfully",
@@ -89,7 +89,7 @@ Install `spana-bridge` in your test builds to use the DOM bridge.
 
 After running `spana init`:
 
-1. Install spana: `npm install -D spana`
+1. Install spana: `npm install -D spana-test`
 2. Add `spana-output` to your `.gitignore`
 3. Edit `flows/example.flow.ts` with selectors from your app
 4. Discover selectors: `spana selectors`

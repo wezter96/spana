@@ -3,7 +3,7 @@ title: CI/CD Integration
 description: Run spana tests in continuous integration pipelines with structured reporting and artifacts.
 ---
 
-spana is designed for CI from the ground up. It ships as a single npm package (`spana`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
+spana is designed for CI from the ground up. It ships as a single npm package (`spana-test`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
 
 ## Exit codes
 
@@ -41,7 +41,7 @@ Run only the flows affected by a pull request while staying **fail-open**. `--ch
 
 `--changed-since` does nothing without a `filters` list in config: spana prints a warning and runs all flows. If git fails (for example, the base ref is missing in a shallow clone), spana also fails open and runs all flows. If one filter throws, that filter is skipped and keeps every flow it received (flows an earlier filter excluded stay excluded). If the filters exclude every flow, the run exits `0`.
 
-Built-in filters (all exported from `spana`):
+Built-in filters (all exported from `spana-test`):
 
 - **`pathRuleFilter`** — deterministic, no LLM. Maps flow tags or file prefixes to watched source paths. Flows that no rule owns always run.
 - **`deterministicImpactFilter`** — deterministic, no LLM. Uses path mappings and the import graph; by default, unmapped changes run everything.
@@ -51,7 +51,12 @@ All three always keep changed flow files and flows with `alwaysRunTags`, and run
 
 ```ts
 // spana.config.ts
-import { defineConfig, decisionFilter, createLogprobDecisionJudge, pathRuleFilter } from "spana";
+import {
+  defineConfig,
+  decisionFilter,
+  createLogprobDecisionJudge,
+  pathRuleFilter,
+} from "spana-test";
 
 export default defineConfig({
   filters: [
@@ -170,7 +175,7 @@ jobs:
 | `tags`              | —                    | Filter by tags                                            |
 | `grep`              | —                    | Filter by name pattern                                    |
 | `working-directory` | `.`                  | Directory to run spana in                                 |
-| `version`           | `latest`             | `spana` version to install                                |
+| `version`           | `latest`             | `spana-test` version to install                           |
 | `upload-artifacts`  | `true`               | Upload `spana-output/` and `allure-results/` as artifacts |
 
 The action also sets a `result` output (`pass` or `fail`).
@@ -198,7 +203,7 @@ jobs:
         run: npm ci
 
       - name: Install spana
-        run: npm install -g spana
+        run: npm install -g spana-test
 
       - name: Install Chromium
         run: npx playwright install chromium
@@ -249,7 +254,7 @@ e2e-android:
         node-version: 24
 
     - name: Install spana
-      run: npm install -g spana
+      run: npm install -g spana-test
 
     - name: Set up Android emulator
       uses: reactivecircus/android-emulator-runner@v2
@@ -282,7 +287,7 @@ e2e-ios:
         node-version: 24
 
     - name: Install spana
-      run: npm install -g spana
+      run: npm install -g spana-test
 
     - name: Boot iOS Simulator
       run: |
@@ -308,7 +313,7 @@ e2e-web:
   stage: test
   script:
     - npm ci
-    - npm install -g spana
+    - npm install -g spana-test
     - npm run dev &
     - npx wait-on http://localhost:3000
     - spana test --platform web --reporter console,junit,html
@@ -331,4 +336,4 @@ GitLab natively parses JUnit XML when declared under `artifacts.reports.junit`, 
 - **Scale web workers.** `--workers <n>` runs `n` isolated browser contexts, spread over browser processes by `execution.web.maxContextsPerBrowser`.
 - **Split across jobs.** `--shard <current>/<total>` runs one slice of the flows per CI job.
 - **Use tags to split pipelines.** Run `spana test --tag smoke` on every push and `spana test --tag regression` on a nightly schedule to balance speed and coverage.
-- **Pin spana version.** Use `npm install -g spana@<version>` (for example `spana@0.7.0`) in CI to avoid unexpected breakage from new releases.
+- **Pin spana version.** Use `npm install -g spana-test@<version>` (for example `spana-test@0.7.0`) in CI to avoid unexpected breakage from new releases.

@@ -6,9 +6,9 @@ description: Install spana, configure it, and run your first flow.
 ## 1. Install
 
 ```bash
-npm install spana
+npm install spana-test
 # or
-bun add spana
+bun add spana-test
 ```
 
 spana works with Node.js 20+ and [Bun](https://bun.sh).
@@ -18,7 +18,7 @@ spana works with Node.js 20+ and [Bun](https://bun.sh).
 Create `spana.config.ts` at the root of your project:
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -37,7 +37,7 @@ Start with `platforms: ["web"]` while getting familiar with the framework, then 
 Create `flows/login.flow.ts`:
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });

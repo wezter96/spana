@@ -69,7 +69,7 @@ Save as `caps/browserstack-ios.json`:
 Create or update `spana.config.ts`:
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {

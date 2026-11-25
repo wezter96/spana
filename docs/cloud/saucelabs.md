@@ -62,7 +62,7 @@ Save as `caps/saucelabs-ios.json`:
 ## 3. Configure Spana
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {

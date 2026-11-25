@@ -93,7 +93,7 @@ export function generateFlowCode(flowName: string, actions: RecordedAction[]): s
   const lines = actions.map((action) => `  ${generateActionLine(action)}`);
   const body = lines.length > 0 ? `\n${lines.join("\n")}\n` : "\n";
 
-  return `import { flow } from "spana";
+  return `import { flow } from "spana-test";
 
 export default flow("${flowName}", async ({ app, expect }) => {${body}});`;
 }

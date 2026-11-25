@@ -103,19 +103,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install Playwright Chromium for CI test suite
+        run: bunx playwright-core install chromium
+
       - name: Verify lint, types & tests
         run: |
           bun run lint
           CI=1 bun run check-types
           bun run test
 
-      - name: Build Studio, spana & spana-bridge
+      - name: Build Studio, spana-test & spana-bridge
         run: |
           (cd apps/studio && bun run build)
           (cd packages/spana && bun run build)
           (cd packages/spana-bridge && bun run build)
 
-      - name: Publish spana
+      - name: Publish spana-test
         working-directory: packages/spana
         run: npm publish --provenance --access public
         env:

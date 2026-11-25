@@ -228,7 +228,7 @@ Today the CLI only calls `createHelper()` (and the helper's `prepareCapabilities
 ### `CloudProvider`
 
 ```ts
-import type { CloudProvider, CloudProviderHelper } from "spana";
+import type { CloudProvider, CloudProviderHelper } from "spana-test";
 
 const provider: CloudProvider = {
   name() {

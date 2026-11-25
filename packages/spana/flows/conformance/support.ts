@@ -1,4 +1,4 @@
-import type { FlowContext } from "spana";
+import type { FlowContext } from "spana-test";
 
 /**
  * Navigate to the playground screen from a cold launch.

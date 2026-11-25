@@ -7,10 +7,10 @@ Custom reporters let you push results into Slack, internal dashboards, CSV files
 
 ## Reporter shape
 
-Import reporter types from `spana`:
+Import reporter types from `spana-test`:
 
 ```ts
-import type { Reporter, FlowResult, RunSummary } from "spana";
+import type { Reporter, FlowResult, RunSummary } from "spana-test";
 
 const reporter: Reporter = {
   onFlowStart(name, platform, workerName) {
@@ -34,7 +34,7 @@ All hooks except `onRunComplete` are optional. `onFlowPass` and `onFlowFail` fir
 ## Registering a reporter
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   reporters: ["console", "./reporters/slack.ts"],
@@ -48,7 +48,7 @@ Paths that start with `.` are resolved relative to the directory of `spana.confi
 If your reporter needs options, export a factory function:
 
 ```ts
-import type { Reporter } from "spana";
+import type { Reporter } from "spana-test";
 
 export default function createCsvReporter(options: { outputDir: string }): Reporter {
   return {
@@ -158,7 +158,7 @@ interface FlowError {
 Spana does not await reporter hooks, and the process exits soon after `onRunComplete`. An async hook like this one can be cut off before the request finishes, so keep the work small or write to disk synchronously.
 
 ```ts
-import type { Reporter } from "spana";
+import type { Reporter } from "spana-test";
 
 const reporter: Reporter = {
   async onFlowFail(result) {

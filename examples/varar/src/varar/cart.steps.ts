@@ -1,5 +1,5 @@
 import { steps } from "@varar/varar";
-import { connect, type Session } from "spana/agent";
+import { connect, type Session } from "spana-test/agent";
 import { afterAll } from "vitest";
 
 let session: Session | undefined;

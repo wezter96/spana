@@ -47,7 +47,7 @@ function generateConfig(answers: PlatformAnswers): string {
     platforms.push('"ios"');
   }
 
-  return `import { defineConfig } from "spana";
+  return `import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -65,7 +65,7 @@ ${apps.join("\n")}
 
 function generateExampleFlow(platforms: string[]): string {
   const platformsArr = platforms.map((p) => `"${p}"`).join(", ");
-  return `import { flow } from "spana";
+  return `import { flow } from "spana-test";
 
 export default flow(
   "Example - app loads successfully",
@@ -80,7 +80,7 @@ export default flow(
 }
 
 function generateWebFirstPresetConfig(): string {
-  return `import { defineConfig } from "spana";
+  return `import { defineConfig } from "spana-test";
 
 export default defineConfig({
   platforms: ["web", "android", "ios", "electron", "electrobun"],
@@ -107,7 +107,7 @@ export default defineConfig({
 }
 
 function generateWebFirstExampleFlow(): string {
-  return `import { flow, systemUI } from "spana";
+  return `import { flow, systemUI } from "spana-test";
 
 export default flow(
   "OAuth sign-in across web, Capacitor, Electron, and Electrobun",
@@ -186,7 +186,7 @@ export async function runInitCommand(options: InitOptions): Promise<boolean> {
     }
 
     console.log("\n  Next steps:");
-    console.log("    1. npm install -D spana");
+    console.log("    1. npm install -D spana-test");
     console.log('    2. Add "spana-output" to your .gitignore');
     console.log("    3. Edit flows/example.flow.ts with your app's selectors");
     console.log("    4. Run: npx spana test");

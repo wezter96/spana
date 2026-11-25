@@ -33,7 +33,7 @@ inputs:
     required: false
     default: "."
   version:
-    description: "spana version to install (default: latest)"
+    description: "spana-test version to install (default: latest)"
     required: false
     default: "latest"
   upload-artifacts:
@@ -55,9 +55,9 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Install spana
+    - name: Install spana-test
       shell: bash
-      run: npm install -g spana@${{ inputs.version }}
+      run: npm install -g spana-test@${{ inputs.version }}
 
     - name: Run spana tests
       id: run

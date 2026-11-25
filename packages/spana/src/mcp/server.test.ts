@@ -113,7 +113,7 @@ describe("Spana stdio MCP server (spana mcp)", () => {
     const stopped = await server.callTool("spana_session_stop", { flowName: "SSO Sign-In" });
     const stopData = JSON.parse(stopped.content[0]!.text!);
     expect(stopData.stepCount).toBe(3);
-    expect(stopData.code).toContain('import { flow, systemUI } from "spana";');
+    expect(stopData.code).toContain('import { flow, systemUI } from "spana-test";');
     expect(stopData.code).toContain('await app.tap(systemUI({"text":"Continue"}));');
     expect(stopData.code).toContain('await expect({"testID":"profile-id"}).toBeVisible();');
     expect(stub.events).toContain("disconnect");
@@ -121,6 +121,6 @@ describe("Spana stdio MCP server (spana mcp)", () => {
 
   test("buildFlowFileFromLines omits systemUI import when unused", () => {
     const code = buildFlowFileFromLines("simple", ['await app.tap({"testID":"go"});']);
-    expect(code).toContain('import { flow } from "spana";');
+    expect(code).toContain('import { flow } from "spana-test";');
   });
 });

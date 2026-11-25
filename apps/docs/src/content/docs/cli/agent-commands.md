@@ -45,7 +45,7 @@ The flow `expect` API has no `expect.screen()` today, so lines recorded by `span
 
 ## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
 
-`ReplaySession` and `ReplayCacheStore` (exported from `spana`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
+`ReplaySession` and `ReplayCacheStore` (exported from `spana-test`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
 
 `ReplaySession` has three modes: `read-write` (default: on a miss or mismatch, hand off to the executor and save the healed recording), `strict` (fail on a missing or mismatched recording), and `off`.
 
@@ -203,15 +203,15 @@ graph LR
 
 ## Agent skill file
 
-spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spanaing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
+spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spana-testing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
 
 **To use it with your AI agent:**
 
 1. Copy the skill file into your project:
 
    ```bash
-   mkdir -p .agents/skills/spanaing
-   cp node_modules/spana/.agents/skills/spanaing/SKILL.md .agents/skills/spanaing/
+   mkdir -p .agents/skills/spana-testing
+   cp node_modules/spana-test/.agents/skills/spana-testing/SKILL.md .agents/skills/spana-testing/
    ```
 
 2. Or reference it in your `CLAUDE.md` / `AGENTS.md`:
@@ -220,12 +220,12 @@ spana ships with a ready-made skill file for AI coding agents at `.agents/skills
    ## Testing
 
    For writing E2E tests, follow the spana testing skill at:
-   .agents/skills/spanaing/SKILL.md
+   .agents/skills/spana-testing/SKILL.md
    ```
 
 3. Or point your agent to it directly:
    ```
-   Read .agents/skills/spanaing/SKILL.md and use it to write a test for the login flow.
+   Read .agents/skills/spana-testing/SKILL.md and use it to write a test for the login flow.
    ```
 
 The skill file is self-contained — it includes the full API reference, workflow loop, and common patterns so the agent can start writing tests immediately.

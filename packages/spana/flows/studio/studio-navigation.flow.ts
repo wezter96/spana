@@ -1,4 +1,4 @@
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow(
   "Studio - inspector selects live elements and recorder surfaces render",

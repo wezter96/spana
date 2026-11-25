@@ -1,4 +1,4 @@
-import { Given, When, Then } from "spana/steps";
+import { Given, When, Then } from "spana-test/steps";
 import { buildFrameworkHref, navigateToHomeScreen } from "../support/navigation.js";
 
 // --- Navigation steps ---

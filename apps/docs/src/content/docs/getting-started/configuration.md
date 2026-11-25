@@ -6,7 +6,7 @@ description: Full reference for defineConfig() and all spana configuration optio
 Configuration lives in `spana.config.ts` at the project root. Pass the config object to `defineConfig` for type safety.
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   // ...
@@ -20,7 +20,7 @@ Run `spana validate-config` to validate the file without starting drivers or dis
 ## Full example
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -455,7 +455,7 @@ export default defineConfig({
 The `flow()` function accepts an optional config object as its second argument, letting you override global settings for a single flow.
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 flow(
   "checkout",
@@ -632,4 +632,4 @@ These values become defaults for `expect(selector).toMatchScreenshot(name, optio
 filters?: TestFilter[]
 ```
 
-CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).
+CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana-test` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).

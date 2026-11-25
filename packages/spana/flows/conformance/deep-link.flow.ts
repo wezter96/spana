@@ -1,4 +1,4 @@
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 /**
  * Proves `launchApp({ deepLink })` navigates to the target route on Android

@@ -3,7 +3,7 @@ title: Introduction
 description: What spana is, why it exists, its dual-channel web-first engine, and its core principles.
 ---
 
-**spana** is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
+**spana** (`spana-test`) is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
 
 ## Why spana
 
@@ -38,8 +38,8 @@ Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 
 ## Monorepo structure
 
-- `packages/spana` (`spana`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
+- `packages/spana` (`spana-test`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
 - `packages/spana-bridge` (`spana-bridge`) — optional in-app WebSocket bridge for hybrid/desktop targets
 - `apps/docs` — documentation & landing page (`https://spana.antonwester.se`)
-- `apps/studio` — Spana Studio web UI (embedded into `spana`)
+- `apps/studio` — Spana Studio web UI (embedded into `spana-test`)
 - `benchmarks/` — reproducible head-to-head framework and MCP agent benchmarks

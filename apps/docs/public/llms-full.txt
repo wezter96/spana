@@ -11,7 +11,7 @@
 
 ## Introduction
 
-**spana** is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
+**spana** (`spana-test`) is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
 
 ## Why spana
 
@@ -46,10 +46,10 @@ Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 
 ## Monorepo structure
 
-- `packages/spana` (`spana`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
+- `packages/spana` (`spana-test`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
 - `packages/spana-bridge` (`spana-bridge`) — optional in-app WebSocket bridge for hybrid/desktop targets
 - `apps/docs` — documentation & landing page (`https://spana.antonwester.se`)
-- `apps/studio` — Spana Studio web UI (embedded into `spana`)
+- `apps/studio` — Spana Studio web UI (embedded into `spana-test`)
 - `benchmarks/` — reproducible head-to-head framework and MCP agent benchmarks
 
 ---
@@ -59,9 +59,9 @@ Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 ## 1. Install
 
 ```bash
-npm install spana
+npm install spana-test
 # or
-bun add spana
+bun add spana-test
 ```
 
 spana works with Node.js 20+ and [Bun](https://bun.sh).
@@ -71,7 +71,7 @@ spana works with Node.js 20+ and [Bun](https://bun.sh).
 Create `spana.config.ts` at the root of your project:
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -90,7 +90,7 @@ Start with `platforms: ["web"]` while getting familiar with the framework, then 
 Create `flows/login.flow.ts`:
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });
@@ -205,7 +205,7 @@ before each DOM action, instead of acting on a loading screen. See [Debugging](/
 | --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | 1   | `spana mcp`                                            | One live session for all tool calls. The agent does not start a new browser each time.  | Your agent has no MCP support.                                                       |
 | 2   | `spana selectors`, `spana hierarchy`, `spana validate` | Plain CLI. Works in any agent.                                                          | You call them many times in a row: each call starts a new browser or driver session. |
-| 3   | `connect()` from `spana/agent`                    | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
+| 3   | `connect()` from `spana-test/agent`                    | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
 
 When the agent has a working flow, save it as a `.flow.ts` file and run it with `spana test`
 (suite option #1).
@@ -217,7 +217,7 @@ When the agent has a working flow, save it as a `.flow.ts` file and run it with 
 Configuration lives in `spana.config.ts` at the project root. Pass the config object to `defineConfig` for type safety.
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   // ...
@@ -231,7 +231,7 @@ Run `spana validate-config` to validate the file without starting drivers or dis
 ## Full example
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -666,7 +666,7 @@ export default defineConfig({
 The `flow()` function accepts an optional config object as its second argument, letting you override global settings for a single flow.
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 flow(
   "checkout",
@@ -843,7 +843,7 @@ These values become defaults for `expect(selector).toMatchScreenshot(name, optio
 filters?: TestFilter[]
 ```
 
-CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).
+CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana-test` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).
 
 ---
 
@@ -1018,7 +1018,7 @@ flow(name: string, config: FlowConfig, fn: FlowFn): FlowDefinition
 ### Basic flow
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });
@@ -1501,7 +1501,7 @@ Matches the OS-level accessibility label exactly (on web, the `aria-label` attri
 ### System UI
 
 ```ts
-import { systemUI } from "spana";
+import { systemUI } from "spana-test";
 
 await app.tap(systemUI({ text: "Allow" }));
 // equivalent to:
@@ -1766,7 +1766,7 @@ spana runs a single flow file against multiple platforms. There are two mechanis
 The `platform` value in `FlowContext` is `"web" | "android" | "ios" | "electron" | "electrobun"`. Use it for conditional logic within a flow that is mostly shared across platforms.
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow("user can share content", async ({ app, expect, platform }) => {
   await app.tap({ testID: "share-button" });
@@ -1794,7 +1794,7 @@ export default flow("user can share content", async ({ app, expect, platform }) 
 Use `FlowConfig.platforms` to prevent a flow from running on platforms where it does not apply.
 
 ```ts
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow(
   "push notification permissions",
@@ -1831,7 +1831,7 @@ CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["
 Out-of-process OS UI (permission dialogs, share sheets, in-app browser tabs) is not part of the app's DOM. Mark those selectors with `systemUI` so spana goes straight to the native driver:
 
 ```ts
-import { flow, systemUI } from "spana";
+import { flow, systemUI } from "spana-test";
 
 export default flow("allow notifications", { platforms: ["android", "ios"] }, async ({ app }) => {
   await app.tap({ testID: "enable-notifications" });
@@ -1940,10 +1940,10 @@ Use `Scenario Outline` with an `Examples` table to run the same scenario with di
 
 ## Writing step definitions
 
-Step definitions map Gherkin steps to TypeScript functions. Import them from `spana/steps`:
+Step definitions map Gherkin steps to TypeScript functions. Import them from `spana-test/steps`:
 
 ```ts title="flows/login/steps/login.steps.ts"
-import { Given, When, Then } from "spana/steps";
+import { Given, When, Then } from "spana-test/steps";
 
 Given("I am on the login screen", async ({ app }) => {
   await app.launch({ deepLink: "myapp://login" });
@@ -2025,7 +2025,7 @@ If you define a world, its state fields and methods are also on the context.
 Run setup/teardown code before or after each scenario:
 
 ```ts
-import { Before, After } from "spana/steps";
+import { Before, After } from "spana-test/steps";
 
 // Runs before every scenario
 Before(async ({ app }) => {
@@ -2054,7 +2054,7 @@ Before("@auth", async ({ app }) => {
 Use `defineWorld` to share state and helper methods across steps within a scenario:
 
 ```ts title="flows/login/steps/world.ts"
-import { defineWorld } from "spana/steps";
+import { defineWorld } from "spana-test/steps";
 
 export default defineWorld({
   // Fresh state for each scenario
@@ -2110,7 +2110,7 @@ either an input (a **stimulus**) or an expected output (a **sensor**). If the ap
 different value, the test fails. There are no `Given`/`When`/`Then` keywords.
 
 Varar runs inside Vitest. Spana does not run `.md` files itself. Instead, your step functions call
-Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana/agent`) to drive the
+Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana-test/agent`) to drive the
 app.
 
 :::note[Which one to pick]
@@ -2126,7 +2126,7 @@ A full working project is in
 ## Install
 
 ```bash
-npm install -D spana @varar/varar @varar/vitest @varar/cli vitest vite
+npm install -D spana-test @varar/varar @varar/vitest @varar/cli vitest vite
 ```
 
 Your `package.json` must have `"type": "module"`.
@@ -2164,7 +2164,7 @@ When the shopper adds 2 items to the cart, the cart shows 2 items.
 
 ```ts title="src/varar/cart.steps.ts"
 import { steps } from "@varar/varar";
-import { connect, type Session } from "spana/agent";
+import { connect, type Session } from "spana-test/agent";
 import { afterAll } from "vitest";
 
 let session: Session | undefined;
@@ -2543,7 +2543,7 @@ The flow `expect` API has no `expect.screen()` today, so lines recorded by `span
 
 ## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
 
-`ReplaySession` and `ReplayCacheStore` (exported from `spana`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
+`ReplaySession` and `ReplayCacheStore` (exported from `spana-test`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
 
 `ReplaySession` has three modes: `read-write` (default: on a miss or mismatch, hand off to the executor and save the healed recording), `strict` (fail on a missing or mismatched recording), and `off`.
 
@@ -2701,15 +2701,15 @@ graph LR
 
 ## Agent skill file
 
-spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spanaing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
+spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spana-testing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
 
 **To use it with your AI agent:**
 
 1. Copy the skill file into your project:
 
    ```bash
-   mkdir -p .agents/skills/spanaing
-   cp node_modules/spana/.agents/skills/spanaing/SKILL.md .agents/skills/spanaing/
+   mkdir -p .agents/skills/spana-testing
+   cp node_modules/spana-test/.agents/skills/spana-testing/SKILL.md .agents/skills/spana-testing/
    ```
 
 2. Or reference it in your `CLAUDE.md` / `AGENTS.md`:
@@ -2718,12 +2718,12 @@ spana ships with a ready-made skill file for AI coding agents at `.agents/skills
    ## Testing
 
    For writing E2E tests, follow the spana testing skill at:
-   .agents/skills/spanaing/SKILL.md
+   .agents/skills/spana-testing/SKILL.md
    ```
 
 3. Or point your agent to it directly:
    ```
-   Read .agents/skills/spanaing/SKILL.md and use it to write a test for the login flow.
+   Read .agents/skills/spana-testing/SKILL.md and use it to write a test for the login flow.
    ```
 
 The skill file is self-contained — it includes the full API reference, workflow loop, and common patterns so the agent can start writing tests immediately.
@@ -2769,7 +2769,7 @@ Then it creates:
 ## Generated config
 
 ```ts title="spana.config.ts"
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   apps: {
@@ -2788,7 +2788,7 @@ export default defineConfig({
 ## Generated flow
 
 ```ts title="flows/example.flow.ts"
-import { flow } from "spana";
+import { flow } from "spana-test";
 
 export default flow(
   "Example - app loads successfully",
@@ -2818,7 +2818,7 @@ Install `spana-bridge` in your test builds to use the DOM bridge.
 
 After running `spana init`:
 
-1. Install spana: `npm install -D spana`
+1. Install spana: `npm install -D spana-test`
 2. Add `spana-output` to your `.gitignore`
 3. Edit `flows/example.flow.ts` with selectors from your app
 4. Discover selectors: `spana selectors`
@@ -3116,10 +3116,10 @@ Custom reporters let you push results into Slack, internal dashboards, CSV files
 
 ## Reporter shape
 
-Import reporter types from `spana`:
+Import reporter types from `spana-test`:
 
 ```ts
-import type { Reporter, FlowResult, RunSummary } from "spana";
+import type { Reporter, FlowResult, RunSummary } from "spana-test";
 
 const reporter: Reporter = {
   onFlowStart(name, platform, workerName) {
@@ -3143,7 +3143,7 @@ All hooks except `onRunComplete` are optional. `onFlowPass` and `onFlowFail` fir
 ## Registering a reporter
 
 ```ts
-import { defineConfig } from "spana";
+import { defineConfig } from "spana-test";
 
 export default defineConfig({
   reporters: ["console", "./reporters/slack.ts"],
@@ -3157,7 +3157,7 @@ Paths that start with `.` are resolved relative to the directory of `spana.confi
 If your reporter needs options, export a factory function:
 
 ```ts
-import type { Reporter } from "spana";
+import type { Reporter } from "spana-test";
 
 export default function createCsvReporter(options: { outputDir: string }): Reporter {
   return {
@@ -3267,7 +3267,7 @@ interface FlowError {
 Spana does not await reporter hooks, and the process exits soon after `onRunComplete`. An async hook like this one can be cut off before the request finishes, so keep the work small or write to disk synchronously.
 
 ```ts
-import type { Reporter } from "spana";
+import type { Reporter } from "spana-test";
 
 const reporter: Reporter = {
   async onFlowFail(result) {
@@ -3297,20 +3297,20 @@ export default reporter;
 
 ## Agent API
 
-The `spana/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
+The `spana-test/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
 
 ## Installation
 
-The agent API ships with `spana`.
+The agent API ships with `spana-test`.
 
 ```ts
-import { connect, validateFlows } from "spana/agent";
+import { connect, validateFlows } from "spana-test/agent";
 ```
 
 ## Connecting
 
 ```ts
-import { connect } from "spana/agent";
+import { connect } from "spana-test/agent";
 
 const session = await connect({
   platform: "web",
@@ -3505,7 +3505,7 @@ await session.setNetworkConditions({
 The same package also exports programmatic validation. It takes a list of flow file paths and returns `{ file, error }` entries for the files that fail to import or have no valid default export:
 
 ```ts
-import { validateFlows } from "spana/agent";
+import { validateFlows } from "spana-test/agent";
 
 const issues = await validateFlows(["./flows/login.flow.ts", "./flows/checkout.flow.ts"]);
 if (issues.length > 0) {
@@ -4730,7 +4730,7 @@ Today the CLI only calls `createHelper()` (and the helper's `prepareCapabilities
 ### `CloudProvider`
 
 ```ts
-import type { CloudProvider, CloudProviderHelper } from "spana";
+import type { CloudProvider, CloudProviderHelper } from "spana-test";
 
 const provider: CloudProvider = {
   name() {
@@ -4805,7 +4805,7 @@ jobs:
 
 ## CI/CD Integration
 
-spana is designed for CI from the ground up. It ships as a single npm package (`spana`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
+spana is designed for CI from the ground up. It ships as a single npm package (`spana-test`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
 
 ## Exit codes
 
@@ -4843,7 +4843,7 @@ Run only the flows affected by a pull request while staying **fail-open**. `--ch
 
 `--changed-since` does nothing without a `filters` list in config: spana prints a warning and runs all flows. If git fails (for example, the base ref is missing in a shallow clone), spana also fails open and runs all flows. If one filter throws, that filter is skipped and keeps every flow it received (flows an earlier filter excluded stay excluded). If the filters exclude every flow, the run exits `0`.
 
-Built-in filters (all exported from `spana`):
+Built-in filters (all exported from `spana-test`):
 
 - **`pathRuleFilter`** — deterministic, no LLM. Maps flow tags or file prefixes to watched source paths. Flows that no rule owns always run.
 - **`deterministicImpactFilter`** — deterministic, no LLM. Uses path mappings and the import graph; by default, unmapped changes run everything.
@@ -4858,7 +4858,7 @@ import {
   decisionFilter,
   createLogprobDecisionJudge,
   pathRuleFilter,
-} from "spana";
+} from "spana-test";
 
 export default defineConfig({
   filters: [
@@ -4977,7 +4977,7 @@ jobs:
 | `tags`              | —                    | Filter by tags                                            |
 | `grep`              | —                    | Filter by name pattern                                    |
 | `working-directory` | `.`                  | Directory to run spana in                                 |
-| `version`           | `latest`             | `spana` version to install                           |
+| `version`           | `latest`             | `spana-test` version to install                           |
 | `upload-artifacts`  | `true`               | Upload `spana-output/` and `allure-results/` as artifacts |
 
 The action also sets a `result` output (`pass` or `fail`).
@@ -5005,7 +5005,7 @@ jobs:
         run: npm ci
 
       - name: Install spana
-        run: npm install -g spana
+        run: npm install -g spana-test
 
       - name: Install Chromium
         run: npx playwright install chromium
@@ -5056,7 +5056,7 @@ e2e-android:
         node-version: 24
 
     - name: Install spana
-      run: npm install -g spana
+      run: npm install -g spana-test
 
     - name: Set up Android emulator
       uses: reactivecircus/android-emulator-runner@v2
@@ -5089,7 +5089,7 @@ e2e-ios:
         node-version: 24
 
     - name: Install spana
-      run: npm install -g spana
+      run: npm install -g spana-test
 
     - name: Boot iOS Simulator
       run: |
@@ -5115,7 +5115,7 @@ e2e-web:
   stage: test
   script:
     - npm ci
-    - npm install -g spana
+    - npm install -g spana-test
     - npm run dev &
     - npx wait-on http://localhost:3000
     - spana test --platform web --reporter console,junit,html
@@ -5138,7 +5138,7 @@ GitLab natively parses JUnit XML when declared under `artifacts.reports.junit`, 
 - **Scale web workers.** `--workers <n>` runs `n` isolated browser contexts, spread over browser processes by `execution.web.maxContextsPerBrowser`.
 - **Split across jobs.** `--shard <current>/<total>` runs one slice of the flows per CI job.
 - **Use tags to split pipelines.** Run `spana test --tag smoke` on every push and `spana test --tag regression` on a nightly schedule to balance speed and coverage.
-- **Pin spana version.** Use `npm install -g spana@<version>` (for example `spana@0.7.0`) in CI to avoid unexpected breakage from new releases.
+- **Pin spana version.** Use `npm install -g spana-test@<version>` (for example `spana-test@0.7.0`) in CI to avoid unexpected breakage from new releases.
 
 ---
 
