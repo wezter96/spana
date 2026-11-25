@@ -5,7 +5,7 @@
 <h1 align="center">spana</h1>
 
 <p align="center">
-  <strong>Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS &amp; Android), Electron, and Electrobun — one <code>{ testID }</code> selector model, zero Appium required.</strong>
+  <strong>One test. Every screen.</strong><br />TypeScript E2E testing for Web, iOS &amp; Android (Capacitor / React Native), Electron, and Electrobun — one <code>{ testID }</code> selector, no Appium to set up, and an MCP server your coding agent can drive.
 </p>
 
 <p align="center">
@@ -613,7 +613,7 @@ See [ARCHITECTURE.md](https://github.com/wezter96/spana/blob/main/ARCHITECTURE.m
 ## Platforms
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wezter96/spana/main/docs/assets/spana-hero.jpg" alt="One selector model fanning out to Web, iOS, Android, Electron, and Electrobun" width="100%" />
+  <img src="https://raw.githubusercontent.com/wezter96/spana/main/docs/assets/spana-hero.jpg" alt="One test fanning out to Web, iOS, Android, Electron, and Electrobun" width="100%" />
 </p>
 
 | Platform      | Driver / DOM Channel                                                                  | Companion binary                                         |

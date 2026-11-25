@@ -1,4 +1,5 @@
-:root {
+/* Starlight styles live in a cascade layer, so bare :root here would also beat its light theme. */
+:root:not([data-theme="light"]) {
   --sl-color-accent-low: #083344;
   --sl-color-accent: #06b6d4;
   --sl-color-accent-high: #67e8f9;
@@ -6,37 +7,73 @@
   --sl-color-bg-nav: #0b1120;
   --sl-color-bg-sidebar: #0b1120;
   --sl-color-hairline: #1e293b;
+  --spana-surface: #0b1120;
+  --spana-surface-raised: #0f172a;
+  --spana-eyebrow: #22d3ee;
+  --spana-good: #34d399;
+  --spana-muted: #94a3b8;
 }
 
 :root[data-theme="light"] {
   --sl-color-accent-low: #cffafe;
-  --sl-color-accent: #0891b2;
+  --sl-color-accent: #0e7490;
   --sl-color-accent-high: #164e63;
+  --spana-surface: #f8fafc;
+  --spana-surface-raised: #ffffff;
+  --spana-eyebrow: #0e7490;
+  --spana-good: #047857;
+  --spana-muted: #475569;
+}
+
+/* ---------- Hero ---------- */
+.hero {
+  padding-block: 2.5rem 1rem;
+}
+
+.hero h1 {
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.hero .tagline {
+  max-width: 46ch;
 }
 
 .hero img {
   border-radius: 20px;
   border: 1px solid rgba(34, 211, 238, 0.25);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 
+/* ---------- Generic sections ---------- */
 .spana-section {
-  margin: 3.5rem 0;
+  margin: 4.5rem 0;
 }
 
 .spana-section-header {
-  margin-bottom: 1.25rem;
+  margin-bottom: 1.5rem;
 }
 
 .spana-section-header h2 {
-  font-size: clamp(1.5rem, 2.4vw, 2rem);
-  margin: 0 0 0.4rem;
+  font-size: clamp(1.6rem, 2.6vw, 2.15rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5rem;
 }
 
 .spana-section-header p {
   color: var(--sl-color-gray-3);
   margin: 0;
-  max-width: 68ch;
+  max-width: 64ch;
+}
+
+.spana-eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--spana-eyebrow);
+  margin-bottom: 0.5rem;
 }
 
 .spana-visual-frame {
@@ -53,6 +90,7 @@
   height: auto;
 }
 
+/* ---------- Install bar ---------- */
 .spana-install-bar {
   display: flex;
   flex-wrap: wrap;
@@ -61,17 +99,150 @@
   gap: 0.75rem;
   padding: 0.85rem 1.15rem;
   border-radius: 12px;
-  border: 1px solid rgba(34, 211, 238, 0.28);
-  background: rgba(11, 17, 32, 0.85);
-  margin: 1.5rem 0 2.5rem;
-}
-
-:root[data-theme="light"] .spana-install-bar {
-  background: #f8fafc;
+  border: 1px solid var(--sl-color-hairline);
+  background: var(--spana-surface);
+  margin: 0.5rem 0 3rem;
 }
 
 .spana-install-bar code {
   font-size: 0.95rem;
   background: transparent;
   padding: 0;
+  overflow-wrap: anywhere;
+}
+
+.spana-install-bar span {
+  font-size: 0.9rem;
+}
+
+/* ---------- Code + proof ---------- */
+.spana-proof {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: stretch;
+}
+
+.spana-proof .expressive-code {
+  margin: 0;
+}
+
+.spana-stats {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0 !important;
+}
+
+.spana-stat {
+  padding: 1rem 1.15rem;
+  border-radius: 12px;
+  border: 1px solid var(--sl-color-hairline);
+  background: var(--spana-surface);
+  margin: 0 !important;
+}
+
+.spana-stat strong {
+  display: block;
+  font-size: 1.85rem;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--sl-color-white);
+}
+
+.spana-stat span {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+  color: var(--sl-color-gray-3);
+  margin-top: 0.25rem;
+}
+
+.spana-footnote {
+  font-size: 0.82rem;
+  color: var(--spana-muted);
+  margin-top: 0.75rem;
+}
+
+/* ---------- Benefit grid ---------- */
+.spana-benefits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.spana-benefit {
+  padding: 1.25rem;
+  border-radius: 14px;
+  border: 1px solid var(--sl-color-hairline);
+  background: var(--spana-surface);
+  margin: 0 !important;
+}
+
+.spana-benefit h3 {
+  font-size: 1.1rem;
+  margin: 0 0 0.4rem;
+}
+
+.spana-benefit p {
+  margin: 0;
+  font-size: 0.93rem;
+  color: var(--sl-color-gray-3);
+}
+
+/* ---------- Final CTA ---------- */
+.spana-cta {
+  text-align: center;
+  padding: 3rem 1.5rem;
+  border-radius: 20px;
+  border: 1px solid var(--sl-color-hairline);
+  background:
+    radial-gradient(60% 120% at 50% 0%, rgba(6, 182, 212, 0.18), transparent 70%),
+    var(--spana-surface);
+}
+
+.spana-cta h2 {
+  margin: 0 0 0.5rem;
+  font-size: clamp(1.6rem, 2.6vw, 2.15rem);
+}
+
+.spana-cta p {
+  margin: 0 auto 1.5rem;
+  max-width: 52ch;
+  color: var(--sl-color-gray-3);
+}
+
+.spana-cta .sl-flex {
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ---------- Compare page table ---------- */
+.spana-compare-table {
+  overflow-x: auto;
+}
+
+.spana-compare-table table {
+  display: table;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.spana-compare-table th,
+.spana-compare-table td {
+  padding: 0.5rem 0.45rem;
+}
+
+.spana-compare-table td:first-child,
+.spana-compare-table th:first-child {
+  font-weight: 600;
+}
+
+@media (max-width: 50rem) {
+  .spana-proof {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .spana-compare-table table {
+    min-width: 640px;
+  }
 }

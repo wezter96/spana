@@ -513,7 +513,7 @@ if (command === "test") {
   console.log("spana v0.4.0");
 } else {
   console.log(
-    "spana — Web-first, TypeScript-native E2E testing across Web, Capacitor/RN, Electron & Electrobun",
+    "spana — One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron & Electrobun",
   );
   console.log("");
   console.log("Commands:");

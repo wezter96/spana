@@ -1,0 +1,110 @@
+---
+title: Spana vs Playwright, WebdriverIO, Maestro, Detox and Appium
+description: An honest comparison of Spana with Playwright, WebdriverIO, Maestro, Detox and Appium — platforms, setup, AI agent support and benchmark numbers.
+tableOfContents: false
+---
+
+Spana is a TypeScript E2E framework. One test runs on Web, iOS, Android, Electron and Electrobun.
+This page shows where it fits next to the tools you may already use, and where those tools are the
+better choice.
+
+:::note[Spana uses Playwright]
+On the web, Spana runs on a bundled copy of Playwright. Spana does not replace Playwright's browser
+engine. It adds one test format for web, mobile and desktop, plus faster runs and an agent server on
+top.
+:::
+
+## At a glance
+
+<div class="spana-compare-table">
+
+|                       | Spana                                  | Playwright                       | WebdriverIO           | Maestro                   | Detox                         | Appium                               |
+| --------------------- | -------------------------------------- | -------------------------------- | --------------------- | ------------------------- | ----------------------------- | ------------------------------------ |
+| Test format           | TypeScript, Gherkin                    | JS/TS, Python, .NET, Java        | JS/TS                 | YAML                      | JavaScript (Jest)             | JS, Java, Python, Ruby, .NET clients |
+| Web                   | Yes (Playwright inside)                | Yes                              | Yes                   | Yes, still in development | No                            | Yes, through browser drivers         |
+| iOS app               | Yes, direct WebDriverAgent             | No                               | Yes, through Appium   | Yes, simulators only      | Yes, React Native, simulators | Yes, XCUITest driver                 |
+| Android app           | Yes, direct UiAutomator2               | Experimental, Chrome and WebView | Yes, through Appium   | Yes                       | Yes, React Native             | Yes, UiAutomator2 / Espresso         |
+| Electron              | Yes                                    | Experimental                     | Yes, official service | No                        | No                            | No official driver                   |
+| Electrobun            | Yes                                    | No                               | No                    | No                        | No                            | No                                   |
+| Appium server locally | Not needed                             | —                                | Needed for mobile     | Not needed                | Not needed                    | Is Appium                            |
+| Agent (MCP) server    | `spana mcp`, exports a `.flow.ts` test | `@playwright/mcp`                | `@wdio/mcp`           | Maestro MCP               | None official                 | `appium-mcp`                         |
+| License               | Apache-2.0                             | Apache-2.0                       | MIT                   | Apache-2.0                | MIT                           | Apache-2.0                           |
+
+</div>
+
+Facts about other tools come from their official docs and repositories, checked on 25 November 2026.
+"No" means their docs do not list it. If something here is out of date, please
+[open an issue](https://github.com/wezter96/spana/issues).
+
+## Benchmarks
+
+Web runs: Apple M4 Pro, Bun 1.4.5, headless Chrome. 20 flows with 14 steps each (280 steps in
+total). Playwright and Spana sign in once through the UI, then reuse the session for the other
+flows.
+
+How the other tools are run:
+
+- **Playwright** rows use the Playwright library directly (one browser, a new context per flow).
+  They do not use the `playwright test` runner.
+- **WebDriver HTTP** is a simulation of the W3C WebDriver protocol that WebdriverIO uses: plain HTTP
+  calls to a small local WebDriver server. It does not use the `webdriverio` package, so treat it
+  as a rough guide to protocol cost, not a WebdriverIO result.
+
+### Web, 20 flows
+
+| Setup                                              | Total time | Compared with                              |
+| -------------------------------------------------- | ---------: | ------------------------------------------ |
+| WebDriver HTTP (simulated), sign-in state injected |     8.40 s | —                                          |
+| Playwright, `storageState`, 1 worker               |     9.23 s | —                                          |
+| **Spana, `spana-bridge`, 1 worker**                | **2.97 s** | **3.1× faster than Playwright, 1 worker**  |
+| Playwright, 4 workers                              |     6.31 s | —                                          |
+| **Spana, shared pool, 4 workers**                  | **1.24 s** | **5.1× faster than Playwright, 4 workers** |
+
+### Capacitor app, 5 flows, sign in through the UI
+
+The benchmark script stores these numbers as fixed values. It does not measure them, so
+"Run it yourself" below does not reproduce them. Treat them as a rough guide.
+
+| Platform | WebdriverIO + Appium |  Spana | Speed-up |
+| -------- | -------------------: | -----: | -------: |
+| iOS      |               28.4 s | 6.82 s |     4.2× |
+| Android  |               22.9 s | 5.45 s |     4.2× |
+
+With `spana-bridge` sign-in state (no UI sign-in), the same flows take 1.52 s on iOS and 1.27 s on
+Android.
+
+### Pull requests
+
+With `--changed-since origin/main` and path rules, Spana ran only the 5 flows a change could
+affect, in 0.71 s. This is not a fair speed comparison: it shows the time you save by not running
+tests that cannot fail.
+
+### Run it yourself
+
+```bash
+git clone https://github.com/wezter96/spana && cd spana && bun install
+bun run benchmarks/framework-comparison/benchmark.ts
+```
+
+Raw numbers: [`benchmarks/framework-comparison/results.json`](https://github.com/wezter96/spana/blob/main/benchmarks/framework-comparison/results.json).
+
+## When to pick something else
+
+- **Playwright** — your app is web only and you want the largest community, the trace viewer, and
+  many languages.
+- **WebdriverIO** — you already have a WebDriver or Appium grid, or you need its large plugin
+  ecosystem.
+- **Maestro** — you want YAML tests that non-developers can read and write.
+- **Detox** — you test only a React Native app and want gray-box sync with the app's JavaScript
+  thread.
+- **Appium** — you need a driver Spana does not have (for example Windows, macOS or TV apps), or
+  you write tests in Java, Python or Ruby.
+
+## When Spana fits best
+
+- One app on web **and** mobile **and** desktop, with one test suite.
+- A Capacitor, React Native or Electron app with `testID` attributes.
+- You want your coding agent to write and run E2E tests.
+- You want fast local runs without installing Appium.
+
+[Start with the Quick Start →](/getting-started/quick-start/)

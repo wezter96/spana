@@ -14,6 +14,7 @@ The links below intentionally point to the canonical Markdown sources in GitHub 
 - [Introduction](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/introduction.md): Product overview, philosophy, platform support, and package layout.
 - [Quick Start](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/quick-start.md): Install spana, add config, and run the first flow.
 - [Configuration](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/configuration.md): `defineConfig()` reference and core runtime settings.
+- [Compare with other tools](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/compare.mdx): Spana vs Playwright, WebdriverIO, Maestro, Detox and Appium, with benchmark numbers.
 
 ## Writing tests
 

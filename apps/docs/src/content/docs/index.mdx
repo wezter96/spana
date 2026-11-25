@@ -1,20 +1,28 @@
 ---
-title: spana
-description: Web-first, TypeScript-native E2E testing across Web, iOS, Android, Electron, and Electrobun — zero Appium required.
+title: One test. Every screen.
+head:
+  - tag: meta
+    attrs:
+      property: og:title
+      content: "spana — One test. Every screen."
+  - tag: meta
+    attrs:
+      name: twitter:title
+      content: "spana — One test. Every screen."
+description: Write one TypeScript E2E test and run it on Web, iOS, Android, Electron and Electrobun. No Appium to set up, and an MCP server your coding agent can drive.
 template: splash
 hero:
-  title: One selector model. Five platforms. Zero Appium.
-  tagline: Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — engineered for sub-5 ms agent workflows and 5× faster CI.
+  title: One test. Every screen.
+  tagline: Spana runs the same TypeScript E2E flow on Web, iOS, Android, Electron and Electrobun. No Appium to set up, and your coding agent can drive it.
   image:
     file: ../../assets/spana-scout.jpg
-    alt: Spana scout mascot surveying Web, iOS, Android, Electron, and Electrobun
+    alt: Spana scout mascot looking at web, mobile and desktop screens through a telescope
   actions:
     - text: Quick Start
       link: /getting-started/quick-start/
       icon: right-arrow
-    - text: Copy for Your Agent
-      link: "#agent-prompts"
-      icon: rocket
+    - text: Compare with Playwright & co.
+      link: /compare/
       variant: secondary
     - text: GitHub
       link: https://github.com/wezter96/spana
@@ -22,64 +30,123 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from "@astrojs/starlight/components";
+import { LinkButton } from "@astrojs/starlight/components";
 import AgentPrompts from "../../components/AgentPrompts.astro";
 
 <div class="spana-install-bar">
-  <code>bun add -d spana-test &nbsp;# or: npm install -D spana-test</code>
+  <code>npm install -D spana-test</code>
   <span>
     <a href="https://www.npmjs.com/package/spana-test">npm</a> · <a href="/llms.txt">llms.txt</a> ·{" "}
     <a href="/llms-full.txt">llms-full.txt</a>
   </span>
 </div>
 
+<section class="spana-section" style="margin-top: 0">
+  <div class="spana-section-header">
+    <span class="spana-eyebrow">How it looks</span>
+    <h2>A test is a typed TypeScript function</h2>
+    <p>
+      Tag elements with a <code>testID</code> once. Spana finds them on the web page, in the
+      WebView of your iOS or Android app, and in your desktop app.
+    </p>
+  </div>
+
+<div class="spana-proof">
+
+```ts title="flows/login.flow.ts"
+import { flow } from "spana-test";
+
+export default flow("user can log in", async ({ app, expect }) => {
+  await app.tap({ testID: "email-input" });
+  await app.inputText("user@example.com");
+  await app.tap({ testID: "login-button" });
+  await expect({ testID: "home-screen" }).toBeVisible();
+});
+
+// spana test --platform web,android,ios
+```
+
+<div class="spana-stats">
+  <div class="spana-stat">
+    <strong>3.1× faster</strong>
+    <span>than Playwright on 20 web flows, both with 1 worker</span>
+  </div>
+  <div class="spana-stat">
+    <strong>5.1× faster</strong>
+    <span>than Playwright on the same 20 flows, both with 4 workers</span>
+  </div>
+  <div class="spana-stat">
+    <strong>~273 tokens</strong>
+    <span>
+      for your agent to read a whole screen through <code>spana mcp</code>
+    </span>
+  </div>
+</div>
+
+</div>
+
+  <p class="spana-footnote">
+    Measured on an Apple M4 Pro. Method and raw numbers on the <a href="/compare/">comparison page</a>.
+  </p>
+</section>
+
+<section class="spana-section">
+  <div class="spana-section-header">
+    <span class="spana-eyebrow">Why spana</span>
+    <h2>Less setup, faster runs, agent-ready</h2>
+  </div>
+
+  <div class="spana-benefits">
+    <div class="spana-benefit">
+      <h3>One suite, five targets</h3>
+      <p>
+        The same <code>.flow.ts</code> (or Gherkin <code>.feature</code>) file runs on Web, iOS,
+        Android, Electron and Electrobun.
+      </p>
+    </div>
+    <div class="spana-benefit">
+      <h3>No Appium to install</h3>
+      <p>
+        Spana talks to the iOS and Android drivers directly. Use BrowserStack or Sauce Labs when you
+        need real devices in the cloud.
+      </p>
+    </div>
+    <div class="spana-benefit">
+      <h3>Your agent can test for you</h3>
+      <p>
+        Run <code>spana mcp</code> and Claude Code, Codex or Cursor can see the screen, tap, check
+        results, and save the steps as a real test file.
+      </p>
+    </div>
+    <div class="spana-benefit">
+      <h3>CI runs only what changed</h3>
+      <p>
+        <code>{"--changed-since origin/main"}</code> skips flows a pull request cannot affect. Parallel
+        runs put the slowest flows first.
+      </p>
+    </div>
+  </div>
+</section>
+
 <AgentPrompts />
 
-<CardGrid stagger>
-  <Card title="Dual-Channel Web-First Engine" icon="rocket">
-    <code>{"{ testID }"}</code> queries resolve in ~1 ms via <code>PlaywrightDomChannel</code>,{" "}
-    <code>spana-bridge</code>, Android CDP, Lightpanda CDP, or iOS WebKit Inspector — paired with
-    direct UiAutomator2 / WDA native touches and <code>systemUI()</code>.
-  </Card>
-  <Card title="Sub-5 ms Model-Free MCP Server" icon="magnifier">
-    Run <code>spana mcp</code> to let Claude Code, Codex, Cursor, and Antigravity observe screens
-    (~273 tokens), tap in 2.8 ms, read console/JS errors, and export verified <code>.flow.ts</code>{" "}
-    files.
-  </Card>
-  <Card title="PR-Aware CI Filters & Replay Cache" icon="approve-check">
-    Skip unaffected flows on PRs with <code>--changed-since</code> (1-token KV-cache logprob judge
-    or deterministic path rules) and replay cached agent steps in 6 ms with{" "}
-    <code>--strict-cache</code>.
-  </Card>
-  <Card title="Flashwright-Grade Speed" icon="star">
-    <code>MutationObserver</code> reactive DOM waits, optional <code>failFastWhenIdle</code>, warm
-    Chromium/WDA/UA2 daemons, speculative CLI pre-launch, <code>instantAnimations</code>, and
-    auto-persisted longest-first <code>--parallel</code> scheduling.
-  </Card>
-</CardGrid>
-
 <section class="spana-section">
   <div class="spana-section-header">
-    <h2>Benchmarks</h2>
+    <span class="spana-eyebrow">Benchmarks</span>
+    <h2>Faster than the tools you know</h2>
     <p>
-      Reproducible head-to-head runs on Apple M4 Pro (Bun 1.4.5, Headless Chrome) comparing Spana
-      against Playwright and WebdriverIO on 20 multi-step flows (280 interactions), plus live MCP
-      tool latency.
+      20 flows with 280 steps, headless Chrome, Apple M4 Pro. Playwright 4 workers: 6.3 s. Spana 4
+      workers: 1.2 s. The WebdriverIO bar is a simulated WebDriver HTTP run. See the{" "}
+      <a href="/compare/">comparison page</a> for the method.
     </p>
   </div>
 
-<div class="spana-visual-frame">
-  <img
-    src="/assets/benchmark-20flows.svg"
-    alt="Spana vs Playwright vs WebdriverIO 20-flow benchmark chart"
-    loading="lazy"
-  />
-</div>
-
   <div class="spana-visual-frame">
     <img
-      src="/assets/benchmark-mcp.svg"
-      alt="Spana MCP tool latency and live agent benchmark chart"
+      src="/assets/benchmark-20flows.svg"
+      alt="Bar chart: total time for 20 flows. Simulated WebDriver HTTP (labelled WebdriverIO) 10.9 s, Playwright 1 worker 9.2 s, Playwright 4 workers 6.3 s, Spana 1 worker 3.0 s, Spana 4 workers 1.2 s"
+      width="920"
+      height="510"
       loading="lazy"
     />
   </div>
@@ -87,45 +154,36 @@ import AgentPrompts from "../../components/AgentPrompts.astro";
 
 <section class="spana-section">
   <div class="spana-section-header">
-    <h2>Dual-Channel Architecture</h2>
+    <span class="spana-eyebrow">How it works</span>
+    <h2>Find in the DOM. Touch like a user.</h2>
     <p>
-      Selector lookup stays on a ~1 ms DOM channel (piercing Shadow DOM and same-origin iframes)
-      while pointer input and system sheets stay native — with zero Appium locally and first-class
-      BrowserStack / Sauce Labs support in the cloud.
+      Spana finds elements through a fast DOM channel (about 1 ms, including Shadow DOM and
+      iframes). Taps, typing and system dialogs go through the real native driver.
     </p>
   </div>
 
-<div class="spana-visual-frame">
-  <img
-    src="/assets/architecture-dual-channel.svg"
-    alt="Spana dual-channel web-first architecture diagram"
-    loading="lazy"
-  />
-</div>
-
   <div class="spana-visual-frame">
     <img
-      src="/assets/spana-dual-channel.jpg"
-      alt="Dual-channel optical circuit showing 1ms DOM fast lane paired with direct native touch"
+      src="/assets/architecture-dual-channel.svg"
+      alt="Architecture: selectors go through the DOM channel, touches go through the native UiAutomator2 or WebDriverAgent driver"
+      width="920"
+      height="420"
       loading="lazy"
     />
   </div>
 </section>
 
-<section class="spana-section">
-  <div class="spana-section-header">
-    <h2>Five Targets, One TypeScript Suite</h2>
-    <p>
-      Run the exact same <code>.flow.ts</code> (or Gherkin <code>.feature</code>) tests across Web,
-      Android, iOS, Electron, and Electrobun.
-    </p>
-  </div>
-
-  <div class="spana-visual-frame">
-    <img
-      src="/assets/spana-hero.jpg"
-      alt="One selector model fanning out to Web, iOS, Android, Electron, and Electrobun"
-      loading="lazy"
-    />
+<section class="spana-section spana-cta">
+  <h2>Write your first flow in five minutes</h2>
+  <p>
+    Install spana-test, add a config, and run <code>npx spana test</code>.
+  </p>
+  <div class="sl-flex">
+    <LinkButton href="/getting-started/quick-start/" icon="right-arrow">
+      Quick Start
+    </LinkButton>
+    <LinkButton href="/compare/" variant="secondary">
+      Compare tools
+    </LinkButton>
   </div>
 </section>

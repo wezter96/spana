@@ -47,7 +47,7 @@ function extractTitle(content: string): string {
   return match ? match[1]!.trim().replaceAll(/^["']|["']$/g, "") : "Untitled";
 }
 
-const header = `# spana — Web-first, TypeScript-native E2E testing (Web, iOS, Android, Electron, Electrobun)
+const header = `# spana — One test. Every screen. TypeScript E2E testing (Web, iOS, Android, Electron, Electrobun)
 
 > Docs: https://spana.antonwester.se/
 > Full documentation for AI/LLM consumption.

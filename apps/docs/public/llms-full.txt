@@ -1,4 +1,4 @@
-# spana — Web-first, TypeScript-native E2E testing (Web, iOS, Android, Electron, Electrobun)
+# spana — One test. Every screen. TypeScript E2E testing (Web, iOS, Android, Electron, Electrobun)
 
 > Docs: https://spana.antonwester.se/
 > Full documentation for AI/LLM consumption.
@@ -2007,17 +2007,17 @@ Start Spana's stdio MCP server so any MCP-compatible agent can drive live Web, i
 
 ### Exposed MCP tools
 
-| Tool | Description | Typical Web Latency |
-| --- | --- | ---: |
-| `spana_session_start` | Launch/connect a live session (`web`, `android`, `ios`, `electron`, `electrobun`) | ~125 ms |
-| `spana_observe` | Return a compact interactive accessibility/DOM snapshot (~273 tokens avg) | 1.4–8 ms |
-| `spana_tap` | Tap an element by `{ testID }`, `{ text }`, `{ accessibilityLabel }`, or `systemUI()` | 2.8–4.0 ms |
-| `spana_input_text` / `spana_press_key` | Type text or press keys in the focused control | 1.4 ms |
-| `spana_assert_visible` / `spana_assert_text` | Run real auto-waiting assertions | 0.97 ms |
-| `spana_diagnostics` | Read captured browser console logs & uncaught JS errors | 0.82 ms |
-| `spana_screenshot` | Capture a PNG screenshot for visual inspection | ~35 ms |
-| `spana_export_flow` | Emit a clean, deterministic `.flow.ts` file from the verified session | 0.06 ms |
-| `spana_run_flow` / `spana_session_stop` | Run an existing `.flow.ts` or close the session | ~14 ms |
+| Tool                                         | Description                                                                           | Typical Web Latency |
+| -------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------: |
+| `spana_session_start`                        | Launch/connect a live session (`web`, `android`, `ios`, `electron`, `electrobun`)     |             ~125 ms |
+| `spana_observe`                              | Return a compact interactive accessibility/DOM snapshot (~273 tokens avg)             |            1.4–8 ms |
+| `spana_tap`                                  | Tap an element by `{ testID }`, `{ text }`, `{ accessibilityLabel }`, or `systemUI()` |          2.8–4.0 ms |
+| `spana_input_text` / `spana_press_key`       | Type text or press keys in the focused control                                        |              1.4 ms |
+| `spana_assert_visible` / `spana_assert_text` | Run real auto-waiting assertions                                                      |             0.97 ms |
+| `spana_diagnostics`                          | Read captured browser console logs & uncaught JS errors                               |             0.82 ms |
+| `spana_screenshot`                           | Capture a PNG screenshot for visual inspection                                        |              ~35 ms |
+| `spana_export_flow`                          | Emit a clean, deterministic `.flow.ts` file from the verified session                 |             0.06 ms |
+| `spana_run_flow` / `spana_session_stop`      | Run an existing `.flow.ts` or close the session                                       |              ~14 ms |
 
 ## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
 

@@ -13,14 +13,24 @@ export default defineConfig({
     starlight({
       title: "spana",
       description:
-        "Web-first, TypeScript-native E2E testing across Web, Capacitor/React Native (iOS & Android), Electron, and Electrobun — zero Appium required.",
+        "One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron and Electrobun — no Appium to set up, and an MCP server your coding agent can drive.",
       customCss: ["./src/styles/custom.css"],
       head: [
         {
           tag: "meta",
           attrs: {
             property: "og:image",
-            content: `${site.replace(/\/$/, "")}/assets/github-social-preview.png`,
+            content: `${site.replace(/\/$/, "")}/assets/spana-social-card.png`,
+          },
+        },
+        { tag: "meta", attrs: { property: "og:image:width", content: "1280" } },
+        { tag: "meta", attrs: { property: "og:image:height", content: "640" } },
+        {
+          tag: "meta",
+          attrs: {
+            property: "og:image:alt",
+            content:
+              "spana — One test. Every screen. E2E testing for Web, iOS, Android, Electron and Electrobun.",
           },
         },
         {
@@ -34,7 +44,7 @@ export default defineConfig({
           tag: "meta",
           attrs: {
             name: "twitter:image",
-            content: `${site.replace(/\/$/, "")}/assets/github-social-preview.png`,
+            content: `${site.replace(/\/$/, "")}/assets/spana-social-card.png`,
           },
         },
       ],
@@ -46,6 +56,7 @@ export default defineConfig({
             { label: "Introduction", slug: "getting-started/introduction" },
             { label: "Quick Start", slug: "getting-started/quick-start" },
             { label: "Configuration", slug: "getting-started/configuration" },
+            { label: "Compare with other tools", slug: "compare" },
           ],
         },
         {

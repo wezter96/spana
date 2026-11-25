@@ -43,7 +43,7 @@ const cards = [
     badge: "SKILLS + MCP",
     title: "Install Spana Skill & MCP Server",
     subtitle:
-      "Give your coding agent the spana-testing skill, sub-5 ms stdio MCP tools (spana mcp), and llms-full.txt reference in one paste.",
+      "Give your coding agent the spana-testing skill, stdio MCP tools (spana mcp), and llms-full.txt reference in one paste.",
     buttonLabel: "Copy skills + MCP prompt for your agent",
     prompt: skillsPrompt,
   },
@@ -53,7 +53,7 @@ const cards = [
 <section id="agent-prompts" class="spana-agent-section">
   <div class="spana-agent-header">
     <span class="spana-eyebrow">BUILT FOR AI AGENTS</span>
-    <h2>One paste to onboard your coding agent</h2>
+    <h2>Let your coding agent set it up</h2>
     <p>
       Copy either prompt into Claude Code, Codex, Cursor, or Antigravity — or point any agent directly at{" "}
       <a href="/llms.txt"><code>/llms.txt</code></a> and{" "}
@@ -147,19 +147,6 @@ const cards = [
     margin-bottom: 1.5rem;
   }
 
-  .spana-eyebrow {
-    display: inline-block;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    color: #22d3ee;
-    background: rgba(6, 182, 212, 0.12);
-    border: 1px solid rgba(34, 211, 238, 0.35);
-    padding: 0.22rem 0.65rem;
-    border-radius: 999px;
-    margin-bottom: 0.75rem;
-  }
-
   .spana-agent-header h2 {
     margin: 0 0 0.45rem;
     font-size: clamp(1.5rem, 2.5vw, 2rem);
@@ -178,6 +165,7 @@ const cards = [
   }
 
   .spana-prompt-card {
+    margin: 0;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -199,7 +187,7 @@ const cards = [
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.08em;
-    color: #34d399;
+    color: var(--spana-good);
     background: rgba(16, 185, 129, 0.14);
     border: 1px solid rgba(52, 211, 153, 0.35);
     padding: 0.16rem 0.55rem;
