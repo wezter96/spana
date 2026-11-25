@@ -25,6 +25,7 @@ export interface FailureBundle {
   timestamp: string;
   failedStep: BundleStep | null;
   lastPassedStep: BundleStep | null;
+  steps?: Array<BundleStep & { status: StepResult["status"] }>;
   error: {
     message: string;
     category: string;
@@ -235,8 +236,9 @@ export function createFailureBundle(
     };
   }
 
+  const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
   const flowFile = flowPath ?? `flows/${flowName.replaceAll(" ", "-")}.flow.ts`;
-  const reproCommand = `spana test ${flowFile} --platform ${platform} --grep '${flowName}'`;
+  const reproCommand = `spana test ${shellQuote(flowFile)} --platform ${platform} --grep ${shellQuote(flowName)}`;
 
   // Inline runtime diagnostics (console errors & JS exceptions) when captured in artifactDir
   let runtimeDiagnostics: RuntimeDiagnosticsSummary | undefined;
@@ -310,6 +312,14 @@ export function createFailureBundle(
     timestamp: new Date().toISOString(),
     failedStep,
     lastPassedStep,
+    steps: steps.map((s, index) => ({
+      index,
+      command: s.command,
+      selector: s.selector ?? null,
+      durationMs: s.durationMs,
+      status: s.status,
+      ...(s.error !== undefined ? { error: s.error } : {}),
+    })),
     error: {
       message: error.message,
       category: error.category,

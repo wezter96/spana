@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -14,6 +15,8 @@ import { dirname, join } from "node:path";
 
 export type WarmDaemonKind = "wda" | "uiautomator2" | "iproxy" | "chromium";
 
+export const DEFAULT_WARM_DAEMON_IDLE_TTL_MS = 30 * 60 * 1000;
+
 export interface WarmDaemonRecord {
   kind: WarmDaemonKind;
   deviceId: string;
@@ -28,6 +31,8 @@ export interface WarmDaemonRecord {
   sessionId?: string;
   bundleId?: string;
   startedAt: string;
+  /** Last timestamp this daemon was verified healthy / reused (used for idle TTL reaping). */
+  lastUsedAt?: string;
 }
 
 interface DaemonRegistryFile {
@@ -107,7 +112,7 @@ function deleteScopeRecord(kind: WarmDaemonKind, deviceId: string): void {
 }
 
 function killPidTree(pid: number | undefined): void {
-  if (!pid || pid <= 0) return;
+  if (!pid || pid <= 0 || pid === process.pid) return;
   const targets = process.platform !== "win32" ? [-pid, pid] : [pid];
   for (const target of targets) {
     try {
@@ -154,6 +159,16 @@ export function saveDaemonRegistry(
   atomicWriteJson(stateFile, registry);
 }
 
+function resolveIdleTtlMs(explicit?: number): number {
+  if (explicit !== undefined) return explicit;
+  const envRaw = process.env["SPANA_DAEMON_IDLE_TTL_MS"];
+  if (envRaw !== undefined) {
+    const parsed = Number(envRaw);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return DEFAULT_WARM_DAEMON_IDLE_TTL_MS;
+}
+
 export function registerWarmDaemon(
   record: WarmDaemonRecord,
   stateFile = defaultDaemonStatePath(),
@@ -174,12 +189,36 @@ export function registerWarmDaemon(
     }
   }
 
+  // If this exact scope already had a previous live daemon PID, terminate & clean it up
+  // before overwriting the scope record so we never orphan a running browser/daemon process.
+  const prev = existing.daemons[key];
+  if (prev) {
+    if (prev.pid && prev.pid !== record.pid && isPidAlive(prev.pid)) {
+      killPidTree(prev.pid);
+    }
+    if (prev.tunnelPid && prev.tunnelPid !== record.tunnelPid && isPidAlive(prev.tunnelPid)) {
+      killPidTree(prev.tunnelPid);
+    }
+    if (prev.userDataDir && prev.userDataDir !== record.userDataDir) {
+      try {
+        rmSync(prev.userDataDir, { recursive: true, force: true });
+      } catch {
+        // ignore temp profile cleanup error
+      }
+    }
+  }
+
+  const stamped: WarmDaemonRecord = {
+    ...record,
+    lastUsedAt: record.lastUsedAt ?? record.startedAt ?? new Date().toISOString(),
+  };
+
   if (isUsingDefaultStateFile(stateFile)) {
-    atomicWriteJson(scopeRecordPath(record.kind, record.deviceId), record);
+    atomicWriteJson(scopeRecordPath(record.kind, record.deviceId), stamped);
     return;
   }
 
-  existing.daemons[key] = record;
+  existing.daemons[key] = stamped;
   saveDaemonRegistry(existing, stateFile);
 }
 
@@ -243,7 +282,7 @@ export function isPidAlive(pid: number | undefined): boolean {
 
 /**
  * Probe whether a recorded warm WDA / UiAutomator2 / Chromium daemon is still healthy.
- * Removes stale records automatically.
+ * Removes stale or idle-expired records automatically.
  */
 export async function getHealthyWarmDaemon(
   kind: WarmDaemonKind,
@@ -254,18 +293,32 @@ export async function getHealthyWarmDaemon(
     timeoutMs?: number;
     /** HTTP health endpoint path (default: "/status", use "/json/version" for chromium). */
     statusPath?: string;
+    /** Idle TTL in ms (default: 30 minutes or `SPANA_DAEMON_IDLE_TTL_MS`). Pass 0 to disable. */
+    idleTtlMs?: number;
+    /** Current wall-clock time in ms (for deterministic testing). */
+    nowMs?: number;
   } = {},
 ): Promise<WarmDaemonRecord | null> {
   const stateFile = options.stateFile ?? defaultDaemonStatePath();
   const fetchFn = options.fetchFn ?? fetch;
   const timeoutMs = options.timeoutMs ?? 1500;
   const statusPath = options.statusPath ?? (kind === "chromium" ? "/json/version" : "/status");
+  const idleTtlMs = resolveIdleTtlMs(options.idleTtlMs);
+  const nowMs = options.nowMs ?? Date.now();
 
   const record = isUsingDefaultStateFile(stateFile)
     ? (readScopeRecord(kind, deviceId) ??
       loadDaemonRegistry(stateFile).daemons[daemonKey(kind, deviceId)])
     : loadDaemonRegistry(stateFile).daemons[daemonKey(kind, deviceId)];
   if (!record) return null;
+
+  if (idleTtlMs > 0) {
+    const lastTs = Date.parse(record.lastUsedAt ?? record.startedAt);
+    if (Number.isFinite(lastTs) && nowMs - lastTs > idleTtlMs) {
+      stopWarmDaemon(kind, deviceId, stateFile);
+      return null;
+    }
+  }
 
   try {
     const controller = new AbortController();
@@ -275,7 +328,26 @@ export async function getHealthyWarmDaemon(
         signal: controller.signal,
       });
       if (res.ok) {
-        return record;
+        const touched: WarmDaemonRecord = {
+          ...record,
+          lastUsedAt: new Date(nowMs).toISOString(),
+        };
+        if (isUsingDefaultStateFile(stateFile)) {
+          try {
+            atomicWriteJson(scopeRecordPath(kind, deviceId), touched);
+          } catch {
+            // ignore touch errors
+          }
+        } else {
+          try {
+            const registry = loadDaemonRegistry(stateFile);
+            registry.daemons[daemonKey(kind, deviceId)] = touched;
+            saveDaemonRegistry(registry, stateFile);
+          } catch {
+            // ignore touch errors
+          }
+        }
+        return touched;
       }
     } finally {
       clearTimeout(timer);
@@ -284,8 +356,89 @@ export async function getHealthyWarmDaemon(
     // unreachable — prune stale entry
   }
 
-  unregisterWarmDaemon(kind, deviceId, stateFile);
+  stopWarmDaemon(kind, deviceId, stateFile);
   return null;
+}
+
+/**
+ * Stop any warm daemons whose `lastUsedAt` (or `startedAt`) exceeds `idleTtlMs`.
+ */
+export function reapIdleWarmDaemons(
+  options: { stateFile?: string; idleTtlMs?: number; nowMs?: number } = {},
+): number {
+  const stateFile = options.stateFile ?? defaultDaemonStatePath();
+  const idleTtlMs = resolveIdleTtlMs(options.idleTtlMs);
+  if (idleTtlMs <= 0) return 0;
+  const nowMs = options.nowMs ?? Date.now();
+  const records = listWarmDaemons(stateFile);
+  let reaped = 0;
+  for (const record of records) {
+    const lastTs = Date.parse(record.lastUsedAt ?? record.startedAt);
+    if (Number.isFinite(lastTs) && nowMs - lastTs > idleTtlMs) {
+      if (stopWarmDaemon(record.kind, record.deviceId, stateFile)) {
+        reaped++;
+      }
+    }
+  }
+  return reaped;
+}
+
+const SPANA_BROWSER_PROFILE_MARKERS = [
+  "spana-cdp-profile-",
+  "spana-pw-profile-",
+  "spana-browser-profile-",
+];
+
+/**
+ * Sweep orphaned Chromium processes launched by Spana (identified by Spana's unique
+ * temporary `--user-data-dir=.../spana-*-profile-*` argument) whose PIDs are no longer
+ * tracked in the daemon registry, and remove their temporary profile directories.
+ */
+export function sweepOrphanedSpanaBrowsers(options: { excludePids?: Set<number> } = {}): number {
+  if (process.platform === "win32") return 0;
+  let psOut = "";
+  try {
+    psOut = execFileSync("ps", ["-ax", "-o", "pid=,command="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return 0;
+  }
+
+  const exclude = options.excludePids ?? new Set<number>();
+  let killed = 0;
+  const profileDirsToClean = new Set<string>();
+
+  for (const rawLine of psOut.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const match = /^(\d+)\s+(.*)$/.exec(line);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1]!, 10);
+    const cmd = match[2] ?? "";
+    if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid || exclude.has(pid)) continue;
+    if (!SPANA_BROWSER_PROFILE_MARKERS.some((marker) => cmd.includes(marker))) continue;
+
+    // Extract --user-data-dir=<path> for cleanup
+    const dirMatch = /--user-data-dir=([^\s]+)/.exec(cmd);
+    if (dirMatch?.[1] && SPANA_BROWSER_PROFILE_MARKERS.some((m) => dirMatch[1]!.includes(m))) {
+      profileDirsToClean.add(dirMatch[1]!);
+    }
+
+    killPidTree(pid);
+    killed++;
+  }
+
+  for (const dir of profileDirsToClean) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignore temp profile cleanup errors
+    }
+  }
+
+  return killed;
 }
 
 /**
@@ -324,6 +477,9 @@ export function stopAllWarmDaemons(stateFile = defaultDaemonStatePath()): number
     if (stopWarmDaemon(record.kind, record.deviceId, stateFile)) {
       stopped++;
     }
+  }
+  if (isUsingDefaultStateFile(stateFile)) {
+    stopped += sweepOrphanedSpanaBrowsers();
   }
   return stopped;
 }

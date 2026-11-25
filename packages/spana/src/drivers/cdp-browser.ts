@@ -424,6 +424,8 @@ function parseCdpKeyDescriptor(rawKey: string): {
   };
 }
 
+export const UPLOAD_ATTACH_TIMEOUT_MS = 30_000;
+
 const RESOURCE_BLOCK_PATTERNS: Record<string, string[]> = {
   image: ["*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.svg", "*.ico", "*.avif"],
   font: ["*.woff", "*.woff2", "*.ttf", "*.otf", "*.eot"],
@@ -496,6 +498,7 @@ export function makeLightweightCdpDriver(
     const jsErrors: BrowserJSError[] = [];
     const routeRules: CdpRouteRule[] = [];
     let fetchInterceptEnabled = false;
+    let activeResponseWatchers = 0;
     let nextTabSeq = 1;
     let downloadDir: string | undefined;
     const completedDownloads: string[] = [];
@@ -730,32 +733,98 @@ export function makeLightweightCdpDriver(
       });
     };
 
-    // Auto-track cross-origin iframe (OOPIF) child targets & resolve their viewport offset
+    // Auto-track cross-origin iframe (OOPIF) child targets & popup/new tabs in the same browserContext
     cdpChannel.onEvent("Target.attachedToTarget", (params) => {
       const targetInfo = params?.targetInfo;
       const childSid = params?.sessionId;
+      const waiting = Boolean(params?.waitingForDebugger);
       if (targetInfo?.type === "iframe" && typeof childSid === "string") {
         cdpChannel.addChildSession(childSid, {
           targetId: typeof targetInfo.targetId === "string" ? targetInfo.targetId : undefined,
           url: typeof targetInfo.url === "string" ? targetInfo.url : undefined,
         });
-        void cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
-        if (useInjectedRuntime) {
-          void cdpChannel
-            .sendCommand(
-              "Page.addScriptToEvaluateOnNewDocument",
-              { source: SPANA_INJECTED_RUNTIME_SCRIPT },
-              childSid,
-            )
-            .catch(() => {});
+        void (async () => {
+          await cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
+          if (useInjectedRuntime) {
+            await cdpChannel
+              .sendCommand(
+                "Page.addScriptToEvaluateOnNewDocument",
+                { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+                childSid,
+              )
+              .catch(() => {});
+          }
+          if (waiting) {
+            await cdpChannel
+              .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+              .catch(() => {});
+          }
+        })();
+      } else if (
+        targetInfo?.type === "page" &&
+        typeof childSid === "string" &&
+        activeSlot &&
+        targetInfo.browserContextId === activeSlot.browserContextId
+      ) {
+        const alreadyTracked = activeSlot.tabs.some(
+          (t) => t.sessionId === childSid || t.targetId === targetInfo.targetId,
+        );
+        if (!alreadyTracked) {
+          activeSlot.tabs.push({
+            tabId: `tab-${nextTabSeq++}`,
+            targetId: String(targetInfo.targetId ?? ""),
+            sessionId: childSid,
+          });
         }
+        void (async () => {
+          const setupCalls: Array<Promise<unknown>> = [
+            cdpChannel.sendCommand("Page.enable", {}, childSid).catch(() => {}),
+            cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {}),
+          ];
+          if (activeResponseWatchers > 0) {
+            setupCalls.push(cdpChannel.sendCommand("Network.enable", {}, childSid).catch(() => {}));
+          }
+          if (useInjectedRuntime) {
+            setupCalls.push(
+              cdpChannel
+                .sendCommand(
+                  "Page.addScriptToEvaluateOnNewDocument",
+                  { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+                  childSid,
+                )
+                .catch(() => {}),
+            );
+          }
+          await Promise.all(setupCalls);
+          if (waiting) {
+            await cdpChannel
+              .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+              .catch(() => {});
+          }
+        })();
+      } else if (waiting && typeof childSid === "string") {
+        void cdpChannel
+          .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+          .catch(() => {});
       }
     });
 
     cdpChannel.onEvent("Target.detachedFromTarget", (params) => {
       if (typeof params?.sessionId === "string") {
         cdpChannel.removeChildSession(params.sessionId);
+        if (activeSlot) {
+          activeSlot.tabs = activeSlot.tabs.filter((t) => t.sessionId !== params.sessionId);
+        }
       }
+    });
+
+    // Auto-handle JS dialogs (alert/confirm/prompt/beforeunload) so page teardown
+    // or unexpected dialogs never freeze subsequent CDP commands or navigation.
+    cdpChannel.onEvent("Page.javascriptDialogOpening", (params, sid) => {
+      const accept = params?.type === "beforeunload";
+      void cdpChannel
+        .sendCommand("Page.handleJavaScriptDialog", { accept }, sid ?? null)
+        .catch(() => {});
     });
 
     cdpChannel.setFrameOffsetResolver(async (child) => {
@@ -850,6 +919,22 @@ export function makeLightweightCdpDriver(
     });
 
     if (useContexts) {
+      yield* Effect.tryPromise({
+        try: () =>
+          cdpChannel
+            .sendCommand(
+              "Target.setAutoAttach",
+              {
+                autoAttach: true,
+                waitForDebuggerOnStart: true,
+                flatten: true,
+                filter: [{ type: "page" }],
+              },
+              null,
+            )
+            .catch(() => {}),
+        catch: () => new DriverError({ message: "Failed to enable Target.setAutoAttach" }),
+      }).pipe(Effect.catchAll(() => Effect.void));
       activeSlot = yield* Effect.tryPromise({
         try: () => createContextSlot(options.storageState),
         catch: (e) =>
@@ -1363,11 +1448,37 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             const timeoutMs = waitOpts?.timeout ?? 15_000;
-            const targetSid = activeSlot?.sessionId;
-            await cdpChannel.sendCommand("Network.enable").catch(() => {});
+            const slotSessions = (): Set<string> | null => {
+              if (!activeSlot) return null;
+              const set = new Set<string>([activeSlot.sessionId]);
+              for (const t of activeSlot.tabs) {
+                if (t.sessionId) set.add(t.sessionId);
+              }
+              return set;
+            };
+            const matchesActiveSlot = (sid?: string): boolean => {
+              const allowed = slotSessions();
+              if (!allowed || !sid) return true;
+              return allowed.has(sid);
+            };
+            activeResponseWatchers += 1;
+            const initialSessions = slotSessions();
+            if (initialSessions && initialSessions.size > 0) {
+              await Promise.all(
+                Array.from(initialSessions).map((sid) =>
+                  cdpChannel.sendCommand("Network.enable", {}, sid).catch(() => {}),
+                ),
+              );
+            } else {
+              await cdpChannel.sendCommand("Network.enable").catch(() => {});
+            }
             const requestMethods = new Map<string, string>();
             return await new Promise<BrowserResponseInfo>((resolve, reject) => {
+              let cleaned = false;
               const cleanup = () => {
+                if (cleaned) return;
+                cleaned = true;
+                activeResponseWatchers = Math.max(0, activeResponseWatchers - 1);
                 clearTimeout(timer);
                 offReq();
                 offRes();
@@ -1377,13 +1488,16 @@ export function makeLightweightCdpDriver(
                 reject(new Error(`Timed out waiting for response after ${timeoutMs}ms`));
               }, timeoutMs);
               const offReq = cdpChannel.onEvent("Network.requestWillBeSent", (params, sid) => {
-                if (targetSid && sid && sid !== targetSid) return;
+                if (!matchesActiveSlot(sid)) return;
                 if (params?.requestId && params?.request?.method) {
-                  requestMethods.set(String(params.requestId), String(params.request.method));
+                  requestMethods.set(
+                    `${sid ?? ""}:${String(params.requestId)}`,
+                    String(params.request.method),
+                  );
                 }
               });
               const offRes = cdpChannel.onEvent("Network.responseReceived", (params, sid) => {
-                if (targetSid && sid && sid !== targetSid) return;
+                if (!matchesActiveSlot(sid)) return;
                 const resp = params?.response;
                 if (!resp) return;
                 const requestId = String(params?.requestId ?? "");
@@ -1392,16 +1506,19 @@ export function makeLightweightCdpDriver(
                 for (const [k, v] of Object.entries(rawHeaders)) {
                   headers[k.toLowerCase()] = String(v);
                 }
+                const responseSid = sid ?? activeSlot?.sessionId ?? null;
                 const info: BrowserResponseInfo = {
                   url: String(resp.url ?? ""),
                   status: Number(resp.status ?? 0),
                   statusText: String(resp.statusText ?? ""),
                   headers,
-                  method: requestMethods.get(requestId),
+                  method: requestMethods.get(`${sid ?? ""}:${requestId}`),
                   body: async () => {
-                    const bodyRes = (await cdpChannel.sendCommand("Network.getResponseBody", {
-                      requestId,
-                    })) as { body?: string; base64Encoded?: boolean };
+                    const bodyRes = (await cdpChannel.sendCommand(
+                      "Network.getResponseBody",
+                      { requestId },
+                      responseSid,
+                    )) as { body?: string; base64Encoded?: boolean };
                     if (bodyRes?.base64Encoded && bodyRes.body) {
                       return Buffer.from(bodyRes.body, "base64").toString("utf8");
                     }
@@ -1601,14 +1718,26 @@ export function makeLightweightCdpDriver(
             const expr = buildDomFindElementScript(selector);
             await cdpChannel.sendCommand("DOM.enable");
             await cdpChannel.sendCommand("DOM.getDocument", { depth: 0 }).catch(() => {});
-            const evalRes = (await cdpChannel.sendCommand("Runtime.evaluate", {
-              expression: expr,
-              returnByValue: false,
-            })) as { result?: { objectId?: string } };
-            const objectId = evalRes?.result?.objectId;
+
+            const envTimeout = Number(process.env["SPANA_UPLOAD_TIMEOUT_MS"]);
+            const attachTimeout =
+              Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : UPLOAD_ATTACH_TIMEOUT_MS;
+            const deadline = Date.now() + attachTimeout;
+            let objectId: string | undefined;
+            while (Date.now() < deadline) {
+              const evalRes = (await cdpChannel.sendCommand("Runtime.evaluate", {
+                expression: expr,
+                returnByValue: false,
+              })) as { result?: { objectId?: string } };
+              if (evalRes?.result?.objectId) {
+                objectId = evalRes.result.objectId;
+                break;
+              }
+              await new Promise((r) => setTimeout(r, 50));
+            }
             if (!objectId) {
               throw new Error(
-                `No matching file input found for selector ${JSON.stringify(selector)}`,
+                `No matching file input found within ${attachTimeout}ms for selector ${JSON.stringify(selector)}`,
               );
             }
             const nodeRes = (await cdpChannel

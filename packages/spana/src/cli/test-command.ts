@@ -44,6 +44,7 @@ import {
   planProcessPool,
   runMultiProcessPool,
   startSharedFlowQueueServer,
+  writeWorkerProcessReport,
 } from "../core/worker-pool.js";
 import { orderFlowsLongestFirst } from "../core/parallel.js";
 import { tmpdir } from "node:os";
@@ -1375,6 +1376,8 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         workerStats: result.workerStats,
       });
     }
+
+    await writeWorkerProcessReport(redactedResults);
 
     // Write last run state for --last-failed support
     const sourcePathsByFlowName = new Map(

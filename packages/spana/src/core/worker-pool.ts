@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { readFile, unlink } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { dirname } from "node:path";
 import type { TestResult } from "./engine.js";
 
 export const DEFAULT_MAX_WORKERS_PER_PROCESS = 8;
@@ -211,7 +212,22 @@ export interface MultiProcessPoolResult {
   processResults: ProcessShardOutcome[];
 }
 
-async function defaultReadJsonReport(reportJsonPath: string): Promise<TestResult[]> {
+/**
+ * Persist a worker child's `TestResult[]` to `SPANA_WORKER_REPORT_PATH` so the
+ * parent multi-process pool can aggregate results across `--processes M` children.
+ */
+export async function writeWorkerProcessReport(
+  results: TestResult[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  const reportPath = env["SPANA_WORKER_REPORT_PATH"];
+  if (!reportPath) return null;
+  await mkdir(dirname(reportPath), { recursive: true });
+  await writeFile(reportPath, JSON.stringify({ results }, null, 2), "utf8");
+  return reportPath;
+}
+
+export async function defaultReadJsonReport(reportJsonPath: string): Promise<TestResult[]> {
   let content: string;
   try {
     content = await readFile(reportJsonPath, "utf8");

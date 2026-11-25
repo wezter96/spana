@@ -21,9 +21,12 @@ export interface DomElementMatch {
   tag?: string;
   role?: string;
   text?: string;
+  /** Whitespace-normalized `el.textContent` (immune to CSS `text-transform`, Playwright parity). */
+  textContent?: string;
   value?: string;
   accessibilityLabel?: string;
   accessibleName?: string;
+  accessibleDescription?: string;
   rect: DomRect;
   scrollX: number;
   scrollY: number;
@@ -82,6 +85,7 @@ export interface DomWaitForMatchOptions {
     | "attribute"
     | "accessibilityLabel"
     | "accessibleName"
+    | "accessibleDescription"
     | "focused"
     | "count"
     | "url";
@@ -91,10 +95,12 @@ export interface DomWaitForMatchOptions {
   expectedCount?: number;
   /** Attribute name when `kind === "attribute"`. */
   attributeName?: string;
-  /** RegExp source when `kind === "matchesText" | "accessibleName" | "url"`. */
+  /** RegExp source when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "url"`. */
   patternSource?: string;
-  /** RegExp flags when `kind === "matchesText" | "accessibleName" | "url"`. */
+  /** RegExp flags when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "url"`. */
   patternFlags?: string;
+  /** Invert the match condition (`expect(...).not.*`). */
+  negate?: boolean;
 }
 
 export interface DomFillOptions {
@@ -182,9 +188,13 @@ export function domMatchToElement(match: DomElementMatch, screenBounds?: Bounds)
   return {
     ...(match.id !== undefined ? { id: match.id } : {}),
     ...(match.text !== undefined ? { text: match.text } : {}),
+    ...(match.textContent !== undefined ? { textContent: match.textContent } : {}),
     ...(match.value !== undefined ? { value: match.value } : {}),
     ...(match.accessibilityLabel !== undefined
       ? { accessibilityLabel: match.accessibilityLabel }
+      : {}),
+    ...(match.accessibleDescription !== undefined
+      ? { accessibleDescription: match.accessibleDescription }
       : {}),
     ...(match.tag !== undefined ? { elementType: match.tag } : {}),
     bounds: screenBounds ?? {
@@ -305,6 +315,76 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return "";
   }
+  function visibleTextOf(node, allowHiddenRoot, skipControl) {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1 && node.nodeType !== 11) return "";
+    if (node.nodeType === 1) {
+      if (skipControl && node === skipControl) return "";
+      var t = node.tagName ? node.tagName.toUpperCase() : "";
+      if (t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEMPLATE") return "";
+      if (skipControl && (t === "SELECT" || t === "TEXTAREA" || t === "INPUT")) return "";
+      if (!allowHiddenRoot) {
+        if (node.getAttribute && node.getAttribute("aria-hidden") === "true") return "";
+        var win = (node.ownerDocument && node.ownerDocument.defaultView) || window;
+        if (win && win.getComputedStyle) {
+          var st = win.getComputedStyle(node);
+          if (st && (st.display === "none" || st.visibility === "hidden" || st.visibility === "collapse")) {
+            return "";
+          }
+        }
+      }
+    }
+    var out = [];
+    if (node.shadowRoot) {
+      var stxt = visibleTextOf(node.shadowRoot, false, skipControl);
+      if (stxt) out.push(stxt);
+    }
+    var kids = node.childNodes || [];
+    for (var i = 0; i < kids.length; i++) {
+      var k = visibleTextOf(kids[i], false, skipControl);
+      if (k) out.push(k);
+    }
+    return out.join(" ").replace(/\\s+/g, " ").trim();
+  }
+  function isAriaHidden(el) {
+    if (!el) return true;
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var cur = el;
+    var guard = 0;
+    while (cur && guard++ < 32) {
+      if (cur.getAttribute) {
+        if (cur.getAttribute("aria-hidden") === "true") return true;
+        if (cur.hasAttribute && cur.hasAttribute("inert")) return true;
+      }
+      if (cur.nodeType === 1 && win && win.getComputedStyle) {
+        var cs = win.getComputedStyle(cur);
+        if (cs && cs.display === "none") return true;
+      }
+      var root = typeof cur.getRootNode === "function" ? cur.getRootNode() : null;
+      cur = cur.parentElement || (root && root.host) || null;
+    }
+    if (typeof el.checkVisibility === "function") {
+      try {
+        if (!el.checkVisibility({ visibilityProperty: true })) return true;
+      } catch (e) {}
+    } else if (win && win.getComputedStyle) {
+      var selfCs = win.getComputedStyle(el);
+      if (selfCs && (selfCs.visibility === "hidden" || selfCs.visibility === "collapse")) return true;
+    }
+    return false;
+  }
+  function headingLevelOf(el) {
+    if (!el) return null;
+    var explicit = el.getAttribute && el.getAttribute("aria-level");
+    if (explicit) {
+      var parsed = parseInt(explicit, 10);
+      if (!isNaN(parsed)) return parsed;
+    }
+    var tag = el.tagName ? el.tagName.toUpperCase() : "";
+    var m = /^H([1-6])$/.exec(tag);
+    return m ? parseInt(m[1], 10) : null;
+  }
   function getAccessibleName(el) {
     if (!el) return "";
     var doc = el.ownerDocument || document;
@@ -315,7 +395,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       for (var i = 0; i < ids.length; i++) {
         var ref = doc.getElementById ? doc.getElementById(ids[i]) : null;
         if (ref) {
-          var rt = (ref.innerText || ref.textContent || "").trim();
+          var rt = visibleTextOf(ref, true, null);
           if (rt) parts.push(rt);
         }
       }
@@ -330,16 +410,16 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
           var escId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(el.id) : el.id;
           var forLbl = doc.querySelector('label[for="' + escId + '"]');
           if (forLbl) {
-            var ft = (forLbl.innerText || forLbl.textContent || "").trim();
-            if (ft) return ft.replace(/\\s+/g, " ");
+            var ft = visibleTextOf(forLbl, false, el);
+            if (ft) return ft;
           }
         } catch (e) {}
       }
       if (el.closest) {
         var wrapLbl = el.closest("label");
         if (wrapLbl) {
-          var wt = (wrapLbl.innerText || wrapLbl.textContent || "").trim();
-          if (wt) return wt.replace(/\\s+/g, " ");
+          var wt = visibleTextOf(wrapLbl, false, el);
+          if (wt) return wt;
         }
       }
       var itype = tag === "INPUT" ? (el.getAttribute("type") || "text").toLowerCase() : "";
@@ -353,10 +433,35 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var alt = el.getAttribute && el.getAttribute("alt");
       if (alt && alt.trim()) return alt.trim();
     }
-    var title = el.getAttribute && el.getAttribute("title");
-    var txt = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
+    var txt = visibleTextOf(el, false, null);
     if (txt) return txt;
+    var title = el.getAttribute && el.getAttribute("title");
     return title ? title.trim() : "";
+  }
+  function getAccessibleDescription(el) {
+    if (!el) return "";
+    var doc = el.ownerDocument || document;
+    var describedBy = el.getAttribute && el.getAttribute("aria-describedby");
+    if (describedBy) {
+      var parts = [];
+      var ids = describedBy.trim().split(/\\s+/);
+      for (var i = 0; i < ids.length; i++) {
+        var ref = doc.getElementById ? doc.getElementById(ids[i]) : null;
+        if (ref) {
+          var rt = visibleTextOf(ref, true, null);
+          if (rt) parts.push(rt);
+        }
+      }
+      if (parts.length > 0) return parts.join(" ").replace(/\\s+/g, " ").trim();
+    }
+    var ariaDesc = el.getAttribute && el.getAttribute("aria-description");
+    if (ariaDesc && ariaDesc.trim()) return ariaDesc.trim();
+    var title = el.getAttribute && el.getAttribute("title");
+    if (title && title.trim()) {
+      var accName = getAccessibleName(el);
+      if (accName && accName !== title.trim()) return title.trim();
+    }
+    return "";
   }
   function collectRoots(root, offsetX, offsetY, inShadow, inIframe, out) {
     if (!root) return;
@@ -423,12 +528,14 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       }
     }
   }
-  function findRoleInRoot(root, roleLower, nameSpec, exact, ctx, pushHit) {
+  function findRoleInRoot(root, roleLower, nameSpec, exact, ctx, pushHit, includeHidden, level) {
     if (!root || !root.querySelectorAll) return;
     var candidates = root.querySelectorAll("*");
     for (var i = 0; i < candidates.length; i++) {
       var el = candidates[i];
       if (getImplicitRole(el) !== roleLower) continue;
+      if (!includeHidden && isAriaHidden(el)) continue;
+      if (level !== undefined && level !== null && headingLevelOf(el) !== Number(level)) continue;
       if (nameSpec !== undefined && nameSpec !== null) {
         var accName = getAccessibleName(el);
         if (!matchSpec(accName, nameSpec, Boolean(exact))) continue;
@@ -449,6 +556,16 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       filtered = filtered.filter(function(h) {
         var txt = (h.el.innerText || h.el.textContent || h.el.value || getAccessibleName(h.el) || "");
         return !matchSpec(txt, sel.hasNotText, false);
+      });
+    }
+    if (sel.has !== undefined) {
+      filtered = filtered.filter(function(h) {
+        return findInScope(sel.has, h.el, h.offsetX, h.offsetY, h.inShadow, h.inIframe).length > 0;
+      });
+    }
+    if (sel.hasNot !== undefined) {
+      filtered = filtered.filter(function(h) {
+        return findInScope(sel.hasNot, h.el, h.offsetX, h.offsetY, h.inShadow, h.inIframe).length === 0;
       });
     }
     if (sel.first) return filtered.length > 0 ? [filtered[0]] : [];
@@ -501,6 +618,8 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       delete childSel.within;
       delete childSel.hasText;
       delete childSel.hasNotText;
+      delete childSel.has;
+      delete childSel.hasNot;
       delete childSel.first;
       delete childSel.last;
       delete childSel.nth;
@@ -517,12 +636,22 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       }
       return applyModifiersAndSlice(combined, sel);
     }
+    // Logical OR composition (anyOf): union deduplicated hits across branches
+    if (typeof sel === "object" && sel !== null && Array.isArray(sel.anyOf)) {
+      for (var bi = 0; bi < sel.anyOf.length; bi++) {
+        var branchHits = findInScope(sel.anyOf[bi], scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+        for (var bh = 0; bh < branchHits.length; bh++) {
+          pushHit(branchHits[bh].el, branchHits[bh]);
+        }
+      }
+      return applyModifiersAndSlice(hits, sel);
+    }
 
     var esc = function(v) {
       return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
     };
     var mainCtx = { root: scopeRoot, offsetX: baseOffsetX, offsetY: baseOffsetY, inShadow: baseInShadow, inIframe: baseInIframe };
-    var hasModifiers = typeof sel === "object" && sel !== null && (sel.hasText !== undefined || sel.hasNotText !== undefined || sel.first || sel.last || typeof sel.nth === "number");
+    var hasModifiers = typeof sel === "object" && sel !== null && (sel.hasText !== undefined || sel.hasNotText !== undefined || sel.has !== undefined || sel.hasNot !== undefined || sel.first || sel.last || typeof sel.nth === "number");
 
     // O(1)-ish Light-DOM fast path: avoids scanning thousands of nodes with querySelectorAll("*")
     // unless Shadow DOM / iframe piercing is needed or no Light-DOM match exists.
@@ -550,7 +679,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
           return hits;
         }
       } else if (typeof sel === "object" && sel !== null && "role" in sel) {
-        findRoleInRoot(scopeRoot, String(sel.role).toLowerCase(), sel.name, sel.exact, mainCtx, pushHit);
+        findRoleInRoot(scopeRoot, String(sel.role).toLowerCase(), sel.name, sel.exact, mainCtx, pushHit, sel.includeHidden, sel.level);
         if (hits.length > 0) return hits;
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
         var fastNeedle = typeof sel === "string" ? sel : sel.text;
@@ -580,7 +709,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         var foundLbl = root.querySelectorAll('[aria-label="' + lbl + '"]');
         for (var j = 0; j < foundLbl.length; j++) pushHit(foundLbl[j], ctx);
       } else if (typeof sel === "object" && sel !== null && "role" in sel) {
-        findRoleInRoot(root, String(sel.role).toLowerCase(), sel.name, sel.exact, ctx, pushHit);
+        findRoleInRoot(root, String(sel.role).toLowerCase(), sel.name, sel.exact, ctx, pushHit, sel.includeHidden, sel.level);
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
         var needle = typeof sel === "string" ? sel : sel.text;
         var isExact = typeof sel === "object" && sel !== null && Boolean(sel.exact);
@@ -635,13 +764,22 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return el;
   }
+  function labelControlOf(node) {
+    var cur = node;
+    var guard = 0;
+    while (cur && guard++ < 8) {
+      if (cur.tagName === "LABEL") return cur.control || null;
+      cur = cur.parentElement;
+    }
+    return null;
+  }
   function isSameOrDescendant(target, candidate) {
     if (!target || !candidate) return false;
     if (target === candidate) return true;
     try {
       if (typeof target.contains === "function" && target.contains(candidate)) return true;
-      if (typeof candidate.contains === "function" && candidate.contains(target)) return true;
     } catch (e) {}
+    if (labelControlOf(candidate) === target) return true;
     var cur = candidate;
     var guard = 0;
     while (cur && guard++ < 24) {
@@ -654,6 +792,31 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       }
     }
     return false;
+  }
+  function describeEl(el) {
+    if (!el) return "(unknown)";
+    var tag = el.tagName ? el.tagName.toLowerCase() : "element";
+    var idPart = el.id ? "#" + el.id : "";
+    var cls = typeof el.className === "string" ? el.className.trim().split(/\\s+/).filter(Boolean).slice(0, 3).join(".") : "";
+    var clsPart = cls ? "." + cls : "";
+    var txt = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
+    if (txt.length > 40) txt = txt.slice(0, 37) + "...";
+    return "<" + tag + idPart + clsPart + (txt ? ">" + txt + "</" + tag + ">" : ">");
+  }
+  function getHitTestBlocker(hit) {
+    var el = hit.el;
+    var rect = el.getBoundingClientRect();
+    var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
+    var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
+    var cx = rect.left + hit.offsetX + rect.width / 2;
+    var cy = rect.top + hit.offsetY + rect.height / 2;
+    if (vw > 0 && vh > 0 && (cx < 0 || cy < 0 || cx > vw || cy > vh)) {
+      return "outside viewport";
+    }
+    var topEl = deepElementFromPoint(document, cx, cy);
+    if (!topEl) return null;
+    if (isSameOrDescendant(el, topEl)) return null;
+    return describeEl(topEl);
   }
   function isHitTestClear(hit) {
     var el = hit.el;
@@ -682,6 +845,20 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         catch (e) { try { el.scrollIntoView(true); } catch (e2) {} }
       }
       return true;
+    }
+    return false;
+  }
+  function scrollToUnobscure(hit) {
+    var el = hit.el;
+    if (typeof el.scrollIntoView !== "function") return false;
+    var blocks = ["center", "end", "start", "nearest"];
+    for (var i = 0; i < blocks.length; i++) {
+      try {
+        el.scrollIntoView({ block: blocks[i], inline: "center", behavior: "instant" });
+      } catch (e) {
+        try { el.scrollIntoView(true); } catch (e2) {}
+      }
+      if (isHitTestClear(hit)) return true;
     }
     return false;
   }
@@ -722,16 +899,20 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       ? String(el.value ?? "")
       : undefined;
     var text = (el.innerText || el.textContent || "").trim() || undefined;
+    var normTextContent = (el.textContent || "").replace(/\\s+/g, " ").trim() || undefined;
     var accName = getAccessibleName(el) || undefined;
+    var accDesc = getAccessibleDescription(el) || undefined;
     var role = getImplicitRole(el) || undefined;
     return {
       id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
       tag: tag,
       role: role,
       text: text,
+      textContent: normTextContent,
       value: val,
       accessibilityLabel: el.getAttribute("aria-label") || undefined,
       accessibleName: accName,
+      accessibleDescription: accDesc,
       rect: { x: rect.x + hit.offsetX, y: rect.y + hit.offsetY, width: rect.width, height: rect.height },
       scrollX: window.scrollX || window.pageXOffset || 0,
       scrollY: window.scrollY || window.pageYOffset || 0,
@@ -821,6 +1002,15 @@ export function buildDomTapScript(selector: Selector): string {
  *      `instantAnimations` style is active).
  * Retries seamlessly inside the page via `MutationObserver` + `rAF` in ONE single round trip!
  */
+function defaultActionStableFrames(): number {
+  const envVal = process.env["SPANA_ACTION_STABLE_FRAMES"];
+  if (envVal !== undefined) {
+    const parsed = Number.parseInt(envVal, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 2;
+}
+
 export function buildDomWaitForSelectorScript(
   selector: Selector,
   opts: DomWaitForSelectorOptions = {},
@@ -834,7 +1024,7 @@ export function buildDomWaitForSelectorScript(
     opts.stableFrames !== undefined
       ? Math.max(0, Math.round(opts.stableFrames))
       : forAction
-        ? -1 // auto: 0 rAF when static & unobstructed, 1-2 rAF only if animating or scrolled
+        ? defaultActionStableFrames()
         : 0;
   const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
   const waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
@@ -864,7 +1054,12 @@ export function buildDomWaitForSelectorScript(
       if (!forAction) return ready.map(function(r) { return r.match; });
       var target = ready[ready.length - 1];
       var didScroll = ensureInViewport(target.hit);
-      if (checkHitTest && !isHitTestClear(target.hit)) return null;
+      if (checkHitTest && !isHitTestClear(target.hit)) {
+        if (scrollToUnobscure(target.hit)) {
+          didScroll = true;
+        }
+        if (!isHitTestClear(target.hit)) return null;
+      }
       var updated = toMatch(target.hit);
       if (!updated.visible || !updated.enabled) return null;
       return { hits: ready, target: target, match: updated, didScroll: didScroll };
@@ -1101,8 +1296,9 @@ export function buildDomWaitForMatchScript(
   const attributeName = JSON.stringify(opts.attributeName ?? null);
   const patternSource = JSON.stringify(opts.patternSource ?? null);
   const patternFlags = JSON.stringify(opts.patternFlags ?? "");
+  const negate = Boolean(opts.negate);
 
-  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, patternSource, patternFlags) {
+  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, patternSource, patternFlags, negate) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var lastActual = undefined;
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
@@ -1111,11 +1307,10 @@ export function buildDomWaitForMatchScript(
       if (kind === "url") {
         var href = String(window.location.href || "");
         lastActual = href;
-        if (regex) {
-          if (regex.test(href)) return { matched: true, actual: href };
-        } else if (expected !== null && (href === expected || href.indexOf(String(expected)) !== -1)) {
-          return { matched: true, actual: href };
-        }
+        var urlOk = regex
+          ? regex.test(href)
+          : (expected !== null && (href === expected || href.indexOf(String(expected)) !== -1));
+        if (negate ? !urlOk : urlOk) return { matched: true, actual: href };
         return null;
       }
       var hits = findAcrossRoots(sel);
@@ -1125,54 +1320,56 @@ export function buildDomWaitForMatchScript(
           if (toMatch(hits[ci]).visible) visibleCount += 1;
         }
         lastActual = String(visibleCount);
-        if (visibleCount === expectedCount) return { matched: true, actual: String(visibleCount) };
+        var countOk = visibleCount === expectedCount;
+        if (negate ? !countOk : countOk) return { matched: true, actual: String(visibleCount) };
         return null;
       }
+      var anyVisible = false;
       for (var i = hits.length - 1; i >= 0; i--) {
         var m = toMatch(hits[i]);
         if (!m.visible) continue;
+        anyVisible = true;
+        var matched = false;
+        var actualVal = undefined;
         if (kind === "focused") {
           var isFoc = Boolean(m.focused);
-          lastActual = isFoc ? "focused" : "not focused";
-          if (isFoc) return { matched: true, actual: "focused" };
+          actualVal = isFoc ? "focused" : "not focused";
+          matched = isFoc;
         } else if (kind === "accessibleName") {
           var acc = m.accessibleName || "";
-          lastActual = acc;
-          if (regex ? regex.test(acc) : (expected === null ? acc.length > 0 : acc === expected)) {
-            return { matched: true, actual: acc };
-          }
+          actualVal = acc;
+          matched = regex ? regex.test(acc) : (expected === null ? acc.length > 0 : acc.trim() === String(expected).trim());
+        } else if (kind === "accessibleDescription") {
+          var accD = m.accessibleDescription || "";
+          actualVal = accD;
+          matched = regex ? regex.test(accD) : (expected === null ? accD.length > 0 : accD.trim() === String(expected).trim());
         } else if (kind === "text") {
-          lastActual = m.text;
-          if (m.text === expected) return { matched: true, actual: m.text };
+          var normTxt = m.textContent !== undefined ? m.textContent : (m.text || "");
+          actualVal = normTxt;
+          matched = normTxt === (expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : expected);
         } else if (kind === "containsText") {
-          var actual = m.text || "";
-          lastActual = m.text;
-          if (expected !== null && actual.toLowerCase().indexOf(String(expected).toLowerCase()) !== -1) {
-            return { matched: true, actual: m.text };
-          }
+          var actual = m.textContent !== undefined ? m.textContent : (m.text || "");
+          actualVal = actual;
+          matched = expected !== null && actual.toLowerCase().indexOf(String(expected).replace(/\\s+/g, " ").trim().toLowerCase()) !== -1;
         } else if (kind === "matchesText") {
-          var actualRe = m.text || "";
-          lastActual = m.text;
-          if (regex && regex.test(actualRe)) {
-            return { matched: true, actual: m.text };
-          }
+          var actualRe = m.textContent !== undefined ? m.textContent : (m.text || "");
+          actualVal = actualRe;
+          matched = Boolean(regex && regex.test(actualRe));
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
-          lastActual = val;
-          if (val === expected) return { matched: true, actual: val };
+          actualVal = val;
+          matched = val === expected;
         } else if (kind === "attribute" && attributeName !== null) {
           var attrVal = m.attributes ? m.attributes[attributeName] : undefined;
-          lastActual = attrVal;
-          if (expected === null ? attrVal !== undefined : attrVal === expected) {
-            return { matched: true, actual: attrVal };
-          }
+          actualVal = attrVal;
+          matched = expected === null ? attrVal !== undefined : attrVal === expected;
         } else if (kind === "accessibilityLabel") {
           var lbl = m.accessibilityLabel;
-          lastActual = lbl;
-          if (expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected) {
-            return { matched: true, actual: lbl };
-          }
+          actualVal = lbl;
+          matched = expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected;
         }
+        lastActual = actualVal;
+        if (negate ? !matched : matched) return { matched: true, actual: actualVal };
       }
       return null;
     }
@@ -1246,7 +1443,7 @@ export function buildDomWaitForMatchScript(
         }
       }
     });
-  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${patternSource}, ${patternFlags})`;
+  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${patternSource}, ${patternFlags}, ${negate})`;
 }
 
 /**
@@ -1306,7 +1503,10 @@ export function buildDomFillScript(
         var m = toMatch(h);
         if (!m.visible || !m.enabled) continue;
         ensureInViewport(h);
-        if (checkHitTest && !isHitTestClear(h)) continue;
+        if (checkHitTest && !isHitTestClear(h)) {
+          scrollToUnobscure(h);
+          if (!isHitTestClear(h)) continue;
+        }
         return h.el;
       }
       return null;
@@ -1456,7 +1656,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var forAction = Boolean(opts.forAction);
     var failFastWhenIdle = Boolean(opts.failFastWhenIdle);
     var idleQuietMs = Math.max(50, Math.round(opts.idleQuietMs != null ? opts.idleQuietMs : 250));
-    var reqStableFrames = opts.stableFrames !== undefined ? Math.max(0, Math.round(opts.stableFrames)) : (forAction ? -1 : 0);
+    var reqStableFrames = opts.stableFrames !== undefined ? Math.max(0, Math.round(opts.stableFrames)) : (forAction ? 2 : 0);
     var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
     var waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
     var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
@@ -1482,7 +1682,12 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       if (!forAction) return ready.map(function(r) { return r.match; });
       var target = ready[ready.length - 1];
       var didScroll = ensureInViewport(target.hit);
-      if (checkHitTest && !isHitTestClear(target.hit)) return null;
+      if (checkHitTest && !isHitTestClear(target.hit)) {
+        if (scrollToUnobscure(target.hit)) {
+          didScroll = true;
+        }
+        if (!isHitTestClear(target.hit)) return null;
+      }
       var updated = toMatch(target.hit);
       if (!updated.visible || !updated.enabled) return null;
       return { hits: ready, target: target, match: updated, didScroll: didScroll };
@@ -1651,6 +1856,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var attributeName = opts.attributeName !== undefined ? opts.attributeName : null;
     var patternSource = opts.patternSource !== undefined ? opts.patternSource : null;
     var patternFlags = opts.patternFlags || "";
+    var negate = Boolean(opts.negate);
     var lastActual = undefined;
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
 
@@ -1658,13 +1864,10 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       if (kind === "url") {
         var href = typeof window !== "undefined" && window.location ? String(window.location.href || "") : "";
         lastActual = href;
-        if (regex) {
-          if (regex.test(href)) return { matched: true, actual: href };
-        } else if (expected !== null) {
-          if (href === expected || href.indexOf(String(expected)) !== -1) {
-            return { matched: true, actual: href };
-          }
-        }
+        var urlOk = regex
+          ? regex.test(href)
+          : (expected !== null && (href === expected || href.indexOf(String(expected)) !== -1));
+        if (negate ? !urlOk : urlOk) return { matched: true, actual: href };
         return null;
       }
 
@@ -1676,7 +1879,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           if (toMatch(hits[ci]).visible) visibleCount++;
         }
         lastActual = String(visibleCount);
-        if (expectedCount !== null && visibleCount === expectedCount) {
+        var countOk = expectedCount !== null && visibleCount === expectedCount;
+        if (negate ? !countOk : countOk) {
           return { matched: true, actual: String(visibleCount) };
         }
         return null;
@@ -1685,47 +1889,46 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       for (var i = hits.length - 1; i >= 0; i--) {
         var m = toMatch(hits[i]);
         if (!m.visible) continue;
+        var matched = false;
+        var actualVal = undefined;
         if (kind === "text") {
-          lastActual = m.text;
-          if (m.text === expected) return { matched: true, actual: m.text };
+          var normTxt = m.textContent !== undefined ? m.textContent : (m.text || "");
+          actualVal = normTxt;
+          matched = normTxt === (expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : expected);
         } else if (kind === "containsText") {
-          var actual = m.text || "";
-          lastActual = m.text;
-          if (expected !== null && actual.toLowerCase().indexOf(String(expected).toLowerCase()) !== -1) {
-            return { matched: true, actual: m.text };
-          }
+          var actual = m.textContent !== undefined ? m.textContent : (m.text || "");
+          actualVal = actual;
+          matched = expected !== null && actual.toLowerCase().indexOf(String(expected).replace(/\\s+/g, " ").trim().toLowerCase()) !== -1;
         } else if (kind === "matchesText") {
-          var actualRe = m.text || "";
-          lastActual = m.text;
-          if (regex && regex.test(actualRe)) return { matched: true, actual: m.text };
+          var actualRe = m.textContent !== undefined ? m.textContent : (m.text || "");
+          actualVal = actualRe;
+          matched = Boolean(regex && regex.test(actualRe));
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
-          lastActual = val;
-          if (val === expected) return { matched: true, actual: val };
+          actualVal = val;
+          matched = val === expected;
         } else if (kind === "attribute" && attributeName !== null) {
           var attrVal = m.attributes ? m.attributes[attributeName] : undefined;
-          lastActual = attrVal;
-          if (expected === null ? attrVal !== undefined : attrVal === expected) {
-            return { matched: true, actual: attrVal };
-          }
+          actualVal = attrVal;
+          matched = expected === null ? attrVal !== undefined : attrVal === expected;
         } else if (kind === "accessibilityLabel") {
           var lbl = m.accessibilityLabel;
-          lastActual = lbl;
-          if (expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected) {
-            return { matched: true, actual: lbl };
-          }
+          actualVal = lbl;
+          matched = expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected;
         } else if (kind === "accessibleName") {
           var accName = m.accessibleName || m.accessibilityLabel || m.text || "";
-          lastActual = accName;
-          if (regex) {
-            if (regex.test(accName)) return { matched: true, actual: accName };
-          } else if (expected === null ? accName.length > 0 : accName.trim() === String(expected).trim()) {
-            return { matched: true, actual: accName };
-          }
+          actualVal = accName;
+          matched = regex ? regex.test(accName) : (expected === null ? accName.length > 0 : accName.trim() === String(expected).trim());
+        } else if (kind === "accessibleDescription") {
+          var accDesc = m.accessibleDescription || "";
+          actualVal = accDesc;
+          matched = regex ? regex.test(accDesc) : (expected === null ? accDesc.length > 0 : accDesc.trim() === String(expected).trim());
         } else if (kind === "focused") {
-          lastActual = m.focused ? "focused" : "not focused";
-          if (m.focused) return { matched: true, actual: "focused" };
+          actualVal = m.focused ? "focused" : "not focused";
+          matched = Boolean(m.focused);
         }
+        lastActual = actualVal;
+        if (negate ? !matched : matched) return { matched: true, actual: actualVal };
       }
       return null;
     }
@@ -1829,7 +2032,10 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         var m = toMatch(h);
         if (!m.visible || !m.enabled) continue;
         ensureInViewport(h);
-        if (checkHitTest && !isHitTestClear(h)) continue;
+        if (checkHitTest && !isHitTestClear(h)) {
+          scrollToUnobscure(h);
+          if (!isHitTestClear(h)) continue;
+        }
         return h.el;
       }
       return null;
@@ -1924,6 +2130,22 @@ export type InjectedRuntimeMethod =
   | "waitForHidden"
   | "waitForMatch"
   | "fill";
+
+/** Build an in-page diagnostic script reporting why an existing element failed actionability (covered/disabled/hidden). */
+export function buildDomActionabilityDiagScript(selector: Selector): string {
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
+  return `(function(sel) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return { found: false };
+    var target = hits[hits.length - 1];
+    var m = toMatch(target);
+    if (!m.visible) return { found: true, visible: false, enabled: m.enabled };
+    if (!m.enabled) return { found: true, visible: true, enabled: false };
+    var blocker = getHitTestBlocker(target);
+    return { found: true, visible: true, enabled: true, obstructedBy: blocker || undefined };
+  })(${serialized})`;
+}
 
 /** Build an in-page script returning the matching DOM Element (used for CDP `DOM.setFileInputFiles`). */
 export function buildDomFindElementScript(selector: Selector): string {
