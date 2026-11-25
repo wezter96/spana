@@ -62,10 +62,11 @@ No longer recommended. Was the old Appium-specific API.
 ### Parameter Design
 
 **`pinch()` / `zoom()`:**
-| Parameter | Type | Default | Range | Notes |
-|---|---|---|---|---|
-| `duration` | `number` (ms) | 1500 | 500-10000 | Speed of gesture |
-| `scale` | `number` (float) | — | 0.0-1.0 | Percentage of element/screen size |
+
+| Parameter  | Type             | Default | Range     | Notes                             |
+| ---------- | ---------------- | ------- | --------- | --------------------------------- |
+| `duration` | `number` (ms)    | 1500    | 500-10000 | Speed of gesture                  |
+| `scale`    | `number` (float) | —       | 0.0-1.0   | Percentage of element/screen size |
 
 **W3C Actions `action('pointer')`:**
 
