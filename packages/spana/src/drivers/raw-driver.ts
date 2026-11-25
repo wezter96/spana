@@ -3,6 +3,13 @@ import type { DriverError } from "../errors.js";
 import type { DeviceInfo } from "../schemas/device.js";
 import type { Selector } from "../schemas/selector.js";
 import type { DomChannel } from "../channels/dom-channel.js";
+import type {
+  BiometricOptions,
+  Geolocation,
+  Orientation,
+  PermissionOptions,
+  PushPayload,
+} from "./device-controls.js";
 
 export type RawHierarchy = string; // Raw XML (Android/iOS) or JSON (web) — parsed by platform-specific parsers
 
@@ -272,6 +279,21 @@ export interface RawDriverService<_T extends string = string, R extends string =
   // Queries
   readonly takeScreenshot: () => Effect.Effect<Uint8Array, DriverError>;
   readonly getDeviceInfo: () => Effect.Effect<DeviceInfo, DriverError>;
+  readonly setGeolocation?: (point: Geolocation) => Effect.Effect<void, DriverError>;
+  readonly setSystemTime?: (time: Date | number | string) => Effect.Effect<void, DriverError>;
+  readonly setPermission?: (
+    appId: string,
+    permission: string,
+    state: "grant" | "deny",
+    options?: PermissionOptions,
+  ) => Effect.Effect<void, DriverError>;
+  readonly setOrientation?: (orientation: Orientation) => Effect.Effect<void, DriverError>;
+  readonly setBiometricEnrollment?: (enabled: boolean) => Effect.Effect<void, DriverError>;
+  readonly simulateBiometric?: (options: BiometricOptions) => Effect.Effect<void, DriverError>;
+  readonly sendPushNotification?: (
+    appId: string,
+    payload: PushPayload,
+  ) => Effect.Effect<void, DriverError>;
 
   // App lifecycle
   readonly launchApp: (
@@ -458,6 +480,21 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     hideKeyboard: wrapLoggedMethod(logs, "hideKeyboard", driver.hideKeyboard),
     takeScreenshot: wrapLoggedMethod(logs, "takeScreenshot", driver.takeScreenshot),
     getDeviceInfo: wrapLoggedMethod(logs, "getDeviceInfo", driver.getDeviceInfo),
+    setGeolocation: wrapOptionalMethod(logs, "setGeolocation", driver.setGeolocation),
+    setSystemTime: wrapOptionalMethod(logs, "setSystemTime", driver.setSystemTime),
+    setPermission: wrapOptionalMethod(logs, "setPermission", driver.setPermission),
+    setOrientation: wrapOptionalMethod(logs, "setOrientation", driver.setOrientation),
+    setBiometricEnrollment: wrapOptionalMethod(
+      logs,
+      "setBiometricEnrollment",
+      driver.setBiometricEnrollment,
+    ),
+    simulateBiometric: wrapOptionalMethod(logs, "simulateBiometric", driver.simulateBiometric),
+    sendPushNotification: wrapOptionalMethod(
+      logs,
+      "sendPushNotification",
+      driver.sendPushNotification,
+    ),
     launchApp: wrapLoggedMethod(logs, "launchApp", driver.launchApp),
     stopApp: wrapLoggedMethod(logs, "stopApp", driver.stopApp),
     killApp: wrapLoggedMethod(logs, "killApp", driver.killApp),

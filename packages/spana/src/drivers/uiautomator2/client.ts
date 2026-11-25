@@ -164,6 +164,10 @@ export class UiAutomator2Client {
     }
   }
 
+  async setOrientation(orientation: "PORTRAIT" | "LANDSCAPE"): Promise<void> {
+    await this.request("POST", this.sessionPath("/orientation"), { orientation });
+  }
+
   // ---------------------------------------------------------------------------
   // Gestures — Appium gesture extensions
   // These match the endpoints used by maestro-runner's uiautomator2 client.

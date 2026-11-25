@@ -342,6 +342,44 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
   let uploadFileA: string;
   let uploadFileB: string;
 
+  test("emulates geolocation, permissions, wall clock and viewport on Playwright Chromium", async () => {
+    const driver = await Effect.runPromise(makePlaywrightDriver({ headless: true, baseUrl }));
+    try {
+      const result = await executeFlow(
+        flow("web emulation", async ({ app }) => {
+          await app.grantPermission("geolocation", { origin: baseUrl });
+          await app.setGeolocation({ latitude: 12, longitude: 34 });
+          expect(
+            await app.evaluate<number[]>(
+              `new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(({coords}) => resolve([coords.latitude, coords.longitude]), reject))`,
+            ),
+          ).toEqual([12, 34]);
+          await app.denyPermission("geolocation", { origin: baseUrl });
+          expect(
+            await app.evaluate<string>(
+              `navigator.permissions.query({name: 'geolocation'}).then((permission) => permission.state)`,
+            ),
+          ).toBe("denied");
+          await app.setSystemTime("2030-01-01T00:00:00Z");
+          expect(await app.evaluate<number>("new Date().getUTCFullYear()")).toBe(2030);
+          await app.setOrientation("portrait");
+          expect(await app.evaluate<boolean>("window.innerHeight > window.innerWidth")).toBe(true);
+        }),
+        driver,
+        {
+          appId: baseUrl,
+          platform: "web",
+          coordinatorConfig: { parse: parseWebHierarchy },
+          artifactConfig: { captureOnFailure: false },
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe("passed");
+    } finally {
+      await Effect.runPromise(driver.killApp(baseUrl));
+    }
+  }, 15_000);
+
   beforeAll(async () => {
     const started = await createPilotTestAppServer();
     appServer = started.server;

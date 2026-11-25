@@ -19,6 +19,7 @@ import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { splitGraphemes } from "../../core/graphemes.js";
 import { hasLaunchDeviceState } from "../launch-options.js";
+import { deviceEffect } from "../device-controls.js";
 import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
 import { resolveNetworkConditions } from "../network-profiles.js";
 import type { AppiumClient } from "./client.js";
@@ -28,7 +29,36 @@ export function createAppiumAndroidDriver(
   client: AppiumClient,
   defaultBundleId?: string,
 ): Effect.Effect<RawDriverService, DriverError> {
+  const mobile = async (command: string, params: Record<string, unknown>) => {
+    await client.request("POST", client.sessionPath("/execute/sync"), {
+      script: `mobile: ${command}`,
+      args: [params],
+    });
+  };
   const service: RawDriverService = {
+    setGeolocation: (point) =>
+      deviceEffect("setGeolocation", () => mobile("setGeolocation", { ...point })),
+    setPermission: (appPackage, permission, state) =>
+      deviceEffect("setPermission", () =>
+        mobile("changePermissions", {
+          appPackage,
+          permissions: [permission],
+          action: state === "grant" ? "grant" : "revoke",
+          target: "pm",
+        }),
+      ),
+    simulateBiometric: (options) =>
+      deviceEffect("simulateBiometric", () => {
+        if (options.type !== "fingerprint")
+          throw new Error("Only fingerprint simulation is supported on Android");
+        return mobile("fingerprint", { fingerprintId: options.fingerId });
+      }),
+    setOrientation: (orientation) =>
+      deviceEffect("setOrientation", async () => {
+        await client.request("POST", client.sessionPath("/orientation"), {
+          orientation: orientation.toUpperCase(),
+        });
+      }),
     // -----------------------------------------------------------------------
     // Hierarchy
     // -----------------------------------------------------------------------

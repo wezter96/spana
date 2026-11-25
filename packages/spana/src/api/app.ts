@@ -18,6 +18,13 @@ import type {
   VirtualCredentialInput,
 } from "../drivers/raw-driver.js";
 import { mergeLaunchOptions } from "../drivers/launch-options.js";
+import type {
+  BiometricOptions,
+  Geolocation,
+  Orientation,
+  PermissionOptions,
+  PushPayload,
+} from "../drivers/device-controls.js";
 import type { StorybookConfig } from "../schemas/config.js";
 import {
   inFrame,
@@ -189,6 +196,14 @@ export interface PromiseApp<T extends string = string, R extends string = string
     ...args: any[]
   ): Promise<Result>;
   mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void>;
+  setGeolocation(point: Geolocation): Promise<void>;
+  setSystemTime(time: Date | number | string): Promise<void>;
+  grantPermission(permission: string, options?: PermissionOptions): Promise<void>;
+  denyPermission(permission: string, options?: PermissionOptions): Promise<void>;
+  setOrientation(orientation: Orientation): Promise<void>;
+  setBiometricEnrollment(enabled: boolean): Promise<void>;
+  simulateBiometric(options: BiometricOptions): Promise<void>;
+  sendPushNotification(payload: PushPayload): Promise<void>;
   blockNetwork(matcher: BrowserRouteMatcher): Promise<void>;
   clearNetworkMocks(): Promise<void>;
   setNetworkConditions(conditions: BrowserNetworkConditions): Promise<void>;
@@ -422,6 +437,19 @@ export function createPromiseApp<T extends string = string, R extends string = s
     opts?: { selector?: unknown; captureScreenshot?: boolean },
   ) => (recorder ? recorder.runStep(command, action, opts) : action());
 
+  const runDeviceStep = <A extends unknown[]>(
+    name: string,
+    method: ((...args: A) => Effect.Effect<void, DriverError>) | undefined,
+    ...args: A
+  ) =>
+    runStep(name, async () => {
+      if (!method) {
+        const target = platform ?? (await run(driver.getDeviceInfo())).platform;
+        throw new DriverError({ message: `${name}() is not supported on ${target}` });
+      }
+      await run(method(...args));
+    });
+
   const runScreenshotStep = (
     command: string,
     action: () => Promise<Uint8Array>,
@@ -575,6 +603,19 @@ export function createPromiseApp<T extends string = string, R extends string = s
   );
 
   const appObj: PromiseApp<T, R> = {
+    setGeolocation: (point) => runDeviceStep("setGeolocation", driver.setGeolocation, point),
+    setSystemTime: (time) => runDeviceStep("setSystemTime", driver.setSystemTime, time),
+    grantPermission: (permission, opts) =>
+      runDeviceStep("grantPermission", driver.setPermission, appId, permission, "grant", opts),
+    denyPermission: (permission, opts) =>
+      runDeviceStep("denyPermission", driver.setPermission, appId, permission, "deny", opts),
+    setOrientation: (orientation) =>
+      runDeviceStep("setOrientation", driver.setOrientation, orientation),
+    setBiometricEnrollment: (enabled) =>
+      runDeviceStep("setBiometricEnrollment", driver.setBiometricEnrollment, enabled),
+    simulateBiometric: (opts) => runDeviceStep("simulateBiometric", driver.simulateBiometric, opts),
+    sendPushNotification: (payload) =>
+      runDeviceStep("sendPushNotification", driver.sendPushNotification, appId, payload),
     tap: (selector, opts) =>
       runStep("tap", () => run(coord.tap(selector, opts)), { selector, captureScreenshot: true }),
     tapXY: (x, y) =>

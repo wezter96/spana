@@ -13,6 +13,7 @@ import {
   adbSetData,
 } from "../../device/android.js";
 import { hasLaunchDeviceState } from "../launch-options.js";
+import { androidDeviceControls, deviceEffect } from "../device-controls.js";
 import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
 import { resolveNetworkConditions } from "../network-profiles.js";
 import { UiAutomator2Client } from "./client.js";
@@ -89,6 +90,11 @@ export function createUiAutomator2Driver(
 
     const service: RawDriverService = {
       domChannel,
+      ...androidDeviceControls(serial),
+      setOrientation: (orientation) =>
+        deviceEffect("setOrientation", () =>
+          client.setOrientation(orientation === "portrait" ? "PORTRAIT" : "LANDSCAPE"),
+        ),
 
       // -----------------------------------------------------------------------
       // Hierarchy

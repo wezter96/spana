@@ -35,6 +35,7 @@ import {
 } from "playwright-core";
 import { DriverError } from "../errors.js";
 import { hasLaunchDeviceState } from "./launch-options.js";
+import { deviceEffect } from "./device-controls.js";
 import { resolveNetworkConditions } from "./network-profiles.js";
 import type { BrowserName } from "../schemas/config.js";
 import type { Selector } from "../schemas/selector.js";
@@ -1394,6 +1395,50 @@ export function makePlaywrightDriver(
         }),
 
       getRawPage: () => page,
+
+      setGeolocation: (point) =>
+        deviceEffect("setGeolocation", () => context.setGeolocation(point)),
+
+      setSystemTime: (time) => deviceEffect("setSystemTime", () => page.clock.setSystemTime(time)),
+
+      setPermission: (_appId, permission, state, options) =>
+        deviceEffect("setPermission", async () => {
+          if (state === "grant") {
+            await context.grantPermissions([permission], options);
+            return;
+          }
+          if (browserName !== "chromium")
+            throw new Error(`Permission denial is not supported on ${browserName} (web)`);
+          const session = await ensureCdpSession();
+          const {
+            targetInfo: { browserContextId },
+          } = await session.send("Target.getTargetInfo");
+          if (!browserContextId)
+            throw new Error("Could not resolve Chromium's browser context for permission denial");
+          const name = permission === "midi-sysex" ? "midi" : permission;
+          await session.send("Browser.setPermission", {
+            permission: { name, ...(permission === "midi-sysex" ? { sysex: true } : {}) },
+            setting: "denied",
+            ...(options?.origin ? { origin: options.origin } : {}),
+            browserContextId,
+          });
+        }),
+
+      setOrientation: (orientation) =>
+        deviceEffect("setOrientation", async () => {
+          const viewport =
+            page.viewportSize() ??
+            (await page.evaluate<{ width: number; height: number }>(
+              "({ width: window.innerWidth, height: window.innerHeight })",
+            ));
+          const { width, height } = viewport;
+          if (
+            (orientation === "portrait" && width > height) ||
+            (orientation === "landscape" && height > width)
+          ) {
+            await page.setViewportSize({ width: height, height: width });
+          }
+        }),
 
       getCdpSession: (): CdpSessionHandle | undefined => {
         if (browserName !== "chromium") return undefined;

@@ -25,6 +25,7 @@ import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { splitGraphemes } from "../../core/graphemes.js";
 import { buildIOSLaunchConfiguration } from "../launch-options.js";
+import { deviceEffect } from "../device-controls.js";
 import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
 import { resolveNetworkConditions } from "../network-profiles.js";
 import type { AppiumClient } from "./client.js";
@@ -33,7 +34,37 @@ import { getAppiumWindowSize } from "./window-size.js";
 export function createAppiumIOSDriver(
   client: AppiumClient,
 ): Effect.Effect<RawDriverService, DriverError> {
+  const mobile = async (command: string, params: Record<string, unknown>) => {
+    await client.request("POST", client.sessionPath("/execute/sync"), {
+      script: `mobile: ${command}`,
+      args: [params],
+    });
+  };
   const service: RawDriverService = {
+    setOrientation: (orientation) =>
+      deviceEffect("setOrientation", async () => {
+        await client.request("POST", client.sessionPath("/orientation"), {
+          orientation: orientation.toUpperCase(),
+        });
+      }),
+    setGeolocation: ({ latitude, longitude }) =>
+      deviceEffect("setGeolocation", () => mobile("setSimulatedLocation", { latitude, longitude })),
+    setPermission: (bundleId, permission, state) =>
+      deviceEffect("setPermission", () =>
+        mobile("setPermission", {
+          bundleId,
+          access: { [permission]: state === "grant" ? "yes" : "no" },
+        }),
+      ),
+    setBiometricEnrollment: (isEnabled) =>
+      deviceEffect("setBiometricEnrollment", () => mobile("enrollBiometric", { isEnabled })),
+    simulateBiometric: (options) =>
+      deviceEffect("simulateBiometric", () => {
+        if (options.type === "fingerprint") throw new Error("Use touchId or faceId on iOS");
+        return mobile("sendBiometricMatch", { type: options.type, match: options.match ?? true });
+      }),
+    sendPushNotification: (bundleId, payload) =>
+      deviceEffect("sendPushNotification", () => mobile("pushNotification", { bundleId, payload })),
     // -----------------------------------------------------------------------
     // Hierarchy
     // -----------------------------------------------------------------------

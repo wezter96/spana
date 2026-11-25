@@ -223,6 +223,10 @@ export class WDAClient {
     return value;
   }
 
+  async setOrientation(orientation: "PORTRAIT" | "LANDSCAPE"): Promise<void> {
+    await this.request("POST", this.sessionPath("/orientation"), { orientation });
+  }
+
   // ---------------------------------------------------------------------------
   // Touch actions — WDA-specific endpoints
   // ---------------------------------------------------------------------------

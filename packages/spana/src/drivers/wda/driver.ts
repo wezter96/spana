@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { DriverError } from "../../errors.js";
 import { hasLaunchDeviceState } from "../launch-options.js";
+import { deviceEffect, iosSimulatorControls } from "../device-controls.js";
 import type { RawDriverService, LaunchOptions, NetworkConditions } from "../raw-driver.js";
 import { WDAClient } from "./client.js";
 import {
@@ -263,6 +264,13 @@ export function createWDADriver(
     }
 
     const service: RawDriverService = {
+      ...iosSimulatorControls(simulatorUdid),
+      setOrientation: (orientation) =>
+        deviceEffect("setOrientation", () =>
+          withSessionRecovery(() =>
+            client.setOrientation(orientation === "portrait" ? "PORTRAIT" : "LANDSCAPE"),
+          ),
+        ),
       domChannel,
 
       // -----------------------------------------------------------------------

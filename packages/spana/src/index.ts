@@ -80,6 +80,13 @@ export {
 } from "./schemas/config.js";
 export { type Element } from "./schemas/element.js";
 export { type DeviceInfo } from "./schemas/device.js";
+export type {
+  BiometricOptions,
+  Geolocation,
+  Orientation,
+  PermissionOptions,
+  PushPayload,
+} from "./drivers/device-controls.js";
 export {
   type BrowserRouteMatcher,
   type BrowserMockResponse,
