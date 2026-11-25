@@ -149,6 +149,46 @@ On failure, spana captures screenshots and diagnostics under `spana-output/` by 
 
 ---
 
+## Run it the fastest way
+
+Spana can run the same tests in several ways. Use the first option that fits your case. Fall back
+to the next one only when the "Does not apply when" column matches you.
+
+## Running a test suite
+
+| #   | Use this                                                 | How                                                                                                                  | Does not apply when                                                                                                     |
+| --- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1   | `spana test` with `.flow.ts` or Gherkin `.feature` files | `npx spana test`                                                                                                     | Your team needs [Varar](/writing-tests/varar/) Markdown specs. They run in Vitest, so options 2–6 do not apply.         |
+| 2   | Only the flows a change can affect                       | Local: `spana test --changed` or `--last-failed`. CI: `--changed-since origin/main` **and** a `filters` list         | No `filters` in `spana.config.ts`: then `--changed-since` runs every flow. A config or lockfile change runs every flow. |
+| 3   | Web: shared browser pool                                 | `spana test --platform web --workers 4` (or `defaults.workers: 4`)                                                   | `engine: "lightpanda"` (one worker only). `--parallel` without `--workers` uses one worker.                             |
+| 4   | Hybrid, Electron or Electrobun: spana-bridge             | `execution.bridge.enabled: true` in config, and call `initSpanaBridge()` from `spana-bridge` in the app's test build | You cannot change the app. Pure native React Native screens (no WebView DOM). Multi-worker web runs (use #3).           |
+| 5   | Skip UI sign-in                                          | Web: `execution.web.storageState: "./auth/user.json"`                                                                | Not web. On mobile and desktop, use the bridge (#4) to inject sign-in state.                                            |
+| 6   | Keep drivers warm between runs                           | Web: `execution.web.warmBrowser: true` (Chromium only). Mobile: `execution.warmDaemons.enabled: true`                | Not Chromium. `cdpUrl` or `wsEndpoint` is set.                                                                          |
+| 7   | Local devices, cold start                                | `spana test --platform android,ios`                                                                                  | You need real devices you do not have locally.                                                                          |
+| 8   | Appium server or device cloud (slowest)                  | `--driver appium --appium-url <url>`, or [BrowserStack / Sauce Labs](/guides/cloud-providers/)                       | —                                                                                                                       |
+
+Example CI command that combines #2 and #3:
+
+```bash
+spana test --platform web --workers 4 --changed-since origin/main
+```
+
+The [CI/CD guide](/guides/ci-integration/) shows the `filters` config that `--changed-since`
+needs.
+
+## Coding agents: exploring a screen and writing tests
+
+| #   | Use this                                               | Why                                                                                     | Does not apply when                                                                  |
+| --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1   | `spana mcp`                                            | One live session for all tool calls. The agent does not start a new browser each time.  | Your agent has no MCP support.                                                       |
+| 2   | `spana selectors`, `spana hierarchy`, `spana validate` | Plain CLI. Works in any agent.                                                          | You call them many times in a row: each call starts a new browser or driver session. |
+| 3   | `connect()` from `spana-test/agent`                    | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
+
+When the agent has a working flow, save it as a `.flow.ts` file and run it with `spana test`
+(suite option #1).
+
+---
+
 ## Configuration
 
 Configuration lives in `spana.config.ts` at the project root. Pass the config object to `defineConfig` for type safety.
@@ -1736,6 +1776,126 @@ Both `.flow.ts` and `.feature` files can live in the same `flowDir`. Spana disco
 
 ---
 
+## Varar (Markdown specs)
+
+[Varar](https://varar.dev) turns plain Markdown documents into tests. A value in a sentence is
+either an input (a **stimulus**) or an expected output (a **sensor**). If the app returns a
+different value, the test fails. There are no `Given`/`When`/`Then` keywords.
+
+Varar runs inside Vitest. Spana does not run `.md` files itself. Instead, your step functions call
+Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana-test/agent`) to drive the
+app.
+
+:::note[Which one to pick]
+Use Varar when you want specs that read like normal documentation. Use [Gherkin](/writing-tests/gherkin/)
+when you already have `.feature` files. Use plain [flows](/writing-tests/flows/) for the fastest
+runs: only `spana test` gives you the shared browser pool, `--changed-since` filters, reports and
+platform tags.
+:::
+
+A full working project is in
+[`examples/varar`](https://github.com/wezter96/spana/tree/main/examples/varar).
+
+## Install
+
+```bash
+npm install -D spana-test @varar/varar @varar/vitest @varar/cli vitest vite
+```
+
+Your `package.json` must have `"type": "module"`.
+
+## Configure
+
+```json title="varar.config.json"
+{ "docs": { "include": ["varar/**/*.md"], "exclude": [] }, "steps": ["src/varar/**/*.steps.ts"] }
+```
+
+```ts title="vitest.config.ts"
+import vararPlugin from "@varar/vitest";
+import { VararResultsReporter } from "@varar/vitest/reporter";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [vararPlugin()],
+  test: { testTimeout: 30_000, reporters: ["default", new VararResultsReporter()] },
+});
+```
+
+The Varar plugin replaces Vitest's `test.include` with the `docs.include` list.
+
+## Write the spec
+
+```md title="varar/cart.md"
+# Shopping cart
+
+A new visitor sees that the cart shows 0 items.
+
+When the shopper adds 2 items to the cart, the cart shows 2 items.
+```
+
+## Write the steps
+
+```ts title="src/varar/cart.steps.ts"
+import { steps } from "@varar/varar";
+import { connect, type Session } from "spana-test/agent";
+import { afterAll } from "vitest";
+
+let session: Session | undefined;
+afterAll(() => session?.disconnect());
+
+// The state factory runs for each document. Reuse one session, relaunch the app.
+const { stimulus, sensor } = steps(async () => {
+  session ??= await connect({ platform: "web", baseUrl: "http://localhost:4173" });
+  await session.launch();
+  return { app: session };
+});
+
+stimulus("the shopper adds {int} items to the cart", async ({ app }, count) => {
+  for (let i = 0; i < count; i++) await app.tap({ testID: "add-to-cart" });
+});
+
+// Read a value by testID. selectors() works on web, iOS, Android and desktop.
+async function textOf(app: Session, testID: string) {
+  return (await app.selectors()).find((el) => el.id === testID)?.text;
+}
+
+sensor("the cart shows {int} items", async ({ app }) => Number(await textOf(app, "cart-count")));
+```
+
+Run it:
+
+```bash
+npx vitest run
+```
+
+If the app shows a different number, Varar reports the cell that does not match:
+
+```
+CellMismatchError: cell 1: expected 3 but was 2
+```
+
+## Other platforms
+
+Change the `connect()` options. The steps stay the same, because `{ testID }` selectors work on
+every platform:
+
+```ts
+await connect({ platform: "android", packageName: "com.example.app" });
+await connect({ platform: "ios", bundleId: "com.example.app" });
+```
+
+See [`connect()` options](/reference/agent-api/) for Electron and Electrobun.
+
+## Limits
+
+- Runs one session at a time in each Vitest worker. Spana's shared pool and `--parallel` are not
+  used.
+- `--changed-since`, Spana reporters and `@web`/`@ios` tags do not apply. Use Vitest's own
+  filters and reporters.
+- Varar is at version 0.8. Its API can change.
+
+---
+
 ## CLI Commands
 
 The `spana` binary is the entry point for running flows, validating projects, inspecting live UI state, and scaffolding new tests.
@@ -2849,7 +3009,7 @@ interface ConnectOptions {
 | `loadAuthState`        | `(path) => Promise<void>`                          | Replace the browser context with saved auth state |
 | `downloadFile`         | `(path) => Promise<void>`                          | Save the next browser download                    |
 | `uploadFile`           | `(selector, path) => Promise<void>`                | Upload a local file through a file input          |
-| `newTab`               | `(url?) => Promise<void>`                          | Open a new browser tab                            |
+| `newTab`               | `(url?) => Promise<string>`                        | Open a new browser tab                            |
 | `switchToTab`          | `(index) => Promise<void>`                         | Switch to a tab by index                          |
 | `closeTab`             | `() => Promise<void>`                              | Close the current tab                             |
 | `getTabIds`            | `() => Promise<string[]>`                          | List known tab IDs                                |

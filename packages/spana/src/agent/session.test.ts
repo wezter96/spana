@@ -326,6 +326,13 @@ describe("Session", () => {
     expect(backFn).toHaveBeenCalled();
   });
 
+  test("getText and isVisible delegate to the flow app API", async () => {
+    const session = new Session(mockDriver(), "web", parseHierarchy);
+    expect(await session.getText({ testID: "btn" })).toBe("Click me");
+    expect(await session.isVisible({ testID: "btn" })).toBe(true);
+    expect(await session.isVisible({ testID: "missing" }, { timeout: 50 })).toBe(false);
+  });
+
   test("screenshot returns bytes", async () => {
     const session = new Session(mockDriver(), "web", parseHierarchy);
     const data = await session.screenshot();

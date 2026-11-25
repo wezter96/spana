@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+  <body>
+    <h1>Cart</h1>
+    <p>Items: <span data-testid="cart-count">0</span></p>
+    <button
+      data-testid="add-to-cart"
+      onclick="
+        document.querySelector('[data-testid=cart-count]').textContent = String(
+          Number(document.querySelector('[data-testid=cart-count]').textContent) + 1,
+        )
+      "
+    >
+      Add to cart
+    </button>
+  </body>
+</html>

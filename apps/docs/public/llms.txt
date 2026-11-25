@@ -1,13 +1,29 @@
 # spana docs
 
-> spana is a TypeScript-native end-to-end testing framework for React Native and web applications. A single test file can run on web, Android, and iOS without modifying the app under test.
+> spana — One test. Every screen. A TypeScript E2E testing framework: one test file runs on Web, iOS, Android (Capacitor / React Native), Electron and Electrobun, with no Appium server to set up.
 >
 > For full inlined documentation (all content in one file), see: llms-full.txt
 
-spana favors TypeScript flows over YAML, exposes agent-oriented CLI commands like `selectors`, `hierarchy`, and `validate`, and includes a programmatic `spana-test/agent` API for custom automation.
+spana favors TypeScript flows over YAML, ships an MCP server (`spana mcp`), agent CLI commands (`selectors`, `hierarchy`, `validate`), and a programmatic `spana-test/agent` API.
 
 The rendered documentation lives at https://spana.antonwester.se/.
 The links below intentionally point to the canonical Markdown sources in GitHub because they are cleaner for LLM and agent ingestion than the rendered HTML pages.
+
+## Use the fastest path first
+
+Pick the first option that fits. Fall back to a slower one only when the faster one does not apply. Details: [Run it the fastest way](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/getting-started/fastest-path.md).
+
+Running tests:
+
+1. Run tests with `npx spana test`. Prefer `.flow.ts` files; Gherkin `.feature` files also run through `spana test` and get every speed-up below. Varar Markdown specs run in Vitest through `connect()`, without the pool or filters, so use them only when a team needs that format.
+2. Run only what changed: `spana test --changed` or `--last-failed` locally; `--changed-since origin/main` in CI. `--changed-since` needs a `filters` list (for example `pathRuleFilter`) in `spana.config.ts`, or it runs every flow.
+3. Web: use the shared browser pool, `spana test --platform web --workers 4`. `--parallel` alone uses 1 worker.
+4. Hybrid (Capacitor / WebView), Electron or Electrobun apps you can change: enable `spana-bridge` (`execution.bridge.enabled: true` plus `initSpanaBridge()` in the app's test build). Skip it for pure native screens or apps you cannot change.
+5. Skip UI sign-in: `execution.web.storageState` on web; the bridge on mobile and desktop.
+6. Keep drivers warm: `execution.web.warmBrowser: true` (Chromium) and `execution.warmDaemons.enabled: true` (iOS / Android).
+7. Slowest fallback: a remote Appium server or device cloud (BrowserStack, Sauce Labs), only for devices you do not have locally.
+
+Coding agents exploring an app: use `spana mcp` first (one live session). Fall back to `spana selectors` / `spana hierarchy` (a new session per call), then to `connect()` from `spana-test/agent` for custom scripts. Save the result as a `.flow.ts` file and run it with `spana test`.
 
 ## Start here
 
@@ -23,6 +39,7 @@ The links below intentionally point to the canonical Markdown sources in GitHub 
 - [Assertions](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/assertions.md): `expect()` API and auto-wait behavior.
 - [Platform-Specific Tests](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/platform-specific.md): Platform-aware flow patterns and config.
 - [Gherkin / BDD](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/gherkin.md): `.feature` files and step-definition workflow.
+- [Varar (Markdown specs)](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/writing-tests/varar.md): Run Varar Markdown documents in Vitest, with `connect()` driving the app.
 
 ## Agent workflows
 

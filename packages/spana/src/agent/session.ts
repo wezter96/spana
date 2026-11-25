@@ -39,6 +39,7 @@ import {
 import { findDeviceById } from "../device/discover.js";
 import type { BrowserName, StorybookConfig } from "../schemas/config.js";
 import { buildStorybookUrl, type StorybookOpenOptions } from "../api/storybook.js";
+import { createPromiseApp, type PromiseApp } from "../api/app.js";
 
 export type Direction = "up" | "down" | "left" | "right";
 
@@ -104,6 +105,22 @@ export class Session {
     );
 
     return this.coordinatorPromise;
+  }
+
+  private appPromise?: Promise<PromiseApp>;
+
+  // Reuse the flow `app` implementation for queries and helpers the Session does not implement itself.
+  private async app(): Promise<PromiseApp> {
+    this.appPromise ??= Effect.runPromise(this.driver.getDeviceInfo()).then((info) =>
+      createPromiseApp(
+        this.driver,
+        this.appId,
+        { parse: this.parse, screenWidth: info.screenWidth, screenHeight: info.screenHeight },
+        undefined,
+        { platform: this.platform, storybook: this.storybook },
+      ),
+    );
+    return this.appPromise;
   }
 
   // ---------------------------------------------------------------------------
@@ -373,6 +390,68 @@ export class Session {
         new DriverError({ message: "getJSErrors() is only supported on the web platform" }),
       );
     return Effect.runPromise(effect);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Delegated to the flow `app` API
+  // ---------------------------------------------------------------------------
+
+  async getText(...a: Parameters<PromiseApp["getText"]>) {
+    return (await this.app()).getText(...a);
+  }
+  async getAttribute(...a: Parameters<PromiseApp["getAttribute"]>) {
+    return (await this.app()).getAttribute(...a);
+  }
+  async isVisible(...a: Parameters<PromiseApp["isVisible"]>) {
+    return (await this.app()).isVisible(...a);
+  }
+  async isEnabled(...a: Parameters<PromiseApp["isEnabled"]>) {
+    return (await this.app()).isEnabled(...a);
+  }
+  async pinch(...a: Parameters<PromiseApp["pinch"]>) {
+    return (await this.app()).pinch(...a);
+  }
+  async zoom(...a: Parameters<PromiseApp["zoom"]>) {
+    return (await this.app()).zoom(...a);
+  }
+  async multiTouch(...a: Parameters<PromiseApp["multiTouch"]>) {
+    return (await this.app()).multiTouch(...a);
+  }
+  async downloadFile(...a: Parameters<PromiseApp["downloadFile"]>) {
+    return (await this.app()).downloadFile(...a);
+  }
+  async uploadFile(...a: Parameters<PromiseApp["uploadFile"]>) {
+    return (await this.app()).uploadFile(...a);
+  }
+  async newTab(...a: Parameters<PromiseApp["newTab"]>) {
+    return (await this.app()).newTab(...a);
+  }
+  async switchToTab(...a: Parameters<PromiseApp["switchToTab"]>) {
+    return (await this.app()).switchToTab(...a);
+  }
+  async closeTab() {
+    return (await this.app()).closeTab();
+  }
+  async getTabIds() {
+    return (await this.app()).getTabIds();
+  }
+  async getHAR() {
+    return (await this.app()).getHAR();
+  }
+  async getContexts() {
+    return (await this.app()).getContexts();
+  }
+  async getCurrentContext() {
+    return (await this.app()).getCurrentContext();
+  }
+  async switchToContext(...a: Parameters<PromiseApp["switchToContext"]>) {
+    return (await this.app()).switchToContext(...a);
+  }
+  async switchToWebView() {
+    return (await this.app()).switchToWebView();
+  }
+  async switchToNativeApp() {
+    return (await this.app()).switchToNativeApp();
   }
 
   // ---------------------------------------------------------------------------

@@ -81,6 +81,7 @@ export default defineConfig({
             { label: "Introduction", slug: "getting-started/introduction" },
             { label: "Quick Start", slug: "getting-started/quick-start" },
             { label: "Configuration", slug: "getting-started/configuration" },
+            { label: "Run it the fastest way", slug: "getting-started/fastest-path" },
             { label: "Compare with other tools", slug: "compare" },
           ],
         },
@@ -89,6 +90,7 @@ export default defineConfig({
           items: [
             { label: "Flows", slug: "writing-tests/flows" },
             { label: "Gherkin / BDD", slug: "writing-tests/gherkin" },
+            { label: "Varar (Markdown specs)", slug: "writing-tests/varar" },
             { label: "Selectors", slug: "writing-tests/selectors" },
             { label: "Assertions", slug: "writing-tests/assertions" },
             { label: "Platform-Specific", slug: "writing-tests/platform-specific" },

@@ -118,25 +118,25 @@ interface ConnectOptions {
 
 ### Browser helpers
 
-| Method                 | Signature                                          | Description                                       |
-| ---------------------- | -------------------------------------------------- | ------------------------------------------------- |
-| `mockNetwork`          | `(matcher, response) => Promise<void>`             | Fulfill matching requests with mocked data        |
-| `blockNetwork`         | `(matcher) => Promise<void>`                       | Abort matching requests                           |
-| `clearNetworkMocks`    | `() => Promise<void>`                              | Remove active network mocks                       |
+| Method                 | Signature                                          | Description                                                                |
+| ---------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`             | Fulfill matching requests with mocked data                                 |
+| `blockNetwork`         | `(matcher) => Promise<void>`                       | Abort matching requests                                                    |
+| `clearNetworkMocks`    | `() => Promise<void>`                              | Remove active network mocks                                                |
 | `setNetworkConditions` | `(conditions) => Promise<void>`                    | Simulate network conditions — profiles, custom throttling, or offline mode |
-| `saveCookies`          | `(path) => Promise<void>`                          | Persist cookies to disk                           |
-| `loadCookies`          | `(path) => Promise<void>`                          | Load cookies from disk                            |
-| `saveAuthState`        | `(path) => Promise<void>`                          | Save Playwright storage state                     |
-| `loadAuthState`        | `(path) => Promise<void>`                          | Replace the browser context with saved auth state |
-| `downloadFile`         | `(path) => Promise<void>`                          | Save the next browser download                    |
-| `uploadFile`           | `(selector, path) => Promise<void>`                | Upload a local file through a file input          |
-| `newTab`               | `(url?) => Promise<void>`                          | Open a new browser tab                            |
-| `switchToTab`          | `(index) => Promise<void>`                         | Switch to a tab by index                          |
-| `closeTab`             | `() => Promise<void>`                              | Close the current tab                             |
-| `getTabIds`            | `() => Promise<string[]>`                          | List known tab IDs                                |
-| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`  | Read captured console messages                    |
-| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>` | Read uncaught JavaScript errors                   |
-| `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the current HAR network capture              |
+| `saveCookies`          | `(path) => Promise<void>`                          | Persist cookies to disk                                                    |
+| `loadCookies`          | `(path) => Promise<void>`                          | Load cookies from disk                                                     |
+| `saveAuthState`        | `(path) => Promise<void>`                          | Save Playwright storage state                                              |
+| `loadAuthState`        | `(path) => Promise<void>`                          | Replace the browser context with saved auth state                          |
+| `downloadFile`         | `(path) => Promise<void>`                          | Save the next browser download                                             |
+| `uploadFile`           | `(selector, path) => Promise<void>`                | Upload a local file through a file input                                   |
+| `newTab`               | `(url?) => Promise<string>`                        | Open a new browser tab                                                     |
+| `switchToTab`          | `(index) => Promise<void>`                         | Switch to a tab by index                                                   |
+| `closeTab`             | `() => Promise<void>`                              | Close the current tab                                                      |
+| `getTabIds`            | `() => Promise<string[]>`                          | List known tab IDs                                                         |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`  | Read captured console messages                                             |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>` | Read uncaught JavaScript errors                                            |
+| `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the current HAR network capture                                       |
 
 These helpers are available on local Playwright web sessions.
 
@@ -166,14 +166,14 @@ await session.setNetworkConditions({
 
 **Platform support:**
 
-| Platform | Offline | Profiles | Custom Values |
-|---|---|---|---|
-| Web (Chromium) | Yes | Yes | Yes |
-| Web (Firefox/WebKit) | Yes | No | No |
-| Android emulator | Yes | Yes | Yes |
-| Android device | Yes | No | No |
-| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
-| Appium cloud | Yes | Yes | varies |
+| Platform             | Offline | Profiles   | Custom Values |
+| -------------------- | ------- | ---------- | ------------- |
+| Web (Chromium)       | Yes     | Yes        | Yes           |
+| Web (Firefox/WebKit) | Yes     | No         | No            |
+| Android emulator     | Yes     | Yes        | Yes           |
+| Android device       | Yes     | No         | No            |
+| iOS simulator        | Yes     | Yes (sudo) | Yes (sudo)    |
+| Appium cloud         | Yes     | Yes        | varies        |
 
 ### Hybrid / WebView helpers
 
