@@ -171,6 +171,31 @@ export function terminateOnSimulator(udid: string, bundleId: string): void {
   }
 }
 
+/**
+ * Clone an existing iOS Simulator for parallel multi-worker CI execution (`xcrun simctl clone`).
+ * Returns the newly created simulator UDID.
+ */
+export function cloneIOSSimulator(sourceUdid: string, cloneName: string): string {
+  const out = execFileSync("xcrun", ["simctl", "clone", sourceUdid, cloneName], {
+    encoding: "utf-8",
+  });
+  const udid = out.trim();
+  if (!udid) {
+    throw new Error(`xcrun simctl clone returned empty UDID for ${sourceUdid}`);
+  }
+  return udid;
+}
+
+/** Shut down and delete a temporary cloned iOS Simulator (`xcrun simctl delete`). */
+export function deleteIOSSimulator(udid: string): void {
+  try {
+    execFileSync("xcrun", ["simctl", "shutdown", udid], { stdio: "ignore" });
+  } catch {
+    // already shut down
+  }
+  execFileSync("xcrun", ["simctl", "delete", udid], { stdio: "ignore" });
+}
+
 // ---------------------------------------------------------------------------
 // Physical device support
 // ---------------------------------------------------------------------------

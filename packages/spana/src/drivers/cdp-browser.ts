@@ -22,6 +22,7 @@ import type {
   VirtualCredential,
 } from "./raw-driver.js";
 import { CdpDomChannel, type WebSocketFactory } from "../channels/cdp-client.js";
+import { SPANA_INJECTED_RUNTIME_SCRIPT } from "../channels/dom-channel.js";
 
 export interface DirectCdpBrowserLaunchOptions {
   /** Explicit Chromium/Chrome binary path. Auto-detects system Chrome or Playwright Chromium if omitted. */
@@ -245,7 +246,16 @@ export interface LightweightCdpDriverOptions {
   useBrowserContexts?: boolean;
   /** Pre-warm the next isolated CDP browser context while the current flow runs, and dispose old contexts asynchronously. */
   freshContextPerFlow?: boolean;
-  /** Navigation wait condition (`"load"`, `"domcontentloaded"`, or `"commit"`). Default: `"load"` in browser-context mode. */
+  /**
+   * Context isolation mode when `freshContextPerFlow` is enabled:
+   * - `"fresh"` (default): creates a brand-new `Target.createBrowserContext` per flow.
+   * - `"hot-cache"`: keeps Chromium's HTTP & V8 bytecode caches warm while wiping cookies,
+   *   localStorage, sessionStorage, IndexedDB, CacheStorage, and service workers (~4 ms reset).
+   */
+  contextIsolation?: "fresh" | "hot-cache";
+  /** Install persistent `window.__spanaRt` once per document to cut CDP wire payload ~100× (default: true on live sockets). */
+  useInjectedRuntime?: boolean;
+  /** Navigation wait condition (`"domcontentloaded"`, `"load"`, or `"commit"`). Default: `"domcontentloaded"` in browser-context mode. */
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
   /** Collapse CSS transitions & animations to 0.001ms via `Page.addScriptToEvaluateOnNewDocument`. */
   instantAnimations?: boolean;
@@ -450,6 +460,9 @@ export function makeLightweightCdpDriver(
       return res?.authenticatorId ?? "cdp-virtual-auth-1";
     };
 
+    const useInjectedRuntime = options.useInjectedRuntime ?? !options.createWebSocket;
+    cdpChannel.enableInjectedRuntime(useInjectedRuntime);
+
     const configureSession = async (sessionId: string | null, storageStatePath?: string) => {
       const state = await loadStorageStateFile(storageStatePath);
       const needsNetworkDomain = Boolean(
@@ -459,6 +472,17 @@ export function makeLightweightCdpDriver(
       await Promise.all([
         cdpChannel.sendCommand("Page.enable", {}, sessionId).catch(() => {}),
         cdpChannel.sendCommand("Runtime.enable", {}, sessionId).catch(() => {}),
+        ...(useInjectedRuntime
+          ? [
+              cdpChannel
+                .sendCommand(
+                  "Page.addScriptToEvaluateOnNewDocument",
+                  { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+                  sessionId,
+                )
+                .catch(() => {}),
+            ]
+          : []),
         cdpChannel
           .sendCommand(
             "Target.setAutoAttach",
@@ -591,7 +615,14 @@ export function makeLightweightCdpDriver(
     };
 
     const schedulePrefetch = () => {
-      if (!useContexts || !options.freshContextPerFlow || prefetchedSlotPromise) return;
+      if (
+        !useContexts ||
+        !options.freshContextPerFlow ||
+        options.contextIsolation === "hot-cache" ||
+        prefetchedSlotPromise
+      ) {
+        return;
+      }
       prefetchedSlotPromise = createContextSlot(options.storageState);
       prefetchedSlotPromise.catch(() => {
         prefetchedSlotPromise = undefined;
@@ -608,6 +639,15 @@ export function makeLightweightCdpDriver(
           url: typeof targetInfo.url === "string" ? targetInfo.url : undefined,
         });
         void cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
+        if (useInjectedRuntime) {
+          void cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+              childSid,
+            )
+            .catch(() => {});
+        }
       }
     });
 
@@ -733,7 +773,7 @@ export function makeLightweightCdpDriver(
         return;
       }
 
-      const waitUntil = options.waitUntil ?? "load";
+      const waitUntil = options.waitUntil ?? "domcontentloaded";
       const targetSid = activeSlot?.sessionId;
       if (waitUntil === "commit" || target === "about:blank") {
         await cdpChannel.sendCommand("Page.navigate", { url: target });
@@ -770,14 +810,50 @@ export function makeLightweightCdpDriver(
             jsErrors.length = 0;
             cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
-              const previousSlot = activeSlot;
-              const pending = prefetchedSlotPromise;
-              prefetchedSlotPromise = undefined;
-              activeSlot = pending ? await pending : await createContextSlot(options.storageState);
-              cdpChannel.setSessionId(activeSlot.sessionId);
-              activeAuthenticatorId = activeSlot.authenticatorId;
-              if (previousSlot) {
-                disposeSlotInBackground(previousSlot);
+              if (options.contextIsolation === "hot-cache" && activeSlot) {
+                // Hot-cache isolation: keep HTTP asset cache & V8 compiled JS bytecode hot while
+                // wiping cookies, localStorage, sessionStorage, IndexedDB, CacheStorage, & SWs.
+                const origin = options.baseUrl
+                  ? (() => {
+                      try {
+                        return new URL(options.baseUrl).origin;
+                      } catch {
+                        return "*";
+                      }
+                    })()
+                  : "*";
+                await Promise.all([
+                  cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
+                  cdpChannel
+                    .sendCommand("Storage.clearDataForOrigin", {
+                      origin,
+                      storageTypes:
+                        "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers",
+                    })
+                    .catch(() => {}),
+                  cdpChannel
+                    .evaluate("try { localStorage.clear(); sessionStorage.clear(); } catch {}")
+                    .catch(() => {}),
+                  cdpChannel.sendCommand("Page.navigate", { url: "about:blank" }).catch(() => {}),
+                ]);
+                const state = await loadStorageStateFile(options.storageState);
+                if (state?.cookies && state.cookies.length > 0) {
+                  await cdpChannel
+                    .sendCommand("Network.setCookies", { cookies: state.cookies })
+                    .catch(() => {});
+                }
+              } else {
+                const previousSlot = activeSlot;
+                const pending = prefetchedSlotPromise;
+                prefetchedSlotPromise = undefined;
+                activeSlot = pending
+                  ? await pending
+                  : await createContextSlot(options.storageState);
+                cdpChannel.setSessionId(activeSlot.sessionId);
+                activeAuthenticatorId = activeSlot.authenticatorId;
+                if (previousSlot) {
+                  disposeSlotInBackground(previousSlot);
+                }
               }
             }
             hasRunFirstFlow = true;

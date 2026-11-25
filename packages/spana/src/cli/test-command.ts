@@ -39,6 +39,9 @@ import {
   writeLastRunState,
 } from "./iteration.js";
 import { collectWatchRoots, runWatchLoop } from "./watch-mode.js";
+import { planProcessPool, runMultiProcessPool } from "../core/worker-pool.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export interface TestCommandOptions {
   platforms: Platform[];
@@ -536,7 +539,9 @@ async function resolveExecutionContext(
 
   // Resolve paths relative to config file location
   const resolveFromConfig = (p: string) => resolve(configDir, p);
-  if (config.artifacts?.outputDir) {
+  if (process.env.SPANA_OUTPUT_DIR) {
+    config.artifacts = { ...config.artifacts, outputDir: process.env.SPANA_OUTPUT_DIR };
+  } else if (config.artifacts?.outputDir) {
     config.artifacts.outputDir = resolveFromConfig(config.artifacts.outputDir);
   }
 
@@ -950,6 +955,100 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   // 2. Discover flows & step definitions while speculatively pre-launching web browser
   //    and loading prior run duration hints for longest-first parallel scheduling.
   const outputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
+
+  // Auto-shard across multiple OS processes when --workers exceeds maxWorkersPerProcess (default 8)
+  // so 16–32+ worker CI suites get separate JS heaps, GCs, and event loops with zero event-loop contention.
+  const maxWorkersPerProcess = config.defaults?.maxWorkersPerProcess;
+  const requestedWorkers = opts.workers ?? config.defaults?.workers;
+  if (
+    requestedWorkers &&
+    !opts.shard &&
+    !opts.watch &&
+    !opts.validateConfigOnly &&
+    !opts.device &&
+    !process.env.SPANA_WORKER_PROCESS &&
+    process.argv[1]
+  ) {
+    const plan = planProcessPool(requestedWorkers, maxWorkersPerProcess);
+    if (plan.processCount > 1) {
+      console.log(
+        `Sharding ${requestedWorkers} workers across ${plan.processCount} OS processes (${plan.workersPerProcess.join("+")})...\n`,
+      );
+      const { redactor, reporters } = await setupReporters(
+        reporterNames,
+        config,
+        resolveFromConfig,
+        opts.appiumUrl,
+        opts,
+        [],
+      );
+      const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
+      const poolResult = await runMultiProcessPool({
+        totalWorkers: requestedWorkers,
+        maxWorkersPerProcess,
+        buildShardCommand: (shardIndex, shardTotal, workerCount) => {
+          const shardOutDir = join(tmpdir(), `spana-mp-${runTag}-s${shardIndex}`);
+          const args = [
+            process.argv[1]!,
+            "test",
+            ...(opts.flowPath ? [opts.flowPath] : []),
+            "--platform",
+            platforms.join(","),
+            "--shard",
+            `${shardIndex}/${shardTotal}`,
+            "--workers",
+            String(workerCount),
+            "--reporter",
+            "json",
+            ...(opts.configPath ? ["--config", opts.configPath] : []),
+            ...(opts.tags?.flatMap((t) => ["--tag", t]) ?? []),
+            ...(opts.grep ? ["--grep", opts.grep] : []),
+            ...(opts.changedSince ? ["--changed-since", opts.changedSince] : []),
+            ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
+          ];
+          return {
+            command: process.execPath,
+            args,
+            env: {
+              SPANA_WORKER_PROCESS: "1",
+              SPANA_OUTPUT_DIR: shardOutDir,
+            },
+            reportJsonPath: join(shardOutDir, "results.json"),
+          };
+        },
+      });
+      const redactedResults = poolResult.results.map((r) =>
+        r.error
+          ? {
+              ...r,
+              error: {
+                ...r.error,
+                message: redactor.redact(r.error.message),
+                stack: r.error.stack ? redactor.redact(r.error.stack) : undefined,
+                suggestion: r.error.suggestion ? redactor.redact(r.error.suggestion) : undefined,
+              },
+            }
+          : r,
+      );
+      for (const reporter of reporters) {
+        reporter.onRunComplete({
+          total: redactedResults.length,
+          passed: poolResult.passed,
+          failed: poolResult.failed,
+          skipped: poolResult.skipped,
+          flaky: poolResult.flaky,
+          durationMs: poolResult.totalDurationMs,
+          results: redactedResults,
+          platforms,
+        });
+      }
+      return {
+        success: poolResult.failed === 0,
+        watchRoots: collectWatchRoots(flowDir, configPath),
+      };
+    }
+  }
+
   const prelaunchedWeb =
     executionMode === "local" && platforms.includes("web")
       ? speculativelyPrelaunchWebBrowser(config)

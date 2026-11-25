@@ -164,9 +164,17 @@ export function createCoordinator<T extends string = string, R extends string = 
         clampY(coords.endY),
         500,
       );
-      // On mobile, wait briefly for scroll momentum to settle; web scrollBy is synchronous.
+      // On mobile, settle scroll momentum reactively when a DOM channel is live,
+      // otherwise use a compact 100ms settle instead of a long fixed sleep; web scrollBy is synchronous.
       if (config.platform !== "web") {
-        yield* Effect.promise(() => new Promise((r) => setTimeout(r, 300)));
+        if (driver.domChannel?.isConnected() && driver.domChannel.waitForIdle) {
+          yield* Effect.tryPromise({
+            try: () => driver.domChannel!.waitForIdle!({ timeout: 150, quietPeriodMs: 30 }),
+            catch: () => undefined,
+          }).pipe(Effect.catchAll(() => Effect.void));
+        } else {
+          yield* Effect.promise(() => new Promise((r) => setTimeout(r, 100)));
+        }
       }
       yield* afterMutation();
     });

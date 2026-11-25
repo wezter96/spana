@@ -429,6 +429,22 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return false;
   }
+  function hasActiveAnimation(el) {
+    var cur = el;
+    var depth = 0;
+    while (cur && depth++ < 8) {
+      if (typeof cur.getAnimations === "function") {
+        try {
+          var anims = cur.getAnimations();
+          for (var i = 0; i < anims.length; i++) {
+            if (anims[i] && anims[i].playState === "running") return true;
+          }
+        } catch (e) {}
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  }
   function isVisible(el, rect) {
     if (rect.width <= 0 || rect.height <= 0) return false;
     var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -558,7 +574,7 @@ export function buildDomWaitForSelectorScript(
     opts.stableFrames !== undefined
       ? Math.max(0, Math.round(opts.stableFrames))
       : forAction
-        ? 1
+        ? -1 // auto: 0 rAF when static & unobstructed, 1-2 rAF only if animating or scrolled
         : 0;
   const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
   const waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
@@ -566,7 +582,7 @@ export function buildDomWaitForSelectorScript(
   return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs, reqStableFrames, checkHitTest, waitForAppReady) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
-    var stableFrames = instantAnim ? 0 : reqStableFrames;
+    var explicitStableFrames = instantAnim ? 0 : reqStableFrames;
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
@@ -587,20 +603,28 @@ export function buildDomWaitForSelectorScript(
       if (!ready) return null;
       if (!forAction) return ready.map(function(r) { return r.match; });
       var target = ready[ready.length - 1];
-      ensureInViewport(target.hit);
+      var didScroll = ensureInViewport(target.hit);
       if (checkHitTest && !isHitTestClear(target.hit)) return null;
       var updated = toMatch(target.hit);
       if (!updated.visible || !updated.enabled) return null;
-      return { hits: ready, target: target, match: updated };
+      return { hits: ready, target: target, match: updated, didScroll: didScroll };
     }
 
-    // Fast synchronous exit when no multi-frame stability check is needed
-    if (!forAction || stableFrames <= 0 || typeof requestAnimationFrame !== "function") {
-      var imm = checkActionableNow();
-      if (imm) {
-        if (!forAction) return imm;
-        return [imm.match];
-      }
+    function neededStableFrames(candidate) {
+      if (!forAction || typeof requestAnimationFrame !== "function") return 0;
+      if (explicitStableFrames >= 0) return explicitStableFrames;
+      // Smart auto stability: 0 rAF wait on static, unobstructed elements;
+      // wait 2 frames if CSS animations/transitions are running or 1 frame right after scroll.
+      if (hasActiveAnimation(candidate.target.hit.el)) return 2;
+      if (candidate.didScroll) return 1;
+      return 0;
+    }
+
+    // Fast synchronous exit when target is already actionable and needs 0 stability frames
+    var imm = checkActionableNow();
+    if (imm) {
+      if (!forAction) return imm;
+      if (neededStableFrames(imm) <= 0) return [imm.match];
     }
 
     return new Promise(function(resolve) {
@@ -644,14 +668,15 @@ export function buildDomWaitForSelectorScript(
 
       function verifyStability(candidate) {
         if (done || checkingStability) return;
-        if (!forAction || stableFrames <= 0 || typeof requestAnimationFrame !== "function") {
+        var framesToWait = neededStableFrames(candidate);
+        if (!forAction || framesToWait <= 0 || typeof requestAnimationFrame !== "function") {
           finish(forAction ? [candidate.match] : candidate);
           return;
         }
         checkingStability = true;
         var el = candidate.target.hit.el;
         var lastRect = candidate.match.rect;
-        var remainingFrames = stableFrames;
+        var remainingFrames = framesToWait;
 
         function step() {
           if (done) return;
@@ -679,7 +704,7 @@ export function buildDomWaitForSelectorScript(
               return;
             }
           } else {
-            remainingFrames = stableFrames;
+            remainingFrames = framesToWait;
             lastRect = cur.rect;
           }
           rafId = requestAnimationFrame(step);
@@ -1029,4 +1054,450 @@ export function buildDomFillScript(
       }
     });
   })(${serializedSel}, ${serializedVal}, ${timeoutMs}, ${checkHitTest})`;
+}
+
+/**
+ * Sentinel returned by compact `buildInjectedCallScript()` expressions when
+ * `window.__spanaRt` has not yet been installed in the current JS execution context.
+ */
+export const SPANA_RUNTIME_MISSING_SENTINEL = "__SPANA_RT_MISSING__";
+
+/**
+ * Persistent in-page Spana DOM runtime installed ONCE per document via
+ * `Page.addScriptToEvaluateOnNewDocument` (or lazily on first call).
+ * Cuts per-action CDP `Runtime.evaluate` payload by ~100× (~8 KB → ~70 bytes)
+ * and lets V8 TurboFan JIT-compile the selector & actionability helpers once.
+ */
+export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
+  if (typeof window === "undefined" || window.__spanaRt) return true;
+  ${SHARED_DOM_TRAVERSAL_HELPERS}
+
+  function query(sel) {
+    return findAcrossRoots(sel).map(toMatch);
+  }
+
+  function scrollIntoView(sel) {
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return null;
+    var hit = hits[hits.length - 1];
+    if (typeof hit.el.scrollIntoView === "function") {
+      try { hit.el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); }
+      catch (e) { try { hit.el.scrollIntoView(true); } catch (e2) {} }
+    }
+    return toMatch(hit);
+  }
+
+  function tap(sel) {
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return false;
+    var hit = hits[hits.length - 1];
+    var el = hit.el;
+    if (typeof el.scrollIntoView === "function") {
+      try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
+    }
+    var rect = el.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var init = { bubbles: true, cancelable: true, composed: true, clientX: cx, clientY: cy };
+    try { el.dispatchEvent(new PointerEvent("pointerdown", init)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", init)); } catch (e) {}
+    if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
+    try { el.dispatchEvent(new PointerEvent("pointerup", init)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", init)); } catch (e) {}
+    if (typeof el.click === "function") { el.click(); }
+    else { el.dispatchEvent(new MouseEvent("click", init)); }
+    return true;
+  }
+
+  function waitForSelector(sel, opts) {
+    opts = opts || {};
+    var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
+    var forAction = Boolean(opts.forAction);
+    var failFastWhenIdle = Boolean(opts.failFastWhenIdle);
+    var idleQuietMs = Math.max(50, Math.round(opts.idleQuietMs != null ? opts.idleQuietMs : 250));
+    var reqStableFrames = opts.stableFrames !== undefined ? Math.max(0, Math.round(opts.stableFrames)) : (forAction ? -1 : 0);
+    var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
+    var waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
+    var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
+    var explicitStableFrames = instantAnim ? 0 : reqStableFrames;
+
+    function findCandidates() {
+      if (waitForAppReady && !isAppReady()) return null;
+      var rawHits = findAcrossRoots(sel);
+      var ready = [];
+      for (var i = 0; i < rawHits.length; i++) {
+        var h = rawHits[i];
+        var m = toMatch(h);
+        if (!m.visible) continue;
+        if (forAction && !m.enabled) continue;
+        ready.push({ hit: h, match: m });
+      }
+      return ready.length > 0 ? ready : null;
+    }
+
+    function checkActionableNow() {
+      var ready = findCandidates();
+      if (!ready) return null;
+      if (!forAction) return ready.map(function(r) { return r.match; });
+      var target = ready[ready.length - 1];
+      var didScroll = ensureInViewport(target.hit);
+      if (checkHitTest && !isHitTestClear(target.hit)) return null;
+      var updated = toMatch(target.hit);
+      if (!updated.visible || !updated.enabled) return null;
+      return { hits: ready, target: target, match: updated, didScroll: didScroll };
+    }
+
+    function neededStableFrames(candidate) {
+      if (!forAction || typeof requestAnimationFrame !== "function") return 0;
+      if (explicitStableFrames >= 0) return explicitStableFrames;
+      if (hasActiveAnimation(candidate.target.hit.el)) return 2;
+      if (candidate.didScroll) return 1;
+      return 0;
+    }
+
+    var imm = checkActionableNow();
+    if (imm) {
+      if (!forAction) return imm;
+      if (neededStableFrames(imm) <= 0) return [imm.match];
+    }
+
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+      var idleTimer = null;
+      var rafId = null;
+      var checkingStability = false;
+
+      function finish(result) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (rafId !== null && typeof cancelAnimationFrame === "function") {
+          try { cancelAnimationFrame(rafId); } catch (e) {}
+        }
+        resolve(result);
+      }
+
+      function armIdleTimer() {
+        if (!failFastWhenIdle) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(function() {
+          if (document.readyState === "complete" && (!waitForAppReady || isAppReady())) {
+            var hit = checkActionableNow();
+            finish(hit ? (forAction ? [hit.match] : hit) : []);
+          } else {
+            armIdleTimer();
+          }
+        }, idleQuietMs);
+      }
+
+      function verifyStability(candidate) {
+        if (done || checkingStability) return;
+        var framesToWait = neededStableFrames(candidate);
+        if (!forAction || framesToWait <= 0 || typeof requestAnimationFrame !== "function") {
+          finish(forAction ? [candidate.match] : candidate);
+          return;
+        }
+        checkingStability = true;
+        var el = candidate.target.hit.el;
+        var lastRect = candidate.match.rect;
+        var remainingFrames = framesToWait;
+
+        function step() {
+          if (done) return;
+          if (!el.isConnected) { checkingStability = false; return; }
+          if (checkHitTest && !isHitTestClear(candidate.target.hit)) { checkingStability = false; return; }
+          var cur = toMatch(candidate.target.hit);
+          if (!cur.visible || !cur.enabled) { checkingStability = false; return; }
+          var dx = Math.abs(cur.rect.x - lastRect.x);
+          var dy = Math.abs(cur.rect.y - lastRect.y);
+          var dw = Math.abs(cur.rect.width - lastRect.width);
+          var dh = Math.abs(cur.rect.height - lastRect.height);
+          if (dx <= 1 && dy <= 1 && dw <= 1 && dh <= 1) {
+            remainingFrames -= 1;
+            if (remainingFrames <= 0) { finish([cur]); return; }
+          } else {
+            remainingFrames = framesToWait;
+            lastRect = cur.rect;
+          }
+          rafId = requestAnimationFrame(step);
+        }
+        rafId = requestAnimationFrame(step);
+      }
+
+      function attempt() {
+        if (done || checkingStability) return;
+        var hit = checkActionableNow();
+        if (hit) {
+          if (forAction) verifyStability(hit);
+          else finish(hit);
+          return;
+        }
+        armIdleTimer();
+      }
+
+      var scheduled = false;
+      function scheduleAttempt() {
+        if (done || scheduled || checkingStability) return;
+        scheduled = true;
+        Promise.resolve().then(function() { scheduled = false; attempt(); });
+      }
+
+      timeoutTimer = setTimeout(function() {
+        var finalHit = checkActionableNow();
+        finish(finalHit ? (forAction ? [finalHit.match] : finalHit) : []);
+      }, timeoutMs);
+      fallbackInterval = setInterval(attempt, forAction ? 40 : 120);
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(scheduleAttempt);
+          observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
+        }
+      }
+      attempt();
+    });
+  }
+
+  function waitForHidden(sel, opts) {
+    opts = opts || {};
+    var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
+    function isHiddenNow() {
+      var hits = findAcrossRoots(sel);
+      for (var i = 0; i < hits.length; i++) {
+        if (toMatch(hits[i]).visible) return false;
+      }
+      return true;
+    }
+    if (isHiddenNow()) return true;
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+      function finish(val) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        resolve(val);
+      }
+      function onChange() { if (isHiddenNow()) finish(true); }
+      timeoutTimer = setTimeout(function() { finish(isHiddenNow()); }, timeoutMs);
+      fallbackInterval = setInterval(onChange, 120);
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(onChange);
+          observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
+        }
+      }
+    });
+  }
+
+  function waitForMatch(sel, opts) {
+    opts = opts || {};
+    var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
+    var kind = opts.kind;
+    var expected = opts.expected !== undefined ? opts.expected : null;
+    var attributeName = opts.attributeName !== undefined ? opts.attributeName : null;
+    var patternSource = opts.patternSource !== undefined ? opts.patternSource : null;
+    var patternFlags = opts.patternFlags || "";
+    var lastActual = undefined;
+    var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
+
+    function evaluateMatch() {
+      var hits = findAcrossRoots(sel);
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var m = toMatch(hits[i]);
+        if (!m.visible) continue;
+        if (kind === "text") {
+          lastActual = m.text;
+          if (m.text === expected) return { matched: true, actual: m.text };
+        } else if (kind === "containsText") {
+          var actual = m.text || "";
+          lastActual = m.text;
+          if (expected !== null && actual.toLowerCase().indexOf(String(expected).toLowerCase()) !== -1) {
+            return { matched: true, actual: m.text };
+          }
+        } else if (kind === "matchesText") {
+          var actualRe = m.text || "";
+          lastActual = m.text;
+          if (regex && regex.test(actualRe)) return { matched: true, actual: m.text };
+        } else if (kind === "value") {
+          var val = m.value !== undefined ? m.value : "";
+          lastActual = val;
+          if (val === expected) return { matched: true, actual: val };
+        } else if (kind === "attribute" && attributeName !== null) {
+          var attrVal = m.attributes ? m.attributes[attributeName] : undefined;
+          lastActual = attrVal;
+          if (expected === null ? attrVal !== undefined : attrVal === expected) {
+            return { matched: true, actual: attrVal };
+          }
+        } else if (kind === "accessibilityLabel") {
+          var lbl = m.accessibilityLabel;
+          lastActual = lbl;
+          if (expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected) {
+            return { matched: true, actual: lbl };
+          }
+        }
+      }
+      return null;
+    }
+
+    var immediate = evaluateMatch();
+    if (immediate) return immediate;
+
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+      var scheduled = false;
+      function finish(res) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        if (typeof document !== "undefined") {
+          document.removeEventListener("input", onChange, true);
+          document.removeEventListener("change", onChange, true);
+        }
+        resolve(res);
+      }
+      function onChange() {
+        if (done || scheduled) return;
+        scheduled = true;
+        Promise.resolve().then(function() {
+          scheduled = false;
+          if (done) return;
+          var res = evaluateMatch();
+          if (res) finish(res);
+        });
+      }
+      timeoutTimer = setTimeout(function() {
+        var finalRes = evaluateMatch();
+        finish(finalRes || { matched: false, actual: lastActual });
+      }, timeoutMs);
+      fallbackInterval = setInterval(onChange, 120);
+      if (typeof document !== "undefined") {
+        document.addEventListener("input", onChange, true);
+        document.addEventListener("change", onChange, true);
+      }
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(onChange);
+          observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
+        }
+      }
+    });
+  }
+
+  function fill(sel, val, opts) {
+    opts = opts || {};
+    var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
+    var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : true;
+    function applyFill(el) {
+      if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
+      var tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") {
+        var proto = tag === "TEXTAREA"
+          ? (window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype)
+          : (window.HTMLInputElement && window.HTMLInputElement.prototype);
+        var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
+        if (desc && typeof desc.set === "function") desc.set.call(el, val);
+        else el.value = val;
+      } else if (tag === "SELECT") {
+        el.value = val;
+      } else if (el.isContentEditable) {
+        el.textContent = val;
+      } else {
+        el.value = val;
+      }
+      try { el.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, data: val, inputType: "insertText" })); }
+      catch (e) { el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true })); }
+      el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+      return true;
+    }
+    function tryNow() {
+      if (!isAppReady()) return false;
+      var hits = findAcrossRoots(sel);
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var h = hits[i];
+        var m = toMatch(h);
+        if (!m.visible || !m.enabled) continue;
+        ensureInViewport(h);
+        if (checkHitTest && !isHitTestClear(h)) continue;
+        return applyFill(h.el);
+      }
+      return false;
+    }
+    if (tryNow()) return true;
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+      var scheduled = false;
+      function finish(ok) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        resolve(ok);
+      }
+      function onChange() {
+        if (done || scheduled) return;
+        scheduled = true;
+        Promise.resolve().then(function() {
+          scheduled = false;
+          if (!done && tryNow()) finish(true);
+        });
+      }
+      timeoutTimer = setTimeout(function() { finish(tryNow()); }, timeoutMs);
+      fallbackInterval = setInterval(onChange, 40);
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(onChange);
+          observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
+        }
+      }
+    });
+  }
+
+  window.__spanaRt = {
+    query: query,
+    scrollIntoView: scrollIntoView,
+    tap: tap,
+    waitForSelector: waitForSelector,
+    waitForHidden: waitForHidden,
+    waitForMatch: waitForMatch,
+    fill: fill
+  };
+  return true;
+})();`;
+
+export type InjectedRuntimeMethod =
+  | "query"
+  | "scrollIntoView"
+  | "tap"
+  | "waitForSelector"
+  | "waitForHidden"
+  | "waitForMatch"
+  | "fill";
+
+/** Build a ~70-byte call to the pre-injected `window.__spanaRt` runtime. */
+export function buildInjectedCallScript(method: InjectedRuntimeMethod, ...args: unknown[]): string {
+  const serializedArgs = args.map((arg) => JSON.stringify(arg)).join(",");
+  return `window.__spanaRt?window.__spanaRt.${method}(${serializedArgs}):${JSON.stringify(SPANA_RUNTIME_MISSING_SENTINEL)}`;
 }

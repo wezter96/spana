@@ -791,7 +791,7 @@ async function runSpanaDirectCdpMultiStepSuite(
   appUrl: string,
   flows: BenchmarkFlowSpec[],
   workerCount: number,
-  options?: { recordPlayback?: boolean },
+  options?: { recordPlayback?: boolean; contextIsolation?: "fresh" | "hot-cache" },
 ): Promise<{ totalMs: number; avgFlowMs: number; flowCount: number; framesCaptured?: number }> {
   const start = performance.now();
   const actualWorkers = Math.min(workerCount, flows.length);
@@ -803,6 +803,7 @@ async function runSpanaDirectCdpMultiStepSuite(
           baseUrl: appUrl,
           useBrowserContexts: true,
           freshContextPerFlow: true,
+          contextIsolation: options?.contextIsolation ?? "fresh",
         }),
       ),
     ),
@@ -1152,6 +1153,20 @@ try {
     4,
     { recordPlayback: true },
   );
+  const spanaDirectCdpHotCache1w = await runSpanaDirectCdpMultiStepSuite(
+    [cdpWsUrls[0]!],
+    appUrl,
+    SUITE_FLOWS,
+    1,
+    { contextIsolation: "hot-cache" },
+  );
+  const spanaDirectCdpHotCache4w = await runSpanaDirectCdpMultiStepSuite(
+    cdpWsUrls,
+    appUrl,
+    SUITE_FLOWS,
+    4,
+    { contextIsolation: "hot-cache" },
+  );
 
   // 2. Real Local M4 Pro Decision Model Filter (--changed-since origin/main on Billing PR)
   const candidates: FilterCandidate[] = SUITE_FLOWS.map((f) => ({
@@ -1283,6 +1298,8 @@ try {
       spanaSharedPoolParallel4: spanaPoolParallel4_20,
       spanaDirectCdpPool4w,
       spanaDirectCdpPlayback4w,
+      spanaDirectCdpHotCache1w,
+      spanaDirectCdpHotCache4w,
       spanaLocalDecisionBridge1w: {
         filterMs: decisionFilterMs,
         runMs: spanaDecisionBridge.totalMs,
@@ -1379,6 +1396,18 @@ try {
       Flows: 20,
       "Filter (ms)": 0,
       "Total (ms)": spanaDirectCdpPlayback4w.totalMs,
+    },
+    {
+      Strategy: "Spana Direct CDP hot-cache (1w, isolated reset, 20 flows)",
+      Flows: 20,
+      "Filter (ms)": 0,
+      "Total (ms)": spanaDirectCdpHotCache1w.totalMs,
+    },
+    {
+      Strategy: "Spana Direct CDP hot-cache (4w, isolated reset, 20 flows)",
+      Flows: 20,
+      "Filter (ms)": 0,
+      "Total (ms)": spanaDirectCdpHotCache4w.totalMs,
     },
     {
       Strategy: `Spana + Local ${OLLAMA_MODEL} Filter + Bridge (1w)`,

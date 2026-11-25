@@ -31,6 +31,12 @@ export interface WDADriverOptions {
   warmSessionId?: string;
   /** Callback fired when a new WDA session is created so callers can persist it */
   onSessionCreated?: (sessionId: string) => void;
+  /**
+   * When a DOM channel (spana-bridge / WebKit Inspector) is already connected after first launch,
+   * reuse the running iOS app via fast storage clear + reload (~40ms) on subsequent `launchApp()`
+   * calls instead of terminating and cold-booting the simulator app (~800–2000ms). Default: true.
+   */
+  fastWebViewReset?: boolean;
 }
 
 /**
@@ -72,6 +78,19 @@ export function createWDADriver(
   return Effect.gen(function* () {
     const client = new WDAClient(host, port);
     let currentContext = "NATIVE_APP";
+    let hasLaunchedOnce = false;
+
+    const waitForWdaReady = async (maxMs: number): Promise<void> => {
+      const deadline = Date.now() + maxMs;
+      while (Date.now() < deadline) {
+        try {
+          await client.getWindowSize();
+          return;
+        } catch {
+          await sleep(40);
+        }
+      }
+    };
 
     const inspectorChannel = createWebKitInspectorChannel({
       endpointUrl: driverOptions?.webkitInspectorUrl,
@@ -127,7 +146,7 @@ export function createWDADriver(
     const activateSimulatorApp = async (targetBundleId: string) => {
       if (!targetBundleId) return;
       await client.activateApp(targetBundleId);
-      await sleep(1000);
+      await waitForWdaReady(400);
     };
 
     const openSimulatorUrl = async (url: string, targetBundleId = bundleId) => {
@@ -139,7 +158,7 @@ export function createWDADriver(
       try {
         await activateSimulatorApp(targetBundleId);
         await client.openUrl(url);
-        await sleep(1000);
+        await waitForWdaReady(400);
         return;
       } catch {
         // Some simulator sessions lose their WDA attachment while the app stays
@@ -156,7 +175,7 @@ export function createWDADriver(
           await client.disableQuiescence();
           await activateSimulatorApp(targetBundleId);
           await client.openUrl(url);
-          await sleep(1000);
+          await waitForWdaReady(400);
           return;
         } catch {
           // Fall back to simulator relaunch below if WDA still can't route the
@@ -388,6 +407,38 @@ export function createWDADriver(
       launchApp: (appBundleId, opts?: LaunchOptions) =>
         Effect.tryPromise({
           try: async () => {
+            // Fast WebView reset: when a DOM channel (spana-bridge / WebKit Inspector) is live
+            // after initial launch, reset storage & reload (~40ms) instead of killing & rebooting iOS app.
+            const canFastReset =
+              hasLaunchedOnce &&
+              driverOptions?.fastWebViewReset !== false &&
+              domChannel.isConnected() &&
+              !opts?.deepLink &&
+              !opts?.clearKeychain &&
+              !hasLaunchDeviceState(opts?.deviceState) &&
+              !(opts?.launchArguments && Object.keys(opts.launchArguments).length > 0);
+            if (canFastReset) {
+              try {
+                if (opts?.clearState && domChannel.clearStorage) {
+                  await domChannel.clearStorage({
+                    localStorage: true,
+                    sessionStorage: true,
+                    cookies: true,
+                    indexedDB: true,
+                    capacitorPreferences: true,
+                  });
+                }
+                if (domChannel.reload) {
+                  await domChannel.reload();
+                } else {
+                  await domChannel.evaluate("window.location.reload()");
+                }
+                return;
+              } catch {
+                // Fall back to full native relaunch
+              }
+            }
+
             if (opts?.clearState && simulatorUdid) {
               terminateOnSimulator(simulatorUdid, appBundleId);
               try {
@@ -429,15 +480,14 @@ export function createWDADriver(
                     /* app may not be running */
                   }
                 }
-                await sleep(300);
                 // Relaunch via WDA to keep session attached
                 try {
                   await client.launchApp(appBundleId);
-                  await sleep(500);
+                  await waitForWdaReady(500);
                 } catch {
                   // WDA launch failed — fall back to simctl + session recreation
                   launchOnSimulator(simulatorUdid, appBundleId);
-                  await sleep(500);
+                  await sleep(250);
                   try {
                     await client.deleteSession();
                   } catch {
@@ -451,10 +501,12 @@ export function createWDADriver(
                   }
                 }
               }
+              hasLaunchedOnce = true;
               return;
             }
 
             await (opts?.deepLink ? client.openUrl(opts.deepLink) : client.launchApp(appBundleId));
+            hasLaunchedOnce = true;
           },
           catch: (e) => new DriverError({ message: `Launch app failed: ${e}` }),
         }),

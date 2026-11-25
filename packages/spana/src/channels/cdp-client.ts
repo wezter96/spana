@@ -8,6 +8,9 @@ import {
   buildDomWaitForMatchScript,
   buildDomWaitForSelectorScript,
   buildEvaluateExpression,
+  buildInjectedCallScript,
+  SPANA_INJECTED_RUNTIME_SCRIPT,
+  SPANA_RUNTIME_MISSING_SENTINEL,
   type DomChannel,
   type DomElementMatch,
   type DomFillOptions,
@@ -16,6 +19,7 @@ import {
   type DomWaitForMatchOptions,
   type DomWaitForMatchResult,
   type DomWaitForSelectorOptions,
+  type InjectedRuntimeMethod,
 } from "./dom-channel.js";
 
 export interface MinimalWebSocket {
@@ -307,6 +311,34 @@ export class CdpDomChannel implements DomChannel {
     return Array.from(this.childSessions.values());
   }
 
+  private useInjectedRuntime = false;
+
+  enableInjectedRuntime(enabled = true): void {
+    this.useInjectedRuntime = enabled;
+  }
+
+  private async invokeDom<T>(
+    sessionId: string | null | undefined,
+    method: InjectedRuntimeMethod,
+    args: unknown[],
+    fallbackScript: () => string,
+  ): Promise<T> {
+    if (!this.useInjectedRuntime) {
+      return this.evaluateOnSession<T>(sessionId, fallbackScript());
+    }
+    const callExpr = buildInjectedCallScript(method, ...args);
+    const res = await this.evaluateOnSession<T | typeof SPANA_RUNTIME_MISSING_SENTINEL>(
+      sessionId,
+      callExpr,
+    );
+    if (res !== SPANA_RUNTIME_MISSING_SENTINEL) {
+      return res as T;
+    }
+    // Runtime wasn't present on this execution context yet (e.g. already-loaded page) — install once & retry
+    await this.evaluateOnSession(sessionId, SPANA_INJECTED_RUNTIME_SCRIPT);
+    return this.evaluateOnSession<T>(sessionId, callExpr);
+  }
+
   setFrameOffsetResolver(resolver: CdpFrameOffsetResolver | undefined): void {
     this.frameOffsetResolver = resolver;
   }
@@ -431,15 +463,22 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async query(selector: Selector): Promise<DomElementMatch[]> {
-    const script = buildDomQueryScript(selector);
-    const result = await this.evaluate<DomElementMatch[]>(script);
+    const fallback = () => buildDomQueryScript(selector);
+    const result = await this.invokeDom<DomElementMatch[]>(
+      undefined,
+      "query",
+      [selector],
+      fallback,
+    );
     if (Array.isArray(result) && result.length > 0) return result;
     if (this.childSessions.size === 0) return [];
 
     for (const child of this.childSessions.values()) {
-      const childRes = await this.evaluateOnSession<DomElementMatch[]>(
+      const childRes = await this.invokeDom<DomElementMatch[]>(
         child.sessionId,
-        script,
+        "query",
+        [selector],
+        fallback,
       ).catch(() => []);
       if (Array.isArray(childRes) && childRes.length > 0) {
         return this.applyChildOffset(childRes, child);
@@ -452,9 +491,13 @@ export class CdpDomChannel implements DomChannel {
     selector: Selector,
     opts?: DomWaitForSelectorOptions,
   ): Promise<DomElementMatch[]> {
+    const fallback = () => buildDomWaitForSelectorScript(selector, opts);
     if (this.childSessions.size === 0) {
-      const result = await this.evaluate<DomElementMatch[]>(
-        buildDomWaitForSelectorScript(selector, opts),
+      const result = await this.invokeDom<DomElementMatch[]>(
+        undefined,
+        "waitForSelector",
+        [selector, opts ?? {}],
+        fallback,
       );
       return Array.isArray(result) ? result : [];
     }
@@ -465,13 +508,20 @@ export class CdpDomChannel implements DomChannel {
     if (filtered.length > 0 && !opts?.forAction) return filtered;
 
     // Race reactive MutationObserver wait across main frame and attached OOPIF sessions
-    const script = buildDomWaitForSelectorScript(selector, opts);
     const racers: Array<Promise<DomElementMatch[]>> = [
-      this.evaluate<DomElementMatch[]>(script).catch(() => []),
+      this.invokeDom<DomElementMatch[]>(
+        undefined,
+        "waitForSelector",
+        [selector, opts ?? {}],
+        fallback,
+      ).catch(() => []),
       ...Array.from(this.childSessions.values()).map(async (child) => {
-        const res = await this.evaluateOnSession<DomElementMatch[]>(child.sessionId, script).catch(
-          () => [],
-        );
+        const res = await this.invokeDom<DomElementMatch[]>(
+          child.sessionId,
+          "waitForSelector",
+          [selector, opts ?? {}],
+          fallback,
+        ).catch(() => []);
         return Array.isArray(res) && res.length > 0 ? this.applyChildOffset(res, child) : [];
       }),
     ];
@@ -498,12 +548,19 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async waitForHidden(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean> {
-    const script = buildDomWaitForHiddenScript(selector, opts);
-    const mainHidden = Boolean(await this.evaluate<boolean>(script));
+    const fallback = () => buildDomWaitForHiddenScript(selector, opts);
+    const mainHidden = Boolean(
+      await this.invokeDom<boolean>(undefined, "waitForHidden", [selector, opts ?? {}], fallback),
+    );
     if (!mainHidden || this.childSessions.size === 0) return mainHidden;
     for (const child of this.childSessions.values()) {
       const ok = Boolean(
-        await this.evaluateOnSession<boolean>(child.sessionId, script).catch(() => true),
+        await this.invokeDom<boolean>(
+          child.sessionId,
+          "waitForHidden",
+          [selector, opts ?? {}],
+          fallback,
+        ).catch(() => true),
       );
       if (!ok) return false;
     }
@@ -514,14 +571,21 @@ export class CdpDomChannel implements DomChannel {
     selector: Selector,
     opts: DomWaitForMatchOptions,
   ): Promise<DomWaitForMatchResult> {
-    const script = buildDomWaitForMatchScript(selector, opts);
-    const result = await this.evaluate<DomWaitForMatchResult>(script);
+    const fallback = () => buildDomWaitForMatchScript(selector, opts);
+    const result = await this.invokeDom<DomWaitForMatchResult>(
+      undefined,
+      "waitForMatch",
+      [selector, opts],
+      fallback,
+    );
     if (result && typeof result === "object" && result.matched) return result;
     if (this.childSessions.size > 0) {
       for (const child of this.childSessions.values()) {
-        const childRes = await this.evaluateOnSession<DomWaitForMatchResult>(
+        const childRes = await this.invokeDom<DomWaitForMatchResult>(
           child.sessionId,
-          script,
+          "waitForMatch",
+          [selector, opts],
+          fallback,
         ).catch(() => ({ matched: false }));
         if (childRes?.matched) return childRes;
       }
@@ -530,12 +594,19 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async fillDom(selector: Selector, value: string, opts?: DomFillOptions): Promise<boolean> {
-    const script = buildDomFillScript(selector, value, opts);
-    const mainFilled = Boolean(await this.evaluate<boolean>(script));
+    const fallback = () => buildDomFillScript(selector, value, opts);
+    const mainFilled = Boolean(
+      await this.invokeDom<boolean>(undefined, "fill", [selector, value, opts ?? {}], fallback),
+    );
     if (mainFilled || this.childSessions.size === 0) return mainFilled;
     for (const child of this.childSessions.values()) {
       const ok = Boolean(
-        await this.evaluateOnSession<boolean>(child.sessionId, script).catch(() => false),
+        await this.invokeDom<boolean>(
+          child.sessionId,
+          "fill",
+          [selector, value, opts ?? {}],
+          fallback,
+        ).catch(() => false),
       );
       if (ok) return true;
     }
@@ -543,12 +614,16 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async tapDom(selector: Selector): Promise<boolean> {
-    const script = buildDomTapScript(selector);
-    const mainTapped = Boolean(await this.evaluate<boolean>(script));
+    const fallback = () => buildDomTapScript(selector);
+    const mainTapped = Boolean(
+      await this.invokeDom<boolean>(undefined, "tap", [selector], fallback),
+    );
     if (mainTapped || this.childSessions.size === 0) return mainTapped;
     for (const child of this.childSessions.values()) {
       const ok = Boolean(
-        await this.evaluateOnSession<boolean>(child.sessionId, script).catch(() => false),
+        await this.invokeDom<boolean>(child.sessionId, "tap", [selector], fallback).catch(
+          () => false,
+        ),
       );
       if (ok) return true;
     }
@@ -556,14 +631,21 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async scrollIntoView(selector: Selector): Promise<DomElementMatch | null> {
-    const script = buildDomScrollIntoViewScript(selector);
-    const result = await this.evaluate<DomElementMatch | null>(script);
+    const fallback = () => buildDomScrollIntoViewScript(selector);
+    const result = await this.invokeDom<DomElementMatch | null>(
+      undefined,
+      "scrollIntoView",
+      [selector],
+      fallback,
+    );
     if (result) return result;
     if (this.childSessions.size > 0) {
       for (const child of this.childSessions.values()) {
-        const childRes = await this.evaluateOnSession<DomElementMatch | null>(
+        const childRes = await this.invokeDom<DomElementMatch | null>(
           child.sessionId,
-          script,
+          "scrollIntoView",
+          [selector],
+          fallback,
         ).catch(() => null);
         if (childRes) {
           const adjusted = await this.applyChildOffset([childRes], child);

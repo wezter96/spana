@@ -27,6 +27,12 @@ export interface UiAutomator2DriverOptions {
   cdpPort?: number;
   /** Whether to expose the direct Android WebView CDP channel (default: true) */
   enableWebViewCdp?: boolean;
+  /**
+   * When a DOM channel (spana-bridge or WebView CDP) is already connected after initial boot,
+   * reuse the running app via fast storage clear + reload (~40ms) on subsequent `launchApp()`
+   * calls instead of cold-killing (`adbForceStop`) and relaunching the entire APK. Default: true.
+   */
+  fastWebViewReset?: boolean;
 }
 
 export function createUiAutomator2Driver(
@@ -39,6 +45,19 @@ export function createUiAutomator2Driver(
   return Effect.gen(function* () {
     const client = new UiAutomator2Client(host, port);
     let currentContext = "NATIVE_APP";
+    let hasLaunchedOnce = false;
+
+    const waitForAndroidReady = async (maxMs: number): Promise<void> => {
+      const deadline = Date.now() + maxMs;
+      while (Date.now() < deadline) {
+        try {
+          await client.getWindowSize();
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+        }
+      }
+    };
 
     const cdpChannel =
       driverOptions?.enableWebViewCdp === false
@@ -163,7 +182,7 @@ export function createUiAutomator2Driver(
         Effect.tryPromise({
           try: async () => {
             const base64 = await client.getScreenshot();
-            return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+            return new Uint8Array(Buffer.from(base64, "base64"));
           },
           catch: (e) => new DriverError({ message: `Screenshot failed: ${e}` }),
         }),
@@ -191,6 +210,38 @@ export function createUiAutomator2Driver(
       launchApp: (bundleId, opts?: LaunchOptions) =>
         Effect.tryPromise({
           try: async () => {
+            // Fast WebView reset path: skip cold adbForceStop + APK restart (~1–2s) when
+            // a DOM channel (spana-bridge / WebView CDP) is live and no native relaunch flags are requested.
+            const canFastReset =
+              hasLaunchedOnce &&
+              driverOptions?.fastWebViewReset !== false &&
+              domChannel?.isConnected() &&
+              !opts?.deepLink &&
+              !opts?.clearKeychain &&
+              !hasLaunchDeviceState(opts?.deviceState) &&
+              !(opts?.launchArguments && Object.keys(opts.launchArguments).length > 0);
+            if (canFastReset) {
+              try {
+                if (opts?.clearState && domChannel!.clearStorage) {
+                  await domChannel!.clearStorage({
+                    localStorage: true,
+                    sessionStorage: true,
+                    cookies: true,
+                    indexedDB: true,
+                    capacitorPreferences: true,
+                  });
+                }
+                if (domChannel!.reload) {
+                  await domChannel!.reload();
+                } else {
+                  await domChannel!.evaluate("window.location.reload()");
+                }
+                return;
+              } catch {
+                // Fall back to full native relaunch if WebView reload fails
+              }
+            }
+
             if (opts?.clearState) {
               adbClearApp(serial, bundleId);
             }
@@ -205,7 +256,7 @@ export function createUiAutomator2Driver(
             }
             if (opts?.deepLink) {
               adbOpenLink(serial, opts.deepLink, bundleId);
-              await new Promise((resolve) => setTimeout(resolve, 500));
+              await waitForAndroidReady(500);
             } else {
               adbForceStop(serial, bundleId);
               if (opts?.launchArguments && Object.keys(opts.launchArguments).length > 0) {
@@ -232,8 +283,9 @@ export function createUiAutomator2Driver(
               } else {
                 adbLaunchApp(serial, bundleId);
               }
+              await waitForAndroidReady(800);
             }
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            hasLaunchedOnce = true;
           },
           catch: (e) => new DriverError({ message: `Launch app failed: ${e}` }),
         }),

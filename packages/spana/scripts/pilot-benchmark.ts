@@ -240,6 +240,7 @@ async function runSpanaSuite(
   workers: number,
   engine: "playwright" | "cdp",
   maxContextsPerBrowser = 1,
+  contextIsolation: "fresh" | "hot-cache" = "fresh",
 ): Promise<BenchResult> {
   const suiteStart = performance.now();
   const config: ProvConfig = {
@@ -251,6 +252,7 @@ async function runSpanaSuite(
         headless: true,
         executablePath,
         freshContextPerFlow: true,
+        contextIsolation,
         maxContextsPerBrowser,
       },
     },
@@ -305,7 +307,9 @@ async function runSpanaSuite(
   return {
     label:
       engine === "cdp"
-        ? `Spana CDP (${maxContextsPerBrowser}ctx/b)`
+        ? contextIsolation === "hot-cache"
+          ? `Spana CDP hot-cache (${maxContextsPerBrowser}ctx/b)`
+          : `Spana CDP (${maxContextsPerBrowser}ctx/b)`
         : `Spana PW (${maxContextsPerBrowser}ctx/b)`,
     workers,
     suiteWallMs: Math.round(performance.now() - suiteStart),
@@ -329,12 +333,14 @@ async function main() {
   try {
     rows.push(await runPlaywrightSuite(server.url, chromePath, 1));
     rows.push(await runSpanaSuite(server.url, chromePath, 1, "playwright", 1));
-    rows.push(await runSpanaSuite(server.url, chromePath, 1, "cdp", 1));
+    rows.push(await runSpanaSuite(server.url, chromePath, 1, "cdp", 1, "fresh"));
+    rows.push(await runSpanaSuite(server.url, chromePath, 1, "cdp", 1, "hot-cache"));
 
     rows.push(await runPlaywrightSuite(server.url, chromePath, 4));
     rows.push(await runSpanaSuite(server.url, chromePath, 4, "playwright", 2));
-    rows.push(await runSpanaSuite(server.url, chromePath, 4, "cdp", 2));
-    rows.push(await runSpanaSuite(server.url, chromePath, 4, "cdp", 1));
+    rows.push(await runSpanaSuite(server.url, chromePath, 4, "cdp", 2, "fresh"));
+    rows.push(await runSpanaSuite(server.url, chromePath, 4, "cdp", 1, "fresh"));
+    rows.push(await runSpanaSuite(server.url, chromePath, 4, "cdp", 2, "hot-cache"));
   } finally {
     await server.close();
   }

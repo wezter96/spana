@@ -46,6 +46,7 @@ export {
   type WarmDaemonConfig,
   type BrowserName,
   type WebBrowserEngine,
+  type WebContextIsolation,
   type VideoRecordingMode,
   type WebResourceBlockType,
   type StorybookConfig,
@@ -100,6 +101,9 @@ export {
   buildDomWaitForHiddenScript,
   buildDomWaitForMatchScript,
   buildDomFillScript,
+  SPANA_INJECTED_RUNTIME_SCRIPT,
+  buildInjectedCallScript,
+  type InjectedRuntimeMethod,
 } from "./channels/dom-channel.js";
 export {
   createCdpDomChannel,
@@ -308,6 +312,19 @@ export {
   type MultiProcessPoolOptions,
   type MultiProcessPoolResult,
 } from "./core/worker-pool.js";
+
+// Deterministic local API network replay cache & iOS simulator cloning
+export {
+  NetworkReplayCache,
+  attachNetworkReplayCache,
+  buildNetworkCacheKey,
+  type NetworkCacheMode,
+  type CachedNetworkEntry,
+  type NetworkReplayCacheOptions,
+  type AttachNetworkCacheOptions,
+  type AttachNetworkCacheResult,
+} from "./core/network-cache.js";
+export { cloneIOSSimulator, deleteIOSSimulator } from "./device/ios.js";
 
 // Stdio MCP Server (spana mcp)
 export {

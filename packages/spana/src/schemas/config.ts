@@ -108,6 +108,7 @@ export interface ElectrobunAppConfig {
 
 export type BrowserName = "chromium" | "firefox" | "webkit";
 export type WebBrowserEngine = "auto" | "playwright" | "cdp" | "lightpanda";
+export type WebContextIsolation = "fresh" | "hot-cache";
 export type WebResourceBlockType = "image" | "font" | "media" | "stylesheet";
 export type VideoRecordingMode = "off" | "on" | "retain-on-failure";
 
@@ -145,6 +146,13 @@ export interface WebExecutionConfig {
   warmBrowserScope?: string;
   /** Create a fresh isolated BrowserContext per flow using pre-warmed context pooling + background teardown. */
   freshContextPerFlow?: boolean;
+  /**
+   * Context isolation strategy when `freshContextPerFlow` is enabled (Direct CDP):
+   * - `"fresh"` (default): new `Target.createBrowserContext` per flow (strictest isolation).
+   * - `"hot-cache"`: keeps Chromium's HTTP & V8 bytecode cache hot while wiping cookies, localStorage,
+   *   sessionStorage, IndexedDB, CacheStorage, and service workers between flows (~4 ms reset!).
+   */
+  contextIsolation?: WebContextIsolation;
   /** Max worker contexts sharing one Chromium browser process under `--parallel` (default: 2 to avoid CDP/IO contention). */
   maxContextsPerBrowser?: number;
   /** Automatically attach a CDP WebAuthn virtual authenticator (passkey) to every fresh context. */
@@ -517,6 +525,7 @@ const webExecutionConfigSchema = z
     warmBrowser: z.boolean().optional(),
     warmBrowserScope: z.string().min(1).optional(),
     freshContextPerFlow: z.boolean().optional(),
+    contextIsolation: z.enum(["fresh", "hot-cache"]).optional(),
     maxContextsPerBrowser: z.number().int().positive().optional(),
     virtualAuthenticator: z.union([z.boolean(), virtualAuthenticatorOptionsSchema]).optional(),
     storageState: z.string().min(1).optional(),
