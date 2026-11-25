@@ -154,6 +154,29 @@ export interface TouchSequence {
   actions: TouchAction[];
 }
 
+export interface VirtualAuthenticatorOptions {
+  /** WebAuthn protocol. Default: "ctap2". */
+  protocol?: "ctap2" | "u2f";
+  /** Authenticator transport. Default: "internal" (platform passkey). */
+  transport?: "usb" | "nfc" | "ble" | "cable" | "internal";
+  /** Support discoverable resident keys (passkeys). Default: true. */
+  hasResidentKey?: boolean;
+  /** Support user verification (Touch ID / Face ID / PIN). Default: true. */
+  hasUserVerification?: boolean;
+  /** Automatically pass user verification. Default: true. */
+  isUserVerified?: boolean;
+  /** Automatically simulate user presence on prompts. Default: true. */
+  automaticPresenceSimulation?: boolean;
+}
+
+export interface VirtualCredential {
+  credentialId: string;
+  isResidentCredential: boolean;
+  rpId?: string;
+  userHandle?: string;
+  signCount: number;
+}
+
 export interface RawDriverService<_T extends string = string, R extends string = string> {
   // Flow lifecycle
   readonly beginFlow?: (flowName: string) => Effect.Effect<void, DriverError>;
@@ -217,7 +240,7 @@ export interface RawDriverService<_T extends string = string, R extends string =
 
   // Scripting
   readonly evaluate: <T = unknown>(
-    script: string | ((...args: unknown[]) => T),
+    script: string | ((...args: any[]) => T),
     ...args: unknown[]
   ) => Effect.Effect<T, DriverError>;
 
@@ -254,6 +277,19 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly getConsoleLogs?: () => Effect.Effect<BrowserConsoleLog[], DriverError>;
   readonly getJSErrors?: () => Effect.Effect<BrowserJSError[], DriverError>;
   readonly getHAR?: () => Effect.Effect<BrowserHAR, DriverError>;
+
+  // Raw escape hatch & built-in WebAuthn virtual passkey support
+  readonly getRawPage?: () => unknown;
+  readonly enableVirtualAuthenticator?: (
+    opts?: VirtualAuthenticatorOptions,
+  ) => Effect.Effect<string, DriverError>;
+  readonly removeVirtualAuthenticator?: (
+    authenticatorId?: string,
+  ) => Effect.Effect<void, DriverError>;
+  readonly getVirtualCredentials?: (
+    authenticatorId?: string,
+  ) => Effect.Effect<VirtualCredential[], DriverError>;
+  readonly clearVirtualCredentials?: (authenticatorId?: string) => Effect.Effect<void, DriverError>;
 }
 
 // Non-generic Context.Tag — the Effect runtime always resolves to the default
@@ -384,5 +420,26 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     getConsoleLogs: wrapOptionalMethod(logs, "getConsoleLogs", driver.getConsoleLogs),
     getJSErrors: wrapOptionalMethod(logs, "getJSErrors", driver.getJSErrors),
     getHAR: wrapOptionalMethod(logs, "getHAR", driver.getHAR),
+    getRawPage: driver.getRawPage,
+    enableVirtualAuthenticator: wrapOptionalMethod(
+      logs,
+      "enableVirtualAuthenticator",
+      driver.enableVirtualAuthenticator,
+    ),
+    removeVirtualAuthenticator: wrapOptionalMethod(
+      logs,
+      "removeVirtualAuthenticator",
+      driver.removeVirtualAuthenticator,
+    ),
+    getVirtualCredentials: wrapOptionalMethod(
+      logs,
+      "getVirtualCredentials",
+      driver.getVirtualCredentials,
+    ),
+    clearVirtualCredentials: wrapOptionalMethod(
+      logs,
+      "clearVirtualCredentials",
+      driver.clearVirtualCredentials,
+    ),
   };
 }

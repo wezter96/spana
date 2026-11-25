@@ -65,6 +65,8 @@ export {
   type BrowserJSError,
   type TouchAction,
   type TouchSequence,
+  type VirtualAuthenticatorOptions,
+  type VirtualCredential,
 } from "./drivers/raw-driver.js";
 
 // Target × Channel Matrix & DOM Channels
@@ -86,10 +88,15 @@ export {
   type DomRect,
   type DomIdleOptions,
   type DomWaitForSelectorOptions,
+  type DomWaitForHiddenOptions,
+  type DomWaitForMatchOptions,
+  type DomWaitForMatchResult,
   type DomStorageEntries,
   type DomClearStorageOptions,
   type DomTargetInfo,
   buildDomWaitForSelectorScript,
+  buildDomWaitForHiddenScript,
+  buildDomWaitForMatchScript,
 } from "./channels/dom-channel.js";
 export {
   createCdpDomChannel,
@@ -139,7 +146,10 @@ export {
 } from "./drivers/playwright.js";
 export { speculativelyPrelaunchWebBrowser, type PrelaunchedWebBrowser } from "./runtime/local.js";
 export {
+  launchDirectCdpBrowser,
   makeLightweightCdpDriver,
+  type DirectCdpBrowserLaunchOptions,
+  type DirectCdpBrowserHandle,
   type LightweightCdpDriverOptions,
 } from "./drivers/cdp-browser.js";
 export { orderFlowsLongestFirst } from "./core/parallel.js";
@@ -183,6 +193,7 @@ export {
 export {
   decisionFilter,
   pathRuleFilter,
+  deterministicImpactFilter,
   createOllamaDecisionJudge,
   createLogprobDecisionJudge,
   probabilityFromTopLogprobs,
@@ -205,22 +216,33 @@ export {
   type LogprobDecisionJudgeOptions,
   type PathRule,
   type PathRuleFilterOptions,
+  type DeterministicImpactFilterOptions,
   type AppliedFilterReport,
   type ApplyFiltersResult,
 } from "./core/filters.js";
 
-// Composable lazy fixtures & named setup states
+// Composable lazy fixtures, API setup client & per-persona auth cache
 export {
   defineSetup,
   applyNamedSetup,
   createFlowWithFixtures,
   extractDestructuredParamNames,
+  createApiClient,
+  createApiFixture,
+  definePersona,
+  PersonaAuthCache,
   type NamedSetupDefinition,
   type FixtureFn,
   type FixtureDefinition,
   type FixtureMap,
   type ExtendedFlowConfig,
   type CreateFixturesOptions,
+  type ApiClientOptions,
+  type ApiRequestOptions,
+  type ApiResponse,
+  type ApiClient,
+  type PersonaDefinition,
+  type CachedPersonaState,
 } from "./api/fixtures.js";
 
 // Verified Replay Cache (.spana/cache) & self-healing agent hook

@@ -3,11 +3,16 @@ import {
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
+  buildDomWaitForHiddenScript,
+  buildDomWaitForMatchScript,
   buildDomWaitForSelectorScript,
   buildEvaluateExpression,
   type DomChannel,
   type DomElementMatch,
   type DomTargetInfo,
+  type DomWaitForHiddenOptions,
+  type DomWaitForMatchOptions,
+  type DomWaitForMatchResult,
   type DomWaitForSelectorOptions,
 } from "./dom-channel.js";
 
@@ -94,7 +99,9 @@ export class CdpDomChannel implements DomChannel {
   private connected = false;
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
+  private eventListeners = new Map<string, Set<(params: any, sessionId?: string) => void>>();
   private currentTargetId: string | null = null;
+  private activeSessionId: string | null = null;
 
   constructor(options: CdpDomChannelOptions) {
     this.endpointUrl = options.endpointUrl.replace(/\/+$/, "");
@@ -221,6 +228,23 @@ export class CdpDomChannel implements DomChannel {
           } else {
             entry.resolve(parsed["result"]);
           }
+          return;
+        }
+        const method = parsed["method"];
+        if (typeof method === "string") {
+          const listeners = this.eventListeners.get(method);
+          if (listeners && listeners.size > 0) {
+            const params = parsed["params"];
+            const sessionId =
+              typeof parsed["sessionId"] === "string" ? parsed["sessionId"] : undefined;
+            for (const fn of listeners) {
+              try {
+                fn(params, sessionId);
+              } catch {
+                // listener error must not kill socket loop
+              }
+            }
+          }
         }
       };
 
@@ -244,12 +268,56 @@ export class CdpDomChannel implements DomChannel {
     this.pending.clear();
   }
 
-  async sendCommand<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  setSessionId(sessionId: string | null): void {
+    this.activeSessionId = sessionId;
+  }
+
+  get sessionId(): string | null {
+    return this.activeSessionId;
+  }
+
+  onEvent(method: string, listener: (params: any, sessionId?: string) => void): () => void {
+    let set = this.eventListeners.get(method);
+    if (!set) {
+      set = new Set();
+      this.eventListeners.set(method, set);
+    }
+    set.add(listener);
+    return () => {
+      set?.delete(listener);
+    };
+  }
+
+  waitForEvent<T = any>(
+    method: string,
+    timeoutMs: number = this.timeoutMs,
+    predicate?: (params: T, sessionId?: string) => boolean,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`CDP event "${method}" timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const off = this.onEvent(method, (params: T, sessionId?: string) => {
+        if (predicate && !predicate(params, sessionId)) return;
+        clearTimeout(timer);
+        off();
+        resolve(params);
+      });
+    });
+  }
+
+  async sendCommand<T = any>(
+    method: string,
+    params: Record<string, unknown> = {},
+    sessionId?: string | null,
+  ): Promise<T> {
     if (!this.isConnected()) {
       await this.connect();
     }
     const ws = this.ws!;
     const id = this.nextId++;
+    const resolvedSessionId = sessionId === undefined ? this.activeSessionId : sessionId;
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -258,7 +326,11 @@ export class CdpDomChannel implements DomChannel {
       }, this.timeoutMs);
 
       this.pending.set(id, { resolve, reject, timer });
-      ws.send(JSON.stringify({ id, method, params }));
+      const payload: Record<string, unknown> = { id, method, params };
+      if (resolvedSessionId) {
+        payload["sessionId"] = resolvedSessionId;
+      }
+      ws.send(JSON.stringify(payload));
     });
   }
 
@@ -306,6 +378,21 @@ export class CdpDomChannel implements DomChannel {
       buildDomWaitForSelectorScript(selector, opts),
     );
     return Array.isArray(result) ? result : [];
+  }
+
+  async waitForHidden(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean> {
+    const result = await this.evaluate<boolean>(buildDomWaitForHiddenScript(selector, opts));
+    return Boolean(result);
+  }
+
+  async waitForMatch(
+    selector: Selector,
+    opts: DomWaitForMatchOptions,
+  ): Promise<DomWaitForMatchResult> {
+    const result = await this.evaluate<DomWaitForMatchResult>(
+      buildDomWaitForMatchScript(selector, opts),
+    );
+    return result && typeof result === "object" ? result : { matched: false };
   }
 
   async tapDom(selector: Selector): Promise<boolean> {

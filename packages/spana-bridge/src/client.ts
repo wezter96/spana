@@ -54,6 +54,10 @@ export interface SpanaBridgeHandle {
   setStorage(entries: BridgeStorageEntries): Promise<void>;
   clearStorage(opts?: BridgeClearStorageOptions): Promise<void>;
   idle(opts?: { timeout?: number; quietPeriodMs?: number }): Promise<void>;
+  /** Set app-owned readiness signal (`window.__SPANA_APP_READY__`) so Spana waits key off app readiness. */
+  setReady(ready: boolean): void;
+  /** Register a dynamic readiness predicate synced with `window.__SPANA_APP_READY__`. */
+  setReadyCheck(fn: (() => boolean) | null): void;
   mockNetwork(matcher: BridgeSerializedMatcher, response: BridgeMockResponse): void;
   blockNetwork(matcher: BridgeSerializedMatcher): void;
   clearNetworkMocks(): void;
@@ -654,6 +658,44 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
       }
     });
 
+  let appReady = true;
+  let appReadyCheck: (() => boolean) | null = null;
+
+  const isAppReady = (): boolean => {
+    if (appReadyCheck) {
+      try {
+        return Boolean(appReadyCheck());
+      } catch {
+        return false;
+      }
+    }
+    const sig = win?.["__SPANA_APP_READY__"];
+    if (typeof sig === "function") {
+      try {
+        return Boolean(sig());
+      } catch {
+        return false;
+      }
+    }
+    if (typeof sig === "boolean") return sig;
+    return appReady;
+  };
+
+  const setReady = (ready: boolean): void => {
+    appReady = ready;
+    appReadyCheck = null;
+    if (win) {
+      win["__SPANA_APP_READY__"] = ready;
+    }
+  };
+
+  const setReadyCheck = (fn: (() => boolean) | null): void => {
+    appReadyCheck = fn;
+    if (win) {
+      win["__SPANA_APP_READY__"] = fn ?? appReady;
+    }
+  };
+
   const idle = async (opts?: { timeout?: number; quietPeriodMs?: number }): Promise<void> => {
     const timeout = opts?.timeout ?? 5000;
     const quietPeriodMs = opts?.quietPeriodMs ?? 50;
@@ -663,12 +705,13 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
       const noNetwork = inFlightRequests === 0;
       const noAnim = !hasRunningAnimations();
       const domQuiet = Date.now() - lastMutationAt >= quietPeriodMs;
+      const ready = isAppReady();
 
-      if (noNetwork && noAnim && domQuiet) {
+      if (noNetwork && noAnim && domQuiet && ready) {
         // Wait two frames to let React / Vue / Svelte flush effects & paints
         await nextFrame();
         await nextFrame();
-        if (inFlightRequests === 0 && !hasRunningAnimations()) {
+        if (inFlightRequests === 0 && !hasRunningAnimations() && isAppReady()) {
           return;
         }
       }
@@ -872,6 +915,8 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
     setStorage,
     clearStorage,
     idle,
+    setReady,
+    setReadyCheck,
     mockNetwork,
     blockNetwork,
     clearNetworkMocks,

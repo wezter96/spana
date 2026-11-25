@@ -1,13 +1,17 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { Effect, Layer } from "effect";
 import {
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
+  buildDomWaitForHiddenScript,
+  buildDomWaitForMatchScript,
   buildDomWaitForSelectorScript,
   type DomChannel,
   type DomElementMatch,
+  type DomWaitForMatchResult,
 } from "../channels/dom-channel.js";
 import { allocatePort } from "../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
@@ -42,6 +46,8 @@ import {
   type BrowserHARHeader,
   type BrowserHARPage,
   type BrowserJSError,
+  type VirtualAuthenticatorOptions,
+  type VirtualCredential,
 } from "./raw-driver.js";
 
 type RouteDefinition =
@@ -78,8 +84,51 @@ export interface PlaywrightConfig {
   wsEndpoint?: string;
   /** Reuse a persistent detached headless Chromium daemon across CLI runs (Flashwright-style warm session). */
   warmBrowser?: boolean;
+  /** Scope key for isolating warm Chromium daemons across concurrent repos/runs (defaults to cwd hash). */
+  warmBrowserScope?: string;
+  /** Create a fresh isolated BrowserContext per flow via a pre-warmed context pool + background teardown. */
+  freshContextPerFlow?: boolean;
+  /** Automatically attach a CDP WebAuthn virtual authenticator (passkey) to every fresh context. */
+  virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
   /** Attach a built-in zero-setup Playwright DOM channel for ~1ms `{ testID }` queries without full DOM dumps. Default: true. */
   enableDomChannel?: boolean;
+}
+
+/**
+ * Evaluate a string or function with arbitrary positional arguments on a Playwright Page.
+ * Playwright's native `page.evaluate(fn, arg)` only accepts a single argument and silently
+ * drops `args[1..]`. For 0–1 args we call `page.evaluate` directly (fast & mock-friendly);
+ * for 2+ args we forward all arguments cleanly inside a single wrapper call.
+ */
+async function evaluateOnPage<T = unknown>(
+  activePage: Page,
+  script: string | ((...args: any[]) => T),
+  args: unknown[],
+): Promise<T> {
+  if (typeof script === "string") {
+    return (await activePage.evaluate(script)) as T;
+  }
+  if (args.length === 0) {
+    return (await activePage.evaluate(script as never)) as T;
+  }
+  if (args.length === 1) {
+    return (await activePage.evaluate(script as never, args[0] as never)) as T;
+  }
+  const fnSource = script.toString();
+  return (await activePage.evaluate(
+    ({ src, params }: { src: string; params: unknown[] }) => {
+      // eslint-disable-next-line no-eval
+      const compiled = (0, eval)(`(${src})`);
+      return compiled(...params);
+    },
+    { src: fnSource, params: args },
+  )) as T;
+}
+
+function resolveWarmBrowserKey(scope?: string): string {
+  if (scope && scope.trim().length > 0) return scope.trim();
+  const cwdHash = createHash("sha1").update(process.cwd()).digest("hex").slice(0, 10);
+  return `scope-${cwdHash}`;
 }
 
 const INSTANT_ANIMATIONS_INIT_SCRIPT = `
@@ -104,9 +153,10 @@ const INSTANT_ANIMATIONS_INIT_SCRIPT = `
  * registered in Spana's warm daemon registry (`spana daemon status|stop`).
  */
 export async function ensureWarmBrowserDaemon(
-  config: Pick<PlaywrightConfig, "executablePath" | "headless"> = {},
+  config: Pick<PlaywrightConfig, "executablePath" | "headless" | "warmBrowserScope"> = {},
 ): Promise<{ browser: Browser; cdpUrl: string; reused: boolean }> {
-  const existing = await getHealthyWarmDaemon("chromium", "default", {
+  const daemonKey = resolveWarmBrowserKey(config.warmBrowserScope);
+  const existing = await getHealthyWarmDaemon("chromium", daemonKey, {
     statusPath: "/json/version",
   });
   if (existing) {
@@ -128,7 +178,11 @@ export async function ensureWarmBrowserDaemon(
       `--remote-debugging-port=${port}`,
       "--no-first-run",
       "--no-default-browser-check",
-      "--disable-gpu",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-ipc-flooding-protection",
+      ...(config.headless !== false ? ["--disable-gpu"] : []),
       "about:blank",
     ],
     { detached: true, stdio: "ignore" },
@@ -156,7 +210,7 @@ export async function ensureWarmBrowserDaemon(
 
   registerWarmDaemon({
     kind: "chromium",
-    deviceId: "default",
+    deviceId: daemonKey,
     host: "127.0.0.1",
     port,
     pid: child.pid,
@@ -341,6 +395,17 @@ export function makePlaywrightDriver(
     let context!: BrowserContext;
     let page!: Page;
     let cdpSession: CDPSession | undefined;
+    let activeAuthenticatorId: string | undefined;
+    let hasRunFirstFlow = false;
+    let prefetchedSlotPromise:
+      | Promise<{
+          context: BrowserContext;
+          page: Page;
+          cdpSession?: CDPSession;
+          authenticatorId?: string;
+        }>
+      | undefined;
+    const backgroundCloses: Array<Promise<unknown>> = [];
     const routeDefinitions: RouteDefinition[] = [];
     let appliedRoutes: AppliedRoute[] = [];
     let currentNetworkConditions: NetworkConditions = {};
@@ -746,14 +811,96 @@ export function makePlaywrightDriver(
       }
     };
 
-    const createContextAndPage = async (storageStatePath?: string) => {
-      context = await browser.newContext({
+    const ensureCdpSession = async (
+      targetCtx: BrowserContext = context,
+      targetPage: Page = page,
+    ): Promise<CDPSession> => {
+      if (targetCtx === context && targetPage === page && cdpSession) {
+        return cdpSession;
+      }
+      const session = await targetCtx.newCDPSession(targetPage);
+      if (targetCtx === context && targetPage === page) {
+        cdpSession = session;
+      }
+      return session;
+    };
+
+    const attachVirtualAuthenticatorOn = async (
+      targetCtx: BrowserContext,
+      targetPage: Page,
+      opts?: VirtualAuthenticatorOptions,
+    ): Promise<{ session: CDPSession; authenticatorId: string }> => {
+      if (browserName !== "chromium") {
+        throw new DriverError({
+          message: "enableVirtualAuthenticator() is only supported on Chromium browsers.",
+        });
+      }
+      const session = await ensureCdpSession(targetCtx, targetPage);
+      await session.send("WebAuthn.enable", { enableUI: false });
+      const res = (await session.send("WebAuthn.addVirtualAuthenticator", {
+        options: {
+          protocol: opts?.protocol ?? "ctap2",
+          transport: opts?.transport ?? "internal",
+          hasResidentKey: opts?.hasResidentKey ?? true,
+          hasUserVerification: opts?.hasUserVerification ?? true,
+          isUserVerified: opts?.isUserVerified ?? true,
+          automaticPresenceSimulation: opts?.automaticPresenceSimulation ?? true,
+        },
+      })) as { authenticatorId?: string };
+      return { session, authenticatorId: res?.authenticatorId ?? "virtual-auth-1" };
+    };
+
+    const closeContextInBackground = (oldContext: BrowserContext, oldPage?: Page, delayMs = 0) => {
+      const trigger =
+        delayMs > 0 ? new Promise<void>((r) => setTimeout(r, delayMs)) : Promise.resolve();
+      const p = trigger
+        .then(() => Promise.allSettled([...(oldPage ? [oldPage.close()] : []), oldContext.close()]))
+        .catch(() => {})
+        .finally(() => {
+          const idx = backgroundCloses.indexOf(p);
+          if (idx >= 0) backgroundCloses.splice(idx, 1);
+        });
+      backgroundCloses.push(p);
+    };
+
+    const prepareContextSlot = async (storageStatePath?: string) => {
+      const nextCtx = await browser.newContext({
         acceptDownloads: true,
         ...(storageStatePath ? { storageState: storageStatePath } : {}),
       });
-      await applyContextSpeedOptions(context);
-      page = await context.newPage();
-      cdpSession = undefined;
+      await applyContextSpeedOptions(nextCtx);
+      const nextPage = await nextCtx.newPage();
+      let nextCdp: CDPSession | undefined;
+      let nextAuthId: string | undefined;
+      if (config.virtualAuthenticator && browserName === "chromium") {
+        const authOpts =
+          typeof config.virtualAuthenticator === "object" ? config.virtualAuthenticator : undefined;
+        const attached = await attachVirtualAuthenticatorOn(nextCtx, nextPage, authOpts);
+        nextCdp = attached.session;
+        nextAuthId = attached.authenticatorId;
+      }
+      return {
+        context: nextCtx,
+        page: nextPage,
+        cdpSession: nextCdp,
+        authenticatorId: nextAuthId,
+      };
+    };
+
+    const schedulePrefetchNextContext = () => {
+      if (!config.freshContextPerFlow || prefetchedSlotPromise) return;
+      prefetchedSlotPromise = prepareContextSlot(config.storageState);
+      prefetchedSlotPromise.catch(() => {
+        prefetchedSlotPromise = undefined;
+      });
+    };
+
+    const createContextAndPage = async (storageStatePath?: string) => {
+      const slot = await prepareContextSlot(storageStatePath);
+      context = slot.context;
+      page = slot.page;
+      cdpSession = slot.cdpSession;
+      activeAuthenticatorId = slot.authenticatorId;
       attachPageDiagnostics(page);
 
       await reapplyRoutes();
@@ -771,7 +918,7 @@ export function makePlaywrightDriver(
         await page.goto(url);
       }
 
-      await Promise.allSettled([previousPage.close(), previousContext.close()]);
+      closeContextInBackground(previousContext, previousPage);
     };
 
     const beginFlow = async (flowName: string) => {
@@ -789,14 +936,34 @@ export function makePlaywrightDriver(
       }
       downloadWaiters = [];
 
-      const openPages = context.pages();
-      if (openPages.length === 0) {
-        page = await context.newPage();
+      if (config.freshContextPerFlow && hasRunFirstFlow) {
+        const previousContext = context;
+        const pendingSlot = prefetchedSlotPromise;
+        prefetchedSlotPromise = undefined;
+        const slot = pendingSlot
+          ? await pendingSlot
+          : await prepareContextSlot(config.storageState);
+        context = slot.context;
+        page = slot.page;
+        cdpSession = slot.cdpSession;
+        activeAuthenticatorId = slot.authenticatorId;
+        attachPageDiagnostics(page);
+        await reapplyRoutes();
+        await applyNetworkConditions();
+        // Close old context asynchronously after navigation settles (avoids colliding with next page load)
+        closeContextInBackground(previousContext, undefined, 120);
       } else {
-        const [firstPage, ...extraPages] = openPages;
-        page = firstPage!;
-        await Promise.all(extraPages.map((extraPage) => extraPage.close()));
+        const openPages = context.pages();
+        if (openPages.length === 0) {
+          page = await context.newPage();
+        } else {
+          const [firstPage, ...extraPages] = openPages;
+          page = firstPage!;
+          await Promise.all(extraPages.map((extraPage) => extraPage.close()));
+        }
       }
+
+      hasRunFirstFlow = true;
 
       attachPageDiagnostics(page);
       getTabId(page);
@@ -821,12 +988,7 @@ export function makePlaywrightDriver(
             evaluate: async <T = unknown>(
               script: string | ((...args: any[]) => T),
               ...args: any[]
-            ): Promise<T> => {
-              if (typeof script === "string") {
-                return (await page.evaluate(script)) as T;
-              }
-              return (await page.evaluate(script as any, ...(args as [any]))) as T;
-            },
+            ): Promise<T> => evaluateOnPage<T>(page, script, args),
             query: async (selector) => {
               const res = await page.evaluate(buildDomQueryScript(selector));
               return Array.isArray(res) ? res : [];
@@ -834,6 +996,16 @@ export function makePlaywrightDriver(
             waitForSelector: async (selector, opts) => {
               const res = await page.evaluate(buildDomWaitForSelectorScript(selector, opts));
               return Array.isArray(res) ? res : [];
+            },
+            waitForHidden: async (selector, opts) => {
+              const res = await page.evaluate(buildDomWaitForHiddenScript(selector, opts));
+              return Boolean(res);
+            },
+            waitForMatch: async (selector, opts) => {
+              const res = await page.evaluate(buildDomWaitForMatchScript(selector, opts));
+              return res && typeof res === "object"
+                ? (res as DomWaitForMatchResult)
+                : { matched: false };
             },
             scrollIntoView: async (selector) => {
               const res = await page.evaluate(buildDomScrollIntoViewScript(selector));
@@ -895,28 +1067,6 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await page.mouse.click(x, y);
-            // Only wait for React Native Web focus retention when the tapped target is
-            // actually an editable input; non-input buttons/links return immediately (~2ms vs 48ms).
-            await page
-              .evaluate(`
-              (function() {
-                var el = document.elementFromPoint(${x}, ${y});
-                if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && el.tagName !== "SELECT")) {
-                  return;
-                }
-                el.focus();
-                return new Promise(function(resolve) {
-                  requestAnimationFrame(function() {
-                    var cur = document.elementFromPoint(${x}, ${y});
-                    if (cur && (cur.tagName === "INPUT" || cur.tagName === "TEXTAREA" || cur.tagName === "SELECT")) {
-                      cur.focus();
-                    }
-                    resolve();
-                  });
-                });
-              })()
-            `)
-              .catch(() => {});
           },
           catch: (e) => new DriverError({ message: `Failed to tap at (${x}, ${y}): ${e}` }),
         }),
@@ -1035,6 +1185,7 @@ export function makePlaywrightDriver(
               config.waitUntil ? { waitUntil: config.waitUntil } : undefined,
             );
             updateHarPage(page);
+            schedulePrefetchNextContext();
             debugLog("launchApp", targetUrl);
           },
           catch: (e) => new DriverError({ message: `Failed to navigate to ${url}: ${e}` }),
@@ -1053,11 +1204,27 @@ export function makePlaywrightDriver(
       killApp: (_id) =>
         Effect.tryPromise({
           try: async () => {
-            await Promise.allSettled([
+            const prefetched = prefetchedSlotPromise;
+            prefetchedSlotPromise = undefined;
+            if (ownsBrowser) {
+              // Close the active page/context/browser directly without waiting on
+              // background-closing contexts (which browser.close() tears down instantly).
+              await Promise.race([
+                Promise.allSettled([page.close(), context.close(), browser.close()]),
+                new Promise((r) => setTimeout(r, 5000)),
+              ]);
+              return;
+            }
+            const prefetchedClose = prefetched
+              ? prefetched.then((slot) => slot.context.close()).catch(() => {})
+              : Promise.resolve();
+            const drain = Promise.allSettled([
               page.close(),
               context.close(),
-              ...(ownsBrowser ? [browser.close()] : []),
+              prefetchedClose,
+              ...backgroundCloses,
             ]);
+            await Promise.race([drain, new Promise((r) => setTimeout(r, 3000))]);
           },
           catch: (e) => new DriverError({ message: `Failed to kill app: ${e}` }),
         }),
@@ -1076,6 +1243,7 @@ export function makePlaywrightDriver(
           try: async () => {
             await page.goto(url, config.waitUntil ? { waitUntil: config.waitUntil } : undefined);
             updateHarPage(page);
+            schedulePrefetchNextContext();
             debugLog("openLink", url);
           },
           catch: (e) => new DriverError({ message: `Failed to open link ${url}: ${e}` }),
@@ -1093,8 +1261,64 @@ export function makePlaywrightDriver(
 
       evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
         Effect.tryPromise({
-          try: () => page.evaluate(script as never, ...args) as Promise<T>,
+          try: () => evaluateOnPage<T>(page, script, args),
           catch: (e) => new DriverError({ message: `Evaluate failed: ${e}` }),
+        }),
+
+      getRawPage: () => page,
+
+      enableVirtualAuthenticator: (opts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const attached = await attachVirtualAuthenticatorOn(context, page, opts);
+            activeAuthenticatorId = attached.authenticatorId;
+            debugLog("enableVirtualAuthenticator", attached.authenticatorId);
+            return attached.authenticatorId;
+          },
+          catch: (e) =>
+            e instanceof DriverError
+              ? e
+              : new DriverError({ message: `Failed to enable virtual authenticator: ${e}` }),
+        }),
+
+      removeVirtualAuthenticator: (authenticatorId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const id = authenticatorId ?? activeAuthenticatorId;
+            if (!id) return;
+            const session = await ensureCdpSession();
+            await session.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId: id });
+            if (id === activeAuthenticatorId) activeAuthenticatorId = undefined;
+            debugLog("removeVirtualAuthenticator", id);
+          },
+          catch: (e) =>
+            new DriverError({ message: `Failed to remove virtual authenticator: ${e}` }),
+        }),
+
+      getVirtualCredentials: (authenticatorId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const id = authenticatorId ?? activeAuthenticatorId;
+            if (!id) return [];
+            const session = await ensureCdpSession();
+            const res = (await session.send("WebAuthn.getCredentials", {
+              authenticatorId: id,
+            })) as { credentials?: VirtualCredential[] };
+            return Array.isArray(res?.credentials) ? res.credentials : [];
+          },
+          catch: (e) => new DriverError({ message: `Failed to read virtual credentials: ${e}` }),
+        }),
+
+      clearVirtualCredentials: (authenticatorId) =>
+        Effect.tryPromise({
+          try: async () => {
+            const id = authenticatorId ?? activeAuthenticatorId;
+            if (!id) return;
+            const session = await ensureCdpSession();
+            await session.send("WebAuthn.clearCredentials", { authenticatorId: id });
+            debugLog("clearVirtualCredentials", id);
+          },
+          catch: (e) => new DriverError({ message: `Failed to clear virtual credentials: ${e}` }),
         }),
 
       mockNetwork: (matcher, response) =>

@@ -13,7 +13,11 @@ import {
   launchPlaywrightBrowser,
   makePlaywrightDriver,
 } from "../drivers/playwright.js";
-import { makeLightweightCdpDriver } from "../drivers/cdp-browser.js";
+import {
+  launchDirectCdpBrowser,
+  makeLightweightCdpDriver,
+  type DirectCdpBrowserHandle,
+} from "../drivers/cdp-browser.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
 import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
@@ -127,12 +131,16 @@ export function speculativelyPrelaunchWebBrowser(
     : webExecution?.cdpUrl
       ? connectPlaywrightOverCDP(webExecution.cdpUrl)
       : useWarm
-        ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then(
-            (r) => r.browser,
-          )
+        ? ensureWarmBrowserDaemon({
+            headless: webExecution?.headless ?? true,
+            executablePath: webExecution?.executablePath,
+            warmBrowserScope: webExecution?.warmBrowserScope,
+          }).then((r) => r.browser)
         : launchPlaywrightBrowser({
             browser: webExecution?.browser,
             headless: webExecution?.headless ?? true,
+            executablePath: webExecution?.executablePath,
+            channel: webExecution?.channel,
           });
 
   // Prevent unhandled rejection if CLI exits early before awaiting
@@ -149,35 +157,61 @@ export async function buildWebRuntime(
   const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
 
   const prelaunchedBrowser = prelaunched ? await prelaunched.browserPromise : undefined;
+  let launchedDirectCdp: DirectCdpBrowserHandle | undefined;
 
-  const rawDriver =
-    webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda"
-      ? await Effect.runPromise(
-          makeLightweightCdpDriver({
-            cdpUrl: webExecution.cdpUrl ?? "http://127.0.0.1:9222",
-            baseUrl: webUrl,
-            engineLabel: webExecution.engine,
-          }),
-        )
-      : await Effect.runPromise(
-          makePlaywrightDriver({
-            browser: webExecution?.browser,
-            headless: webExecution?.headless ?? true,
-            baseUrl: webUrl,
-            storageState: webExecution?.storageState,
-            verboseLogging: webExecution?.verboseLogging,
-            recordHar: Boolean(config.artifacts?.har),
-            waitUntil: webExecution?.waitUntil,
-            instantAnimations: webExecution?.instantAnimations,
-            blockResources: webExecution?.blockResources,
-            sharedBrowser: prelaunchedBrowser,
-            cdpEndpoint: prelaunchedBrowser ? undefined : webExecution?.cdpUrl,
-            wsEndpoint: prelaunchedBrowser ? undefined : webExecution?.wsEndpoint,
-            warmBrowser: prelaunchedBrowser
-              ? false
-              : (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false),
-          }),
-        );
+  let rawDriver;
+  if (webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
+    let targetCdpUrl = webExecution.cdpUrl;
+    const useContexts = webExecution.engine === "cdp";
+    if (!targetCdpUrl && webExecution.engine === "cdp") {
+      launchedDirectCdp = await launchDirectCdpBrowser({
+        executablePath: webExecution.executablePath,
+        headless: webExecution.headless ?? true,
+        warmBrowser: webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
+        warmBrowserScope: webExecution.warmBrowserScope,
+      });
+      targetCdpUrl = launchedDirectCdp.browserWsUrl;
+    }
+    rawDriver = await Effect.runPromise(
+      makeLightweightCdpDriver({
+        cdpUrl: targetCdpUrl ?? "http://127.0.0.1:9222",
+        baseUrl: webUrl,
+        engineLabel: webExecution.engine,
+        useBrowserContexts: useContexts,
+        freshContextPerFlow: webExecution.freshContextPerFlow,
+        waitUntil: webExecution.waitUntil,
+        instantAnimations: webExecution.instantAnimations,
+        blockResources: webExecution.blockResources,
+        virtualAuthenticator: webExecution.virtualAuthenticator,
+        storageState: webExecution.storageState,
+      }),
+    );
+  } else {
+    rawDriver = await Effect.runPromise(
+      makePlaywrightDriver({
+        browser: webExecution?.browser,
+        headless: webExecution?.headless ?? true,
+        executablePath: webExecution?.executablePath,
+        channel: webExecution?.channel,
+        baseUrl: webUrl,
+        storageState: webExecution?.storageState,
+        verboseLogging: webExecution?.verboseLogging,
+        recordHar: Boolean(config.artifacts?.har),
+        waitUntil: webExecution?.waitUntil,
+        instantAnimations: webExecution?.instantAnimations,
+        blockResources: webExecution?.blockResources,
+        freshContextPerFlow: webExecution?.freshContextPerFlow,
+        virtualAuthenticator: webExecution?.virtualAuthenticator,
+        warmBrowserScope: webExecution?.warmBrowserScope,
+        sharedBrowser: prelaunchedBrowser,
+        cdpEndpoint: prelaunchedBrowser ? undefined : webExecution?.cdpUrl,
+        wsEndpoint: prelaunchedBrowser ? undefined : webExecution?.wsEndpoint,
+        warmBrowser: prelaunchedBrowser
+          ? false
+          : (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false),
+      }),
+    );
+  }
   const driver = bridge ? { ...rawDriver, domChannel: bridge } : rawDriver;
   const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
 
@@ -191,6 +225,7 @@ export async function buildWebRuntime(
             prelaunchedBrowser && prelaunched?.ownsBrowser
               ? prelaunchedBrowser.close()
               : Promise.resolve(),
+          () => (launchedDirectCdp ? launchedDirectCdp.close() : Promise.resolve()),
           () => bridge?.disconnect() ?? Promise.resolve(),
         ),
       metadata: {
@@ -206,8 +241,11 @@ export async function buildWebRuntime(
 }
 
 /**
- * Launch ONE shared Playwright browser process and create `workerCount`
- * isolated BrowserContext runtimes on top of it (faster startup, lower RAM).
+ * Create `workerCount` isolated web runtimes sharded across
+ * `Math.ceil(workerCount / maxContextsPerBrowser)` browser processes
+ * (default: 2 contexts per browser, so 4 workers run on 2 Chromium processes × 2 contexts
+ * — avoiding single-browser CDP/IO contention while keeping startup fast!).
+ * Supports both direct CDP (`engine: "cdp"`, zero Playwright pipe) and Playwright.
  */
 export async function buildWebRuntimePool(
   config: ProvConfig,
@@ -215,49 +253,173 @@ export async function buildWebRuntimePool(
   prelaunched?: PrelaunchedWebBrowser,
 ): Promise<RuntimeResult[]> {
   const webExecution = config.execution?.web;
-  if (workerCount <= 1 || webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
+  if (workerCount <= 1 || webExecution?.engine === "lightpanda") {
     return [await buildWebRuntime(config, prelaunched)];
   }
 
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
+  const maxPerBrowser = Math.max(
+    1,
+    webExecution?.maxContextsPerBrowser ?? (webExecution?.engine === "cdp" ? 1 : 2),
+  );
+
+  // Direct CDP multi-browser worker pool (zero Playwright Node client↔server pipe!)
+  if (webExecution?.engine === "cdp") {
+    const useExternalCdp = Boolean(webExecution.cdpUrl);
+    const browserCount = useExternalCdp ? 1 : Math.ceil(workerCount / maxPerBrowser);
+    const handles: Array<{
+      cdpUrl: string;
+      handle?: DirectCdpBrowserHandle;
+      remaining: number;
+    }> = [];
+
+    if (useExternalCdp) {
+      handles.push({ cdpUrl: webExecution.cdpUrl!, remaining: workerCount });
+    } else {
+      const launched = await Promise.all(
+        Array.from({ length: browserCount }, (_v, bIdx) =>
+          launchDirectCdpBrowser({
+            executablePath: webExecution.executablePath,
+            headless: webExecution.headless ?? true,
+            warmBrowser:
+              bIdx === 0 &&
+              (webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false),
+            warmBrowserScope: webExecution.warmBrowserScope,
+          }),
+        ),
+      );
+      for (const h of launched) {
+        handles.push({ cdpUrl: h.browserWsUrl, handle: h, remaining: 0 });
+      }
+      for (let i = 0; i < workerCount; i++) {
+        handles[i % handles.length]!.remaining += 1;
+      }
+    }
+
+    const results: RuntimeResult[] = [];
+    for (let i = 0; i < workerCount; i++) {
+      const bucket = handles[i % handles.length]!;
+      const driver = await Effect.runPromise(
+        makeLightweightCdpDriver({
+          cdpUrl: bucket.cdpUrl,
+          baseUrl: webUrl,
+          engineLabel: "cdp",
+          useBrowserContexts: true,
+          freshContextPerFlow: webExecution.freshContextPerFlow,
+          waitUntil: webExecution.waitUntil,
+          instantAnimations: webExecution.instantAnimations,
+          blockResources: webExecution.blockResources,
+          virtualAuthenticator: webExecution.virtualAuthenticator,
+          storageState: webExecution.storageState,
+        }),
+      );
+      const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+      let cleaned = false;
+      results.push({
+        runtime: {
+          driver,
+          cleanup: () =>
+            safeCleanup(async () => {
+              if (cleaned) return;
+              cleaned = true;
+              await Effect.runPromise(driver.killApp(""));
+              bucket.remaining -= 1;
+              if (bucket.remaining <= 0 && bucket.handle) {
+                await bucket.handle.close();
+              }
+            }),
+          metadata: {
+            platform: "web",
+            mode: "local",
+            deviceId: `cdp-context-${i + 1}`,
+          },
+        },
+        engineConfig: buildEngineConfig(webUrl, "web", parseWebHierarchy, config, {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        }),
+      });
+    }
+    return results;
+  }
+
   const useWarm =
     (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
     (webExecution?.browser ?? "chromium") === "chromium";
-  const ownsSharedBrowser = prelaunched
-    ? prelaunched.ownsBrowser
-    : !useWarm && !webExecution?.cdpUrl && !webExecution?.wsEndpoint;
-  const sharedBrowser = prelaunched
-    ? prelaunched.browserPromise
-    : webExecution?.wsEndpoint
-      ? connectPlaywrightOverWS(webExecution.wsEndpoint, webExecution.browser)
-      : webExecution?.cdpUrl
-        ? connectPlaywrightOverCDP(webExecution.cdpUrl)
-        : useWarm
-          ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then(
-              (r) => r.browser,
-            )
-          : launchPlaywrightBrowser({
-              browser: webExecution?.browser,
-              headless: webExecution?.headless ?? true,
-            });
-  const resolvedBrowser = await sharedBrowser;
+  const singleExternalEndpoint = Boolean(webExecution?.cdpUrl || webExecution?.wsEndpoint);
+  const browserCount = singleExternalEndpoint ? 1 : Math.ceil(workerCount / maxPerBrowser);
 
-  let remaining = workerCount;
-  const results: RuntimeResult[] = [];
+  const launchOneBrowser = async (
+    idx: number,
+  ): Promise<{ browser: Browser; owns: boolean; remaining: number }> => {
+    if (idx === 0 && prelaunched) {
+      return {
+        browser: await prelaunched.browserPromise,
+        owns: prelaunched.ownsBrowser,
+        remaining: 0,
+      };
+    }
+    if (webExecution?.wsEndpoint) {
+      return {
+        browser: await connectPlaywrightOverWS(webExecution.wsEndpoint, webExecution.browser),
+        owns: false,
+        remaining: 0,
+      };
+    }
+    if (webExecution?.cdpUrl) {
+      return {
+        browser: await connectPlaywrightOverCDP(webExecution.cdpUrl),
+        owns: false,
+        remaining: 0,
+      };
+    }
+    if (idx === 0 && useWarm) {
+      const warm = await ensureWarmBrowserDaemon({
+        headless: webExecution?.headless ?? true,
+        executablePath: webExecution?.executablePath,
+        warmBrowserScope: webExecution?.warmBrowserScope,
+      });
+      return { browser: warm.browser, owns: false, remaining: 0 };
+    }
+    return {
+      browser: await launchPlaywrightBrowser({
+        browser: webExecution?.browser,
+        headless: webExecution?.headless ?? true,
+        executablePath: webExecution?.executablePath,
+        channel: webExecution?.channel,
+      }),
+      owns: true,
+      remaining: 0,
+    };
+  };
 
+  const browserBuckets = await Promise.all(
+    Array.from({ length: browserCount }, (_v, idx) => launchOneBrowser(idx)),
+  );
   for (let i = 0; i < workerCount; i++) {
+    browserBuckets[i % browserBuckets.length]!.remaining += 1;
+  }
+
+  const results: RuntimeResult[] = [];
+  for (let i = 0; i < workerCount; i++) {
+    const bucket = browserBuckets[i % browserBuckets.length]!;
     const driver = await Effect.runPromise(
       makePlaywrightDriver({
         browser: webExecution?.browser,
         headless: webExecution?.headless ?? true,
+        executablePath: webExecution?.executablePath,
+        channel: webExecution?.channel,
         baseUrl: webUrl,
         storageState: webExecution?.storageState,
         verboseLogging: webExecution?.verboseLogging,
-        sharedBrowser: resolvedBrowser,
+        sharedBrowser: bucket.browser,
         recordHar: Boolean(config.artifacts?.har),
         waitUntil: webExecution?.waitUntil,
         instantAnimations: webExecution?.instantAnimations,
         blockResources: webExecution?.blockResources,
+        freshContextPerFlow: webExecution?.freshContextPerFlow,
+        virtualAuthenticator: webExecution?.virtualAuthenticator,
+        warmBrowserScope: webExecution?.warmBrowserScope,
       }),
     );
     const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
@@ -271,9 +433,9 @@ export async function buildWebRuntimePool(
             if (cleaned) return;
             cleaned = true;
             await Effect.runPromise(driver.killApp(""));
-            remaining -= 1;
-            if (remaining <= 0 && ownsSharedBrowser) {
-              await resolvedBrowser.close();
+            bucket.remaining -= 1;
+            if (bucket.remaining <= 0 && bucket.owns) {
+              await bucket.browser.close();
             }
           }),
         metadata: {

@@ -723,6 +723,11 @@ async function discoverAndFilterFlows(
   let filterSummaries: string[] = [];
 
   // Handle --changed-since <ref> with pluggable CI filters (fail-open)
+  if (input.changedSince && !input.filters?.length) {
+    console.log(
+      `Warning: --changed-since ${input.changedSince} has no effect because spana.config.ts has no \`filters\` — running all flows. Add e.g. \`filters: [pathRuleFilter({ rules: [...] })]\`. See https://spana.antonwester.se/guides/ci-integration/`,
+    );
+  }
   if (
     input.changedSince &&
     input.filters &&
@@ -785,7 +790,20 @@ async function discoverAndFilterFlows(
     console.log(`Rerunning ${filteredLoadedFlows.length} flow(s) from the last failed run.`);
   }
 
-  const selectedLoadedFlows = applyShard(filteredLoadedFlows, input.shard);
+  const lastRunStateForShard = input.shard
+    ? await readLastRunState(createLastRunStatePath(input.outputDir))
+    : null;
+  const shardDurationHints = extractDurationHints(lastRunStateForShard);
+  const selectedLoadedFlows = applyShard(
+    filteredLoadedFlows,
+    input.shard,
+    Object.keys(shardDurationHints).length > 0
+      ? {
+          durationHintsMs: shardDurationHints,
+          getName: (entry) => entry.flow.name,
+        }
+      : undefined,
+  );
   const selectedFlows = selectedLoadedFlows.map((l) => l.flow);
 
   if (filteredLoadedFlows.length === 0) {

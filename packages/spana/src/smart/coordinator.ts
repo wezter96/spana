@@ -2,6 +2,8 @@ import { Duration, Effect } from "effect";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { Element } from "../schemas/element.js";
 import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/selector.js";
+import { isSystemUISelector } from "../schemas/selector.js";
+import type { DomWaitForMatchOptions } from "../channels/dom-channel.js";
 import type { WaitTimeoutError } from "../errors.js";
 import { DriverError, ElementNotFoundError, TextMismatchError } from "../errors.js";
 import { splitGraphemes } from "../core/graphemes.js";
@@ -89,6 +91,17 @@ export interface CoordinatorConfig {
   tapMode?: TapMode;
   /** Platform hint for DOM-to-screen coordinate conversion. */
   platform?: Platform;
+}
+
+function isRelativeSelectorLike(selector: ExtendedSelector): boolean {
+  if (typeof selector !== "object" || selector === null) return false;
+  return (
+    "below" in selector ||
+    "above" in selector ||
+    "leftOf" in selector ||
+    "rightOf" in selector ||
+    "childOf" in selector
+  );
 }
 
 export function createCoordinator<T extends string = string, R extends string = string>(
@@ -208,6 +221,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       message: string;
       expected: string;
     },
+    domMatchSpec?: Omit<DomWaitForMatchOptions, "timeoutMs">,
   ): Effect.Effect<
     void,
     ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
@@ -217,6 +231,38 @@ export function createCoordinator<T extends string = string, R extends string = 
       const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
       const start = Date.now();
       let lastActual: string | undefined;
+
+      // Single-round-trip MutationObserver assertion wait on web/DOM channels (0 runner polling)
+      const domChannel = driver.domChannel;
+      if (
+        domMatchSpec &&
+        config.platform === "web" &&
+        !isSystemUISelector(selector) &&
+        !isRelativeSelectorLike(selector) &&
+        domChannel?.isConnected() &&
+        domChannel.waitForMatch
+      ) {
+        const reactive = yield* Effect.tryPromise({
+          try: () =>
+            domChannel.waitForMatch!(selector as Selector, {
+              ...domMatchSpec,
+              timeoutMs: timeout,
+            }),
+          catch: () => null,
+        }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+        if (reactive) {
+          if (reactive.matched) return;
+          lastActual = reactive.actual;
+          const err = formatError(lastActual, timeout);
+          return yield* new TextMismatchError({
+            message: err.message,
+            expected: err.expected,
+            actual: lastActual,
+            selector,
+          });
+        }
+      }
 
       while (Date.now() - start < timeout) {
         if (cache) cache.invalidate();
@@ -338,6 +384,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           message: `Expected text "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
           expected,
         }),
+        { kind: "text", expected },
       ),
 
     assertContainsText: (
@@ -362,6 +409,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           message: `Expected text to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
           expected,
         }),
+        { kind: "containsText", expected },
       ),
 
     assertEnabled: (
@@ -430,6 +478,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           message: `Expected value "${expectedStr}" but got "${actual ?? "(no value)"}" after ${timeout}ms`,
           expected: expectedStr,
         }),
+        { kind: "value", expected: expectedStr },
       );
     },
 
@@ -462,6 +511,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 message: `Expected attribute "${name}" to be "${expectedValue}" but got "${actual ?? "(not found)"}" after ${timeout}ms`,
                 expected: expectedValue,
               },
+        { kind: "attribute", attributeName: name, expected: expectedValue },
       ),
 
     assertMatchesText: (

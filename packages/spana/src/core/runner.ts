@@ -169,9 +169,65 @@ export function filterFlows(flows: FlowDefinition[], opts: DiscoverOptions): Flo
   });
 }
 
-export function applyShard<T>(items: T[], shard?: ShardOptions): T[] {
+export interface BalancedShardOptions<T> {
+  /** Historical per-flow durations in ms (e.g. from `.spana/last-run.json`) for LPT balanced sharding. */
+  durationHintsMs?: Record<string, number>;
+  /** Extract flow name from each item when using `durationHintsMs`. */
+  getName?: (item: T) => string;
+}
+
+/**
+ * Partition items across CI shards.
+ * When `durationHintsMs` are provided (e.g. from `.spana/last-run.json`), uses
+ * Longest-Processing-Time-First (LPT) bin packing so every shard finishes at
+ * roughly the same wall-clock time instead of stranding slow tests on one shard.
+ */
+export function applyShard<T>(
+  items: T[],
+  shard?: ShardOptions,
+  options?: BalancedShardOptions<T>,
+): T[] {
   if (!shard || shard.total === 1 || items.length === 0) {
     return items;
+  }
+
+  const hints = options?.durationHintsMs;
+  const getName = options?.getName;
+  if (hints && getName && Object.keys(hints).length > 0) {
+    const knownDurations = Object.values(hints).filter((d) => typeof d === "number" && d > 0);
+    const defaultDuration =
+      knownDurations.length > 0
+        ? knownDurations.reduce((a, b) => a + b, 0) / knownDurations.length
+        : 1000;
+
+    const indexed = items.map((item, originalIndex) => {
+      const weight = hints[getName(item)] ?? defaultDuration;
+      return { item, originalIndex, weight };
+    });
+
+    // Sort descending by predicted duration (stable tie-breaker by original index)
+    indexed.sort((a, b) => b.weight - a.weight || a.originalIndex - b.originalIndex);
+
+    const loads = Array.from({ length: shard.total }, () => 0);
+    const buckets: Array<Array<{ item: T; originalIndex: number }>> = Array.from(
+      { length: shard.total },
+      () => [],
+    );
+
+    for (const entry of indexed) {
+      let bestBucket = 0;
+      for (let b = 1; b < shard.total; b++) {
+        if (loads[b]! < loads[bestBucket]!) {
+          bestBucket = b;
+        }
+      }
+      loads[bestBucket] = loads[bestBucket]! + entry.weight;
+      buckets[bestBucket]!.push({ item: entry.item, originalIndex: entry.originalIndex });
+    }
+
+    const chosen = buckets[shard.current - 1] ?? [];
+    chosen.sort((a, b) => a.originalIndex - b.originalIndex);
+    return chosen.map((c) => c.item);
   }
 
   const itemsPerShard = Math.max(Math.ceil(items.length / shard.total), 1);

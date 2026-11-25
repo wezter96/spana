@@ -49,12 +49,39 @@ export interface DomIdleOptions {
 export interface DomWaitForSelectorOptions {
   /** Max time to wait in ms. Default: 5000. */
   timeoutMs?: number;
-  /** Require the matched element to be visible & enabled for pointer actions. */
+  /** Require the matched element to be visible, enabled, unobstructed, and stable for pointer actions. */
   forAction?: boolean;
   /** Fail early once the DOM stays quiet and document.readyState === "complete". */
   failFastWhenIdle?: boolean;
   /** Quiet window in ms before failFastWhenIdle resolves empty. Default: 250. */
   idleQuietMs?: number;
+  /** Consecutive requestAnimationFrame frames the bounding box must remain stable (≤ 1px) when `forAction: true`. Default: 2 (0 when instantAnimations active). */
+  stableFrames?: number;
+  /** Verify center point via deep `elementFromPoint` (piercing Shadow DOM & iframes) when `forAction: true`. Default: true. */
+  checkHitTest?: boolean;
+  /** Respect app-owned `window.__SPANA_APP_READY__` signal when defined. Default: true. */
+  waitForAppReady?: boolean;
+}
+
+export interface DomWaitForHiddenOptions {
+  /** Max time to wait in ms. Default: 5000. */
+  timeoutMs?: number;
+}
+
+export interface DomWaitForMatchOptions {
+  /** Max time to wait in ms. Default: 5000. */
+  timeoutMs?: number;
+  /** Assertion kind evaluated reactively inside the page via MutationObserver. */
+  kind: "text" | "containsText" | "value" | "attribute";
+  /** Expected value/substring (optional when `kind === "attribute"` checks presence). */
+  expected?: string;
+  /** Attribute name when `kind === "attribute"`. */
+  attributeName?: string;
+}
+
+export interface DomWaitForMatchResult {
+  matched: boolean;
+  actual?: string;
 }
 
 export interface DomStorageEntries {
@@ -93,11 +120,15 @@ export interface DomChannel {
   disconnect(): Promise<void>;
   evaluate<T = unknown>(script: string | ((...args: any[]) => T), ...args: any[]): Promise<T>;
   query(selector: Selector): Promise<DomElementMatch[]>;
-  /** MutationObserver-reactive DOM wait: resolves immediately when a matching visible element mounts. */
+  /** MutationObserver-reactive DOM wait: resolves immediately when a matching visible element mounts & is actionable. */
   waitForSelector?(
     selector: Selector,
     opts?: DomWaitForSelectorOptions,
   ): Promise<DomElementMatch[]>;
+  /** MutationObserver-reactive wait until no matching visible element remains. */
+  waitForHidden?(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean>;
+  /** MutationObserver-reactive wait until text/value/attribute matches (zero runner-side polling). */
+  waitForMatch?(selector: Selector, opts: DomWaitForMatchOptions): Promise<DomWaitForMatchResult>;
   tapDom(selector: Selector): Promise<boolean>;
   /** Scroll a DOM element into the viewport center and return its updated bounding rect. */
   scrollIntoView?(selector: Selector): Promise<DomElementMatch | null>;
@@ -253,6 +284,89 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var cursor = win.getComputedStyle(el).cursor;
     return cursor === "pointer";
   }
+  function isAppReady() {
+    var sig = typeof window !== "undefined" ? window.__SPANA_APP_READY__ : undefined;
+    if (typeof sig === "function") {
+      try { return Boolean(sig()); } catch (e) { return false; }
+    }
+    if (typeof sig === "boolean") return sig;
+    return true;
+  }
+  function deepElementFromPoint(rootDoc, x, y) {
+    if (!rootDoc || typeof rootDoc.elementFromPoint !== "function") return null;
+    var el = rootDoc.elementFromPoint(x, y);
+    var guard = 0;
+    while (el && guard++ < 16) {
+      if (el.shadowRoot && typeof el.shadowRoot.elementFromPoint === "function") {
+        var inner = el.shadowRoot.elementFromPoint(x, y);
+        if (inner && inner !== el) { el = inner; continue; }
+      }
+      if (el.tagName === "IFRAME") {
+        try {
+          var fdoc = el.contentDocument;
+          if (fdoc && typeof fdoc.elementFromPoint === "function") {
+            var fr = el.getBoundingClientRect();
+            var fx = x - fr.left;
+            var fy = y - fr.top;
+            var fEl = fdoc.elementFromPoint(fx, fy);
+            if (fEl && fEl !== el) { el = fEl; x = fx; y = fy; continue; }
+          }
+        } catch (e) {}
+      }
+      break;
+    }
+    return el;
+  }
+  function isSameOrDescendant(target, candidate) {
+    if (!target || !candidate) return false;
+    if (target === candidate) return true;
+    try {
+      if (typeof target.contains === "function" && target.contains(candidate)) return true;
+      if (typeof candidate.contains === "function" && candidate.contains(target)) return true;
+    } catch (e) {}
+    var cur = candidate;
+    var guard = 0;
+    while (cur && guard++ < 24) {
+      if (cur === target) return true;
+      var root = typeof cur.getRootNode === "function" ? cur.getRootNode() : null;
+      if (root && root.host) {
+        cur = root.host;
+      } else {
+        cur = cur.parentElement;
+      }
+    }
+    return false;
+  }
+  function isHitTestClear(hit) {
+    var el = hit.el;
+    var rect = el.getBoundingClientRect();
+    var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
+    var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
+    var cx = rect.left + hit.offsetX + rect.width / 2;
+    var cy = rect.top + hit.offsetY + rect.height / 2;
+    if (vw > 0 && vh > 0 && (cx < 0 || cy < 0 || cx > vw || cy > vh)) {
+      return false;
+    }
+    var topEl = deepElementFromPoint(document, cx, cy);
+    if (!topEl) return true;
+    return isSameOrDescendant(el, topEl);
+  }
+  function ensureInViewport(hit) {
+    var el = hit.el;
+    var rect = el.getBoundingClientRect();
+    var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
+    var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
+    var cx = rect.left + hit.offsetX + rect.width / 2;
+    var cy = rect.top + hit.offsetY + rect.height / 2;
+    if (vw > 0 && vh > 0 && (cx < 1 || cy < 1 || cx > vw - 1 || cy > vh - 1)) {
+      if (typeof el.scrollIntoView === "function") {
+        try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); }
+        catch (e) { try { el.scrollIntoView(true); } catch (e2) {} }
+      }
+      return true;
+    }
+    return false;
+  }
   function isVisible(el, rect) {
     if (rect.width <= 0 || rect.height <= 0) return false;
     var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -359,10 +473,15 @@ export function buildDomTapScript(selector: Selector): string {
 }
 
 /**
- * Self-contained MutationObserver-reactive DOM wait script.
- * Resolves synchronously (< 1ms) if the element is already visible, otherwise
- * listens for DOM mutations so async renders resolve in ~1-2ms instead of
- * waiting on 50-200ms poll ticks. Optionally supports `failFastWhenIdle`.
+ * Self-contained MutationObserver-reactive DOM wait script with full single-round-trip
+ * Playwright-grade actionability checks when `forAction: true`:
+ *   1. App-ready signal (`window.__SPANA_APP_READY__`) when defined.
+ *   2. Visible + enabled match (piercing open Shadow DOM & same-origin iframes).
+ *   3. Auto-scroll offscreen targets into viewport (`scrollIntoView({ behavior: "instant" })`).
+ *   4. Deep `elementFromPoint` hit-test verifying no overlay/backdrop/modal obscures the target.
+ *   5. 2-rAF bounding-box stability check (≤ 1px movement; bypassed when `stableFrames === 0` or
+ *      `instantAnimations` style is active).
+ * Retries seamlessly inside the page via `MutationObserver` + `rAF` in ONE single round trip!
  */
 export function buildDomWaitForSelectorScript(
   selector: Selector,
@@ -373,18 +492,54 @@ export function buildDomWaitForSelectorScript(
   const forAction = Boolean(opts.forAction);
   const failFastWhenIdle = Boolean(opts.failFastWhenIdle);
   const idleQuietMs = Math.max(50, Math.round(opts.idleQuietMs ?? 250));
+  const stableFrames =
+    opts.stableFrames !== undefined
+      ? Math.max(0, Math.round(opts.stableFrames))
+      : forAction
+        ? 1
+        : 0;
+  const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
+  const waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
 
-  return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs) {
+  return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs, reqStableFrames, checkHitTest, waitForAppReady) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
-    function check() {
-      var hits = findAcrossRoots(sel).map(toMatch);
-      var filtered = hits.filter(function(m) {
-        return m.visible && (!forAction || m.enabled);
-      });
-      return filtered.length > 0 ? filtered : null;
+    var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
+    var stableFrames = instantAnim ? 0 : reqStableFrames;
+
+    function findCandidates() {
+      if (waitForAppReady && !isAppReady()) return null;
+      var rawHits = findAcrossRoots(sel);
+      var ready = [];
+      for (var i = 0; i < rawHits.length; i++) {
+        var h = rawHits[i];
+        var m = toMatch(h);
+        if (!m.visible) continue;
+        if (forAction && !m.enabled) continue;
+        ready.push({ hit: h, match: m });
+      }
+      return ready.length > 0 ? ready : null;
     }
-    var immediate = check();
-    if (immediate) return immediate;
+
+    function checkActionableNow() {
+      var ready = findCandidates();
+      if (!ready) return null;
+      if (!forAction) return ready.map(function(r) { return r.match; });
+      var target = ready[ready.length - 1];
+      ensureInViewport(target.hit);
+      if (checkHitTest && !isHitTestClear(target.hit)) return null;
+      var updated = toMatch(target.hit);
+      if (!updated.visible || !updated.enabled) return null;
+      return { hits: ready, target: target, match: updated };
+    }
+
+    // Fast synchronous exit when no multi-frame stability check is needed
+    if (!forAction || stableFrames <= 0 || typeof requestAnimationFrame !== "function") {
+      var imm = checkActionableNow();
+      if (imm) {
+        if (!forAction) return imm;
+        return [imm.match];
+      }
+    }
 
     return new Promise(function(resolve) {
       var done = false;
@@ -392,6 +547,8 @@ export function buildDomWaitForSelectorScript(
       var timeoutTimer = null;
       var fallbackInterval = null;
       var idleTimer = null;
+      var rafId = null;
+      var checkingStability = false;
 
       function finish(result) {
         if (done) return;
@@ -400,6 +557,9 @@ export function buildDomWaitForSelectorScript(
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (fallbackInterval) clearInterval(fallbackInterval);
         if (idleTimer) clearTimeout(idleTimer);
+        if (rafId !== null && typeof cancelAnimationFrame === "function") {
+          try { cancelAnimationFrame(rafId); } catch (e) {}
+        }
         resolve(result);
       }
 
@@ -407,32 +567,149 @@ export function buildDomWaitForSelectorScript(
         if (!failFastWhenIdle) return;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(function() {
-          if (document.readyState === "complete") {
-            var hit = check();
-            finish(hit || []);
+          if (document.readyState === "complete" && (!waitForAppReady || isAppReady())) {
+            var hit = checkActionableNow();
+            if (hit) {
+              finish(forAction ? [hit.match] : hit);
+            } else {
+              finish([]);
+            }
           } else {
             armIdleTimer();
           }
         }, idleQuietMs);
       }
 
-      function onChange() {
-        var hit = check();
+      function verifyStability(candidate) {
+        if (done || checkingStability) return;
+        if (!forAction || stableFrames <= 0 || typeof requestAnimationFrame !== "function") {
+          finish(forAction ? [candidate.match] : candidate);
+          return;
+        }
+        checkingStability = true;
+        var el = candidate.target.hit.el;
+        var lastRect = candidate.match.rect;
+        var remainingFrames = stableFrames;
+
+        function step() {
+          if (done) return;
+          if (!el.isConnected) {
+            checkingStability = false;
+            return;
+          }
+          if (checkHitTest && !isHitTestClear(candidate.target.hit)) {
+            checkingStability = false;
+            return;
+          }
+          var cur = toMatch(candidate.target.hit);
+          if (!cur.visible || !cur.enabled) {
+            checkingStability = false;
+            return;
+          }
+          var dx = Math.abs(cur.rect.x - lastRect.x);
+          var dy = Math.abs(cur.rect.y - lastRect.y);
+          var dw = Math.abs(cur.rect.width - lastRect.width);
+          var dh = Math.abs(cur.rect.height - lastRect.height);
+          if (dx <= 1 && dy <= 1 && dw <= 1 && dh <= 1) {
+            remainingFrames -= 1;
+            if (remainingFrames <= 0) {
+              finish([cur]);
+              return;
+            }
+          } else {
+            remainingFrames = stableFrames;
+            lastRect = cur.rect;
+          }
+          rafId = requestAnimationFrame(step);
+        }
+        rafId = requestAnimationFrame(step);
+      }
+
+      function attempt() {
+        if (done || checkingStability) return;
+        var hit = checkActionableNow();
         if (hit) {
-          finish(hit);
+          if (forAction) {
+            verifyStability(hit);
+          } else {
+            finish(hit);
+          }
           return;
         }
         armIdleTimer();
       }
 
       timeoutTimer = setTimeout(function() {
-        finish(check() || []);
+        var finalHit = checkActionableNow();
+        finish(finalHit ? (forAction ? [finalHit.match] : finalHit) : []);
       }, timeoutMs);
 
-      fallbackInterval = setInterval(function() {
-        var hit = check();
-        if (hit) finish(hit);
-      }, 250);
+      fallbackInterval = setInterval(attempt, forAction ? 40 : 120);
+
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(attempt);
+          observer.observe(root, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true
+          });
+        }
+      }
+
+      attempt();
+    });
+  })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs}, ${stableFrames}, ${checkHitTest}, ${waitForAppReady})`;
+}
+
+/**
+ * Self-contained MutationObserver-reactive script that resolves `true` as soon as
+ * no visible matching element exists in the DOM (zero runner-side polling).
+ */
+export function buildDomWaitForHiddenScript(
+  selector: Selector,
+  opts: DomWaitForHiddenOptions = {},
+): string {
+  const serialized = JSON.stringify(selector);
+  const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
+
+  return `(function(sel, timeoutMs) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    function isHiddenNow() {
+      var hits = findAcrossRoots(sel);
+      for (var i = 0; i < hits.length; i++) {
+        if (toMatch(hits[i]).visible) return false;
+      }
+      return true;
+    }
+    if (isHiddenNow()) return true;
+
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+
+      function finish(val) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        resolve(val);
+      }
+
+      function onChange() {
+        if (isHiddenNow()) finish(true);
+      }
+
+      timeoutTimer = setTimeout(function() {
+        finish(isHiddenNow());
+      }, timeoutMs);
+
+      fallbackInterval = setInterval(onChange, 120);
 
       if (typeof MutationObserver !== "undefined") {
         var root = document.documentElement || document.body || document;
@@ -446,8 +723,109 @@ export function buildDomWaitForSelectorScript(
           });
         }
       }
-
-      armIdleTimer();
     });
-  })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs})`;
+  })(${serialized}, ${timeoutMs})`;
+}
+
+/**
+ * Self-contained MutationObserver-reactive assertion wait script for text,
+ * substring text, input value, and DOM attribute assertions — runs completely
+ * in-page with zero runner-side polling ticks.
+ */
+export function buildDomWaitForMatchScript(
+  selector: Selector,
+  opts: DomWaitForMatchOptions,
+): string {
+  const serialized = JSON.stringify(selector);
+  const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
+  const kind = JSON.stringify(opts.kind);
+  const expected = JSON.stringify(opts.expected ?? null);
+  const attributeName = JSON.stringify(opts.attributeName ?? null);
+
+  return `(function(sel, timeoutMs, kind, expected, attributeName) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var lastActual = undefined;
+
+    function evaluateMatch() {
+      var hits = findAcrossRoots(sel);
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var m = toMatch(hits[i]);
+        if (!m.visible) continue;
+        if (kind === "text") {
+          lastActual = m.text;
+          if (m.text === expected) return { matched: true, actual: m.text };
+        } else if (kind === "containsText") {
+          var actual = m.text || "";
+          lastActual = m.text;
+          if (expected !== null && actual.toLowerCase().indexOf(String(expected).toLowerCase()) !== -1) {
+            return { matched: true, actual: m.text };
+          }
+        } else if (kind === "value") {
+          var val = m.value !== undefined ? m.value : "";
+          lastActual = val;
+          if (val === expected) return { matched: true, actual: val };
+        } else if (kind === "attribute" && attributeName !== null) {
+          var attrVal = m.attributes ? m.attributes[attributeName] : undefined;
+          lastActual = attrVal;
+          if (expected === null ? attrVal !== undefined : attrVal === expected) {
+            return { matched: true, actual: attrVal };
+          }
+        }
+      }
+      return null;
+    }
+
+    var immediate = evaluateMatch();
+    if (immediate) return immediate;
+
+    return new Promise(function(resolve) {
+      var done = false;
+      var observer = null;
+      var timeoutTimer = null;
+      var fallbackInterval = null;
+
+      function finish(res) {
+        if (done) return;
+        done = true;
+        if (observer) { try { observer.disconnect(); } catch (e) {} }
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        if (fallbackInterval) clearInterval(fallbackInterval);
+        if (typeof document !== "undefined") {
+          document.removeEventListener("input", onChange, true);
+          document.removeEventListener("change", onChange, true);
+        }
+        resolve(res);
+      }
+
+      function onChange() {
+        var res = evaluateMatch();
+        if (res) finish(res);
+      }
+
+      timeoutTimer = setTimeout(function() {
+        var finalRes = evaluateMatch();
+        finish(finalRes || { matched: false, actual: lastActual });
+      }, timeoutMs);
+
+      fallbackInterval = setInterval(onChange, 120);
+
+      if (typeof document !== "undefined") {
+        document.addEventListener("input", onChange, true);
+        document.addEventListener("change", onChange, true);
+      }
+
+      if (typeof MutationObserver !== "undefined") {
+        var root = document.documentElement || document.body || document;
+        if (root) {
+          observer = new MutationObserver(onChange);
+          observer.observe(root, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true
+          });
+        }
+      }
+    });
+  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${attributeName})`;
 }

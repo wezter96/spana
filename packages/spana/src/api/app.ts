@@ -10,6 +10,8 @@ import type {
   BrowserConsoleLog,
   BrowserJSError,
   TouchSequence,
+  VirtualAuthenticatorOptions,
+  VirtualCredential,
 } from "../drivers/raw-driver.js";
 import { mergeLaunchOptions } from "../drivers/launch-options.js";
 import type { StorybookConfig } from "../schemas/config.js";
@@ -36,7 +38,13 @@ export type {
   DismissKeyboardOptions,
   ScrollUntilVisibleOptions,
 } from "../smart/coordinator.js";
-export type { BrowserConsoleLog, BrowserHAR, BrowserJSError } from "../drivers/raw-driver.js";
+export type {
+  BrowserConsoleLog,
+  BrowserHAR,
+  BrowserJSError,
+  VirtualAuthenticatorOptions,
+  VirtualCredential,
+} from "../drivers/raw-driver.js";
 export type { StorybookOpenOptions } from "./storybook.js";
 
 export interface PromiseApp<T extends string = string, R extends string = string> {
@@ -88,6 +96,16 @@ export interface PromiseApp<T extends string = string, R extends string = string
   getConsoleLogs(): Promise<BrowserConsoleLog[]>;
   getJSErrors(): Promise<BrowserJSError[]>;
   getHAR(): Promise<BrowserHAR>;
+  /** Escape hatch: access the underlying Playwright `Page` (or CDP session) on web runs. */
+  getPage<PageType = unknown>(): PageType;
+  /** Enable a CDP WebAuthn virtual authenticator (passkey / platform authenticator) for this context. */
+  enableVirtualAuthenticator(opts?: VirtualAuthenticatorOptions): Promise<string>;
+  /** Remove an active virtual WebAuthn authenticator (defaults to the latest enabled one). */
+  removeVirtualAuthenticator(authenticatorId?: string): Promise<void>;
+  /** List credentials stored inside the active virtual WebAuthn authenticator. */
+  getVirtualCredentials(authenticatorId?: string): Promise<VirtualCredential[]>;
+  /** Clear all credentials stored inside the active virtual WebAuthn authenticator. */
+  clearVirtualCredentials(authenticatorId?: string): Promise<void>;
 
   pinch(
     selector: ExtendedSelector<T>,
@@ -386,6 +404,46 @@ export function createPromiseApp<T extends string = string, R extends string = s
     getJSErrors: () =>
       runStep("getJSErrors", () => run(optionalMethod("getJSErrors", driver.getJSErrors)())),
     getHAR: () => runStep("getHAR", () => run(optionalMethod("getHAR", driver.getHAR)())),
+    getPage: <PageType = unknown>(): PageType => {
+      if (!driver.getRawPage) {
+        throw new DriverError({
+          message:
+            "getPage() is only available when running with a browser driver that exposes a raw page.",
+        });
+      }
+      return driver.getRawPage() as PageType;
+    },
+    enableVirtualAuthenticator: (opts) =>
+      runStep(
+        "enableVirtualAuthenticator",
+        () =>
+          run(
+            optionalMethod("enableVirtualAuthenticator", driver.enableVirtualAuthenticator)(opts),
+          ),
+        { selector: opts },
+      ),
+    removeVirtualAuthenticator: (authenticatorId) =>
+      runStep("removeVirtualAuthenticator", () =>
+        run(
+          optionalMethod(
+            "removeVirtualAuthenticator",
+            driver.removeVirtualAuthenticator,
+          )(authenticatorId),
+        ),
+      ),
+    getVirtualCredentials: (authenticatorId) =>
+      runStep("getVirtualCredentials", () =>
+        run(optionalMethod("getVirtualCredentials", driver.getVirtualCredentials)(authenticatorId)),
+      ),
+    clearVirtualCredentials: (authenticatorId) =>
+      runStep("clearVirtualCredentials", () =>
+        run(
+          optionalMethod(
+            "clearVirtualCredentials",
+            driver.clearVirtualCredentials,
+          )(authenticatorId),
+        ),
+      ),
 
     pinch: (selector, opts) =>
       runStep("pinch", () => run(coord.pinch(selector, opts)), {

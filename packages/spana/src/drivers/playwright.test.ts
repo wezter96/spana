@@ -998,4 +998,54 @@ describe("Playwright driver adapter", () => {
       expect(result.left.message).toContain("Failed to press key Enter: Error: press exploded");
     }
   });
+
+  test("forwards multiple arguments in evaluate(fn, a, b, c) without dropping args 2+", async () => {
+    const { makePlaywrightDriver } = await importFreshDriver();
+    const driver = await Effect.runPromise(makePlaywrightDriver({}));
+
+    const out = await Effect.runPromise(
+      driver.evaluate(((a: number, b: number, c: number) => a + b + c) as any, 10, 20, 30),
+    );
+    expect(out).toBe(60);
+  });
+
+  test("exposes raw page escape hatch via getRawPage()", async () => {
+    const { makePlaywrightDriver } = await importFreshDriver();
+    const driver = await Effect.runPromise(makePlaywrightDriver({}));
+    const rawPage = driver.getRawPage?.() as MockPage;
+    expect(rawPage).toBeDefined();
+    expect(typeof rawPage.evaluate).toBe("function");
+  });
+
+  test("freshContextPerFlow swaps to pre-warmed context on beginFlow without blocking on old context close", async () => {
+    const { makePlaywrightDriver } = await importFreshDriver();
+    const driver = await Effect.runPromise(makePlaywrightDriver({ freshContextPerFlow: true }));
+
+    const firstPage = driver.getRawPage!() as MockPage;
+    await Effect.runPromise(driver.beginFlow!("flow-1"));
+    expect((driver.getRawPage!() as MockPage).__id).toBe(firstPage.__id);
+
+    await Effect.runPromise(driver.beginFlow!("flow-2"));
+    const secondPage = driver.getRawPage!() as MockPage;
+    expect(secondPage.__id).not.toBe(firstPage.__id);
+    await Effect.runPromise(driver.killApp(""));
+  });
+
+  test("enableVirtualAuthenticator attaches WebAuthn virtual passkey via CDP", async () => {
+    const { makePlaywrightDriver } = await importFreshDriver();
+    const driver = await Effect.runPromise(makePlaywrightDriver({ browser: "chromium" }));
+
+    const authId = await Effect.runPromise(driver.enableVirtualAuthenticator!());
+    expect(typeof authId).toBe("string");
+    expect(playwrightState.events).toContainEqual([
+      "cdpSend",
+      "WebAuthn.enable",
+      { enableUI: false },
+    ]);
+    expect(
+      playwrightState.events.some(
+        (ev) => ev[0] === "cdpSend" && ev[1] === "WebAuthn.addVirtualAuthenticator",
+      ),
+    ).toBe(true);
+  });
 });

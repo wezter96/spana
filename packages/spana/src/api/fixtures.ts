@@ -355,3 +355,264 @@ export function createFlowWithFixtures<
 
   return extendedFlow;
 }
+
+// ── First-Class API Setup Client & Per-Persona Auth Cache ───────────────────
+
+export interface ApiClientOptions {
+  /** Base URL for API/test-control endpoints (e.g. `"http://localhost:3000/api"`). */
+  baseUrl: string;
+  /** Default headers attached to every request (e.g. `{ Authorization: "Bearer ..." }`). */
+  headers?: Record<string, string>;
+  /** Optional custom fetch implementation for testing. */
+  fetchFn?: typeof fetch;
+}
+
+export interface ApiRequestOptions {
+  headers?: Record<string, string>;
+  query?: Record<string, string | number | boolean | undefined>;
+  signal?: AbortSignal;
+}
+
+export interface ApiResponse<T = unknown> {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  data: T;
+}
+
+export interface ApiClient {
+  get<T = unknown>(path: string, opts?: ApiRequestOptions): Promise<ApiResponse<T>>;
+  post<T = unknown>(
+    path: string,
+    body?: unknown,
+    opts?: ApiRequestOptions,
+  ): Promise<ApiResponse<T>>;
+  put<T = unknown>(path: string, body?: unknown, opts?: ApiRequestOptions): Promise<ApiResponse<T>>;
+  patch<T = unknown>(
+    path: string,
+    body?: unknown,
+    opts?: ApiRequestOptions,
+  ): Promise<ApiResponse<T>>;
+  delete<T = unknown>(path: string, opts?: ApiRequestOptions): Promise<ApiResponse<T>>;
+  /** Register an automatic teardown callback (runs in strict LIFO order on `cleanup()`). */
+  onCleanup(fn: () => Promise<void> | void): void;
+  /** Run all registered cleanup callbacks in reverse (LIFO) order and clear the queue. */
+  cleanup(): Promise<void>;
+}
+
+/**
+ * First-class HTTP client for seeding and tearing down test data via API/test-control
+ * endpoints inside Spana flows and lazy fixtures (far faster than UI setup).
+ */
+export function createApiClient(options: ApiClientOptions): ApiClient {
+  const baseUrl = options.baseUrl.replace(/\/+$/, "");
+  const defaultHeaders = options.headers ?? {};
+  const fetchFn = options.fetchFn ?? fetch;
+  const cleanups: Array<() => Promise<void> | void> = [];
+
+  const request = async <T = unknown>(
+    method: string,
+    path: string,
+    body?: unknown,
+    opts?: ApiRequestOptions,
+  ): Promise<ApiResponse<T>> => {
+    const cleanPath =
+      path.startsWith("http://") || path.startsWith("https://")
+        ? path
+        : `${baseUrl}/${path.replace(/^\/+/, "")}`;
+    const url = new URL(cleanPath);
+    if (opts?.query) {
+      for (const [k, v] of Object.entries(opts.query)) {
+        if (v !== undefined) url.searchParams.set(k, String(v));
+      }
+    }
+
+    const headers: Record<string, string> = {
+      ...defaultHeaders,
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...opts?.headers,
+    };
+
+    const res = await fetchFn(url.toString(), {
+      method,
+      headers,
+      ...(body !== undefined
+        ? { body: typeof body === "string" ? body : JSON.stringify(body) }
+        : {}),
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    });
+
+    const contentType = res.headers.get("content-type") ?? "";
+    let data: unknown;
+    if (contentType.includes("application/json")) {
+      data = await res.json().catch(() => null);
+    } else {
+      const text = await res.text().catch(() => "");
+      try {
+        data = text ? JSON.parse(text) : text;
+      } catch {
+        data = text;
+      }
+    }
+
+    return {
+      status: res.status,
+      ok: res.ok,
+      headers: res.headers,
+      data: data as T,
+    };
+  };
+
+  return {
+    get: <T = unknown>(path: string, opts?: ApiRequestOptions) =>
+      request<T>("GET", path, undefined, opts),
+    post: <T = unknown>(path: string, body?: unknown, opts?: ApiRequestOptions) =>
+      request<T>("POST", path, body, opts),
+    put: <T = unknown>(path: string, body?: unknown, opts?: ApiRequestOptions) =>
+      request<T>("PUT", path, body, opts),
+    patch: <T = unknown>(path: string, body?: unknown, opts?: ApiRequestOptions) =>
+      request<T>("PATCH", path, body, opts),
+    delete: <T = unknown>(path: string, opts?: ApiRequestOptions) =>
+      request<T>("DELETE", path, undefined, opts),
+    onCleanup: (fn) => {
+      cleanups.push(fn);
+    },
+    cleanup: async () => {
+      const pending = cleanups.splice(0, cleanups.length).toReversed();
+      const errors: unknown[] = [];
+      for (const fn of pending) {
+        try {
+          await fn();
+        } catch (err) {
+          errors.push(err);
+        }
+      }
+      if (errors.length > 0) {
+        throw errors[0];
+      }
+    },
+  };
+}
+
+/**
+ * Convenience lazy fixture builder for `createFlowWithFixtures`:
+ * provides a fresh `ApiClient` to each flow and automatically executes all
+ * `api.onCleanup(...)` hooks in LIFO order even when the flow throws.
+ */
+export function createApiFixture<
+  Deps extends Record<string, unknown> = Record<string, never>,
+  T extends string = string,
+  R extends string = string,
+>(
+  options: ApiClientOptions | ((ctx: FlowContext<T, R> & Deps) => ApiClientOptions),
+): FixtureFn<ApiClient, Deps, T, R> {
+  return async (ctx, use) => {
+    const resolved = typeof options === "function" ? options(ctx) : options;
+    const api = createApiClient(resolved);
+    try {
+      await use(api);
+    } finally {
+      await api.cleanup();
+    }
+  };
+}
+
+export interface PersonaDefinition<T extends string = string, R extends string = string> {
+  name: string;
+  /** Sign in once (via API, virtual passkey, or UI) and return storage entries or a saved storageStatePath. */
+  signIn: (
+    ctx: FlowContext<T, R>,
+  ) => Promise<{ storage?: DomStorageEntries; storageStatePath?: string } | void>;
+  /** Optional cache key discriminator (e.g. base URL or tenant ID). */
+  cacheKey?: string;
+  /** Optional route to navigate to after restoring cached auth state. */
+  navigateTo?: R;
+}
+
+/** Define a reusable authenticated persona for `PersonaAuthCache`. */
+export function definePersona<T extends string = string, R extends string = string>(
+  name: string,
+  config: Omit<PersonaDefinition<T, R>, "name">,
+): PersonaDefinition<T, R> {
+  return { name, ...config };
+}
+
+export interface CachedPersonaState {
+  storage?: DomStorageEntries;
+  storageStatePath?: string;
+  cachedAt: number;
+}
+
+/**
+ * In-memory per-persona auth state cache (single-flight safe across parallel workers).
+ * Signs a persona in ONCE (including passkey / WebAuthn flows), caches its auth state,
+ * and restores it in milliseconds across all remaining flows.
+ */
+export class PersonaAuthCache {
+  private readonly cache = new Map<string, CachedPersonaState>();
+  private readonly inflight = new Map<string, Promise<CachedPersonaState>>();
+
+  private keyFor(persona: PersonaDefinition<any, any>): string {
+    return `${persona.name}::${persona.cacheKey ?? "default"}`;
+  }
+
+  get(name: string, cacheKey = "default"): CachedPersonaState | undefined {
+    return this.cache.get(`${name}::${cacheKey}`);
+  }
+
+  invalidate(name?: string, cacheKey = "default"): void {
+    if (!name) {
+      this.cache.clear();
+      return;
+    }
+    this.cache.delete(`${name}::${cacheKey}`);
+  }
+
+  /**
+   * Ensure `persona` is authenticated in `ctx`. On cache miss, executes `persona.signIn(ctx)`
+   * once (coalescing concurrent callers); on cache hit, restores cookies/storageState directly.
+   */
+  async authenticate<T extends string = string, R extends string = string>(
+    persona: PersonaDefinition<T, R>,
+    ctx: FlowContext<T, R>,
+  ): Promise<CachedPersonaState> {
+    const key = this.keyFor(persona);
+    let state = this.cache.get(key);
+    let wasMiss = false;
+
+    if (!state) {
+      wasMiss = true;
+      let pending = this.inflight.get(key);
+      if (!pending) {
+        pending = (async () => {
+          const produced = (await persona.signIn(ctx)) ?? {};
+          const entry: CachedPersonaState = {
+            storage: produced.storage,
+            storageStatePath: produced.storageStatePath,
+            cachedAt: Date.now(),
+          };
+          this.cache.set(key, entry);
+          return entry;
+        })().finally(() => {
+          this.inflight.delete(key);
+        });
+        this.inflight.set(key, pending);
+      }
+      state = await pending;
+    }
+
+    const app = ctx.app as PromiseApp<T, R>;
+    if (!wasMiss) {
+      if (state.storageStatePath && ctx.platform === "web") {
+        await app.loadAuthState(state.storageStatePath);
+      }
+      if (state.storage) {
+        await app.setStorage(state.storage);
+      }
+    }
+    if (persona.navigateTo) {
+      await app.openLink(persona.navigateTo);
+    }
+    return state;
+  }
+}

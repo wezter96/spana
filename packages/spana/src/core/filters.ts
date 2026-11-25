@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { basename, dirname, relative, resolve } from "node:path";
 import type { FlowDefinition } from "../api/flow.js";
 import type { Platform } from "../schemas/selector.js";
 
@@ -707,6 +707,214 @@ export function pathRuleFilter(options: PathRuleFilterOptions): TestFilter {
         if (!affected) {
           exclude[candidate.id] = `no changed files matched [${watchedPrefixes.join(", ")}]`;
         }
+      }
+
+      return { exclude };
+    },
+  };
+}
+
+// ── Built-in Deterministic Import-Graph Impact Filter (Zero AI) ─────────────
+
+export interface DeterministicImpactFilterOptions {
+  name?: string;
+  /** Additional path-to-flow rules combined with automatic static import-graph tracing. */
+  pathMappings?: PathRule[];
+  /** Flow tags that are NEVER skipped (e.g. `["smoke"]`). */
+  alwaysRunTags?: string[];
+  /** Path prefixes that force the entire suite to run (e.g. `["src/shared/", "db/"]`). */
+  runAllOnPaths?: string[];
+  /**
+   * When true (default), if a changed file is NOT imported by any flow and does not
+   * match any `pathMappings`, fail open and run all flows so unmapped app changes are
+   * never silently missed. Set to `false` for strict import-graph-only selection.
+   */
+  failOpenOnUnmappedChange?: boolean;
+  /** Max recursive import depth to trace from each flow file. Default: 12. */
+  maxDepth?: number;
+}
+
+const IMPORT_SPECIFIER_RE =
+  /(?:import|export)\s+(?:[^'"]*?\s+from\s+)?["'](\.{1,2}\/[^"']+)["']|require\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)|import\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g;
+
+const RESOLVE_EXTENSIONS = [
+  "",
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  "/index.ts",
+  "/index.tsx",
+  "/index.js",
+  "/index.mjs",
+];
+
+function resolveLocalImport(fromFileAbs: string, specifier: string): string | null {
+  const baseDir = dirname(fromFileAbs);
+  const rawTarget = resolve(baseDir, specifier);
+  // Handle TS ESM `.js` -> `.ts` / `.tsx` extension rewriting
+  const withoutJs = rawTarget.replace(/\.m?js$/, "");
+  const candidates =
+    rawTarget !== withoutJs
+      ? [withoutJs + ".ts", withoutJs + ".tsx", withoutJs + ".mts", rawTarget]
+      : [rawTarget];
+
+  for (const base of candidates) {
+    for (const ext of RESOLVE_EXTENSIONS) {
+      const full = ext ? base + ext : base;
+      try {
+        if (existsSync(full) && statSync(full).isFile()) {
+          return full;
+        }
+      } catch {
+        // ignore unreadable paths
+      }
+    }
+  }
+  return null;
+}
+
+function collectTransitiveImports(
+  entryAbs: string,
+  cwd: string,
+  maxDepth: number,
+  fileCache: Map<string, string[]>,
+): Set<string> {
+  const visited = new Set<string>();
+  const queue: Array<{ abs: string; depth: number }> = [{ abs: entryAbs, depth: 0 }];
+
+  while (queue.length > 0) {
+    const { abs, depth } = queue.shift()!;
+    const normRel = normalizePath(relative(cwd, abs));
+    if (visited.has(normRel)) continue;
+    visited.add(normRel);
+    if (depth >= maxDepth) continue;
+
+    let specs = fileCache.get(abs);
+    if (!specs) {
+      specs = [];
+      try {
+        if (existsSync(abs) && statSync(abs).isFile()) {
+          const content = readFileSync(abs, "utf-8");
+          IMPORT_SPECIFIER_RE.lastIndex = 0;
+          let match: RegExpExecArray | null;
+          while ((match = IMPORT_SPECIFIER_RE.exec(content)) !== null) {
+            const spec = match[1] ?? match[2] ?? match[3];
+            if (spec) specs.push(spec);
+          }
+        }
+      } catch {
+        // ignore unreadable
+      }
+      fileCache.set(abs, specs);
+    }
+
+    for (const spec of specs) {
+      const resolved = resolveLocalImport(abs, spec);
+      if (resolved) {
+        queue.push({ abs: resolved, depth: depth + 1 });
+      }
+    }
+  }
+
+  return visited;
+}
+
+/**
+ * 100% deterministic, zero-AI test impact filter for `--changed-since`.
+ *
+ * Recursively traces static ESM/CJS imports (`import`, `export ... from`, `require`)
+ * from every `.flow.ts` file and combines them with optional `pathMappings`.
+ * Fails open on config/lockfile changes, `runAllOnPaths`, and (by default) any
+ * changed file not covered by any import graph or path mapping.
+ */
+export function deterministicImpactFilter(
+  options: DeterministicImpactFilterOptions = {},
+): TestFilter {
+  const filterName = options.name ?? "deterministic-impact";
+  const alwaysRunTags = new Set(options.alwaysRunTags ?? []);
+  const runAllOnPaths = (options.runAllOnPaths ?? []).map(normalizePath);
+  const pathMappings = options.pathMappings ?? [];
+  const failOpenOnUnmapped = options.failOpenOnUnmappedChange ?? true;
+  const maxDepth = options.maxDepth ?? 12;
+
+  return {
+    name: filterName,
+    filter(flows, context): FilterDecisionOutput {
+      const { changes, configPath, cwd } = context;
+
+      if (changes.files.length === 0) {
+        return { exclude: {}, note: "no git changes detected" };
+      }
+
+      if (changes.files.some((f) => isConfigOrLockfile(f, configPath))) {
+        return { exclude: {}, note: "config or lockfile changed — running all flows" };
+      }
+
+      const matchedGlobal = changes.files.find((f) =>
+        runAllOnPaths.some((prefix) => normalizePath(f).startsWith(prefix)),
+      );
+      if (matchedGlobal) {
+        return { exclude: {}, note: `global path changed (${matchedGlobal}) — running all flows` };
+      }
+
+      const changedFiles = changes.files.map(normalizePath);
+      const changedSet = new Set(changedFiles);
+      const fileCache = new Map<string, string[]>();
+
+      // Build transitive import graph for every candidate flow
+      const flowDeps = new Map<string, Set<string>>();
+      const allKnownFiles = new Set<string>();
+      for (const candidate of flows) {
+        const entryAbs = resolve(cwd, candidate.file);
+        const deps = collectTransitiveImports(entryAbs, cwd, maxDepth, fileCache);
+        deps.add(normalizePath(candidate.file));
+        flowDeps.set(candidate.id, deps);
+        for (const d of deps) allKnownFiles.add(d);
+      }
+
+      const allWatchedPrefixes = pathMappings.flatMap((r) => r.watchPaths.map(normalizePath));
+
+      if (failOpenOnUnmapped) {
+        const unmapped = changedFiles.find(
+          (cf) =>
+            !allKnownFiles.has(cf) && !allWatchedPrefixes.some((prefix) => cf.startsWith(prefix)),
+        );
+        if (unmapped) {
+          return {
+            exclude: {},
+            note: `unmapped file changed (${unmapped}) — failing open and running all flows`,
+          };
+        }
+      }
+
+      const exclude: Record<string, string> = {};
+      for (const candidate of flows) {
+        if (changedSet.has(normalizePath(candidate.file))) continue;
+        if (candidate.tags.some((t) => alwaysRunTags.has(t))) continue;
+
+        const deps = flowDeps.get(candidate.id);
+        const touchedByImport = deps ? changedFiles.some((cf) => deps.has(cf)) : false;
+        if (touchedByImport) continue;
+
+        const matchedRules = pathMappings.filter((rule) => {
+          const tagOk = rule.matchFlow.tag ? candidate.tags.includes(rule.matchFlow.tag) : true;
+          const fileOk = rule.matchFlow.filePrefix
+            ? normalizePath(candidate.file).startsWith(normalizePath(rule.matchFlow.filePrefix))
+            : true;
+          return (rule.matchFlow.tag || rule.matchFlow.filePrefix) && tagOk && fileOk;
+        });
+        const touchedByRule = matchedRules.some((rule) =>
+          changedFiles.some((cf) =>
+            rule.watchPaths.some((prefix) => cf.startsWith(normalizePath(prefix))),
+          ),
+        );
+        if (touchedByRule) continue;
+
+        exclude[candidate.id] = "unaffected by changed imports or path mappings";
       }
 
       return { exclude };

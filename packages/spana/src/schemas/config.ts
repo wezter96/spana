@@ -1,8 +1,12 @@
 import type { Platform, TapMode } from "./selector.js";
-import type { DeviceStateConfig, LaunchOptions } from "../drivers/raw-driver.js";
+import type {
+  DeviceStateConfig,
+  LaunchOptions,
+  VirtualAuthenticatorOptions,
+} from "../drivers/raw-driver.js";
 import { z, type ZodError } from "zod";
 
-export type { DeviceStateConfig, LaunchOptions };
+export type { DeviceStateConfig, LaunchOptions, VirtualAuthenticatorOptions };
 
 export interface IOSSigningConfig {
   /** Apple Development Team ID (from developer.apple.com or Xcode) */
@@ -117,12 +121,16 @@ export interface StorybookConfig {
 
 export interface WebExecutionConfig {
   browser?: BrowserName;
-  /** Browser engine backend: "playwright" (default), "cdp" (CDP-direct), or "lightpanda". */
+  /** Browser engine backend: "playwright" (default), "cdp" (direct CDP WebSocket — zero Playwright pipe), or "lightpanda". */
   engine?: WebBrowserEngine;
   /** Connect to an existing CDP browser / Lightpanda endpoint (e.g. "http://127.0.0.1:9222"). */
   cdpUrl?: string;
   /** Connect to a remote Playwright server WebSocket (e.g. BrowserStack Automate Web `wss://cdp.browserstack.com/playwright?...`). */
   wsEndpoint?: string;
+  /** Explicit browser executable path (e.g. system Chrome or custom Chromium binary). */
+  executablePath?: string;
+  /** Browser release channel (e.g. "chrome", "chrome-beta", "msedge"). */
+  channel?: string;
   headless?: boolean;
   /** Navigation readiness event for launchApp/openLink (default: "load"). */
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
@@ -132,6 +140,14 @@ export interface WebExecutionConfig {
   blockResources?: WebResourceBlockType[];
   /** Reuse a persistent warm Chromium daemon across runs via CDP (chromium only). */
   warmBrowser?: boolean;
+  /** Scope key for isolating warm Chromium daemons across concurrent repos/runs (defaults to cwd hash). */
+  warmBrowserScope?: string;
+  /** Create a fresh isolated BrowserContext per flow using pre-warmed context pooling + background teardown. */
+  freshContextPerFlow?: boolean;
+  /** Max worker contexts sharing one Chromium browser process under `--parallel` (default: 2 to avoid CDP/IO contention). */
+  maxContextsPerBrowser?: number;
+  /** Automatically attach a CDP WebAuthn virtual authenticator (passkey) to every fresh context. */
+  virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
   /** Optional Playwright storage state JSON file to preload for web runs */
   storageState?: string;
   /** Print verbose Playwright runtime events to stdout for local web debugging */
@@ -468,17 +484,34 @@ const appiumExecutionConfigSchema = z
   })
   .strict();
 
+const virtualAuthenticatorOptionsSchema = z
+  .object({
+    protocol: z.enum(["ctap2", "u2f"]).optional(),
+    transport: z.enum(["usb", "nfc", "ble", "cable", "internal"]).optional(),
+    hasResidentKey: z.boolean().optional(),
+    hasUserVerification: z.boolean().optional(),
+    isUserVerified: z.boolean().optional(),
+    automaticPresenceSimulation: z.boolean().optional(),
+  })
+  .strict();
+
 const webExecutionConfigSchema = z
   .object({
     browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
     engine: z.enum(["playwright", "cdp", "lightpanda"]).optional(),
     cdpUrl: z.string().url().optional(),
     wsEndpoint: z.string().url().optional(),
+    executablePath: z.string().min(1).optional(),
+    channel: z.string().min(1).optional(),
     headless: z.boolean().optional(),
     waitUntil: z.enum(["domcontentloaded", "load", "networkidle", "commit"]).optional(),
     instantAnimations: z.boolean().optional(),
     blockResources: z.array(z.enum(["image", "font", "media", "stylesheet"])).optional(),
     warmBrowser: z.boolean().optional(),
+    warmBrowserScope: z.string().min(1).optional(),
+    freshContextPerFlow: z.boolean().optional(),
+    maxContextsPerBrowser: z.number().int().positive().optional(),
+    virtualAuthenticator: z.union([z.boolean(), virtualAuthenticatorOptionsSchema]).optional(),
     storageState: z.string().min(1).optional(),
     verboseLogging: z.boolean().optional(),
     storybook: storybookConfigSchema.optional(),

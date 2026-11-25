@@ -8,6 +8,7 @@ import { formatSelector } from "./element-matcher.js";
 import type { HierarchyCache } from "./hierarchy-cache.js";
 import { diagnoseElementNotFound, formatDiagnostic } from "./diagnostics.js";
 import { resolveElementAcrossChannels, type ResolvedElementResult } from "./channel-resolver.js";
+import { domMatchToElement } from "../channels/dom-channel.js";
 
 export interface WaitOptions {
   timeout?: number; // default 5000ms
@@ -102,6 +103,54 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
       !isSystemUISelector(selector) &&
       !isRelativeSelectorLike(selector) &&
       (opts?.platform === "web" || isTestIDSelector(selector));
+
+    // Single-round-trip web fast path: waitForSelector performs visibility, enabled,
+    // scrollIntoView, hit-test, and 2-rAF stability checks inside ONE in-page evaluate,
+    // returning the final DomElementMatch directly with zero extra query round trips.
+    const initialDomChannel = driver.domChannel;
+    if (
+      opts?.platform === "web" &&
+      canReactiveDomWait &&
+      settleTimeout === 0 &&
+      initialDomChannel?.isConnected() &&
+      initialDomChannel.waitForSelector
+    ) {
+      const reactiveMatches = yield* Effect.tryPromise({
+        try: () =>
+          initialDomChannel.waitForSelector!(selector as Selector, {
+            timeoutMs: timeout,
+            forAction,
+            failFastWhenIdle: opts?.failFastWhenIdle,
+            idleQuietMs: opts?.idleQuietMs,
+          }),
+        catch: () => null,
+      }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+      if (Array.isArray(reactiveMatches) && reactiveMatches.length > 0) {
+        const match = reactiveMatches[reactiveMatches.length - 1]!;
+        return {
+          element: domMatchToElement(match),
+          channel: "dom" as const,
+          tapMode: opts?.tapMode ?? "native",
+          domMatch: match,
+        };
+      }
+      if (
+        Array.isArray(reactiveMatches) &&
+        reactiveMatches.length === 0 &&
+        (opts?.failFastWhenIdle || Date.now() - start >= timeout)
+      ) {
+        if (cache) cache.invalidate();
+        const diagRoot = yield* getHierarchy(driver, parse, cache);
+        const diagnostic = diagnoseElementNotFound(diagRoot, selector);
+        const diagMessage = formatDiagnostic(diagnostic);
+        return yield* new ElementNotFoundError({
+          message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}\n${diagMessage}`,
+          selector,
+          timeoutMs: timeout,
+        });
+      }
+    }
 
     while (Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
@@ -245,6 +294,30 @@ export function waitForNotVisible<T extends string = string, R extends string = 
     const start = Date.now();
     let waitedForIdle = false;
     let isFirstPoll = true;
+
+    // Single-round-trip MutationObserver wait on web/DOM channels (zero runner polling)
+    const domChannel = driver.domChannel;
+    const canReactiveHidden =
+      !isSystemUISelector(selector) &&
+      !isRelativeSelectorLike(selector) &&
+      (opts?.platform === "web" || isTestIDSelector(selector));
+
+    if (canReactiveHidden && domChannel?.isConnected() && domChannel.waitForHidden) {
+      const hidden = yield* Effect.tryPromise({
+        try: () => domChannel.waitForHidden!(selector as Selector, { timeoutMs: timeout }),
+        catch: () => null,
+      }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+      if (hidden === true) return;
+      if (hidden === false) {
+        return yield* new WaitTimeoutError({
+          message: `Element still visible after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          selector,
+          timeoutMs: timeout,
+        });
+      }
+    }
+
     while (Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
       isFirstPoll = false;
