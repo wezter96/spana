@@ -82,8 +82,17 @@ export function flow<T extends string = string, R extends string = string>(
   return { name, fn: maybeFn!, config: configOrFn };
 }
 
-function modifyFlow(modifier: "skip" | "fixme" | "only"): typeof flow {
-  return function <T extends string = string, R extends string = string>(
+function modifyFlow(modifier: "skip" | "fixme" | "only") {
+  function modified<T extends string = string, R extends string = string>(
+    name: string,
+    fn: FlowFn<T, R>,
+  ): FlowDefinition<T, R>;
+  function modified<T extends string = string, R extends string = string>(
+    name: string,
+    config: FlowConfig<R>,
+    fn: FlowFn<T, R>,
+  ): FlowDefinition<T, R>;
+  function modified<T extends string = string, R extends string = string>(
     name: string,
     configOrFn: FlowConfig<R> | FlowFn<T, R>,
     maybeFn?: FlowFn<T, R>,
@@ -91,7 +100,8 @@ function modifyFlow(modifier: "skip" | "fixme" | "only"): typeof flow {
     const config = typeof configOrFn === "function" ? {} : configOrFn;
     const fn = typeof configOrFn === "function" ? configOrFn : maybeFn!;
     return flow(name, { ...config, [modifier]: config[modifier] ?? true }, fn);
-  };
+  }
+  return modified;
 }
 
 export namespace flow {
