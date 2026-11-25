@@ -25,6 +25,17 @@
   --spana-muted: #475569;
 }
 
+/* Inline code contrast inside muted body copy */
+:root:not([data-theme="light"]) :not(pre) > code {
+  color: #e2e8f0;
+  background-color: #1e293b;
+}
+
+:root[data-theme="light"] :not(pre) > code {
+  color: #0f172a;
+  background-color: #e2e8f0;
+}
+
 /* ---------- Hero ---------- */
 .hero {
   padding-block: 2.5rem 1rem;
@@ -106,7 +117,8 @@
 
 .spana-install-bar code {
   font-size: 0.95rem;
-  background: transparent;
+  background: transparent !important;
+  color: var(--sl-color-text) !important;
   padding: 0;
   overflow-wrap: anywhere;
 }
@@ -205,7 +217,7 @@
   font-size: clamp(1.6rem, 2.6vw, 2.15rem);
 }
 
-.spana-cta p {
+.spana-cta > p {
   margin: 0 auto 1.5rem;
   max-width: 52ch;
   color: var(--sl-color-gray-3);
@@ -213,7 +225,18 @@
 
 .spana-cta .sl-flex {
   justify-content: center;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.spana-cta .sl-link-button {
+  margin: 0 !important;
+}
+
+.spana-cta .sl-link-button p {
+  margin: 0;
+  color: inherit;
 }
 
 /* ---------- Compare page table ---------- */

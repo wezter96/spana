@@ -17,6 +17,31 @@ export default defineConfig({
       customCss: ["./src/styles/custom.css"],
       head: [
         {
+          tag: "script",
+          content: `(() => {
+  const labelCodeRegions = () => {
+    const pres = document.querySelectorAll(".expressive-code pre");
+    pres.forEach((pre, idx) => {
+      if (!pre.getAttribute("aria-label") && !pre.getAttribute("aria-labelledby")) {
+        const fig = pre.closest("figure");
+        const title = fig?.querySelector("figcaption .title")?.textContent?.trim();
+        const lang = pre.getAttribute("data-language") || "code";
+        pre.setAttribute("aria-label", title ? title + " (" + lang + ", #" + (idx + 1) + ")" : "Code example " + (idx + 1) + " (" + lang + ")");
+      }
+    });
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", labelCodeRegions, { once: true });
+  } else {
+    labelCodeRegions();
+  }
+  const obs = new MutationObserver(labelCodeRegions);
+  const startObs = () => document.body && obs.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["role"] });
+  if (document.body) startObs();
+  else document.addEventListener("DOMContentLoaded", startObs, { once: true });
+})();`,
+        },
+        {
           tag: "meta",
           attrs: {
             property: "og:image",

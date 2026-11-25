@@ -71,7 +71,11 @@ const cards = [
             <p>{card.subtitle}</p>
           </div>
 
-          <pre class="spana-prompt-preview"><code>{card.prompt}</code></pre>
+          <pre
+            class="spana-prompt-preview"
+            tabindex="0"
+            aria-label={`${card.title} prompt preview`}
+          ><code>{card.prompt}</code></pre>
 
           <div class="spana-prompt-actions">
             <button
