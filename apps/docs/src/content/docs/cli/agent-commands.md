@@ -1,9 +1,47 @@
 ---
-title: Agent Commands
-description: CLI commands designed for AI agent workflows — hierarchy, selectors, and validate.
+title: Agent Commands & MCP Server
+description: Model-free stdio MCP server (spana mcp), Verified Replay Cache, and agent CLI commands (selectors, hierarchy, validate, doctor).
 ---
 
-spana includes three commands designed specifically for AI agent-driven test authoring. They allow an agent to inspect the current UI state, generate flows, and validate them without needing a device connection.
+spana is built for AI coding agents (Claude Code, Codex, Cursor, Antigravity) with both a **model-free stdio MCP server** (`spana mcp`) and structured `--json` CLI commands.
+
+## `spana mcp` (Model-Free Stdio MCP Server)
+
+Start Spana's stdio MCP server so any MCP-compatible agent can drive live Web, iOS, Android, Electron, or Electrobun sessions at sub-5 ms tool latency and export verified `.flow.ts` files:
+
+```json
+{
+  "mcpServers": {
+    "spana": {
+      "command": "npx",
+      "args": ["spana", "mcp"]
+    }
+  }
+}
+```
+
+### Exposed MCP tools
+
+| Tool                                         | Description                                                                           | Typical Web Latency |
+| -------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------: |
+| `spana_session_start`                        | Launch/connect a live session (`web`, `android`, `ios`, `electron`, `electrobun`)     |             ~125 ms |
+| `spana_observe`                              | Return a compact interactive accessibility/DOM snapshot (~273 tokens avg)             |            1.4–8 ms |
+| `spana_tap`                                  | Tap an element by `{ testID }`, `{ text }`, `{ accessibilityLabel }`, or `systemUI()` |          2.8–4.0 ms |
+| `spana_input_text` / `spana_press_key`       | Type text or press keys in the focused control                                        |              1.4 ms |
+| `spana_assert_visible` / `spana_assert_text` | Run real auto-waiting assertions                                                      |             0.97 ms |
+| `spana_diagnostics`                          | Read captured browser console logs & uncaught JS errors                               |             0.82 ms |
+| `spana_screenshot`                           | Capture a PNG screenshot for visual inspection                                        |              ~35 ms |
+| `spana_export_flow`                          | Emit a clean, deterministic `.flow.ts` file from the verified session                 |             0.06 ms |
+| `spana_run_flow` / `spana_session_stop`      | Run an existing `.flow.ts` or close the session                                       |              ~14 ms |
+
+## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
+
+`ReplaySession` and `ReplayCacheStore` record agentic actions only **after** real assertions pass, then replay them deterministically in CI with zero LLM calls (measured **238.8× faster**: `1,433 ms → 6 ms`).
+
+```bash
+# Enforce 0-LLM deterministic replay in CI (fails loudly on cache miss)
+spana test --strict-cache
+```
 
 ## `spana selectors`
 

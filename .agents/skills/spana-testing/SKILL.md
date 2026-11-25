@@ -2,303 +2,179 @@
 
 ## When to use
 
-Use this skill when writing, debugging, or iterating on spana E2E test flows. spana is a TypeScript-native E2E testing framework for React Native + Web that uses `flow()` files instead of traditional test suites.
+Use this skill when setting up, writing, debugging, or iterating on **spana (`spana-test`)** E2E tests across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun**. Spana uses pure TypeScript `flow()` files (plus optional Gherkin `.feature` files) with a dual-channel web-first engine — zero Appium required locally.
 
-## Quick reference
+Full online docs & LLM reference: `https://spana.antonwester.se/llms-full.txt`
 
-### Discover elements on screen
+---
+
+## Preferred Agent Workflow: `spana mcp` (Model-Free Stdio MCP Server)
+
+When connected to `spana mcp` (`npx spana mcp` / `bunx spana mcp`), drive live sessions directly at sub-5 ms tool latency instead of shelling out repeatedly:
+
+| MCP Tool                                             | Purpose                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| `spana_session_start`                                | Start a live session (`web`, `android`, `ios`, `electron`, `electrobun`)  |
+| `spana_observe`                                      | Compact interactive element tree (~273 tokens avg) with `testID` & bounds |
+| `spana_tap` / `spana_input_text` / `spana_press_key` | Execute verified pointer/keyboard actions (2–4 ms on web)                 |
+| `spana_assert_visible` / `spana_assert_text`         | Run real auto-waiting assertions (~1 ms on web)                           |
+| `spana_diagnostics`                                  | Fetch browser console logs & uncaught JS errors (~0.8 ms)                 |
+| `spana_screenshot`                                   | Capture PNG screenshot when visual inspection is needed                   |
+| `spana_export_flow`                                  | Export the verified action trace as a deterministic `.flow.ts` file       |
+| `spana_run_flow` / `spana_session_stop`              | Execute existing `.flow.ts` files and cleanly tear down                   |
+
+---
+
+## CLI Discovery & Execution Loop
 
 ```bash
-spana selectors --platform web       # JSON array of interactable elements with suggested selectors
-spana selectors --platform android   # same for Android
-spana selectors --platform ios       # same for iOS
-spana hierarchy --platform web       # full accessibility tree (includes non-interactable elements)
+# 1. Check environment readiness (web, Android/iOS WebView, WDA/UA2, Electron, Electrobun)
+spana doctor --json
+
+# 2. Discover interactable elements with suggested selectors
+spana selectors --platform web
+spana selectors --platform android
+spana selectors --platform ios
+spana hierarchy --platform web --pretty
+
+# 3. Validate flows without a device/browser
+spana validate-config
+spana validate flows/
+
+# 4. Run tests (fast parallel + structured output)
+spana test flows/login.flow.ts --reporter json
+spana test --platform web --parallel --workers 4
+spana test --changed-since origin/main --reporter console,github
+spana test --last-failed
+spana test --strict-cache   # 0-LLM verified replay cache in CI
+
+# 5. Manage persistent warm daemons (Chromium / WDA / UiAutomator2)
+spana daemon status
+spana daemon stop
 ```
 
-Filter with `jq`:
+---
 
-```bash
-spana selectors --platform web | jq '.[] | select(.testID != null)'
-spana selectors --platform ios | jq '[.[].suggestedSelector]'
-```
+## Writing Flows
 
-### Write a flow
+### Standard `.flow.ts`
 
 ```ts
-import { flow } from "spana-test";
+import { flow, systemUI } from "spana-test";
 
-// Simple form
-export default flow("descriptive name", async ({ app, expect, platform }) => {
-  // test body
+export default flow(
+  "SSO sign-in across WebView and native sheet",
+  { tags: ["smoke", "auth"], platforms: ["web", "android", "ios"], timeout: 30_000 },
+  async ({ app, expect, platform }) => {
+    await app.tap({ testID: "sign-in" }); // ~1 ms DOM lookup -> real native touch
+    if (platform !== "web") {
+      await app.tap(systemUI({ text: "Continue" })); // SFSafariViewController / Chrome Custom Tabs
+    }
+    await expect({ testID: "profile-id" }).toBeVisible();
+  },
+);
+```
+
+### Composable Lazy Fixtures & Named Setups
+
+```ts
+import { createFlowWithFixtures, defineSetup } from "spana-test";
+
+const adminSetup = defineSetup("admin", {
+  storage: { localStorage: { auth_token: "test-admin-jwt" } },
 });
 
-// With config
-export default flow(
-  "descriptive name",
-  { tags: ["smoke"], platforms: ["web", "android"], timeout: 30000 },
-  async ({ app, expect, platform }) => {
-    // test body
+const testFlow = createFlowWithFixtures({
+  setups: { admin: adminSetup },
+  fixtures: {
+    seededOrder: async ({ app }, use) => {
+      const orderId = "ord_123";
+      await use(orderId);
+    },
+  },
+});
+
+export default testFlow(
+  "admin inspects order",
+  { setup: "admin" },
+  async ({ app, expect, seededOrder }) => {
+    await app.openLink(`/orders/${seededOrder}`);
+    await expect({ testID: "order-status" }).toContainText("Paid");
   },
 );
 ```
 
-**File naming:** `<name>.flow.ts` in the configured `flowDir` (default `./flows`).
+---
 
-**FlowConfig options:**
+## Selector Priority & Dual-Channel Rules
 
-| Option       | Type                          | Default | Description                         |
-| ------------ | ----------------------------- | ------- | ----------------------------------- |
-| `tags`       | `string[]`                    | --      | Filter with `--tag`                 |
-| `platforms`  | `("web"\|"android"\|"ios")[]` | all     | Restrict to specific platforms      |
-| `timeout`    | `number`                      | config  | Timeout in ms                       |
-| `autoLaunch` | `boolean`                     | `true`  | Launch app before flow starts       |
-| `artifacts`  | `ArtifactConfig`              | --      | Per-flow artifact capture overrides |
-| `when`       | `{ platform?, env? }`         | --      | Conditional execution               |
+1. **`{ testID: "..." }`** (preferred) — maps to `data-testid` / `testID` (Web, Shadow DOM, same-origin `<iframe>`, Capacitor WebView, Electron, Electrobun), `resource-id` (Android), and `accessibilityIdentifier` (iOS).
+2. **`systemUI({ text: "..." })` / `systemUI({ accessibilityLabel: "..." })`** — routes straight to native OS UI (permission sheets, OAuth `SFSafariViewController`, Chrome Custom Tabs) and skips DOM channels.
+3. **`{ accessibilityLabel: "..." }`** — OS accessibility label / `aria-label`.
+4. **`{ text: "..." }`** — visible text match.
+5. **Relative selectors:** `{ selector: { text: "Edit" }, below: { testID: "user-row-1" } }` (`below`, `above`, `leftOf`, `rightOf`, `childOf`).
+6. **`{ point: { x, y } }`** — last resort only.
 
-### app methods (FlowContext.app)
+### Common `app` & `expect` APIs
 
-| Method                           | Description                       |
-| -------------------------------- | --------------------------------- |
-| `app.tap(selector, opts?)`       | Tap element (auto-waits)          |
-| `app.tapXY(x, y)`                | Tap absolute coordinates          |
-| `app.doubleTap(selector, opts?)` | Double-tap element                |
-| `app.longPress(selector, opts?)` | Long press (default 1s)           |
-| `app.inputText(text)`            | Type text into focused element    |
-| `app.pressKey(key)`              | Press a keyboard key              |
-| `app.hideKeyboard()`             | Dismiss keyboard                  |
-| `app.dismissKeyboard(opts?)`     | Platform-aware keyboard dismissal |
-| `app.swipe(direction, opts?)`    | Swipe: "up"/"down"/"left"/"right" |
-| `app.scroll(direction)`          | Scroll (slower swipe)             |
-| `app.scrollUntilVisible(sel)`    | Scroll until target is visible    |
-| `app.launch(opts?)`              | Launch/relaunch app               |
-| `app.stop()` / `app.kill()`      | Stop or force-kill app            |
-| `app.clearState()`               | Clear app data                    |
-| `app.openLink(url)`              | Open deep link or URL             |
-| `app.back()`                     | Navigate back                     |
-| `app.backUntilVisible(sel)`      | Back until target is visible      |
-| `app.takeScreenshot(name?)`      | Capture screenshot                |
-| `app.evaluate(fn, ...args)`      | Run JS in web context             |
+- **Actions:** `app.tap()`, `app.doubleTap()`, `app.longPress()`, `app.inputText()`, `app.pressKey()`, `app.dismissKeyboard()`, `app.scrollUntilVisible()`, `app.backUntilVisible()`, `app.openLink()`, `app.takeScreenshot()`, `app.evaluate()`
+- **Web helpers:** `app.mockNetwork()`, `app.blockNetwork()`, `app.setNetworkConditions()`, `app.saveAuthState()`, `app.loadAuthState()`, `app.getConsoleLogs()`, `app.getJSErrors()`, `app.openStory()`
+- **Assertions (auto-waiting with MutationObserver reactive waits on web):** `toBeVisible()`, `toBeHidden()`, `toHaveText()`, `toContainText()`, `toMatchText()`, `toHaveValue()`, `toBeEnabled()`, `toBeDisabled()`, `toHaveAttribute()`, `toMatchScreenshot({ mode: "layout-tolerant" })`, `toPassAccessibilityAudit()`
 
-`opts` on tap/doubleTap/longPress accepts `{ timeout?: number }` to override wait timeout.
+---
 
-### expect methods (FlowContext.expect)
+## Fast Configuration & CI Filters (`spana.config.ts`)
 
 ```ts
-await expect({ testID: "header" }).toBeVisible();
-await expect({ testID: "header" }).toBeVisible({ timeout: 10_000 });
-await expect({ testID: "spinner" }).toBeHidden();
-await expect({ testID: "title" }).toHaveText("Welcome");
-```
-
-| Method                        | Description                           |
-| ----------------------------- | ------------------------------------- |
-| `toBeVisible(opts?)`          | Assert element is visible on screen   |
-| `toBeHidden(opts?)`           | Assert element is not visible         |
-| `toHaveText(expected, opts?)` | Assert element's text matches exactly |
-
-All expect methods auto-wait with polling. Pass `{ timeout: ms }` to override.
-
-### Selector types
-
-```ts
-{ testID: "login-btn" }           // maps to data-testid (web), resource-id (Android), accessibilityIdentifier (iOS)
-{ text: "Sign In" }               // visible label text
-{ accessibilityLabel: "Close" }   // OS accessibility label
-{ point: { x: 100, y: 200 } }    // absolute coordinate (last resort)
-"Sign In"                         // shorthand for { text: "Sign In" }
-```
-
-**Selector priority:** `testID` > `accessibilityLabel` > `text` > `point`
-
-**Relative selectors** (for ambiguous elements):
-
-```ts
-await app.tap({ selector: { text: "Edit" }, below: { testID: "user-row-1" } });
-await app.tap({ selector: { text: "Delete" }, rightOf: { text: "Item 3" } });
-```
-
-Relative modifiers: `below`, `above`, `leftOf`, `rightOf`, `childOf`.
-
-### Validate without a device
-
-```bash
-spana validate             # validates all flows in flowDir
-spana validate flows/      # validate specific directory
-```
-
-Checks: valid exports, no duplicate names, valid platform values, directory exists.
-
-### Run and read results
-
-```bash
-spana test --platform web --reporter json
-spana test flows/login.flow.ts --reporter json
-spana test --tag smoke --platform android --reporter json
-spana test --grep "login" --reporter json
-
-# Parse failures
-spana test --reporter json 2>&1 | jq '.results[] | select(.status == "failed")'
-```
-
-## Agent workflow loop
-
-```
-1. spana selectors --platform <target>     -> discover elements
-2. Write a .flow.ts file using selectors   -> create the test
-3. spana validate flows/                   -> check structure (no device needed)
-4. spana test <file> --reporter json       -> execute on device
-5. If failed: read error, fix, goto 3
-```
-
-Do not skip step 3. Validation catches export errors, duplicate names, and invalid platforms before spending device time.
-
-## Flow patterns
-
-### Navigation with deep links
-
-```ts
-export default flow(
-  "home screen loads",
-  { autoLaunch: false },
-  async ({ app, expect, platform }) => {
-    const url = platform === "web" ? "http://localhost:3000/" : "myapp://home";
-    await app.openLink(url);
-    await expect({ testID: "home-screen" }).toBeVisible();
-  },
-);
-```
-
-### Form fill
-
-```ts
-await app.tap({ testID: "email-input" });
-await app.inputText("user@example.com");
-await app.tap({ testID: "password-input" });
-await app.inputText("secret123");
-await app.dismissKeyboard();
-await app.tap({ testID: "submit-btn" });
-await expect({ testID: "dashboard" }).toBeVisible();
-```
-
-### Scrolling to find content
-
-```ts
-await app.scroll("down");
-await expect({ testID: "footer-section" }).toBeVisible({ timeout: 10_000 });
-```
-
-### Platform branching
-
-```ts
-async ({ app, expect, platform }) => {
-  await app.tap({ testID: "menu-btn" });
-  if (platform === "android") {
-    await app.back(); // close drawer via back button
-  }
-  if (platform === "web") {
-    await app.evaluate(() => window.scrollTo(0, 0));
-  }
-};
-```
-
-### Artifact capture per flow
-
-```ts
-export default flow(
-  "checkout flow",
-  { artifacts: { captureOnSuccess: true, captureSteps: true } },
-  async ({ app, expect }) => {
-    /* ... */
-  },
-);
-```
-
-## Platform-specific notes
-
-### Web
-
-- Uses Playwright (CDP). No companion binary needed.
-- `testID` maps to `data-testid` attribute.
-- `app.evaluate()` runs JS in the browser context.
-- Default `baseUrl`: `http://localhost:3000`.
-
-### Android
-
-- Uses UiAutomator2 HTTP server (APK auto-installed on device).
-- `testID` maps to `resource-id`.
-- `app.back()` triggers the system back button.
-- Emulators and physical devices supported.
-
-### iOS
-
-- Uses WebDriverAgent (XCTest bundle).
-- `testID` maps to `accessibilityIdentifier`.
-- Simulators: works out of the box.
-- Physical devices: requires code signing config in `spana.config.ts`.
-- `app.back()` may not work the same as Android; prefer tap on back button element.
-
-## Error handling
-
-| Error                         | Cause                                        | Fix                                                                     |
-| ----------------------------- | -------------------------------------------- | ----------------------------------------------------------------------- |
-| `Element not found: {...}`    | Selector does not match any visible element  | Run `spana selectors` to verify element exists and get correct selector |
-| `Timeout waiting for element` | Element didn't appear within wait timeout    | Increase `timeout` in opts, or check if prior navigation succeeded      |
-| `Duplicate flow name`         | Two flow files export the same `name` string | Rename one of the flows                                                 |
-| `Invalid platform`            | Platform string is not web/android/ios       | Fix the `platforms` array in FlowConfig                                 |
-| `No Android device connected` | No emulator/device available                 | Start emulator or connect device, verify with `spana devices`           |
-| `No iOS simulator available`  | No booted simulator found                    | Boot a simulator: `xcrun simctl boot <udid>`                            |
-
-When a flow fails at runtime, the JSON reporter includes the error message and the step that failed. Read the `results[].error` field to diagnose.
-
-## Config reference
-
-`spana.config.ts` at project root:
-
-```ts
-import { defineConfig } from "spana-test";
+import {
+  defineConfig,
+  decisionFilter,
+  createLogprobDecisionJudge,
+  pathRuleFilter,
+} from "spana-test";
 
 export default defineConfig({
   apps: {
     web: { url: "http://localhost:3000" },
-    android: { packageName: "com.example.app" },
-    ios: { bundleId: "com.example.app", appPath: "./MyApp.app" },
+    android: { packageName: "com.example.app", appPath: "./builds/app.apk" },
+    ios: { bundleId: "com.example.app", appPath: "./builds/MyApp.app" },
   },
-  platforms: ["web", "android", "ios"],
-  flowDir: "./flows",
-  reporters: ["console", "json", "html"],
+  execution: {
+    web: {
+      browser: "chromium", // or engine: "cdp" | "lightpanda" with cdpUrl, or wsEndpoint for BrowserStack Automate Web
+      headless: true,
+      warmBrowser: true,
+      instantAnimations: true,
+      blockResources: ["image", "font", "media"],
+    },
+  },
   defaults: {
-    waitTimeout: 5000, // ms to wait for element visibility
-    pollInterval: 200, // ms between hierarchy polls
-    settleTimeout: 300, // ms of stability before match
-    retries: 2, // retries on action failure
+    waitTimeout: 5000,
+    failFastWhenIdle: false, // set true on web to fail missing selectors once page is idle
   },
-  artifacts: {
-    outputDir: ".spana/artifacts",
-    captureOnFailure: true,
-    captureOnSuccess: false,
-    screenshot: true,
-    uiHierarchy: true,
-  },
-  hooks: {
-    beforeAll: async ({ app }) => {
-      /* global setup */
-    },
-    beforeEach: async ({ app }) => {
-      /* per-flow setup, e.g. clear state */
-    },
-    afterEach: async ({ app, result }) => {
-      /* per-flow teardown */
-    },
-    afterAll: async ({ app, summary }) => {
-      /* global cleanup */
-    },
-  },
+  filters: [
+    pathRuleFilter({
+      rules: [{ matchFlow: { tag: "billing" }, watchPaths: ["src/billing/"] }],
+    }),
+    decisionFilter({
+      alwaysRunTags: ["smoke"],
+      judge: createLogprobDecisionJudge({
+        provider: "openai",
+        baseUrl: "http://127.0.0.1:8000/v1",
+        model: "typesafe-ai/jev",
+      }),
+    }),
+  ],
+  reporters: ["console", "html"],
 });
 ```
 
-Key config options for agents:
+---
 
-- `flowDir`: where to put flow files (default `./flows`)
-- `defaults.waitTimeout`: how long auto-wait polls before failing
-- `artifacts.captureOnFailure`: auto-capture screenshots on failure (useful for debugging)
-- `reporters`: use `["json"]` for machine-readable output
+## Failure Investigation Checklist
+
+When a flow fails, inspect `.spana/artifacts/` (or `spana-output/`):
+
+1. Read `failure-bundle.json` — contains the failed step, attempted selector, nearby selector alternatives, inline `consoleLogs` & `jsErrors`, screenshot path, and exact repro command.
+2. Prefer fixing selectors to `{ testID }` over adding sleeps (Spana already uses `MutationObserver` reactive waits + adaptive polling).
+3. Always run `spana validate` before `spana test` after editing flows.

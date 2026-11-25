@@ -1,48 +1,45 @@
 ---
 title: Introduction
-description: What spana is, why it exists, and its core principles.
+description: What spana is, why it exists, its dual-channel web-first engine, and its core principles.
 ---
 
-spana is a TypeScript-native end-to-end testing framework for React Native and web applications. It lets you write a single test file that runs against a browser, an Android device or emulator, and an iOS simulator or device — without modifying the app under test.
+**spana** (`spana-test`) is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
 
 ## Why spana
 
-Existing E2E tools fall into two camps:
+Existing E2E tools force a painful split:
 
-- **YAML-based runners** (Maestro, Detox scripts) — readable but limited. No real TypeScript, no imports, no abstractions.
-- **Platform-native tools** (Espresso, XCUITest) — powerful but siloed. You write Android tests in Kotlin and iOS tests in Swift.
+- **Web-only tools** (Playwright, Cypress) are fast on desktop browsers but cannot drive native mobile WebViews, OS sheets (`SFSafariViewController`, Chrome Custom Tabs, permission dialogs), or native mobile gestures.
+- **Mobile-first runners** (Appium/WebdriverIO, Maestro) add heavy middleware, JVM/YAML layers, or brittle full-tree XML dumps on every single tap.
 
-spana occupies the gap: full TypeScript with real imports, types, and async/await, running across all three platforms from one file.
+Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 
-It replaces Maestro's JVM/YAML stack with a pure-TypeScript engine. No companion JVM process. No YAML parsing. No patching the app binary.
+1. **Fast DOM Lane (~1 ms):** `{ testID }` queries pierce Shadow DOM and same-origin `<iframe>`s via built-in `PlaywrightDomChannel`, `spana-bridge`, Android CDP, Lightpanda CDP, iOS WebKit Inspector, or Apple `webinspectord`, paired with `MutationObserver` reactive waits.
+2. **Native & System UI Lane:** Real OS touches and out-of-process native sheets (`systemUI()`) go directly to persistent warm UiAutomator2 / WebDriverAgent daemons (with session reuse) — or to BrowserStack / Sauce Labs in Appium cloud mode.
 
 ## Key principles
 
-**Pure TypeScript.** Tests are `.ts` files. You get autocomplete, type errors, imports, and the full JS ecosystem. The test runner works with both Node.js 20+ and Bun.
-
-**No app modification.** spana never requires adding a test server, special build flag, or SDK to your app. Interaction happens through the platform's accessibility layer (UiAutomator2, WebDriverAgent, Playwright CDP).
-
-**Agent-first.** The CLI exposes `hierarchy`, `selectors`, and `validate` commands designed for AI agent workflows. `--reporter json` produces structured output suitable for piping to an agent.
-
-**Thin drivers.** Raw platform drivers are HTTP clients with no logic. All selector matching, auto-wait, and retry runs in the TypeScript smart layer on the host machine.
+- **Pure TypeScript (plus optional Gherkin / BDD).** Full autocomplete, imports, composable lazy fixtures (`createFlowWithFixtures`), and named setups (`defineSetup`). Works with both Bun and Node.js 20+.
+- **Zero-setup fast path, opt-in superpowers.** Works with zero app modification out of the box, and supports an opt-in `spana-bridge` WebSocket package for instant storage injection, fast reset, network mocking, and lazy idle detection across hybrid mobile and desktop shells.
+- **Agent-native from day one.** Ships a model-free stdio MCP server (`spana mcp`, 2–4 ms tool latency, ~273-token observations), a Verified Replay Cache (`.spana/cache/`, `--strict-cache`), pluggable CI Filters (`--changed-since` + 1-token KV-cache logprob decision judge), and versioned `--json` CLI envelopes.
+- **Engineered for raw speed.** Speculative CLI browser pre-launch, persistent warm Chromium/WDA/UA2 daemons, single-browser multi-context worker pools, `MutationObserver` reactive waits + optional `failFastWhenIdle`, `instantAnimations`, `blockResources`, and auto-persisted longest-first `--parallel` scheduling.
 
 ## Platform support
 
-| Platform      | Driver                     | Notes                                                             |
-| ------------- | -------------------------- | ----------------------------------------------------------------- |
-| Web / RN Web  | Playwright (CDP)           | No companion binary — Playwright is a dev dependency              |
-| Android       | UiAutomator2 HTTP client   | Bundled APK server (~2–3 MB), ADB-forwarded                       |
-| iOS Simulator | WebDriverAgent HTTP client | Bundled unsigned XCTest bundle (~5 MB)                            |
-| iOS Device    | WebDriverAgent HTTP client | Re-signed with user certificate via `codesign`; requires `iproxy` |
+| Platform      | Driver / DOM Channel                                                                  | Notes                                                      |
+| ------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Web / RN Web  | Playwright (`PlaywrightDomChannel`, warm daemon, shared pool) or CDP / Lightpanda     | Also supports `wsEndpoint` for BrowserStack Automate Web   |
+| Android       | Direct UiAutomator2 + Android CDP / `spana-bridge` (`adb reverse`)                    | Bundled APK server, persistent warm daemon                 |
+| iOS Simulator | Direct WDA (warm session reuse) + WebKit Inspector / `webinspectord` / `spana-bridge` | Bundled unsigned XCTest bundle                             |
+| iOS Device    | Same WDA bundle + `iproxy` + WebKit / `spana-bridge`                                  | Re-signed via `codesign`; requires `iproxy`                |
+| Electron      | Electron CDP (`--remote-debugging-port`) + `spana-bridge`                             | Launches entry/binary or attaches via `cdpUrl` / `cdpPort` |
+| Electrobun    | CEF / WebView2 CDP / WebKit Inspector + `spana-bridge`                                | Supports native & CEF renderers                            |
+| Appium Cloud  | Direct W3C Appium client (no WebdriverIO required)                                    | First-class BrowserStack & Sauce Labs helpers              |
 
 ## Monorepo structure
 
-The `spana` package (`packages/spana`) is the core library and CLI. Source is organized into:
-
-- `src/api/` — `flow()`, `app`, `expect` — the public test-writing API
-- `src/core/` — engine, orchestrator, parallel runner
-- `src/smart/` — coordinator, auto-wait, element-matcher (all TypeScript, no native code)
-- `src/drivers/` — thin HTTP clients for each platform
-- `src/agent/` — `session.ts` backing `spana hierarchy` and `spana selectors`
-- `src/cli/` — CLI entry point
-- `src/schemas/` — shared types: `Element`, `Selector`, `Platform`, `SpanaConfig`
+- `packages/spana` (`spana-test`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
+- `packages/spana-bridge` (`spana-bridge`) — optional in-app WebSocket bridge for hybrid/desktop targets
+- `apps/docs` — documentation & landing page (`https://spana.antonwester.se`)
+- `apps/studio` — Spana Studio web UI (embedded into `spana-test`)
+- `benchmarks/` — reproducible head-to-head framework and MCP agent benchmarks

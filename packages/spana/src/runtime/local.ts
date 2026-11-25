@@ -8,6 +8,7 @@ import type { DiscoveredDevice } from "../device/discover.js";
 import type { RuntimeResult } from "./types.js";
 import {
   connectPlaywrightOverCDP,
+  connectPlaywrightOverWS,
   ensureWarmBrowserDaemon,
   launchPlaywrightBrowser,
   makePlaywrightDriver,
@@ -120,15 +121,19 @@ export function speculativelyPrelaunchWebBrowser(
   const useWarm =
     (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
     (webExecution?.browser ?? "chromium") === "chromium";
-  const ownsBrowser = !useWarm && !webExecution?.cdpUrl;
-  const browserPromise = webExecution?.cdpUrl
-    ? connectPlaywrightOverCDP(webExecution.cdpUrl)
-    : useWarm
-      ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then((r) => r.browser)
-      : launchPlaywrightBrowser({
-          browser: webExecution?.browser,
-          headless: webExecution?.headless ?? true,
-        });
+  const ownsBrowser = !useWarm && !webExecution?.cdpUrl && !webExecution?.wsEndpoint;
+  const browserPromise = webExecution?.wsEndpoint
+    ? connectPlaywrightOverWS(webExecution.wsEndpoint, webExecution.browser)
+    : webExecution?.cdpUrl
+      ? connectPlaywrightOverCDP(webExecution.cdpUrl)
+      : useWarm
+        ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then(
+            (r) => r.browser,
+          )
+        : launchPlaywrightBrowser({
+            browser: webExecution?.browser,
+            headless: webExecution?.headless ?? true,
+          });
 
   // Prevent unhandled rejection if CLI exits early before awaiting
   browserPromise.catch(() => {});
@@ -167,6 +172,7 @@ export async function buildWebRuntime(
             blockResources: webExecution?.blockResources,
             sharedBrowser: prelaunchedBrowser,
             cdpEndpoint: prelaunchedBrowser ? undefined : webExecution?.cdpUrl,
+            wsEndpoint: prelaunchedBrowser ? undefined : webExecution?.wsEndpoint,
             warmBrowser: prelaunchedBrowser
               ? false
               : (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false),
@@ -219,19 +225,21 @@ export async function buildWebRuntimePool(
     (webExecution?.browser ?? "chromium") === "chromium";
   const ownsSharedBrowser = prelaunched
     ? prelaunched.ownsBrowser
-    : !useWarm && !webExecution?.cdpUrl;
+    : !useWarm && !webExecution?.cdpUrl && !webExecution?.wsEndpoint;
   const sharedBrowser = prelaunched
     ? prelaunched.browserPromise
-    : webExecution?.cdpUrl
-      ? connectPlaywrightOverCDP(webExecution.cdpUrl)
-      : useWarm
-        ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then(
-            (r) => r.browser,
-          )
-        : launchPlaywrightBrowser({
-            browser: webExecution?.browser,
-            headless: webExecution?.headless ?? true,
-          });
+    : webExecution?.wsEndpoint
+      ? connectPlaywrightOverWS(webExecution.wsEndpoint, webExecution.browser)
+      : webExecution?.cdpUrl
+        ? connectPlaywrightOverCDP(webExecution.cdpUrl)
+        : useWarm
+          ? ensureWarmBrowserDaemon({ headless: webExecution?.headless ?? true }).then(
+              (r) => r.browser,
+            )
+          : launchPlaywrightBrowser({
+              browser: webExecution?.browser,
+              headless: webExecution?.headless ?? true,
+            });
   const resolvedBrowser = await sharedBrowser;
 
   let remaining = workerCount;

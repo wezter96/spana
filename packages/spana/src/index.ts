@@ -135,6 +135,7 @@ export {
   ensureWarmBrowserDaemon,
   launchPlaywrightBrowser,
   connectPlaywrightOverCDP,
+  connectPlaywrightOverWS,
 } from "./drivers/playwright.js";
 export { speculativelyPrelaunchWebBrowser, type PrelaunchedWebBrowser } from "./runtime/local.js";
 export {

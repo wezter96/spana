@@ -30,6 +30,54 @@ spana test --reporter console,junit,html
 - **`junit`** — writes a JUnit XML file to `spana-output/junit.xml`, understood by most CI systems.
 - **`json`** — writes structured JSON to stdout, useful for piping to other tools.
 - **`html`** — writes an HTML report to `spana-output/report.html` with screenshots and step details.
+- **`github`** — writes a PR-ready Markdown summary (`github-pr-summary.md`) and appends directly to `$GITHUB_STEP_SUMMARY` in GitHub Actions.
+
+## PR-Aware CI Filtering (`--changed-since`)
+
+Run only the flows affected by a pull request while staying **fail-open** (changed test files, config/lockfile edits, oversized diffs >60 kB, `alwaysRunTags`, and judge errors always run).
+
+```ts
+// spana.config.ts
+import {
+  defineConfig,
+  decisionFilter,
+  createLogprobDecisionJudge,
+  pathRuleFilter,
+} from "spana-test";
+
+export default defineConfig({
+  filters: [
+    pathRuleFilter({
+      rules: [{ matchFlow: { tag: "billing" }, watchPaths: ["src/billing/"] }],
+    }),
+    decisionFilter({
+      alwaysRunTags: ["smoke"],
+      judge: createLogprobDecisionJudge({
+        provider: "openai", // works with vLLM, SGLang, llama-server, Typesafe AI, OpenRouter, or "ollama"
+        baseUrl: "http://127.0.0.1:8000/v1",
+        model: "typesafe-ai/jev",
+      }),
+    }),
+  ],
+});
+```
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0 # required for merge-base diffing
+
+- name: Run affected E2E flows
+  run: >-
+    npx spana test
+    --parallel --workers 4
+    --reporter console,junit,github
+    ${{ github.event_name == 'pull_request' && format('--changed-since origin/{0}', github.base_ref) || '' }}
+```
+
+`createLogprobDecisionJudge` places the shared git diff prefix **first** in every prompt so vLLM, SGLang, and llama.cpp reuse the KV cache across every flow in the PR and emit only **1 single token** (`YES` / `NO`) with calibrated logprob probabilities.
+
+For parallel CI runs, Spana also persists per-flow durations in `last-run.json` and automatically schedules the slowest flows first (`orderFlowsLongestFirst`) on subsequent runs.
 
 ## GitHub Actions
 

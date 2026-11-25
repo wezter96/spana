@@ -61,7 +61,14 @@ export default defineConfig({
   execution: {
     web: {
       browser: "chromium",
+      engine: "playwright", // or "cdp" | "lightpanda" with cdpUrl
+      cdpUrl: undefined, // e.g. "http://127.0.0.1:9222" for Lightpanda or remote CDP
+      wsEndpoint: undefined, // e.g. BrowserStack Automate Web Playwright wsEndpoint
       headless: true,
+      warmBrowser: true, // keep warm headless Chromium daemon alive across runs
+      instantAnimations: true, // collapse CSS transitions/animations to 0.001ms
+      blockResources: ["image", "font", "media"], // optional heavy asset abort
+      waitUntil: "load", // "domcontentloaded" | "load" | "networkidle" | "commit"
       verboseLogging: false,
       storybook: { url: "http://localhost:6006" },
     },

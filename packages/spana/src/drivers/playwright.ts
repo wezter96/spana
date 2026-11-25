@@ -74,6 +74,8 @@ export interface PlaywrightConfig {
   blockResources?: Array<"image" | "font" | "media" | "stylesheet">;
   /** Connect to an already-running warm Chromium CDP endpoint instead of launching a new browser process. */
   cdpEndpoint?: string;
+  /** Connect to a remote Playwright WebSocket server (e.g. BrowserStack Automate Web `wss://cdp.browserstack.com/playwright?...`). */
+  wsEndpoint?: string;
   /** Reuse a persistent detached headless Chromium daemon across CLI runs (Flashwright-style warm session). */
   warmBrowser?: boolean;
   /** Attach a built-in zero-setup Playwright DOM channel for ~1ms `{ testID }` queries without full DOM dumps. Default: true. */
@@ -167,6 +169,13 @@ export async function ensureWarmBrowserDaemon(
 
 export async function connectPlaywrightOverCDP(cdpEndpoint: string): Promise<Browser> {
   return chromium.connectOverCDP(cdpEndpoint);
+}
+
+export async function connectPlaywrightOverWS(
+  wsEndpoint: string,
+  browserName: BrowserName = "chromium",
+): Promise<Browser> {
+  return browserLaunchers[browserName].connect(wsEndpoint);
 }
 
 export async function launchPlaywrightBrowser(
@@ -293,32 +302,41 @@ export function makePlaywrightDriver(
 ): Effect.Effect<RawDriverService, DriverError> {
   return Effect.gen(function* () {
     const browserName = config.browser ?? "chromium";
-    const ownsBrowser = !config.sharedBrowser && !config.cdpEndpoint && !config.warmBrowser;
+    const ownsBrowser =
+      !config.sharedBrowser && !config.cdpEndpoint && !config.wsEndpoint && !config.warmBrowser;
     const browser = config.sharedBrowser
       ? config.sharedBrowser
-      : config.cdpEndpoint
+      : config.wsEndpoint
         ? yield* Effect.tryPromise({
-            try: () => chromium.connectOverCDP(config.cdpEndpoint!),
+            try: () => browserLaunchers[browserName].connect(config.wsEndpoint!),
             catch: (e) =>
               new DriverError({
-                message: `Failed to connect to browser over CDP (${config.cdpEndpoint}): ${e}`,
+                message: `Failed to connect to remote Playwright server (${config.wsEndpoint}): ${e}`,
               }),
           })
-        : config.warmBrowser && browserName === "chromium"
+        : config.cdpEndpoint
           ? yield* Effect.tryPromise({
-              try: async () => (await ensureWarmBrowserDaemon(config)).browser,
+              try: () => chromium.connectOverCDP(config.cdpEndpoint!),
               catch: (e) =>
-                new DriverError({ message: `Failed to connect to warm Chromium daemon: ${e}` }),
-            })
-          : yield* Effect.tryPromise({
-              try: () =>
-                browserLaunchers[browserName].launch({
-                  headless: config.headless ?? true,
-                  ...(config.channel ? { channel: config.channel } : {}),
-                  ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+                new DriverError({
+                  message: `Failed to connect to browser over CDP (${config.cdpEndpoint}): ${e}`,
                 }),
-              catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
-            });
+            })
+          : config.warmBrowser && browserName === "chromium"
+            ? yield* Effect.tryPromise({
+                try: async () => (await ensureWarmBrowserDaemon(config)).browser,
+                catch: (e) =>
+                  new DriverError({ message: `Failed to connect to warm Chromium daemon: ${e}` }),
+              })
+            : yield* Effect.tryPromise({
+                try: () =>
+                  browserLaunchers[browserName].launch({
+                    headless: config.headless ?? true,
+                    ...(config.channel ? { channel: config.channel } : {}),
+                    ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+                  }),
+                catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
+              });
 
     let context!: BrowserContext;
     let page!: Page;

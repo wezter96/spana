@@ -11,49 +11,46 @@
 
 ## Introduction
 
-spana is a TypeScript-native end-to-end testing framework for React Native and web applications. It lets you write a single test file that runs against a browser, an Android device or emulator, and an iOS simulator or device — without modifying the app under test.
+**spana** (`spana-test`) is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
 
 ## Why spana
 
-Existing E2E tools fall into two camps:
+Existing E2E tools force a painful split:
 
-- **YAML-based runners** (Maestro, Detox scripts) — readable but limited. No real TypeScript, no imports, no abstractions.
-- **Platform-native tools** (Espresso, XCUITest) — powerful but siloed. You write Android tests in Kotlin and iOS tests in Swift.
+- **Web-only tools** (Playwright, Cypress) are fast on desktop browsers but cannot drive native mobile WebViews, OS sheets (`SFSafariViewController`, Chrome Custom Tabs, permission dialogs), or native mobile gestures.
+- **Mobile-first runners** (Appium/WebdriverIO, Maestro) add heavy middleware, JVM/YAML layers, or brittle full-tree XML dumps on every single tap.
 
-spana occupies the gap: full TypeScript with real imports, types, and async/await, running across all three platforms from one file.
+Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 
-It replaces Maestro's JVM/YAML stack with a pure-TypeScript engine. No companion JVM process. No YAML parsing. No patching the app binary.
+1. **Fast DOM Lane (~1 ms):** `{ testID }` queries pierce Shadow DOM and same-origin `<iframe>`s via built-in `PlaywrightDomChannel`, `spana-bridge`, Android CDP, Lightpanda CDP, iOS WebKit Inspector, or Apple `webinspectord`, paired with `MutationObserver` reactive waits.
+2. **Native & System UI Lane:** Real OS touches and out-of-process native sheets (`systemUI()`) go directly to persistent warm UiAutomator2 / WebDriverAgent daemons (with session reuse) — or to BrowserStack / Sauce Labs in Appium cloud mode.
 
 ## Key principles
 
-**Pure TypeScript.** Tests are `.ts` files. You get autocomplete, type errors, imports, and the full JS ecosystem. The test runner works with both Node.js 20+ and Bun.
-
-**No app modification.** spana never requires adding a test server, special build flag, or SDK to your app. Interaction happens through the platform's accessibility layer (UiAutomator2, WebDriverAgent, Playwright CDP).
-
-**Agent-first.** The CLI exposes `hierarchy`, `selectors`, and `validate` commands designed for AI agent workflows. `--reporter json` produces structured output suitable for piping to an agent.
-
-**Thin drivers.** Raw platform drivers are HTTP clients with no logic. All selector matching, auto-wait, and retry runs in the TypeScript smart layer on the host machine.
+- **Pure TypeScript (plus optional Gherkin / BDD).** Full autocomplete, imports, composable lazy fixtures (`createFlowWithFixtures`), and named setups (`defineSetup`). Works with both Bun and Node.js 20+.
+- **Zero-setup fast path, opt-in superpowers.** Works with zero app modification out of the box, and supports an opt-in `spana-bridge` WebSocket package for instant storage injection, fast reset, network mocking, and lazy idle detection across hybrid mobile and desktop shells.
+- **Agent-native from day one.** Ships a model-free stdio MCP server (`spana mcp`, 2–4 ms tool latency, ~273-token observations), a Verified Replay Cache (`.spana/cache/`, `--strict-cache`), pluggable CI Filters (`--changed-since` + 1-token KV-cache logprob decision judge), and versioned `--json` CLI envelopes.
+- **Engineered for raw speed.** Speculative CLI browser pre-launch, persistent warm Chromium/WDA/UA2 daemons, single-browser multi-context worker pools, `MutationObserver` reactive waits + optional `failFastWhenIdle`, `instantAnimations`, `blockResources`, and auto-persisted longest-first `--parallel` scheduling.
 
 ## Platform support
 
-| Platform      | Driver                     | Notes                                                             |
-| ------------- | -------------------------- | ----------------------------------------------------------------- |
-| Web / RN Web  | Playwright (CDP)           | No companion binary — Playwright is a dev dependency              |
-| Android       | UiAutomator2 HTTP client   | Bundled APK server (~2–3 MB), ADB-forwarded                       |
-| iOS Simulator | WebDriverAgent HTTP client | Bundled unsigned XCTest bundle (~5 MB)                            |
-| iOS Device    | WebDriverAgent HTTP client | Re-signed with user certificate via `codesign`; requires `iproxy` |
+| Platform      | Driver / DOM Channel                                                                  | Notes                                                      |
+| ------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Web / RN Web  | Playwright (`PlaywrightDomChannel`, warm daemon, shared pool) or CDP / Lightpanda     | Also supports `wsEndpoint` for BrowserStack Automate Web   |
+| Android       | Direct UiAutomator2 + Android CDP / `spana-bridge` (`adb reverse`)                    | Bundled APK server, persistent warm daemon                 |
+| iOS Simulator | Direct WDA (warm session reuse) + WebKit Inspector / `webinspectord` / `spana-bridge` | Bundled unsigned XCTest bundle                             |
+| iOS Device    | Same WDA bundle + `iproxy` + WebKit / `spana-bridge`                                  | Re-signed via `codesign`; requires `iproxy`                |
+| Electron      | Electron CDP (`--remote-debugging-port`) + `spana-bridge`                             | Launches entry/binary or attaches via `cdpUrl` / `cdpPort` |
+| Electrobun    | CEF / WebView2 CDP / WebKit Inspector + `spana-bridge`                                | Supports native & CEF renderers                            |
+| Appium Cloud  | Direct W3C Appium client (no WebdriverIO required)                                    | First-class BrowserStack & Sauce Labs helpers              |
 
 ## Monorepo structure
 
-The `spana` package (`packages/spana`) is the core library and CLI. Source is organized into:
-
-- `src/api/` — `flow()`, `app`, `expect` — the public test-writing API
-- `src/core/` — engine, orchestrator, parallel runner
-- `src/smart/` — coordinator, auto-wait, element-matcher (all TypeScript, no native code)
-- `src/drivers/` — thin HTTP clients for each platform
-- `src/agent/` — `session.ts` backing `spana hierarchy` and `spana selectors`
-- `src/cli/` — CLI entry point
-- `src/schemas/` — shared types: `Element`, `Selector`, `Platform`, `SpanaConfig`
+- `packages/spana` (`spana-test`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
+- `packages/spana-bridge` (`spana-bridge`) — optional in-app WebSocket bridge for hybrid/desktop targets
+- `apps/docs` — documentation & landing page (`https://spana.antonwester.se`)
+- `apps/studio` — Spana Studio web UI (embedded into `spana-test`)
+- `benchmarks/` — reproducible head-to-head framework and MCP agent benchmarks
 
 ---
 
@@ -212,7 +209,14 @@ export default defineConfig({
   execution: {
     web: {
       browser: "chromium",
+      engine: "playwright", // or "cdp" | "lightpanda" with cdpUrl
+      cdpUrl: undefined, // e.g. "http://127.0.0.1:9222" for Lightpanda or remote CDP
+      wsEndpoint: undefined, // e.g. BrowserStack Automate Web Playwright wsEndpoint
       headless: true,
+      warmBrowser: true, // keep warm headless Chromium daemon alive across runs
+      instantAnimations: true, // collapse CSS transitions/animations to 0.001ms
+      blockResources: ["image", "font", "media"], // optional heavy asset abort
+      waitUntil: "load", // "domcontentloaded" | "load" | "networkidle" | "commit"
       verboseLogging: false,
       storybook: { url: "http://localhost:6006" },
     },
@@ -602,23 +606,23 @@ interface DeviceStateConfig {
 }
 ```
 
-| Option            | Default | Description                                                                       |
-| ----------------- | ------- | --------------------------------------------------------------------------------- |
-| `clearState`      | `false` | Clear app data/storage before launch                                              |
-| `clearKeychain`   | `false` | Clear the iOS keychain before launch (simulator only)                             |
-| `deepLink`        | —       | Open the app via a deep link URL                                                  |
-| `launchArguments` | —       | Key-value pairs passed as launch arguments to the app                             |
+| Option            | Default | Description                                                                          |
+| ----------------- | ------- | ------------------------------------------------------------------------------------ |
+| `clearState`      | `false` | Clear app data/storage before launch                                                 |
+| `clearKeychain`   | `false` | Clear the iOS keychain before launch (simulator only)                                |
+| `deepLink`        | —       | Open the app via a deep link URL                                                     |
+| `launchArguments` | —       | Key-value pairs passed as launch arguments to the app                                |
 | `deviceState`     | —       | Launch-time language / locale / time-zone overrides where the runtime can honor them |
 
 #### Platform behavior
 
-| Option            | Web                                 | Android                                                      | iOS                                                                      |
-| ----------------- | ----------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `clearState`      | Clears cookies, localStorage        | `adb shell pm clear`                                         | Resets app permissions                                                   |
-| `clearKeychain`   | No-op                               | No-op (warns)                                                | `xcrun simctl keychain reset`                                            |
-| `launchArguments` | No-op                               | Passed as `--es` extras via `am start`                       | Appium iOS: process args via `mobile: launchApp`; local WDA: warns + ignores |
-| `deviceState`     | Warns + ignores                     | Appium: session-start caps; local Android: warns + ignores   | Appium: session caps + launch-time process config; local WDA: warns + ignores |
-| `deepLink`        | Navigates to URL                    | `adb shell am start -d <url>`                                | `xcrun simctl openurl` / WDA                                             |
+| Option            | Web                          | Android                                                    | iOS                                                                           |
+| ----------------- | ---------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `clearState`      | Clears cookies, localStorage | `adb shell pm clear`                                       | Resets app permissions                                                        |
+| `clearKeychain`   | No-op                        | No-op (warns)                                              | `xcrun simctl keychain reset`                                                 |
+| `launchArguments` | No-op                        | Passed as `--es` extras via `am start`                     | Appium iOS: process args via `mobile: launchApp`; local WDA: warns + ignores  |
+| `deviceState`     | Warns + ignores              | Appium: session-start caps; local Android: warns + ignores | Appium: session caps + launch-time process config; local WDA: warns + ignores |
+| `deepLink`        | Navigates to URL             | `adb shell am start -d <url>`                              | `xcrun simctl openurl` / WDA                                                  |
 
 Android `launchArguments` are string extras. For example:
 
@@ -918,25 +922,25 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 
 ### Browser runtime helpers
 
-| Method                 | Signature                                                                                     | Description                                        |
-| ---------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `mockNetwork`          | `(matcher, response) => Promise<void>`                                                        | Fulfill matching requests with a mocked response   |
-| `blockNetwork`         | `(matcher) => Promise<void>`                                                                  | Abort matching requests                            |
-| `clearNetworkMocks`    | `() => Promise<void>`                                                                         | Remove active route mocks or blocks                |
-| `setNetworkConditions` | `(conditions) => Promise<void>` | Simulate network conditions — profiles, custom throttling, or offline mode |
-| `saveCookies`          | `(path) => Promise<void>`                                                                     | Save Playwright cookies to a JSON file             |
-| `loadCookies`          | `(path) => Promise<void>`                                                                     | Load cookies from a JSON file                      |
-| `saveAuthState`        | `(path) => Promise<void>`                                                                     | Save Playwright storage state to disk              |
-| `loadAuthState`        | `(path) => Promise<void>`                                                                     | Replace the browser context with saved auth state  |
-| `downloadFile`         | `(path) => Promise<void>`                                                                     | Save the next browser download to disk             |
-| `uploadFile`           | `(selector, path) => Promise<void>`                                                           | Upload a local file through a file input           |
-| `newTab`               | `(url?) => Promise<void>`                                                                     | Open a new browser tab                             |
-| `switchToTab`          | `(index) => Promise<void>`                                                                    | Switch to a tab by index                           |
-| `closeTab`             | `() => Promise<void>`                                                                         | Close the current tab                              |
-| `getTabIds`            | `() => Promise<string[]>`                                                                     | List known browser tab IDs                         |
-| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`                                             | Read captured browser console messages             |
-| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>`                                            | Read captured uncaught JavaScript errors           |
-| `getHAR`               | `() => Promise<Record<string, unknown>>`                                                      | Read the recorded HTTP Archive for the current run |
+| Method                 | Signature                                          | Description                                                                |
+| ---------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
+| `mockNetwork`          | `(matcher, response) => Promise<void>`             | Fulfill matching requests with a mocked response                           |
+| `blockNetwork`         | `(matcher) => Promise<void>`                       | Abort matching requests                                                    |
+| `clearNetworkMocks`    | `() => Promise<void>`                              | Remove active route mocks or blocks                                        |
+| `setNetworkConditions` | `(conditions) => Promise<void>`                    | Simulate network conditions — profiles, custom throttling, or offline mode |
+| `saveCookies`          | `(path) => Promise<void>`                          | Save Playwright cookies to a JSON file                                     |
+| `loadCookies`          | `(path) => Promise<void>`                          | Load cookies from a JSON file                                              |
+| `saveAuthState`        | `(path) => Promise<void>`                          | Save Playwright storage state to disk                                      |
+| `loadAuthState`        | `(path) => Promise<void>`                          | Replace the browser context with saved auth state                          |
+| `downloadFile`         | `(path) => Promise<void>`                          | Save the next browser download to disk                                     |
+| `uploadFile`           | `(selector, path) => Promise<void>`                | Upload a local file through a file input                                   |
+| `newTab`               | `(url?) => Promise<void>`                          | Open a new browser tab                                                     |
+| `switchToTab`          | `(index) => Promise<void>`                         | Switch to a tab by index                                                   |
+| `closeTab`             | `() => Promise<void>`                              | Close the current tab                                                      |
+| `getTabIds`            | `() => Promise<string[]>`                          | List known browser tab IDs                                                 |
+| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`  | Read captured browser console messages                                     |
+| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>` | Read captured uncaught JavaScript errors                                   |
+| `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the recorded HTTP Archive for the current run                         |
 
 These helpers are available on local Playwright web runs. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
 
@@ -969,14 +973,14 @@ await app.setNetworkConditions({
 
 **Platform support:**
 
-| Platform | Offline | Profiles | Custom Values |
-|---|---|---|---|
-| Web (Chromium) | Yes | Yes | Yes |
-| Web (Firefox/WebKit) | Yes | No | No |
-| Android emulator | Yes | Yes | Yes |
-| Android device | Yes | No | No |
-| iOS simulator | Yes | Yes (sudo) | Yes (sudo) |
-| Appium cloud | Yes | Yes | varies |
+| Platform             | Offline | Profiles   | Custom Values |
+| -------------------- | ------- | ---------- | ------------- |
+| Web (Chromium)       | Yes     | Yes        | Yes           |
+| Web (Firefox/WebKit) | Yes     | No         | No            |
+| Android emulator     | Yes     | Yes        | Yes           |
+| Android device       | Yes     | No         | No            |
+| iOS simulator        | Yes     | Yes (sudo) | Yes (sudo)    |
+| Appium cloud         | Yes     | Yes        | varies        |
 
 ```ts
 flow("web app can run with mocked APIs", async ({ app, platform }) => {
@@ -1982,9 +1986,47 @@ spana version
 
 ---
 
-## Agent Commands
+## Agent Commands & MCP Server
 
-spana includes three commands designed specifically for AI agent-driven test authoring. They allow an agent to inspect the current UI state, generate flows, and validate them without needing a device connection.
+spana is built for AI coding agents (Claude Code, Codex, Cursor, Antigravity) with both a **model-free stdio MCP server** (`spana mcp`) and structured `--json` CLI commands.
+
+## `spana mcp` (Model-Free Stdio MCP Server)
+
+Start Spana's stdio MCP server so any MCP-compatible agent can drive live Web, iOS, Android, Electron, or Electrobun sessions at sub-5 ms tool latency and export verified `.flow.ts` files:
+
+```json
+{
+  "mcpServers": {
+    "spana": {
+      "command": "npx",
+      "args": ["spana", "mcp"]
+    }
+  }
+}
+```
+
+### Exposed MCP tools
+
+| Tool | Description | Typical Web Latency |
+| --- | --- | ---: |
+| `spana_session_start` | Launch/connect a live session (`web`, `android`, `ios`, `electron`, `electrobun`) | ~125 ms |
+| `spana_observe` | Return a compact interactive accessibility/DOM snapshot (~273 tokens avg) | 1.4–8 ms |
+| `spana_tap` | Tap an element by `{ testID }`, `{ text }`, `{ accessibilityLabel }`, or `systemUI()` | 2.8–4.0 ms |
+| `spana_input_text` / `spana_press_key` | Type text or press keys in the focused control | 1.4 ms |
+| `spana_assert_visible` / `spana_assert_text` | Run real auto-waiting assertions | 0.97 ms |
+| `spana_diagnostics` | Read captured browser console logs & uncaught JS errors | 0.82 ms |
+| `spana_screenshot` | Capture a PNG screenshot for visual inspection | ~35 ms |
+| `spana_export_flow` | Emit a clean, deterministic `.flow.ts` file from the verified session | 0.06 ms |
+| `spana_run_flow` / `spana_session_stop` | Run an existing `.flow.ts` or close the session | ~14 ms |
+
+## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
+
+`ReplaySession` and `ReplayCacheStore` record agentic actions only **after** real assertions pass, then replay them deterministically in CI with zero LLM calls (measured **238.8× faster**: `1,433 ms → 6 ms`).
+
+```bash
+# Enforce 0-LLM deterministic replay in CI (fails loudly on cache miss)
+spana test --strict-cache
+```
 
 ## `spana selectors`
 
@@ -4033,6 +4075,54 @@ spana test --reporter console,junit,html
 - **`junit`** — writes a JUnit XML file to `spana-output/junit.xml`, understood by most CI systems.
 - **`json`** — writes structured JSON to stdout, useful for piping to other tools.
 - **`html`** — writes an HTML report to `spana-output/report.html` with screenshots and step details.
+- **`github`** — writes a PR-ready Markdown summary (`github-pr-summary.md`) and appends directly to `$GITHUB_STEP_SUMMARY` in GitHub Actions.
+
+## PR-Aware CI Filtering (`--changed-since`)
+
+Run only the flows affected by a pull request while staying **fail-open** (changed test files, config/lockfile edits, oversized diffs >60 kB, `alwaysRunTags`, and judge errors always run).
+
+```ts
+// spana.config.ts
+import {
+  defineConfig,
+  decisionFilter,
+  createLogprobDecisionJudge,
+  pathRuleFilter,
+} from "spana-test";
+
+export default defineConfig({
+  filters: [
+    pathRuleFilter({
+      rules: [{ matchFlow: { tag: "billing" }, watchPaths: ["src/billing/"] }],
+    }),
+    decisionFilter({
+      alwaysRunTags: ["smoke"],
+      judge: createLogprobDecisionJudge({
+        provider: "openai", // works with vLLM, SGLang, llama-server, Typesafe AI, OpenRouter, or "ollama"
+        baseUrl: "http://127.0.0.1:8000/v1",
+        model: "typesafe-ai/jev",
+      }),
+    }),
+  ],
+});
+```
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0 # required for merge-base diffing
+
+- name: Run affected E2E flows
+  run: >-
+    npx spana test
+    --parallel --workers 4
+    --reporter console,junit,github
+    ${{ github.event_name == 'pull_request' && format('--changed-since origin/{0}', github.base_ref) || '' }}
+```
+
+`createLogprobDecisionJudge` places the shared git diff prefix **first** in every prompt so vLLM, SGLang, and llama.cpp reuse the KV cache across every flow in the PR and emit only **1 single token** (`YES` / `NO`) with calibrated logprob probabilities.
+
+For parallel CI runs, Spana also persists per-flow durations in `last-run.json` and automatically schedules the slowest flows first (`orderFlowsLongestFirst`) on subsequent runs.
 
 ## GitHub Actions
 

@@ -20,7 +20,7 @@ export default defineConfig({
           tag: "meta",
           attrs: {
             property: "og:image",
-            content: `${site.replace(/\/$/, "")}/assets/spana-scout.jpg`,
+            content: `${site.replace(/\/$/, "")}/assets/github-social-preview.png`,
           },
         },
         {
@@ -34,7 +34,7 @@ export default defineConfig({
           tag: "meta",
           attrs: {
             name: "twitter:image",
-            content: `${site.replace(/\/$/, "")}/assets/spana-scout.jpg`,
+            content: `${site.replace(/\/$/, "")}/assets/github-social-preview.png`,
           },
         },
       ],

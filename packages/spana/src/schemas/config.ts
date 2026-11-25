@@ -121,6 +121,8 @@ export interface WebExecutionConfig {
   engine?: WebBrowserEngine;
   /** Connect to an existing CDP browser / Lightpanda endpoint (e.g. "http://127.0.0.1:9222"). */
   cdpUrl?: string;
+  /** Connect to a remote Playwright server WebSocket (e.g. BrowserStack Automate Web `wss://cdp.browserstack.com/playwright?...`). */
+  wsEndpoint?: string;
   headless?: boolean;
   /** Navigation readiness event for launchApp/openLink (default: "load"). */
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
@@ -471,6 +473,7 @@ const webExecutionConfigSchema = z
     browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
     engine: z.enum(["playwright", "cdp", "lightpanda"]).optional(),
     cdpUrl: z.string().url().optional(),
+    wsEndpoint: z.string().url().optional(),
     headless: z.boolean().optional(),
     waitUntil: z.enum(["domcontentloaded", "load", "networkidle", "commit"]).optional(),
     instantAnimations: z.boolean().optional(),
