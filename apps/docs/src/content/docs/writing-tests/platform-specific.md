@@ -7,7 +7,7 @@ spana runs a single flow file against multiple platforms. There are two mechanis
 
 ## Branching inside a flow
 
-The `platform` value in `FlowContext` is `"web" | "android" | "ios"`. Use it for conditional logic within a flow that is mostly shared across platforms.
+The `platform` value in `FlowContext` is `"web" | "android" | "ios" | "electron" | "electrobun"`. Use it for conditional logic within a flow that is mostly shared across platforms.
 
 ```ts
 import { flow } from "spana-test";
@@ -50,7 +50,9 @@ export default flow(
 );
 ```
 
-This flow is skipped entirely when the runner targets `web`.
+This flow is skipped on `web` (and any other platform not in the list), even when that platform is part of the same run.
+
+`FlowConfig.when.platform` is different: it only drops the flow when none of the run's platforms match. See [Conditional execution](/writing-tests/flows/#conditional-execution-with-when).
 
 ## CLI platform filtering
 
@@ -67,6 +69,19 @@ spana test --platform android,ios
 CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["android"]` will not run if you pass `--platform web`, even if both are in your config.
 
 ## Common patterns
+
+### System UI on mobile
+
+Out-of-process OS UI (permission dialogs, share sheets, in-app browser tabs) is not part of the app's DOM. Mark those selectors with `systemUI` so spana goes straight to the native driver:
+
+```ts
+import { flow, systemUI } from "spana-test";
+
+export default flow("allow notifications", { platforms: ["android", "ios"] }, async ({ app }) => {
+  await app.tap({ testID: "enable-notifications" });
+  await app.tap(systemUI({ text: "Allow" }));
+});
+```
 
 ### Platform-specific selectors
 
@@ -97,7 +112,7 @@ export default flow(
 ### Deep link only on mobile
 
 ```ts
-export default flow("deep link navigation", async ({ app, platform }) => {
+export default flow("deep link navigation", async ({ app, expect, platform }) => {
   if (platform !== "web") {
     await app.openLink("myapp://profile/settings");
   } else {

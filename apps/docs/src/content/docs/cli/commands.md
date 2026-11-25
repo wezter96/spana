@@ -17,13 +17,13 @@ spana test [path] [options]
 
 ### Filtering and targeting
 
-| Flag                           | Description                                  |
-| ------------------------------ | -------------------------------------------- |
-| `--platform <web,android,ios>` | Restrict the run to one or more platforms    |
-| `--tag <tag1,tag2>`            | Run only flows with matching tags            |
-| `--grep <pattern>`             | Run only flows whose names match the pattern |
-| `--device <id>`                | Run on one specific local device             |
-| `--devices <id1>,<id2>`        | Run on specific devices in parallel mode     |
+| Flag                                               | Description                                  |
+| -------------------------------------------------- | -------------------------------------------- |
+| `--platform <web,android,ios,electron,electrobun>` | Restrict the run to one or more platforms    |
+| `--tag <tag1,tag2>`                                | Run only flows with matching tags            |
+| `--grep <pattern>`                                 | Run only flows whose names match the pattern |
+| `--device <id>`                                    | Run on one specific local device             |
+| `--devices <id1>,<id2>`                            | Run on specific devices in parallel mode     |
 
 ### Parallelism and execution control
 
@@ -38,33 +38,35 @@ spana test [path] [options]
 
 ### Iteration helpers
 
-| Flag                 | Description                                        |
-| -------------------- | -------------------------------------------------- |
-| `--watch`            | Re-run when flows or config change                 |
-| `--changed`          | Run only changed flow files from git               |
-| `--last-failed`      | Re-run only flows that failed in the last run      |
-| `--update-baselines` | Rewrite screenshot baselines for visual regression |
+| Flag                    | Description                                                                                                                |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--watch`               | Re-run when flows or config change                                                                                         |
+| `--changed`             | Run only changed flow files from git                                                                                       |
+| `--changed-since <ref>` | Run the `filters` from `spana.config.ts` against the git diff from `<ref>`. Without `filters`, it warns and runs all flows |
+| `--last-failed`         | Re-run only flows that failed in the last run                                                                              |
+| `--update-baselines`    | Rewrite screenshot baselines for visual regression                                                                         |
+| `--strict-cache`        | Accepted for replay cache strict mode, but `spana test` does not use it yet (see [Replay Cache](/cli/agent-commands/))     |
 
 ### Output and configuration
 
-| Flag                | Description                                                                     |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `--reporter <name>` | Reporter: `console`, `json`, `junit`, `html`, `allure`, or a custom module path |
-| `--config <path>`   | Use a non-default config file                                                   |
-| `--validate-config` | Validate config and exit before discovery                                       |
-| `--quiet`, `-q`     | Suppress pass output and show failures plus summary                             |
-| `--verbose`         | Print detailed failure diagnostics and hierarchy                                |
-| `--json`            | Emit machine-readable output where supported                                    |
+| Flag                 | Description                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `--reporter <names>` | Comma-separated reporters: `console`, `json`, `junit`, `html`, `allure`, `github`, or a custom module path (default `console`) |
+| `--config <path>`    | Use a non-default config file                                                                                                  |
+| `--validate-config`  | Validate config and exit before discovery                                                                                      |
+| `--quiet`, `-q`      | Suppress pass output and show failures plus summary                                                                            |
+| `--verbose`          | Print detailed failure diagnostics and hierarchy                                                                               |
 
 ### Appium and cloud overrides
 
-| Flag                       | Description                                           |
-| -------------------------- | ----------------------------------------------------- |
-| `--driver <local\|appium>` | Override `execution.mode`                             |
-| `--appium-url <url>`       | Override `execution.appium.serverUrl`                 |
-| `--caps <path>`            | Load Appium capabilities from JSON                    |
-| `--caps-json <json>`       | Inline Appium capabilities JSON                       |
-| `--no-provider-reporting`  | Skip BrowserStack/Sauce Labs session result reporting |
+| Flag                       | Description                                                         |
+| -------------------------- | ------------------------------------------------------------------- |
+| `--driver <local\|appium>` | Override `execution.mode`                                           |
+| `--appium-url <url>`       | Override `execution.appium.serverUrl`                               |
+| `--appium-auto-start`      | Spawn a local Appium server in Appium mode (ignores any Appium URL) |
+| `--caps <path>`            | Load Appium capabilities from JSON                                  |
+| `--caps-json <json>`       | Inline Appium capabilities JSON                                     |
+| `--no-provider-reporting`  | Skip BrowserStack/Sauce Labs session result reporting               |
 
 ### Examples
 
@@ -123,8 +125,10 @@ CLI flags override `spana.config.ts`. Filtering happens before sharding, so each
 Dump the current UI hierarchy from a live session.
 
 ```bash
-spana hierarchy --platform <web|android|ios> [--config path] [--json] [--pretty]
+spana hierarchy [--platform <web|android|ios>] [--config path] [--json] [--pretty]
 ```
+
+`--platform` defaults to `web`.
 
 Use this to inspect the raw element tree when selectors are not behaving as expected.
 
@@ -133,7 +137,7 @@ Use this to inspect the raw element tree when selectors are not behaving as expe
 List actionable elements and suggested selectors for the current screen.
 
 ```bash
-spana selectors --platform <web|android|ios> [--config path] [--json] [--pretty]
+spana selectors [--platform <web|android|ios>] [--config path] [--json] [--pretty]
 ```
 
 This command connects to the running app, inspects the hierarchy, and returns the best selectors Spana can infer for each visible element.
@@ -168,16 +172,16 @@ Check environment readiness before running tests.
 spana doctor [options]
 ```
 
-| Flag                           | Description                             |
-| ------------------------------ | --------------------------------------- |
-| `--platform <web,android,ios>` | Limit diagnostics to selected platforms |
-| `--config <path>`              | Load a specific config file             |
-| `--driver <local\|appium>`     | Force local or Appium diagnostics       |
-| `--appium-url <url>`           | Override the Appium endpoint under test |
-| `--caps <path>`                | Load Appium capabilities from a file    |
-| `--caps-json <json>`           | Inline Appium capabilities JSON         |
-| `--json`                       | Emit machine-readable doctor results    |
-| `--pretty`                     | Pretty-print JSON output                |
+| Flag                                               | Description                             |
+| -------------------------------------------------- | --------------------------------------- |
+| `--platform <web,android,ios,electron,electrobun>` | Limit diagnostics to selected platforms |
+| `--config <path>`                                  | Load a specific config file             |
+| `--driver <local\|appium>`                         | Force local or Appium diagnostics       |
+| `--appium-url <url>`                               | Override the Appium endpoint under test |
+| `--caps <path>`                                    | Load Appium capabilities from a file    |
+| `--caps-json <json>`                               | Inline Appium capabilities JSON         |
+| `--json`                                           | Emit machine-readable doctor results    |
+| `--pretty`                                         | Pretty-print JSON output                |
 
 Use `doctor` before a new CI environment, after simulator/device setup changes, or when a session fails to start and you want a quick readiness report.
 
@@ -196,8 +200,10 @@ See [Studio](/cli/studio/) for the full workflow.
 Scaffold a new Spana project.
 
 ```bash
-spana init [--preset <local-web|local-react-native|browserstack|saucelabs>] [--force]
+spana init [--preset <local-web|local-react-native|capacitor-web-first|browserstack|saucelabs>] [--force]
 ```
+
+Only `capacitor-web-first` writes a preset config without prompts. The other preset names are accepted, but Spana runs the interactive wizard.
 
 See [Init](/cli/init/) for the generated config and starter flow.
 
@@ -209,13 +215,13 @@ Generate a starter `.flow.ts` file.
 spana init-flow <name> [options]
 ```
 
-| Flag                           | Description                             |
-| ------------------------------ | --------------------------------------- | ------ | ----------------------------------- |
-| `--platform <web,android,ios>` | Add platform tags to the generated flow |
-| `--tag <tag1,tag2>`            | Add custom tags                         |
-| `--preset <blank               | smoke                                   | auth>` | Start from a built-in flow template |
-| `--output <path>`              | Write to a custom file path             |
-| `--force`                      | Overwrite an existing file              |
+| Flag                            | Description                                           |
+| ------------------------------- | ----------------------------------------------------- |
+| `--platform <web,android,ios>`  | Add platform tags to the generated flow               |
+| `--tag <tag1,tag2>`             | Add custom tags                                       |
+| `--preset <blank\|smoke\|auth>` | Start from a built-in flow template (default `smoke`) |
+| `--output <path>`               | Write to a custom file path                           |
+| `--force`                       | Overwrite an existing file                            |
 
 ### Examples
 
@@ -232,7 +238,27 @@ List connected devices and simulators.
 spana devices [--json]
 ```
 
-Output includes platform, device name, device type, and connection state. This is the fastest way to confirm the IDs you should pass to `--device` or `--devices`.
+Spana checks web, Android, iOS, Electron, and Electrobun targets. Output includes platform, device name, device type, and connection state. This is the fastest way to confirm the IDs you should pass to `--device` or `--devices`.
+
+## `spana daemon`
+
+Inspect or stop the warm WDA / UiAutomator2 daemons that Spana has registered (see `execution.warmDaemons`).
+
+```bash
+spana daemon [status|stop]
+```
+
+`status` (the default) lists each registered daemon with kind, device ID, host, port, and PID. `stop` stops all of them.
+
+## `spana mcp`
+
+Start the stdio MCP server for coding agents.
+
+```bash
+spana mcp
+```
+
+See [Agent Commands & MCP Server](/cli/agent-commands/) for the tool list.
 
 ## `spana version`
 

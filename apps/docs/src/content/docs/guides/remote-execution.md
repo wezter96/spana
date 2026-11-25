@@ -3,7 +3,7 @@ title: Remote Execution
 description: Run tests against remote Appium servers and cloud device farms.
 ---
 
-By default, spana runs tests locally using built-in drivers (Playwright for web, UiAutomator2 for Android, WebDriverAgent for iOS). Switch to **Appium mode** to run against a remote Appium server — useful for cloud device farms, shared test infrastructure, or devices on another machine.
+By default, spana runs tests locally using built-in drivers (Playwright or direct CDP for web, UiAutomator2 for Android, WebDriverAgent for iOS). Switch to **Appium mode** to run Android and iOS against a remote Appium server — useful for cloud device farms, shared test infrastructure, or devices on another machine. Web, Electron, and Electrobun still run locally in Appium mode.
 
 ## Enabling Appium mode
 
@@ -26,19 +26,27 @@ export default defineConfig({
 spana test --appium-url http://localhost:4723
 ```
 
-The `--appium-url` flag automatically enables Appium mode.
+The `--appium-url` flag automatically enables Appium mode. You can also select the mode explicitly with `--driver appium` (or `--driver local` to override a config that sets `mode: "appium"`).
+
+The server URL is resolved in this order: `--appium-url`, the `SPANA_APPIUM_URL` environment variable, then `execution.appium.serverUrl`. `SPANA_APPIUM_URL` only supplies the URL; it does not switch on Appium mode by itself.
+
+### Auto-starting a local Appium server
+
+With `--appium-auto-start` (or `execution.appium.autoStart: true`), spana spawns `appium` from `PATH` for the duration of the run and ignores any configured URL. Appium mode must still be on (`mode: "appium"` or `--driver appium`). Use `autoStartBinary` and `autoStartArgs` to change the binary or pass extra arguments.
 
 ## How it works
 
 In Appium mode, spana:
 
 1. Connects to the Appium server at the given URL
-2. Creates a session with the resolved [capabilities](#capabilities)
+2. Creates one session per platform with the resolved [capabilities](#capabilities)
 3. Runs your flows using the Appium WebDriver protocol instead of local drivers
 4. Deletes the session when the run completes
 5. Reports results to the [cloud provider](/guides/cloud-providers) if detected
 
 The same flow files work in both local and Appium mode -- no changes needed.
+
+Appium mode runs one session per platform. `--parallel`, `--workers`, and `--devices` use the local device-discovery path and do not create Appium sessions.
 
 ## Cloud helper config
 
@@ -52,13 +60,15 @@ Raw capabilities still win. Helper config fills missing provider fields and life
 
 ## Capabilities
 
-Appium sessions are configured through W3C capabilities. Spana merges capabilities from three sources (later overrides earlier):
+Appium sessions are configured through W3C capabilities. Spana merges capabilities from five sources (later overrides earlier):
 
-| Source      | How to set                                      | Example                              |
-| ----------- | ----------------------------------------------- | ------------------------------------ |
-| Config file | `execution.appium.capabilities`                 | `{ "appium:app": "/path/to/app" }`   |
-| JSON file   | `--caps <path>` or `capabilitiesFile` in config | `caps.json`                          |
-| Inline CLI  | `--caps-json '<json>'`                          | `'{"appium:deviceName": "Pixel 7"}'` |
+| Source              | How to set                                               | Example                                |
+| ------------------- | -------------------------------------------------------- | -------------------------------------- |
+| Launch device state | `launchOptions.deviceState`                              | `{ language: "sv", locale: "sv_SE" }`  |
+| Config file         | `execution.appium.capabilities`                          | `{ "appium:app": "/path/to/app" }`     |
+| Platform config     | `execution.appium.platformCapabilities.android` / `.ios` | `{ "appium:deviceName": "iPhone 15" }` |
+| JSON file           | `--caps <path>` or `capabilitiesFile` in config          | `caps.json`                            |
+| Inline CLI          | `--caps-json '<json>'`                                   | `'{"appium:deviceName": "Pixel 7"}'`   |
 
 ### Android capabilities
 
@@ -72,7 +82,7 @@ Appium sessions are configured through W3C capabilities. Spana merges capabiliti
 }
 ```
 
-Spana automatically sets `platformName: "Android"`.
+Spana sets `platformName: "Android"` by default. Your capabilities can override it.
 
 ### iOS capabilities
 
@@ -86,7 +96,7 @@ Spana automatically sets `platformName: "Android"`.
 }
 ```
 
-Spana automatically sets `platformName: "iOS"` and `appium:automationName: "XCUITest"`.
+Spana sets `platformName: "iOS"` and `appium:automationName: "XCUITest"` by default. Your capabilities can override them.
 
 ## Local Appium server
 
@@ -117,16 +127,31 @@ export default defineConfig({
       // Appium server URL (required in appium mode)
       serverUrl: "http://localhost:4723",
 
-      // Inline capabilities (lowest priority)
+      // Inline capabilities (applied after launchOptions.deviceState)
       capabilities: {
         "appium:app": "/path/to/app.apk",
       },
 
-      // Path to a JSON capabilities file (medium priority)
+      // Per-platform capabilities (override `capabilities`)
+      platformCapabilities: {
+        android: { "appium:deviceName": "Pixel 7" },
+        ios: { "appium:deviceName": "iPhone 15" },
+      },
+
+      // Path to a JSON capabilities file, resolved relative to spana.config.ts
+      // (overrides config capabilities; --caps-json overrides this)
       capabilitiesFile: "./caps.json",
 
       // Report results to cloud provider (default: true)
       reportToProvider: true,
+
+      // Spawn a local `appium` for the run (default: false)
+      autoStart: false,
+      autoStartBinary: "appium",
+      autoStartArgs: [],
+
+      // Custom cloud provider module (see Cloud Providers guide)
+      // cloudProvider: "./providers/acme-grid.ts",
 
       // BrowserStack helper config
       browserstack: {
@@ -154,12 +179,14 @@ export default defineConfig({
 
 ## CLI flags
 
-| Flag                      | Description                             |
-| ------------------------- | --------------------------------------- |
-| `--appium-url <url>`      | Appium server URL (enables appium mode) |
-| `--caps <path>`           | Path to capabilities JSON file          |
-| `--caps-json <json>`      | Inline capabilities JSON string         |
-| `--no-provider-reporting` | Disable cloud provider result reporting |
+| Flag                       | Description                             |
+| -------------------------- | --------------------------------------- |
+| `--appium-url <url>`       | Appium server URL (enables appium mode) |
+| `--driver <local\|appium>` | Select the execution mode explicitly    |
+| `--appium-auto-start`      | Spawn a local `appium` for the run      |
+| `--caps <path>`            | Path to capabilities JSON file          |
+| `--caps-json <json>`       | Inline capabilities JSON string         |
+| `--no-provider-reporting`  | Disable cloud provider result reporting |
 
 ## Cloud providers
 

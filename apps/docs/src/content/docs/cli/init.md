@@ -13,9 +13,12 @@ spana init
 
 ### Options
 
-| Flag      | Description                                     |
-| --------- | ----------------------------------------------- |
-| `--force` | Overwrite existing `spana.config.ts` if present |
+| Flag              | Description                                                                              |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `--force`         | Overwrite existing `spana.config.ts` (and the starter flow) if present                   |
+| `--preset <name>` | `local-web`, `local-react-native`, `capacitor-web-first`, `browserstack`, or `saucelabs` |
+
+Only `capacitor-web-first` changes the output today: it skips the wizard (see [below](#capacitor-web-first-preset)). The other preset names are accepted, but Spana still runs the interactive wizard.
 
 ## What it does
 
@@ -66,6 +69,21 @@ export default flow(
   },
 );
 ```
+
+## `capacitor-web-first` preset
+
+```bash
+spana init --preset capacitor-web-first
+```
+
+This preset writes files without prompts:
+
+| File                    | Description                                                                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `spana.config.ts`       | All five targets (`web`, `android`, `ios`, `electron`, `electrobun`) with `execution.bridge` and `execution.warmDaemons` turned on |
+| `flows/sign-in.flow.ts` | Sign-in flow that taps a `systemUI()` OAuth sheet                                                                                  |
+
+Install `spana-bridge` in your test builds to use the DOM bridge.
 
 ## Next steps
 

@@ -11,20 +11,24 @@ Spana auto-discovers available devices for each platform. This guide covers how 
 spana devices
 ```
 
-This lists all discovered devices across your configured platforms:
+This lists discovered devices for all platforms (web, Electron, Electrobun, Android, iOS) as platform, name, type, and state:
 
 ```
-Platform   ID                                     Name                        Type
-web        playwright-chromium                     Chromium (Playwright)       browser
-android    emulator-5554                           emulator-5554               emulator
-ios        7338EC82-D2BD-4722-B148-D009FDA64F6E    iPhone 16 (iOS 18.4)        simulator
+  web         Chromium (Playwright)                browser    available
+  electron    Electron (Playwright _electron / CDP) desktop    available
+  electrobun  Electrobun (Native WebView / CEF)    desktop    available
+  android     emulator-5554                        emulator   device
+  ios         iPhone 16 (iOS.18.4)                 simulator  Booted
+  ios         iPhone 16 Pro (iOS.18.4)             simulator  Shutdown
 ```
 
-## Web (Playwright)
+For Android, the name is the serial you pass to `--device`. The plain output does not show iOS UDIDs: use `spana devices --json` to get each device's `id`.
 
-Web testing works out of the box -- Playwright manages its own Chromium browser. No setup required.
+## Web
 
-Spana always shows `playwright-chromium` as an available web device.
+Web testing uses a local Chromium by default. Install a Playwright browser once (`npx playwright install chromium`), or point `execution.web.executablePath` (or `execution.web.channel` on the `playwright` engine) at an installed browser. The `cdp` engine falls back to a system Chrome when no Playwright Chromium is found. `spana doctor` checks this for you.
+
+Spana always shows `playwright-chromium` as an available web device. The browser engine (`execution.web.engine`: `"playwright"` default, `"cdp"`, `"lightpanda"`, or `"auto"`) is chosen in config, not by device.
 
 ## Android
 
@@ -37,6 +41,8 @@ Spana discovers Android devices through `adb` (Android Debug Bridge).
 - **Java 17+** -- required by UiAutomator2
 
 ### Using an emulator
+
+In a single-device run (no `--parallel` / `--workers` / `--devices`), if no device or emulator is connected, spana boots the first AVD from `emulator -list-avds` for you. To start one yourself:
 
 ```bash
 # List available AVDs
@@ -68,13 +74,15 @@ spana test --platform android --device emulator-5554
 
 ## iOS
 
-Spana discovers booted iOS simulators through Xcode's `simctl`.
+Spana discovers iOS simulators through Xcode's `simctl` (all available simulators, booted or not) and connected physical devices through `xcrun devicectl` (Xcode 15+).
+
+When you do not pass `--device`, spana tries a connected physical device first and falls back to a simulator. It prefers a simulator that already has your app installed (booted first), then any booted simulator, then the first available one, and boots it if needed. Boot a simulator before you target it with `--device`.
 
 ### Prerequisites
 
 - **Xcode** -- install from the Mac App Store
 - **Xcode Command Line Tools** -- `xcode-select --install`
-- **A booted simulator** -- spana only discovers simulators that are already running
+- **WebDriverAgent** -- spana builds it with `xcodebuild` from the optional `appium-webdriveragent` dependency on first use per simulator
 
 ### Booting a simulator
 
@@ -92,13 +100,13 @@ open -a Simulator
 ### Targeting a specific simulator
 
 ```bash
-# Use the UDID from `spana devices`
+# Use the UDID from `spana devices --json`
 spana test --platform ios --device 7338EC82-D2BD-4722-B148-D009FDA64F6E
 ```
 
 ### Physical iOS devices
 
-Physical iOS device testing requires additional signing configuration in your config:
+Physical iOS devices need `iproxy` (`brew install libimobiledevice`) and a signed WebDriverAgent. Add your team ID so spana can build and sign WDA for the device:
 
 ```ts title="spana.config.ts"
 export default defineConfig({
@@ -107,27 +115,30 @@ export default defineConfig({
       bundleId: "com.example.myapp",
       signing: {
         teamId: "YOUR_TEAM_ID",
-        signingId: "Apple Development",
-        provisioningProfile: "path/to/profile.mobileprovision",
+        signingIdentity: "Apple Development", // optional, this is the default
       },
     },
   },
 });
 ```
 
+`signing` accepts only `teamId` and `signingIdentity`. Without `signing`, spana expects WebDriverAgent to already be running on the device and only opens the `iproxy` tunnel.
+
 ## Multi-device testing
 
-Run the same flows on multiple devices simultaneously:
+Run the same flows on multiple devices simultaneously. `--device` takes a single ID; use `--devices` (comma-separated) or `--parallel` for more than one:
 
 ```bash
 # Run on a specific Android and iOS device
-spana test \
-  --platform android,ios \
-  --device emulator-5554 \
-  --device 7338EC82-D2BD-4722-B148-D009FDA64F6E
+spana test --devices emulator-5554,7338EC82-D2BD-4722-B148-D009FDA64F6E
+
+# Auto-discover all devices and run in parallel (cap with --workers <n>)
+spana test --platform android,ios --parallel
 ```
 
-When no `--device` flag is provided, spana uses the first available device for each platform.
+With `--devices`, platforms are inferred from the selected devices when `--platform` is not set. `--devices` cannot be combined with `--device`.
+
+When none of `--device`, `--devices`, `--parallel`, or `--workers` is provided, spana uses one device per platform, chosen as described above.
 
 ## Troubleshooting
 
@@ -137,14 +148,15 @@ When no `--device` flag is provided, spana uses the first available device for e
 - Restart ADB: `adb kill-server && adb start-server`
 - For emulators, ensure the emulator is fully booted (wait for the home screen)
 
-### iOS: "no simulators found"
+### iOS: "No iOS simulator or physical device available"
 
-- Spana only discovers **booted** simulators -- make sure one is running
-- Check: `xcrun simctl list devices booted`
-- If empty, boot one: `xcrun simctl boot "iPhone 16"`
+- Check that at least one simulator is available: `xcrun simctl list devices available`
+- If none is listed, create one in Xcode (Settings > Platforms / Devices and Simulators)
+- To skip the boot wait, boot one first: `xcrun simctl boot "iPhone 16"`
 
 ### iOS: WebDriverAgent build fails
 
+- Check that `appium-webdriveragent` is installed (it is an optional dependency), or place WDA in `drivers/ios/WebDriverAgent/`
 - Open `WebDriverAgent.xcodeproj` in Xcode and resolve signing issues
 - Ensure your Xcode version matches the simulator runtime
 - Try: `xcodebuild -showsdks` to verify available SDKs

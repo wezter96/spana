@@ -1,6 +1,6 @@
 ---
 title: Agent API
-description: Programmatic API for connecting to local web, Android, and iOS targets from your own scripts.
+description: Programmatic API for connecting to local web, Android, iOS, Electron, and Electrobun targets from your own scripts.
 ---
 
 The `spana-test/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
@@ -32,7 +32,7 @@ await session.disconnect();
 
 ```ts
 interface ConnectOptions {
-  platform: "web" | "android" | "ios";
+  platform: "web" | "android" | "ios" | "electron" | "electrobun";
   device?: string;
   baseUrl?: string;
   browser?: "chromium" | "firefox" | "webkit";
@@ -45,37 +45,51 @@ interface ConnectOptions {
   };
   packageName?: string;
   bundleId?: string;
+  entry?: string;
+  executablePath?: string;
+  cdpUrl?: string;
+  cdpPort?: number;
+  renderer?: "native" | "cef";
 }
 ```
 
-| Option           | Platform     | Description                                        |
-| ---------------- | ------------ | -------------------------------------------------- |
-| `platform`       | all          | Target platform                                    |
-| `device`         | android, ios | Explicit device ID from `spana devices`            |
-| `baseUrl`        | web          | Base URL to open when the browser session starts   |
-| `browser`        | web          | Browser engine: `chromium`, `firefox`, or `webkit` |
-| `headless`       | web          | Run the browser headless, default `true`           |
-| `storageState`   | web          | Preload Playwright cookies and storage state       |
-| `verboseLogging` | web          | Print verbose Playwright runtime logs              |
-| `storybook`      | web          | Storybook URL and iframe config for `openStory()`  |
-| `packageName`    | android      | Android application ID                             |
-| `bundleId`       | ios          | iOS bundle identifier                              |
+| Option           | Platform             | Description                                                                        |
+| ---------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `platform`       | all                  | Target platform                                                                    |
+| `device`         | android, ios         | Explicit device ID from `spana devices`                                            |
+| `baseUrl`        | web                  | Base URL to open when the browser session starts (default `http://localhost:3000`) |
+| `browser`        | web                  | Browser engine: `chromium`, `firefox`, or `webkit`                                 |
+| `headless`       | web                  | Run the browser headless, default `true`                                           |
+| `storageState`   | web                  | Preload Playwright cookies and storage state                                       |
+| `verboseLogging` | web                  | Print verbose Playwright runtime logs                                              |
+| `storybook`      | web                  | Storybook URL and iframe config for `openStory()`                                  |
+| `packageName`    | android              | Android application ID                                                             |
+| `bundleId`       | ios                  | iOS bundle identifier                                                              |
+| `entry`          | electron             | Electron main entry file to launch                                                 |
+| `executablePath` | electron, electrobun | App executable to launch                                                           |
+| `cdpUrl`         | electron, electrobun | Attach to a running app over CDP                                                   |
+| `cdpPort`        | electron, electrobun | CDP port to use                                                                    |
+| `renderer`       | electrobun           | Electrobun renderer: `native` or `cef`                                             |
+
+Web sessions use the Playwright driver. `connect()` does not take a browser engine option.
 
 ## Session methods
 
 ### Touch and input
 
-| Method            | Signature                            | Description                                        |
-| ----------------- | ------------------------------------ | -------------------------------------------------- |
-| `tap`             | `(selector) => Promise<void>`        | Tap an element                                     |
-| `tapXY`           | `(x, y) => Promise<void>`            | Tap at absolute coordinates                        |
-| `doubleTap`       | `(selector, opts?) => Promise<void>` | Double-tap an element                              |
-| `longPress`       | `(selector, opts?) => Promise<void>` | Long-press an element                              |
-| `longPressXY`     | `(x, y, opts?) => Promise<void>`     | Long-press at coordinates                          |
-| `inputText`       | `(text) => Promise<void>`            | Type into the focused control                      |
-| `pressKey`        | `(key) => Promise<void>`             | Send a named key                                   |
-| `hideKeyboard`    | `() => Promise<void>`                | Dismiss the software keyboard                      |
-| `dismissKeyboard` | `(opts?) => Promise<void>`           | Use the platform-aware keyboard dismissal strategy |
+| Method            | Signature                                     | Description                                        |
+| ----------------- | --------------------------------------------- | -------------------------------------------------- |
+| `tap`             | `(selector) => Promise<void>`                 | Tap an element                                     |
+| `tapXY`           | `(x, y) => Promise<void>`                     | Tap at absolute coordinates                        |
+| `doubleTap`       | `(selector) => Promise<void>`                 | Double-tap an element                              |
+| `longPress`       | `(selector, { duration? }?) => Promise<void>` | Long-press an element                              |
+| `longPressXY`     | `(x, y, opts?) => Promise<void>`              | Long-press at coordinates                          |
+| `inputText`       | `(text) => Promise<void>`                     | Type into the focused control                      |
+| `pressKey`        | `(key) => Promise<void>`                      | Send a named key                                   |
+| `hideKeyboard`    | `() => Promise<void>`                         | Dismiss the software keyboard                      |
+| `dismissKeyboard` | `(opts?) => Promise<void>`                    | Use the platform-aware keyboard dismissal strategy |
+
+`tap`, `doubleTap`, and `longPress` do not auto-wait: the element must already be on screen. Use `scrollUntilVisible()` or `isVisible()` first if it can appear late. `Session` has no `fill()`: call `tap()` and then `inputText()`.
 
 ### Navigation and gestures
 
@@ -110,6 +124,7 @@ interface ConnectOptions {
 | `hierarchy`    | `() => Promise<Element>`                             | Read the full current hierarchy              |
 | `selectors`    | `() => Promise<SuggestedSelector[]>`                 | Get suggested selectors for visible elements |
 | `screenshot`   | `() => Promise<Uint8Array>`                          | Capture a screenshot                         |
+| `platform`     | `Platform` (read-only property)                      | Platform of the session                      |
 | `getText`      | `(selector, opts?) => Promise<string>`               | Read an element's text                       |
 | `getAttribute` | `(selector, name, opts?) => Promise<string \| null>` | Read an attribute                            |
 | `isVisible`    | `(selector, opts?) => Promise<boolean>`              | Check visibility without throwing            |
@@ -138,11 +153,11 @@ interface ConnectOptions {
 | `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>` | Read uncaught JavaScript errors                                            |
 | `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the current HAR network capture                                       |
 
-These helpers are available on local Playwright web sessions.
+These helpers are fully available on local Playwright web sessions. Other drivers implement only some of them (for example, Electron supports `mockNetwork` and console logs). On a driver without the helper, the call fails with "only supported on the web platform".
 
 #### `setNetworkConditions()`
 
-Simulate degraded or offline network conditions across all platforms. You can use a named profile or supply custom values.
+Simulate degraded or offline network conditions. Unlike the other browser helpers, the Android and iOS drivers also support it (see the table below). You can use a named profile or supply custom values.
 
 **Available profiles:** `wifi`, `4g`, `3g`, `2g`, `edge`, `offline`
 
@@ -191,14 +206,14 @@ await session.setNetworkConditions({
 | ------------ | --------------------- | -------------------------------------------------- |
 | `disconnect` | `() => Promise<void>` | Release the session and clean up runtime resources |
 
-## `validateFlows(path)`
+## `validateFlows(paths)`
 
-The same package also exports programmatic validation:
+The same package also exports programmatic validation. It takes a list of flow file paths and returns `{ file, error }` entries for the files that fail to import or have no valid default export:
 
 ```ts
 import { validateFlows } from "spana-test/agent";
 
-const issues = await validateFlows("./flows");
+const issues = await validateFlows(["./flows/login.flow.ts", "./flows/checkout.flow.ts"]);
 if (issues.length > 0) {
   console.error(issues);
 }

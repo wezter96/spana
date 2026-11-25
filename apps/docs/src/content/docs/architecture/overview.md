@@ -3,7 +3,7 @@ title: Architecture Overview
 description: High-level architecture, layered design, and element resolution flow.
 ---
 
-spana uses a layered architecture where all logic lives in TypeScript on the host machine. Platform drivers are thin HTTP clients with no embedded intelligence.
+spana uses a layered architecture where all logic lives in TypeScript on the host machine. Platform drivers are thin clients (HTTP for UiAutomator2/WebDriverAgent/Appium, CDP or Playwright for browsers and desktop webviews) with no embedded selector logic.
 
 ## High-level architecture
 
@@ -12,19 +12,22 @@ graph TD
     A[flow files .flow.ts] --> B[CLI: spana test]
     B --> C[TestRunner / runner.ts]
     C --> D[PlatformOrchestrator]
-    D -->|parallel platforms| E1[Web: Playwright CDP]
-    D -->|parallel platforms| E2[Android: UiAutomator2]
-    D -->|parallel platforms| E3[iOS: WebDriverAgent]
+    D --> E1[Web: Playwright, direct CDP, or Lightpanda]
+    D --> E2[Android: UiAutomator2]
+    D --> E3[iOS: WebDriverAgent]
+    D --> E4[Electron / Electrobun]
     E1 --> F[Reporter]
     E2 --> F
     E3 --> F
+    E4 --> F
     F --> G1[console]
     F --> G2[json]
     F --> G3[junit]
     F --> G4[html]
+    F --> G5[allure / github]
 ```
 
-Platforms run in parallel. Within each platform, flows run serially. Results are collected and passed to the configured reporter(s).
+By default, platforms run one after another so each runtime has exclusive access to its simulator, emulator, or browser. They run concurrently when you pass `--parallel`, `--workers`, or `--devices`, or set `parallelPlatforms: true` in config. Within a platform, flows run serially on one worker, or are pulled from a shared queue when the platform has several workers (see [Parallel execution](#parallel-execution)). Results are collected and passed to the configured reporter(s).
 
 ## Layered architecture
 
@@ -50,7 +53,7 @@ graph TD
     end
 
     subgraph Companion Drivers
-        D1[playwright.ts — CDP via Playwright]
+        D1[playwright.ts / cdp-browser.ts — Playwright or direct CDP]
         D2[uiautomator2/driver.ts — HTTP to APK server]
         D3[wda/driver.ts — HTTP to XCTest runner]
     end
@@ -76,7 +79,7 @@ graph TD
     D3 --> E3
 ```
 
-The Smart Layer never sees raw coordinates. It resolves selectors to elements, derives center coordinates, then calls the thin `RawDriver` interface. The `RawDriver` knows nothing about selectors.
+The Smart Layer resolves selectors to elements, derives center coordinates, then calls the thin `RawDriver` interface. The coordinate-level `RawDriver` methods know nothing about selectors. When a driver exposes an optional DOM channel (web drivers, or the in-app `spana-bridge` for webviews), the Smart Layer can resolve and act on selectors inside the page instead (`smart/channel-resolver.ts`).
 
 ## Element resolution flow
 
@@ -95,7 +98,7 @@ sequenceDiagram
     Coord->>Wait: waitForElement(selector)
     loop poll until found or timeout
         Wait->>Driver: dumpHierarchy()
-        Driver->>Companion: HTTP GET /source
+        Driver->>Companion: HTTP GET /session/:id/source
         Companion-->>Driver: raw XML / JSON string
         Driver-->>Wait: RawHierarchy
         Wait->>Parser: parse(raw) -> Element tree
@@ -104,10 +107,10 @@ sequenceDiagram
     Wait-->>Coord: Element (with bounds)
     Coord->>Coord: centerOf(element) -> {x, y}
     Coord->>Driver: tapAtCoordinate(x, y)
-    Driver->>Companion: HTTP POST /touch/perform
+    Driver->>Companion: HTTP POST /appium/gestures/click (Android) or /wda/tap (iOS)
 ```
 
-The parser is platform-specific (XML for Android/iOS, JSON for web) but always produces the same unified `Element` tree shape. All matching logic runs client-side in TypeScript.
+The diagram shows the native (Android/iOS) path. The parser is platform-specific (XML for Android/iOS, JSON for web) but always produces the same unified `Element` tree shape. On the native path, all matching logic runs client-side in TypeScript.
 
 ## Parallel execution
 
@@ -138,10 +141,13 @@ graph TD
     W3 --> R
 ```
 
-Workers share a single atomic index into the flow array. Because Bun is single-threaded, the increment is naturally safe with no mutex. A faster device finishes sooner and picks up the next flow immediately, draining the queue at the speed of the fastest workers.
+Workers share a single atomic index into the flow array. Because Bun is single-threaded, the increment is naturally safe with no mutex. A faster device finishes sooner and picks up the next flow immediately, draining the queue at the speed of the fastest workers. When a previous run recorded flow durations (`spana-output/.spana/last-run.json`), the queue is ordered longest-first.
+
+For web, `--workers <n>` creates `n` isolated browser contexts spread across `ceil(n / execution.web.maxContextsPerBrowser)` browser processes (default: 1 context per browser for the `cdp` engine, 2 for `playwright`). Android and iOS get one worker per discovered device.
 
 - `parallel.ts` — `runParallel()` launches all workers with `Promise.all`, each looping over the queue until exhausted.
-- `orchestrator.ts` — `orchestrate()` runs one worker per platform with all flows for that platform in series, platforms in parallel.
+- `orchestrator.ts` — `orchestrate()` runs each platform (single worker or `runParallel()` pool). Platforms run serially unless `parallelPlatforms` is enabled.
+- `runtime/local.ts` — `buildWebRuntimePool()` builds the web worker pool.
 
 ## Agent workflow
 
@@ -167,6 +173,8 @@ graph TD
     Root --> Apps[apps/]
 
     Packages --> PProvPkg[spana/ — core library and CLI]
+    Packages --> Bridge[spana-bridge/ — in-app DOM bridge]
+    Packages --> NativePkg[spana-native/ — Rust native accelerator]
     Packages --> Config[config/ — shared TS/lint config]
     Packages --> Env[env/ — environment helpers]
     Packages --> UI[ui/ — shared UI components]
@@ -174,6 +182,7 @@ graph TD
     Apps --> Web[web/ — web app under test]
     Apps --> Native[native/ — React Native app under test]
     Apps --> TUI[tui/ — terminal UI]
+    Apps --> Studio[studio/ — Spana Studio UI]
     Apps --> Docs[docs/]
 
     PProvPkg --> Src[src/]
@@ -181,9 +190,12 @@ graph TD
     Src --> Core[core/ — engine, orchestrator, parallel, runner]
     Src --> Smart[smart/ — coordinator, auto-wait, element-matcher]
     Src --> Drivers[drivers/ — raw-driver interface + platform impls]
+    Src --> Channels[channels/ — CDP, WebKit inspector, bridge DOM channels]
+    Src --> Runtime[runtime/ — local, Appium, web engine selection]
+    Src --> Cloud[cloud/ — BrowserStack, Sauce Labs, custom providers]
     Src --> Agent[agent/ — session.ts for agent/CLI inspection]
     Src --> CLI2[cli/ — CLI entry point]
     Src --> Device[device/ — ADB, simctl device discovery]
-    Src --> Report[report/ — console, json, junit, html reporters]
+    Src --> Report[report/ — console, json, junit, html, allure, github reporters]
     Src --> Schemas[schemas/ — Element, Selector, DeviceInfo types]
 ```

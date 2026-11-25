@@ -248,7 +248,13 @@ function renderVideoPlayback(result: FlowResult, outputDir: string): string {
     steps: trace.steps,
     durationMs: trace.durationMs,
     viewport: trace.viewport ?? { width: 1280, height: 720 },
-  }).replaceAll("</script>", "<\\/script>");
+  })
+    // Escape every tag-forming char so no run-supplied text can close the <script> block.
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e")
+    .replaceAll("&", "\\u0026")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
 
   const firstFrame = trace.frames[0]!;
   const stepButtons = trace.steps

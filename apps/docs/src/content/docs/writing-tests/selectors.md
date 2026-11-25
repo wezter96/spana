@@ -17,11 +17,11 @@ A selector tells spana which element to interact with or assert on. Selectors ar
 
 The preferred selector. Maps to the platform's primary element identifier:
 
-| Platform | Attribute                            |
-| -------- | ------------------------------------ |
-| Web      | `data-testid` attribute              |
-| Android  | `resource-id` (last segment matched) |
-| iOS      | `accessibilityIdentifier`            |
+| Platform | Attribute                             |
+| -------- | ------------------------------------- |
+| Web      | `data-testid` (or `testID`) attribute |
+| Android  | `resource-id` (last segment matched)  |
+| iOS      | `accessibilityIdentifier`             |
 
 Add `testID` props to your React Native components:
 
@@ -39,7 +39,7 @@ On web, this renders as `data-testid="login-button"`.
 }
 ```
 
-Matches against the visible label text of an element. Partial matching is supported — the element text only needs to contain the provided string.
+Matches against the visible label text of an element. Matching is a case-insensitive substring match — the element text only needs to contain the provided string.
 
 Use this when a `testID` is not available, such as for dynamic or third-party content.
 
@@ -51,7 +51,19 @@ Use this when a `testID` is not available, such as for dynamic or third-party co
 }
 ```
 
-Matches the OS-level accessibility label. Useful for elements that have a label distinct from their visible text (e.g. icon buttons).
+Matches the OS-level accessibility label exactly (on web, the `aria-label` attribute). Useful for elements that have a label distinct from their visible text (e.g. icon buttons).
+
+### System UI
+
+```ts
+import { systemUI } from "spana-test";
+
+await app.tap(systemUI({ text: "Allow" }));
+// equivalent to:
+await app.tap({ text: "Allow", systemUI: true });
+```
+
+Add `systemUI: true` to a `text` or `accessibilityLabel` selector when it targets out-of-process OS UI, such as permission dialogs, `SFSafariViewController`, `ASWebAuthenticationSession`, or Chrome Custom Tabs. spana then skips the DOM channel and uses the native driver.
 
 ### point
 
@@ -63,13 +75,15 @@ Taps at absolute screen coordinates. Use as a last resort — coordinates are de
 
 ### String shorthand
 
-A plain string is treated as a `testID`:
+A plain string is treated as a `text` selector (case-insensitive substring match), not as a `testID`:
 
 ```ts
-await app.tap("login-button");
-// equivalent to:
-await app.tap({ testID: "login-button" });
+await app.tap("Sign In");
+// matches the same elements as:
+await app.tap({ text: "Sign In" });
 ```
+
+Use `{ testID: "..." }` explicitly when you mean a test ID.
 
 ## Relative selectors
 
@@ -105,7 +119,7 @@ await app.tap({
 });
 ```
 
-Relative selectors work with all interaction methods (`tap`, `doubleTap`, `longPress`) and assertions (`expect().toBeVisible()`, etc.).
+Relative selectors work with the selector-based interaction methods (`tap`, `doubleTap`, `longPress`, etc.) and assertions (`expect().toBeVisible()`, etc.).
 
 ## Selector priority
 
@@ -114,7 +128,6 @@ When spana builds a suggested selector (e.g. in `spana selectors` output), it us
 1. `testID` — most stable, preferred
 2. `accessibilityLabel`
 3. `text`
-4. `point` — last resort
 
 ## WaitOptions
 
@@ -125,8 +138,11 @@ await app.tap({ testID: "slow-element" }, { timeout: 10000 });
 await expect({ testID: "result" }).toBeVisible({ timeout: 15000, pollInterval: 500 });
 ```
 
-| Option          | Type     | Description                                   |
-| --------------- | -------- | --------------------------------------------- |
-| `timeout`       | `number` | ms to wait before failing                     |
-| `pollInterval`  | `number` | ms between hierarchy polls                    |
-| `settleTimeout` | `number` | ms the element must be stable before matching |
+| Option                | Type                | Description                                                                  |
+| --------------------- | ------------------- | ---------------------------------------------------------------------------- |
+| `timeout`             | `number`            | ms to wait before failing                                                    |
+| `pollInterval`        | `number`            | ms between hierarchy polls                                                   |
+| `settleTimeout`       | `number`            | ms the element must be stable before matching                                |
+| `initialPollInterval` | `number`            | first poll interval before adaptive backoff                                  |
+| `tapMode`             | `"native" \| "dom"` | for taps resolved via a DOM channel: real touch or synthetic click           |
+| `failFastWhenIdle`    | `boolean`           | on web, fail early when the page is idle instead of waiting the full timeout |

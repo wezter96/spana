@@ -1,16 +1,16 @@
 ---
 title: Reporters
-description: Built-in reporters for test output — console, JSON, JUnit, HTML, and Allure.
+description: Built-in reporters for test output — console, JSON, JUnit, HTML, Allure, and GitHub.
 ---
 
-Spana ships five reporters. Use one or combine several to get both human-readable output and machine-readable artifacts from the same run.
+Spana ships six reporters. Use one or combine several to get both human-readable output and machine-readable artifacts from the same run.
 
 ## Enabling reporters
 
-**CLI flag** (one or more):
+**CLI flag** (comma-separated; if you repeat `--reporter`, only the last one is used):
 
 ```bash
-spana test --reporter console --reporter html
+spana test --reporter console,html
 ```
 
 **Config file** (`spana.config.ts`):
@@ -21,7 +21,7 @@ export default defineConfig({
 });
 ```
 
-Multiple reporters run simultaneously. Each receives the same flow results as they complete.
+The CLI flag replaces `reporters` from the config. With neither set, Spana uses `console`. Multiple reporters run simultaneously. Each receives the same flow results as they complete.
 
 ---
 
@@ -34,7 +34,7 @@ Human-readable terminal output with pass/fail symbols, per-platform summaries, a
 **Output:** stdout.
 
 ```
-  ✓ [web] login flow (1243ms)
+  ✓ login flow (1243ms)
   ✗ [android] login flow (3891ms)
 
 web (Playwright)              ✓  1/1 passed (1.2s)
@@ -42,12 +42,13 @@ android (UiAutomator2)        ✗  0/1 passed (3.9s)
 
 --- Failures ---
 ✗ [android] login flow
+  Category: timeout
   Timed out waiting for selector "welcome-text"
 
 1/2 passed, 1 failed (3.9s)
 ```
 
-Flaky tests (passed on retry) are marked with `~` and show the attempt number. Scenario steps (Given/When/Then) are printed inline when using Gherkin-style flows.
+Flaky tests (passed on retry) are tagged `[flaky, passed on attempt N]` and listed with `~` in a "Flaky" section. Scenario steps (Given/When/Then) are printed inline when using Gherkin-style flows.
 
 **When to use:** local development and quick CI feedback.
 
@@ -59,7 +60,7 @@ Streams newline-delimited JSON events to stdout. Each line is a self-contained J
 
 **Enable:** `--reporter json`
 
-**Output:** stdout (one JSON object per line).
+**Output:** stdout (one JSON object per line). Each event holds every field of the `FlowResult` or `RunSummary`, plus `event`.
 
 Events emitted:
 
@@ -71,7 +72,7 @@ Events emitted:
 
 ```json
 {"event":"flowPass","name":"login flow","platform":"web","status":"passed","durationMs":1243}
-{"event":"flowFail","name":"login flow","platform":"android","status":"failed","durationMs":3891,"error":{"message":"Timed out"}}
+{"event":"flowFail","name":"login flow","platform":"android","status":"failed","durationMs":3891,"error":{"message":"Timed out","category":"timeout"}}
 {"event":"runComplete","total":2,"passed":1,"failed":1,"skipped":0,"flaky":0,"durationMs":3891}
 ```
 
@@ -111,7 +112,7 @@ Results are grouped by platform into `<testsuite>` elements. Scenario steps, dri
 
 ![HTML Report](../../../assets/html-report.png)
 
-Self-contained HTML report with a dark theme, responsive layout, and embedded screenshots (base64-inlined so no external files are needed).
+Single-file HTML report with a dark theme, responsive layout, and embedded screenshots (base64-inlined).
 
 **Enable:** `--reporter html`
 
@@ -124,6 +125,7 @@ The report includes:
 - **Step screenshots** -- inline images from each step that captured a screenshot.
 - **Final-state screenshots** -- side-by-side comparison of the final screen on each platform.
 - **Failure details** -- error messages displayed inline.
+- **Video and playback** -- when `artifacts.video` is `"on"` or `"retain-on-failure"`, a video player for the flow recording, and a step-by-step visual playback timeline when frames were captured (`artifacts.playback`). Videos up to 8 MB are inlined; larger videos are linked by a relative path, so keep them next to `report.html`.
 
 **When to use:** sharing results with teammates, reviewing visual state after a run, or archiving test evidence.
 
@@ -135,7 +137,7 @@ Generates [Allure](https://allurereport.org/) result files for rich CI dashboard
 
 **Enable:** `--reporter allure`
 
-**Output:** `allure-results/` directory (default), containing `*-result.json` files and an `environment.properties` file.
+**Output:** `allure-results/` directory (relative to the current working directory; not configurable from the CLI or config), containing `*-result.json` files and an `environment.properties` file.
 
 ```bash
 # Run tests with Allure reporter
@@ -155,6 +157,18 @@ The reporter produces:
 - **Step mapping** — spana steps (tap, assertVisible, etc.) map to Allure test steps with status and duration
 
 **When to use:** CI dashboards that support Allure (Jenkins Allure Plugin, GitHub Actions with `allure-report` action, GitLab with Allure integration).
+
+---
+
+## GitHub
+
+Writes a Markdown run summary for GitHub Actions job summaries and pull request comments: pass/fail/skip counts, a per-platform table, and collapsible failure details with suggestions.
+
+**Enable:** `--reporter github`
+
+**Output:** `<outputDir>/github-pr-summary.md` (default `./spana-output/github-pr-summary.md`). When `$GITHUB_STEP_SUMMARY` is set, the same Markdown is also appended to the job summary. With `--changed-since`, the filter notes are included.
+
+**When to use:** GitHub Actions runs where you want results in the job summary, or a file to post as a PR comment.
 
 ---
 

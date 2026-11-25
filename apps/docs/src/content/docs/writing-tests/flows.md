@@ -3,7 +3,7 @@ title: Flows
 description: The flow() API — defining, configuring, and exporting test flows.
 ---
 
-A flow is the basic unit of a spana test. Each flow file exports a single `FlowDefinition` as its default export.
+A flow is the basic unit of a spana test. Each flow file exports a single `FlowDefinition` as its default export. spana discovers flow files named `*.flow.ts` or `*.test.ts` (plus `*.feature` for [Gherkin](/writing-tests/gherkin/)).
 
 ## Defining a flow
 
@@ -57,16 +57,18 @@ The function receives a `FlowContext` object:
 ```ts
 interface FlowContext {
   app: PromiseApp;
-  expect: (selector: Selector) => PromiseExpectation;
+  expect: (selector: ExtendedSelector) => PromiseExpectation;
   platform: Platform;
+  sessions: Sessions;
 }
 ```
 
-| Property   | Type                               | Description                                               |
-| ---------- | ---------------------------------- | --------------------------------------------------------- |
-| `app`      | `PromiseApp`                       | App interaction API — tap, type, scroll, launch, etc.     |
-| `expect`   | `(selector) => PromiseExpectation` | Assertion API — `toBeVisible`, `toBeHidden`, `toHaveText` |
-| `platform` | `"web" \| "android" \| "ios"`      | The platform this run is executing on                     |
+| Property   | Type                               | Description                                                                                       |
+| ---------- | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `app`      | `PromiseApp`                       | App interaction API — tap, type, scroll, launch, etc.                                             |
+| `expect`   | `(selector) => PromiseExpectation` | Assertion API — `toBeVisible`, `toBeHidden`, `toHaveText`                                         |
+| `platform` | `Platform`                         | `"web"`, `"android"`, `"ios"`, `"electron"`, or `"electrobun"`                                    |
+| `sessions` | `Sessions`                         | `sessions.open({ name, platform: "web", ... })` opens an extra named web session in the same flow |
 
 ## FlowConfig
 
@@ -88,16 +90,16 @@ interface WhenCondition {
 }
 ```
 
-| Option          | Type             | Default        | Description                                                      |
-| --------------- | ---------------- | -------------- | ---------------------------------------------------------------- |
-| `tags`          | `string[]`       | —              | Tag strings for `--tag` filtering at the CLI                     |
-| `platforms`     | `Platform[]`     | all configured | Restrict this flow to specific platforms only                    |
-| `timeout`       | `number`         | config default | Flow-level timeout in milliseconds                               |
-| `autoLaunch`    | `boolean`        | `true`         | Automatically launch the app before the flow starts              |
-| `launchOptions` | `LaunchOptions`  | config default | Override launch defaults for this flow and for manual app.launch |
-| `artifacts`     | `ArtifactConfig` | config default | Override capture behavior for this single flow                   |
-| `defaults`      | `FlowDefaults`   | config default | Override wait / typing / stability defaults per flow             |
-| `when`          | `WhenCondition`  | —              | Runtime conditions that control whether the flow runs            |
+| Option          | Type             | Default                                 | Description                                                      |
+| --------------- | ---------------- | --------------------------------------- | ---------------------------------------------------------------- |
+| `tags`          | `string[]`       | —                                       | Tag strings for `--tag` filtering at the CLI                     |
+| `platforms`     | `Platform[]`     | all configured                          | Restrict this flow to specific platforms only                    |
+| `timeout`       | `number`         | `defaults.waitTimeout × 10`, or `60000` | Flow-level timeout in milliseconds                               |
+| `autoLaunch`    | `boolean`        | `true`                                  | Automatically launch the app before the flow starts              |
+| `launchOptions` | `LaunchOptions`  | config default                          | Override launch defaults for this flow and for manual app.launch |
+| `artifacts`     | `ArtifactConfig` | config default                          | Override capture behavior for this single flow                   |
+| `defaults`      | `FlowDefaults`   | config default                          | Override wait / typing / stability defaults per flow             |
+| `when`          | `WhenCondition`  | —                                       | Runtime conditions that control whether the flow runs            |
 
 ### Per-flow launch overrides
 
@@ -128,11 +130,11 @@ The `when` field lets you skip flows based on runtime conditions.
 
 #### Platform condition
 
-`when.platform` works like `platforms` but within the `when` block, keeping conditional logic grouped:
+`when.platform` is checked once, against the whole set of platforms selected for the run. The flow is dropped only when none of the selected platforms match. Unlike `platforms`, it does not skip the flow on each non-matching platform inside a multi-platform run. Use `platforms` when a flow must never run on a given platform.
 
 ```ts
 export default flow("iOS-specific test", { when: { platform: "ios" } }, async ({ app, expect }) => {
-  // only runs on iOS
+  // skipped when the run does not include iOS
 });
 ```
 
@@ -143,14 +145,14 @@ export default flow(
   "mobile-only test",
   { when: { platform: ["ios", "android"] } },
   async ({ app, expect }) => {
-    // runs on iOS and Android, skipped on web
+    // skipped when the run targets only web
   },
 );
 ```
 
 #### Environment variable condition
 
-`when.env` skips the flow unless the specified environment variable is set:
+`when.env` skips the flow unless the specified environment variable is set to a non-empty value:
 
 ```ts
 export default flow(
@@ -160,7 +162,7 @@ export default flow(
     tags: ["smoke"],
   },
   async ({ app, expect }) => {
-    // only runs when CI=1 (or any truthy value)
+    // only runs when CI is set to any non-empty value
   },
 );
 ```
@@ -171,23 +173,26 @@ All methods return `Promise<void>` unless noted.
 
 ### Core interaction
 
-| Method               | Signature                             | Description                                      |
-| -------------------- | ------------------------------------- | ------------------------------------------------ |
-| `tap`                | `(selector, opts?) => Promise<void>`  | Tap an element                                   |
-| `tapXY`              | `(x, y) => Promise<void>`             | Tap at absolute coordinates                      |
-| `doubleTap`          | `(selector, opts?) => Promise<void>`  | Double-tap an element                            |
-| `longPress`          | `(selector, opts?) => Promise<void>`  | Long-press an element                            |
-| `longPressXY`        | `(x, y, opts?) => Promise<void>`      | Long-press at coordinates                        |
-| `inputText`          | `(text) => Promise<void>`             | Type text into the focused element               |
-| `pressKey`           | `(key) => Promise<void>`              | Press a named key                                |
-| `hideKeyboard`       | `() => Promise<void>`                 | Dismiss the software keyboard                    |
-| `dismissKeyboard`    | `(opts?) => Promise<void>`            | Use a platform-aware keyboard dismissal strategy |
-| `swipe`              | `(direction, opts?) => Promise<void>` | Swipe in a direction                             |
-| `scroll`             | `(direction) => Promise<void>`        | Scroll in a direction                            |
-| `scrollUntilVisible` | `(selector, opts?) => Promise<void>`  | Scroll until a target becomes visible            |
-| `backUntilVisible`   | `(selector, opts?) => Promise<void>`  | Use system back until a target becomes visible   |
+| Method               | Signature                                   | Description                                                                 |
+| -------------------- | ------------------------------------------- | --------------------------------------------------------------------------- |
+| `tap`                | `(selector, opts?) => Promise<void>`        | Tap an element                                                              |
+| `tapXY`              | `(x, y) => Promise<void>`                   | Tap at absolute coordinates                                                 |
+| `doubleTap`          | `(selector, opts?) => Promise<void>`        | Double-tap an element                                                       |
+| `longPress`          | `(selector, opts?) => Promise<void>`        | Long-press an element                                                       |
+| `longPressXY`        | `(x, y, opts?) => Promise<void>`            | Long-press at coordinates                                                   |
+| `inputText`          | `(text) => Promise<void>`                   | Type text into the focused element                                          |
+| `fill`               | `(selector, value, opts?) => Promise<void>` | Wait for a field, focus it, replace its value, and fire input/change events |
+| `pressKey`           | `(key) => Promise<void>`                    | Press a named key                                                           |
+| `hideKeyboard`       | `() => Promise<void>`                       | Dismiss the software keyboard                                               |
+| `dismissKeyboard`    | `(opts?) => Promise<void>`                  | Use a platform-aware keyboard dismissal strategy                            |
+| `swipe`              | `(direction, opts?) => Promise<void>`       | Swipe in a direction                                                        |
+| `scroll`             | `(direction) => Promise<void>`              | Scroll in a direction                                                       |
+| `scrollUntilVisible` | `(selector, opts?) => Promise<void>`        | Scroll until a target becomes visible                                       |
+| `backUntilVisible`   | `(selector, opts?) => Promise<void>`        | Use system back until a target becomes visible                              |
 
 Direction values are `"up" | "down" | "left" | "right"`.
+
+When a DOM channel is connected (web, and WebViews reached via CDP or `spana-bridge`), `fill()` does all of this in one in-page call. On native-only elements it falls back to a tap plus `inputText()`, which does not clear the existing value.
 
 `dismissKeyboard()` defaults to an auto strategy that uses the driver-specific keyboard dismissal path and falls back to Android system back when needed. `scrollUntilVisible()` and `backUntilVisible()` are useful for replacing ad hoc retry loops in mobile-heavy flows.
 
@@ -217,40 +222,45 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 
 ### Element queries and utilities
 
-| Method           | Signature                                            | Description                                      |
-| ---------------- | ---------------------------------------------------- | ------------------------------------------------ |
-| `takeScreenshot` | `() => Promise<Uint8Array>`                          | Capture a screenshot and return the bytes        |
-| `getText`        | `(selector, opts?) => Promise<string>`               | Read the current element text                    |
-| `getAttribute`   | `(selector, name, opts?) => Promise<string \| null>` | Read an element attribute                        |
-| `isVisible`      | `(selector, opts?) => Promise<boolean>`              | Check visibility without failing the flow        |
-| `isEnabled`      | `(selector, opts?) => Promise<boolean>`              | Check whether an element is enabled              |
-| `evaluate`       | `<T>(fn \| string, ...args) => Promise<T>`           | Run JavaScript in the browser context (web only) |
+| Method           | Signature                                                 | Description                                                           |
+| ---------------- | --------------------------------------------------------- | --------------------------------------------------------------------- |
+| `takeScreenshot` | `(name?) => Promise<Uint8Array>`                          | Capture a screenshot and return the bytes                             |
+| `getText`        | `(selector, opts?) => Promise<string>`                    | Read the current element text                                         |
+| `getAttribute`   | `(selector, name, opts?) => Promise<string \| undefined>` | Read an element attribute                                             |
+| `isVisible`      | `(selector, { timeout? }?) => Promise<boolean>`           | Check visibility without failing the flow (default timeout `1000` ms) |
+| `isEnabled`      | `(selector, opts?) => Promise<boolean>`                   | Check whether an element is enabled                                   |
+| `evaluate`       | `<T>(fn \| string, ...args) => Promise<T>`                | Run JavaScript in the page or WebView context                         |
 
 `getText()`, `getAttribute()`, `isVisible()`, and `isEnabled()` are useful when you need branching logic instead of a hard assertion.
 
 ### Browser runtime helpers
 
-| Method                 | Signature                                          | Description                                                                |
-| ---------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- |
-| `mockNetwork`          | `(matcher, response) => Promise<void>`             | Fulfill matching requests with a mocked response                           |
-| `blockNetwork`         | `(matcher) => Promise<void>`                       | Abort matching requests                                                    |
-| `clearNetworkMocks`    | `() => Promise<void>`                              | Remove active route mocks or blocks                                        |
-| `setNetworkConditions` | `(conditions) => Promise<void>`                    | Simulate network conditions — profiles, custom throttling, or offline mode |
-| `saveCookies`          | `(path) => Promise<void>`                          | Save Playwright cookies to a JSON file                                     |
-| `loadCookies`          | `(path) => Promise<void>`                          | Load cookies from a JSON file                                              |
-| `saveAuthState`        | `(path) => Promise<void>`                          | Save Playwright storage state to disk                                      |
-| `loadAuthState`        | `(path) => Promise<void>`                          | Replace the browser context with saved auth state                          |
-| `downloadFile`         | `(path) => Promise<void>`                          | Save the next browser download to disk                                     |
-| `uploadFile`           | `(selector, path) => Promise<void>`                | Upload a local file through a file input                                   |
-| `newTab`               | `(url?) => Promise<void>`                          | Open a new browser tab                                                     |
-| `switchToTab`          | `(index) => Promise<void>`                         | Switch to a tab by index                                                   |
-| `closeTab`             | `() => Promise<void>`                              | Close the current tab                                                      |
-| `getTabIds`            | `() => Promise<string[]>`                          | List known browser tab IDs                                                 |
-| `getConsoleLogs`       | `() => Promise<Array<{ type, text, location? }>>`  | Read captured browser console messages                                     |
-| `getJSErrors`          | `() => Promise<Array<{ name?, message, stack? }>>` | Read captured uncaught JavaScript errors                                   |
-| `getHAR`               | `() => Promise<Record<string, unknown>>`           | Read the recorded HTTP Archive for the current run                         |
+| Method                       | Signature                                          | Description                                                                     |
+| ---------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `mockNetwork`                | `(matcher, response) => Promise<void>`             | Fulfill matching requests with a mocked response                                |
+| `blockNetwork`               | `(matcher) => Promise<void>`                       | Abort matching requests                                                         |
+| `clearNetworkMocks`          | `() => Promise<void>`                              | Remove active route mocks or blocks                                             |
+| `setNetworkConditions`       | `(conditions) => Promise<void>`                    | Simulate network conditions — profiles, custom throttling, or offline mode      |
+| `saveCookies`                | `(path) => Promise<void>`                          | Save Playwright cookies to a JSON file                                          |
+| `loadCookies`                | `(path) => Promise<void>`                          | Load cookies from a JSON file                                                   |
+| `saveAuthState`              | `(path) => Promise<void>`                          | Save Playwright storage state to disk                                           |
+| `loadAuthState`              | `(path) => Promise<void>`                          | Replace the browser context with saved auth state                               |
+| `downloadFile`               | `(path) => Promise<void>`                          | Save the next browser download to disk                                          |
+| `uploadFile`                 | `(selector, path) => Promise<void>`                | Upload a local file through a file input                                        |
+| `newTab`                     | `(url?) => Promise<string>`                        | Open a new browser tab and return its ID                                        |
+| `switchToTab`                | `(index) => Promise<void>`                         | Switch to a tab by index                                                        |
+| `closeTab`                   | `() => Promise<void>`                              | Close the current tab                                                           |
+| `getTabIds`                  | `() => Promise<string[]>`                          | List known browser tab IDs                                                      |
+| `getConsoleLogs`             | `() => Promise<Array<{ type, text, location? }>>`  | Read captured browser console messages                                          |
+| `getJSErrors`                | `() => Promise<Array<{ name?, message, stack? }>>` | Read captured uncaught JavaScript errors                                        |
+| `getHAR`                     | `() => Promise<Record<string, unknown>>`           | Read the recorded HTTP Archive for the current run (Playwright engine only)     |
+| `getPage`                    | `<T>() => T`                                       | Escape hatch: the underlying Playwright `Page` or CDP page object (synchronous) |
+| `enableVirtualAuthenticator` | `(opts?) => Promise<string>`                       | Add a WebAuthn virtual authenticator (passkeys) and return its ID               |
+| `removeVirtualAuthenticator` | `(id?) => Promise<void>`                           | Remove a virtual authenticator (default: the latest one)                        |
+| `getVirtualCredentials`      | `(id?) => Promise<VirtualCredential[]>`            | List credentials stored in the virtual authenticator                            |
+| `clearVirtualCredentials`    | `(id?) => Promise<void>`                           | Delete credentials stored in the virtual authenticator                          |
 
-These helpers are available on local Playwright web runs. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
+These helpers are available on local web runs with the Playwright or direct CDP engine. `getHAR()` needs the Playwright engine. `mockNetwork`, `blockNetwork`, `getConsoleLogs`, and `getJSErrors` are also implemented for Electron, Electrobun, and mobile WebViews; on Android and iOS, network mocks need `spana-bridge`. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
 
 #### `setNetworkConditions()`
 
@@ -335,12 +345,23 @@ flow("primary button story passes smoke checks", async ({ app, expect, platform 
     globals: { theme: "dark" },
   });
 
-  await expect({ role: "button", text: "Save" }).toBeVisible();
-  await expect({ role: "button", text: "Save" }).toMatchScreenshot("storybook-button");
+  await expect({ text: "Save" }).toBeVisible();
+  await expect({ text: "Save" }).toMatchScreenshot("storybook-button");
 });
 ```
 
 Set `execution.web.storybook.url` when Storybook runs on a different origin from your main app. `args` and `globals` support scalar values (`string`, `number`, `boolean`, `null`).
+
+### Fast state helpers
+
+| Method         | Signature                    | Description                                                                                                              |
+| -------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `waitForIdle`  | `(opts?) => Promise<void>`   | Wait for in-flight requests, animations, and renders to settle (needs `spana-bridge`; no-op otherwise)                   |
+| `setStorage`   | `(entries) => Promise<void>` | Inject `localStorage`, `sessionStorage`, and cookies directly                                                            |
+| `clearStorage` | `(opts?) => Promise<void>`   | Clear `localStorage` and `sessionStorage` without a UI flow                                                              |
+| `resetFast`    | `() => Promise<void>`        | Clear storage and reload instead of a full app reset, where the driver supports it; otherwise falls back to `clearState` |
+
+`setStorage` and `clearStorage` run through `evaluate()`, so they work wherever `evaluate()` works. With `spana-bridge` connected, `clearStorage` can also clear cookies, IndexedDB, and Capacitor Preferences.
 
 ### Hybrid / WebView helpers
 
@@ -378,7 +399,7 @@ flow("read page state", async ({ app, platform }) => {
 });
 ```
 
-`evaluate()` is only supported on the web platform. Native apps do not expose a JavaScript execution context.
+`evaluate()` runs in the web page on web, in the renderer on Electron / Electrobun, and in the WebView on mobile when a DOM channel (CDP, WebKit Inspector, or `spana-bridge`) is reachable. Pure native screens have no JavaScript context.
 
 ## Per-flow artifact overrides
 
@@ -423,4 +444,4 @@ export default flow("my flow", async ({ app }) => {
 });
 ```
 
-Per-flow `FlowConfig` values take precedence over `settings`.
+`settings` is shallow-merged on top of the flow's own `FlowConfig`, so a key set in both places takes the `settings` value.

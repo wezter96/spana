@@ -14,21 +14,21 @@ Existing E2E tools force a painful split:
 
 Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 
-1. **Fast DOM Lane (~1 ms):** `{ testID }` queries pierce Shadow DOM and same-origin `<iframe>`s via built-in `PlaywrightDomChannel`, `spana-bridge`, Android CDP, Lightpanda CDP, iOS WebKit Inspector, or Apple `webinspectord`, paired with `MutationObserver` reactive waits.
+1. **Fast DOM Lane:** `{ testID }` queries pierce Shadow DOM and same-origin `<iframe>`s via the built-in Playwright DOM channel, the direct CDP engine (`execution.web.engine: "cdp"` or `"auto"`), `spana-bridge`, Android CDP, Lightpanda CDP, iOS WebKit Inspector, or Apple `webinspectord`, paired with `MutationObserver` reactive waits.
 2. **Native & System UI Lane:** Real OS touches and out-of-process native sheets (`systemUI()`) go directly to persistent warm UiAutomator2 / WebDriverAgent daemons (with session reuse) — or to BrowserStack / Sauce Labs in Appium cloud mode.
 
 ## Key principles
 
 - **Pure TypeScript (plus optional Gherkin / BDD).** Full autocomplete, imports, composable lazy fixtures (`createFlowWithFixtures`), and named setups (`defineSetup`). Works with both Bun and Node.js 20+.
 - **Zero-setup fast path, opt-in superpowers.** Works with zero app modification out of the box, and supports an opt-in `spana-bridge` WebSocket package for instant storage injection, fast reset, network mocking, and lazy idle detection across hybrid mobile and desktop shells.
-- **Agent-native from day one.** Ships a model-free stdio MCP server (`spana mcp`, 2–4 ms tool latency, ~273-token observations), a Verified Replay Cache (`.spana/cache/`, `--strict-cache`), pluggable CI Filters (`--changed-since` + 1-token KV-cache logprob decision judge), and versioned `--json` CLI envelopes.
-- **Engineered for raw speed.** Speculative CLI browser pre-launch, persistent warm Chromium/WDA/UA2 daemons, single-browser multi-context worker pools, `MutationObserver` reactive waits + optional `failFastWhenIdle`, `instantAnimations`, `blockResources`, and auto-persisted longest-first `--parallel` scheduling.
+- **Agent-native from day one.** Ships a model-free stdio MCP server (`spana mcp`), a Verified Replay Cache for agentic steps (`.spana/cache/`), pluggable CI Filters (`filters` + `--changed-since`, including an optional LLM decision judge), and versioned `--json` envelopes on agent-facing commands.
+- **Engineered for raw speed.** Speculative CLI browser pre-launch, an opt-in direct CDP web engine (no Playwright pipe), persistent warm Chromium/WDA/UA2 daemons, multi-context browser worker pools, `app.fill()` one-call form fills, `MutationObserver` reactive waits + optional `failFastWhenIdle`, `instantAnimations`, `blockResources`, and auto-persisted longest-first `--parallel` scheduling.
 
 ## Platform support
 
 | Platform      | Driver / DOM Channel                                                                  | Notes                                                      |
 | ------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Web / RN Web  | Playwright (`PlaywrightDomChannel`, warm daemon, shared pool) or CDP / Lightpanda     | Also supports `wsEndpoint` for BrowserStack Automate Web   |
+| Web / RN Web  | Playwright (default), direct CDP (`engine: "cdp"` / `"auto"`), or Lightpanda          | Also supports `wsEndpoint` for BrowserStack Automate Web   |
 | Android       | Direct UiAutomator2 + Android CDP / `spana-bridge` (`adb reverse`)                    | Bundled APK server, persistent warm daemon                 |
 | iOS Simulator | Direct WDA (warm session reuse) + WebKit Inspector / `webinspectord` / `spana-bridge` | Bundled unsigned XCTest bundle                             |
 | iOS Device    | Same WDA bundle + `iproxy` + WebKit / `spana-bridge`                                  | Re-signed via `codesign`; requires `iproxy`                |

@@ -12,6 +12,7 @@ export default defineConfig({
     astroMermaid(),
     starlight({
       title: "spana",
+      components: { PageTitle: "./src/components/PageTitle.astro" },
       description:
         "One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron and Electrobun — no Appium to set up, and an MCP server your coding agent can drive.",
       customCss: ["./src/styles/custom.css"],
@@ -81,7 +82,7 @@ export default defineConfig({
             { label: "Introduction", slug: "getting-started/introduction" },
             { label: "Quick Start", slug: "getting-started/quick-start" },
             { label: "Configuration", slug: "getting-started/configuration" },
-            { label: "Run it the fastest way", slug: "getting-started/fastest-path" },
+            { label: "Performance: run it fastest", slug: "getting-started/fastest-path" },
             { label: "Compare with other tools", slug: "compare" },
           ],
         },

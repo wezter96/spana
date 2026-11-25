@@ -17,7 +17,8 @@ Running tests:
 
 1. Run tests with `npx spana test`. Prefer `.flow.ts` files; Gherkin `.feature` files also run through `spana test` and get every speed-up below. Varar Markdown specs run in Vitest through `connect()`, without the pool or filters, so use them only when a team needs that format.
 2. Run only what changed: `spana test --changed` or `--last-failed` locally; `--changed-since origin/main` in CI. `--changed-since` needs a `filters` list (for example `pathRuleFilter`) in `spana.config.ts`, or it runs every flow.
-3. Web: use the shared browser pool, `spana test --platform web --workers 4`. `--parallel` alone uses 1 worker.
+3. Web: use the shared browser pool, `spana test --platform web --workers 4` (flows reuse warm contexts). `--parallel` alone uses 1 worker. If every flow needs a fully fresh browser context, set `execution.web.engine: "auto"` and `execution.web.freshContextPerFlow: true` instead.
+   Per-flow tuning: `execution.web.instantAnimations`, `execution.web.blockResources`, `defaults.failFastWhenIdle`, and `window.__SPANA_APP_READY__` in the app. See the fastest-path page.
 4. Hybrid (Capacitor / WebView), Electron or Electrobun apps you can change: enable `spana-bridge` (`execution.bridge.enabled: true` plus `initSpanaBridge()` in the app's test build). Skip it for pure native screens or apps you cannot change.
 5. Skip UI sign-in: `execution.web.storageState` on web; the bridge on mobile and desktop.
 6. Keep drivers warm: `execution.web.warmBrowser: true` (Chromium) and `execution.warmDaemons.enabled: true` (iOS / Android).

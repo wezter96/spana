@@ -34,7 +34,7 @@ Start with `platforms: ["web"]` while getting familiar with the framework, then 
 
 ## 3. Write a flow
 
-Create `flows/login.ts`:
+Create `flows/login.flow.ts`:
 
 ```ts
 import { flow } from "spana-test";
@@ -57,12 +57,12 @@ The `testID` selector maps to `data-testid` on web, `accessibilityIdentifier` on
 spana test
 ```
 
-This discovers all `*.ts` files under `./flows` (or the `flowDir` in your config) and runs them against the configured platforms.
+This discovers all `*.flow.ts`, `*.test.ts`, and `*.feature` files under `./flows` (or the `flowDir` in your config) and runs them against the configured platforms. Other `.ts` files in the folder are not picked up as flows.
 
 ### Run a single file
 
 ```bash
-spana test flows/login.ts
+spana test flows/login.flow.ts
 ```
 
 ### Target a specific platform

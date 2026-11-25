@@ -16,10 +16,10 @@ await expect({ testID: "welcome-banner" }).toBeVisible();
 ### `expect(selector)`
 
 ```ts
-expect: (selector: Selector) => PromiseExpectation;
+expect: (selector: ExtendedSelector) => PromiseExpectation;
 ```
 
-Returns a `PromiseExpectation` bound to the given selector.
+Returns a `PromiseExpectation` bound to the given selector. Any [selector](/writing-tests/selectors/), including relative selectors, works here.
 
 ### Core visibility, text, and state assertions
 
@@ -39,7 +39,7 @@ Returns a `PromiseExpectation` bound to the given selector.
 await expect({ testID: "success-message" }).toBeVisible();
 await expect({ text: "Welcome" }).toBeVisible({ timeout: 8000 });
 await expect({ testID: "user-greeting" }).toHaveText("Hello, Alice");
-await expect({ role: "status" }).toContainText("saved");
+await expect({ testID: "status" }).toContainText("saved");
 await expect({ testID: "price" }).toMatchText(/^\$\d+\.\d{2}$/);
 await expect({ testID: "email" }).toHaveValue("demo@example.com");
 await expect({ testID: "primary-button" }).toHaveAttribute("aria-busy", "false");
@@ -60,7 +60,7 @@ toMatchScreenshot(
 ): Promise<void>
 ```
 
-Capture the current element and compare it against a named baseline image.
+Capture the current element and compare it against a named baseline image. When no baseline exists yet, spana writes the current screenshot as the baseline and the assertion passes.
 
 ```ts
 await expect({ testID: "avatar" }).toMatchScreenshot("profile-avatar");
@@ -98,7 +98,9 @@ await expect({ testID: "login-button" }).toHaveMinTouchTarget(48);
 
 ## Auto-wait behavior
 
-All assertions auto-wait. spana does not require manual `sleep()` calls. The assertion loop works as follows:
+All assertions auto-wait. spana does not require manual `sleep()` calls.
+
+On web, when the DOM channel is connected, spana first waits inside the page with a `MutationObserver`, so most assertions resolve in a single round trip. Otherwise (native screens, relative selectors, `systemUI` selectors) it uses this loop:
 
 1. Dump the element hierarchy from the platform driver.
 2. Search the tree for the selector.
@@ -120,7 +122,9 @@ type WaitOptions = {
 - `timeout`: maximum time to wait before failing
 - `pollInterval`: maximum poll interval once backoff ramps up
 - `initialPollInterval`: first poll interval before backoff grows
-- `settleTimeout`: how long the condition must remain stable before passing
+- `settleTimeout`: how long the element must remain present before the lookup passes
+
+`initialPollInterval` and `settleTimeout` apply to element lookups (`toBeVisible()` and actions). Text, value, attribute, and state assertions poll at a fixed `pollInterval` and ignore them.
 
 `settleTimeout` is useful for transitions and animations where the element briefly appears and disappears.
 

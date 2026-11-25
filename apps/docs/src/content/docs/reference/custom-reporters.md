@@ -29,7 +29,7 @@ const reporter: Reporter = {
 export default reporter;
 ```
 
-All hooks except `onRunComplete` are optional.
+All hooks except `onRunComplete` are optional. `onFlowPass` and `onFlowFail` fire for passed and failed flows; skipped flows fire neither and appear only in `summary.results`. Results are redacted before they reach any reporter.
 
 ## Registering a reporter
 
@@ -41,7 +41,7 @@ export default defineConfig({
 });
 ```
 
-Reporter module paths are resolved relative to `spana.config.ts`.
+Paths that start with `.` are resolved relative to the directory of `spana.config.ts`. Other values are imported as package names. You can also pass a module path on the CLI, for example `spana test --reporter console,./reporters/slack.ts`.
 
 ## Factory reporters
 
@@ -59,7 +59,7 @@ export default function createCsvReporter(options: { outputDir: string }): Repor
 }
 ```
 
-Spana calls factory reporters with `{ outputDir }`.
+Spana calls factory reporters with `{ outputDir }`. The value is the directory of `spana.config.ts`, not `artifacts.outputDir`.
 
 ## Exported types
 
@@ -83,7 +83,7 @@ interface Reporter {
 | Field           | Description                                                 |
 | --------------- | ----------------------------------------------------------- |
 | `name`          | Flow name                                                   |
-| `platform`      | `web`, `android`, or `ios`                                  |
+| `platform`      | `web`, `android`, `ios`, `electron`, or `electrobun`        |
 | `status`        | `passed`, `failed`, or `skipped`                            |
 | `flaky`         | `true` when the flow failed first and later passed on retry |
 | `attempts`      | Number of attempts made                                     |
@@ -112,7 +112,7 @@ interface Reporter {
 
 `StepResult` represents low-level driver actions such as taps, assertions, typing, or network setup.
 
-`ScenarioStepResult` represents higher-level Gherkin steps such as `Given`, `When`, `Then`, `And`, `Before`, and `After`. Each scenario step can include nested `steps` for the underlying driver actions.
+`ScenarioStepResult` represents higher-level Gherkin steps such as `Given`, `When`, `Then`, `And`, `But`, `Before`, and `After`. Each scenario step can include nested `steps` for the underlying driver actions.
 
 ### `Attachment`
 
@@ -154,6 +154,8 @@ interface FlowError {
 - `unknown`
 
 ## Example: failure webhook
+
+Spana does not await reporter hooks, and the process exits soon after `onRunComplete`. An async hook like this one can be cut off before the request finishes, so keep the work small or write to disk synchronously.
 
 ```ts
 import type { Reporter } from "spana-test";

@@ -61,8 +61,8 @@ export default defineConfig({
   execution: {
     web: {
       browser: "chromium",
-      engine: "playwright", // or "cdp" | "lightpanda" with cdpUrl
-      cdpUrl: undefined, // e.g. "http://127.0.0.1:9222" for Lightpanda or remote CDP
+      engine: "playwright", // default; or "auto" | "cdp" | "lightpanda"
+      cdpUrl: undefined, // e.g. "http://127.0.0.1:9222" for Lightpanda or an existing CDP browser
       wsEndpoint: undefined, // e.g. BrowserStack Automate Web Playwright wsEndpoint
       headless: true,
       warmBrowser: true, // keep warm headless Chromium daemon alive across runs
@@ -83,8 +83,8 @@ export default defineConfig({
     baselinesDir: "./visual-baselines",
   },
   hooks: {
-    beforeAll: async ({ app }) => {
-      /* global setup */
+    beforeAll: async ({ platform }) => {
+      /* global setup — no app instance yet */
     },
     beforeEach: async ({ app }) => {
       /* reset state */
@@ -92,7 +92,7 @@ export default defineConfig({
     afterEach: async ({ app, result }) => {
       /* teardown */
     },
-    afterAll: async ({ app, summary }) => {
+    afterAll: async ({ platform, summary }) => {
       /* cleanup */
     },
   },
@@ -105,25 +105,39 @@ Defines the app targets for each platform.
 
 ```ts
 apps: {
-  web?:     { url: string; appPath?: string };
-  android?: { packageName: string; appPath?: string };
-  ios?:     { bundleId: string; appPath?: string; signing?: IOSSigningConfig };
+  web?:        { url?: string; bridge?: BridgeConfig };
+  android?:    { packageName?: string; appPath?: string; cdpPort?: number; bridge?: BridgeConfig };
+  ios?:        {
+    bundleId?: string;
+    appPath?: string;
+    signing?: IOSSigningConfig;
+    webkitInspectorUrl?: string;
+    webkitInspectorPort?: number;
+    bridge?: BridgeConfig;
+  };
+  electron?:   ElectronAppConfig;
+  electrobun?: ElectrobunAppConfig;
 }
 ```
 
-| Field                     | Platform    | Description                                               |
-| ------------------------- | ----------- | --------------------------------------------------------- |
-| `web.url`                 | Web         | Base URL Playwright navigates to on launch                |
-| `android.packageName`     | Android     | Android application ID (e.g. `com.example.app`)           |
-| `ios.bundleId`            | iOS         | iOS bundle identifier (e.g. `com.example.app`)            |
-| `appPath`                 | Android/iOS | Path to `.app`, `.ipa`, or `.apk` for auto-install        |
-| `signing.teamId`          | iOS         | Apple Development Team ID (required for physical devices) |
-| `signing.signingIdentity` | iOS         | Code signing identity (default: `"Apple Development"`)    |
+| Field                     | Platform    | Description                                                   |
+| ------------------------- | ----------- | ------------------------------------------------------------- |
+| `web.url`                 | Web         | Base URL the browser navigates to on launch                   |
+| `android.packageName`     | Android     | Android application ID (e.g. `com.example.app`)               |
+| `ios.bundleId`            | iOS         | iOS bundle identifier (e.g. `com.example.app`)                |
+| `appPath`                 | Android/iOS | Path to `.app`, `.ipa`, or `.apk` for auto-install            |
+| `signing.teamId`          | iOS         | Apple Development Team ID (required for physical devices)     |
+| `signing.signingIdentity` | iOS         | Code signing identity (default: `"Apple Development"`)        |
+| `cdpPort`                 | Android     | Explicit CDP port for Android WebView DOM access              |
+| `webkitInspectorUrl/Port` | iOS         | Explicit WebKit Inspector target for WKWebView DOM access     |
+| `bridge`                  | All         | Per-app `spana-bridge` override (replaces `execution.bridge`) |
+
+`apps.electron` launches an Electron app (`entry` or `executablePath`, plus `args`, `cwd`, `env`, `url`) or attaches to a running one with `cdpUrl` / `cdpPort`. `apps.electrobun` takes `executablePath` or `appDir`, `args`, `cwd`, `env`, `renderer` (`"native"` or `"cef"`), `cdpUrl` / `cdpPort`, `webkitInspectorPort`, and `url`. Both accept `bridge`.
 
 ## `platforms`
 
 ```ts
-platforms?: Array<"web" | "android" | "ios">
+platforms?: Array<"web" | "android" | "ios" | "electron" | "electrobun">
 ```
 
 Which platforms to run tests on by default. Can be overridden per-flow with `FlowConfig.platforms` and at the CLI with `--platform`.
@@ -148,7 +162,7 @@ This is most useful when your web, Android, and iOS runs use independent resourc
 flowDir?: string
 ```
 
-Directory to discover flow files from. Accepts a glob or directory path.
+Directory to discover flow files from. spana searches it recursively for `*.flow.ts`, `*.test.ts`, and `*.feature` files. A single file path also works.
 
 Default: `"./flows"`
 
@@ -160,17 +174,20 @@ Relative paths are resolved from the directory that contains the config file, no
 reporters?: string[]
 ```
 
-One or more reporter names. Available reporters:
+One or more reporter names or custom reporter module paths. Available reporters:
 
-| Name      | Output                                               |
-| --------- | ---------------------------------------------------- |
-| `console` | Human-readable terminal output (default)             |
-| `json`    | Structured JSON events to stdout                     |
-| `junit`   | JUnit XML — compatible with CI artifact ingestion    |
-| `html`    | Self-contained HTML report with embedded screenshots |
-| `allure`  | Allure-compatible result files                       |
+| Name      | Output                                                                   |
+| --------- | ------------------------------------------------------------------------ |
+| `console` | Human-readable terminal output (default)                                 |
+| `json`    | Structured JSON events to stdout                                         |
+| `junit`   | JUnit XML — compatible with CI artifact ingestion                        |
+| `html`    | Self-contained HTML report with embedded screenshots                     |
+| `allure`  | Allure-compatible result files                                           |
+| `github`  | Markdown summary (`github-pr-summary.md`) and GitHub Actions job summary |
 
 Default: `["console"]`
+
+A custom reporter is a relative path (e.g. `"./reporters/slack.ts"`) whose default export is a `Reporter` object or a `(options: { outputDir: string }) => Reporter` factory. See [Custom Reporters](/reference/custom-reporters/).
 
 ## `execution`
 
@@ -181,7 +198,20 @@ execution?: {
   mode?: "local" | "appium";
   web?: {
     browser?: "chromium" | "firefox" | "webkit";
+    engine?: "playwright" | "auto" | "cdp" | "lightpanda";
+    cdpUrl?: string;
+    wsEndpoint?: string;
+    executablePath?: string;
+    channel?: string;
     headless?: boolean;
+    waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+    instantAnimations?: boolean;
+    blockResources?: Array<"image" | "font" | "media" | "stylesheet">;
+    warmBrowser?: boolean;
+    warmBrowserScope?: string;
+    freshContextPerFlow?: boolean;
+    maxContextsPerBrowser?: number;
+    virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
     storageState?: string;
     verboseLogging?: boolean;
     storybook?: {
@@ -189,10 +219,29 @@ execution?: {
       iframePath?: string;
     };
   };
+  bridge?: {
+    enabled?: boolean;
+    port?: number;           // default 9333
+    host?: string;           // default "127.0.0.1"
+    url?: string;
+    connectTimeout?: number; // ms, default 5000
+  };
+  warmDaemons?: {
+    enabled?: boolean;
+    reuseSession?: boolean;
+    stateFile?: string;
+  };
   appium?: {
     serverUrl?: string;
     capabilities?: Record<string, unknown>;
+    platformCapabilities?: {
+      android?: Record<string, unknown>;
+      ios?: Record<string, unknown>;
+    };
     capabilitiesFile?: string;
+    autoStart?: boolean;
+    autoStartBinary?: string;
+    autoStartArgs?: string[];
     reportToProvider?: boolean;
     cloudProvider?: string;
     browserstack?: {
@@ -209,29 +258,49 @@ execution?: {
 }
 ```
 
-Use `execution.web` to configure the local Playwright runtime for web flows.
+Use `execution.web` to configure the local browser runtime for web flows.
 
-| Field                  | Description                                                              |
-| ---------------------- | ------------------------------------------------------------------------ |
-| `browser`              | Browser engine for local web runs: `chromium`, `firefox`, or `webkit`    |
-| `headless`             | Run Playwright without opening a visible browser window                  |
-| `storageState`         | Preload Playwright cookies and storage state from a JSON file            |
-| `verboseLogging`       | Print verbose Playwright browser/page diagnostics to stdout              |
-| `storybook.url`        | Dedicated Storybook origin for `app.openStory()` / `Session.openStory()` |
-| `storybook.iframePath` | Override Storybook's preview iframe path, default `/iframe.html`         |
+| Field                   | Description                                                                                                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `browser`               | Browser for local web runs: `chromium` (default), `firefox`, or `webkit`                                                                                                        |
+| `engine`                | `"playwright"` (default), `"cdp"` (direct CDP to Chromium, no Playwright pipe), `"lightpanda"` (connects to `cdpUrl`, default `http://127.0.0.1:9222`), or `"auto"` (see below) |
+| `cdpUrl`                | Connect to an existing CDP browser or Lightpanda endpoint instead of launching one                                                                                              |
+| `wsEndpoint`            | Connect to a remote Playwright server (e.g. BrowserStack Automate)                                                                                                              |
+| `executablePath`        | Explicit browser binary                                                                                                                                                         |
+| `channel`               | Playwright browser channel such as `"chrome"` or `"msedge"`                                                                                                                     |
+| `headless`              | Run without a visible browser window (default `true`)                                                                                                                           |
+| `waitUntil`             | Navigation readiness event for launch / `openLink` (default `"load"`)                                                                                                           |
+| `instantAnimations`     | Collapse CSS transitions and animations for faster, deterministic runs                                                                                                          |
+| `blockResources`        | Abort `image`, `font`, `media`, or `stylesheet` requests                                                                                                                        |
+| `warmBrowser`           | Reuse a persistent warm Chromium process across runs (Chromium only; falls back to `warmDaemons.enabled`)                                                                       |
+| `warmBrowserScope`      | Key that isolates warm browsers between concurrent repos or runs                                                                                                                |
+| `freshContextPerFlow`   | Give each flow a fresh isolated browser context, using pre-warmed contexts                                                                                                      |
+| `maxContextsPerBrowser` | Max worker contexts per browser process under `--parallel` (default `1` for `cdp`, `2` otherwise)                                                                               |
+| `virtualAuthenticator`  | Attach a WebAuthn virtual authenticator (passkeys) to each new context; `true` or an options object                                                                             |
+| `storageState`          | Preload Playwright cookies and storage state from a JSON file                                                                                                                   |
+| `verboseLogging`        | Print verbose Playwright browser/page diagnostics to stdout                                                                                                                     |
+| `storybook.url`         | Dedicated Storybook origin for `app.openStory()` / `Session.openStory()`                                                                                                        |
+| `storybook.iframePath`  | Override Storybook's preview iframe path, default `/iframe.html`                                                                                                                |
+
+`engine: "auto"` uses the direct CDP engine when `browser` is `chromium` and you have not set `wsEndpoint`, `channel`, or `artifacts.har`; otherwise it uses Playwright. The direct CDP engine does not support `app.getHAR()`.
 
 `storageState` is resolved relative to `spana.config.ts`. Storybook uses URLs instead of filesystem paths, so it stays portable by pointing at the right origin for each environment.
 
+`execution.bridge` configures the optional in-app `spana-bridge` WebSocket server shared by WebView targets. It is enabled when `enabled: true`, or when you set `port` or `url`. `execution.warmDaemons.enabled` keeps WDA / UiAutomator2 daemons alive between runs (default `false`); `reuseSession` (default `true` when enabled) reuses the active session; `stateFile` overrides where daemon metadata is stored. Use `spana daemon status` / `spana daemon stop` to inspect or stop them.
+
 Use `mode: "appium"` when running against BrowserStack, Sauce Labs, or another Appium-compatible grid.
 
-| Field                               | Description                                                                    |
-| ----------------------------------- | ------------------------------------------------------------------------------ |
-| `serverUrl`                         | Remote Appium server URL                                                       |
-| `capabilities` / `capabilitiesFile` | Raw desired capabilities, with file paths resolved relative to the config file |
-| `reportToProvider`                  | Mark the remote session passed/failed when the provider supports it            |
-| `cloudProvider`                     | Path to a custom cloud provider module that default-exports a `CloudProvider`  |
-| `browserstack`                      | BrowserStack upload, local tunnel, and capability helper settings              |
-| `saucelabs`                         | Sauce Labs upload, Sauce Connect, and capability helper settings               |
+| Field                               | Description                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------- |
+| `serverUrl`                         | Remote Appium server URL                                                          |
+| `capabilities` / `capabilitiesFile` | Raw desired capabilities, with file paths resolved relative to the config file    |
+| `platformCapabilities`              | Extra capabilities merged on top of `capabilities` for `android` or `ios`         |
+| `autoStart`                         | Spawn a local `appium` process for the run (default `false`; ignores `serverUrl`) |
+| `autoStartBinary` / `autoStartArgs` | Override the `appium` binary name and pass extra CLI args to it                   |
+| `reportToProvider`                  | Mark the remote session passed/failed when the provider supports it               |
+| `cloudProvider`                     | Path to a custom cloud provider module that default-exports a `CloudProvider`     |
+| `browserstack`                      | BrowserStack upload, local tunnel, and capability helper settings                 |
+| `saucelabs`                         | Sauce Labs upload, Sauce Connect, and capability helper settings                  |
 
 Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `--caps-json` remain the strongest override surface. Provider helper sections fill in missing provider-specific fields and can manage BrowserStack Local / Sauce Connect lifecycle when enabled. For a custom provider implementation, see [Cloud Providers](/guides/cloud-providers/).
 
@@ -239,21 +308,25 @@ Raw capabilities from `execution.appium.capabilities`, `capabilitiesFile`, and `
 
 For `spana test`, CLI flags win over config values.
 
-| CLI flag                                                  | Config field                           |
-| --------------------------------------------------------- | -------------------------------------- |
-| `--platform`                                              | `platforms`                            |
-| `--reporter`                                              | `reporters`                            |
-| `--retries`                                               | `defaults.retries`                     |
-| `--workers`                                               | `defaults.workers`                     |
-| `--driver`                                                | `execution.mode`                       |
-| `--appium-url`                                            | `execution.appium.serverUrl`           |
-| `--validate-config`                                       | Validates config and exits             |
-| `--device` / `--devices`                                  | CLI-only device selection              |
-| `--parallel`                                              | Enables concurrent execution           |
-| `--watch` / `--changed` / `--last-failed`                 | CLI-only iteration controls            |
-| `--update-baselines`                                      | CLI-only visual regression control     |
-| `--shard` / `--bail`                                      | CLI-only execution controls            |
-| `--debug-on-failure` / `--verbose` / `--quiet` / `--json` | CLI-only output and debugging controls |
+| CLI flag                                       | Config field                                         |
+| ---------------------------------------------- | ---------------------------------------------------- |
+| `--platform`                                   | `platforms`                                          |
+| `--reporter`                                   | `reporters`                                          |
+| `--retries`                                    | `defaults.retries`                                   |
+| `--workers`                                    | `defaults.workers`                                   |
+| `--driver`                                     | `execution.mode`                                     |
+| `--appium-url`                                 | `execution.appium.serverUrl`                         |
+| `--appium-auto-start`                          | `execution.appium.autoStart`                         |
+| `--caps` / `--caps-json`                       | `execution.appium.capabilitiesFile` / `capabilities` |
+| `--changed-since <ref>`                        | Runs the configured `filters`                        |
+| `--tag` / `--grep`                             | CLI-only flow selection                              |
+| `--validate-config`                            | Validates config and exits                           |
+| `--device` / `--devices`                       | CLI-only device selection                            |
+| `--parallel`                                   | Enables concurrent execution                         |
+| `--watch` / `--changed` / `--last-failed`      | CLI-only iteration controls                          |
+| `--update-baselines`                           | CLI-only visual regression control                   |
+| `--shard` / `--bail`                           | CLI-only execution controls                          |
+| `--debug-on-failure` / `--verbose` / `--quiet` | CLI-only output and debugging controls               |
 
 Sharding happens after tag/name/platform filtering so each shard gets a deterministic slice of the already-selected flows.
 
@@ -273,21 +346,27 @@ defaults?: {
   hierarchyCacheTtl?: number;
   retryDelay?: number;
   workers?: number;
+  snapshotMaxDepth?: number;
+  tapMode?: "native" | "dom";
+  failFastWhenIdle?: boolean;
 }
 ```
 
-| Option                | Default | Description                                                   |
-| --------------------- | ------- | ------------------------------------------------------------- |
-| `waitTimeout`         | `5000`  | Maximum ms to wait for an assertion or element lookup         |
-| `pollInterval`        | `200`   | Maximum ms between assertion polls                            |
-| `settleTimeout`       | `0`     | Stable time required before an assertion passes               |
-| `retries`             | `0`     | Retry count for failed flow executions                        |
-| `waitForIdleTimeout`  | `0`     | Pause after mutating actions such as tap or scroll            |
-| `typingDelay`         | `0`     | Delay between typed characters                                |
-| `initialPollInterval` | `50`    | First poll interval before adaptive backoff ramps up          |
-| `hierarchyCacheTtl`   | `100`   | Hierarchy cache freshness window in ms; set `0` to disable    |
-| `retryDelay`          | `0`     | Delay between failed flow retry attempts                      |
-| `workers`             | —       | Default max workers per platform when `--parallel` is enabled |
+| Option                | Default    | Description                                                                                                        |
+| --------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| `waitTimeout`         | `5000`     | Maximum ms to wait for an assertion or element lookup                                                              |
+| `pollInterval`        | `200`      | Maximum ms between assertion polls                                                                                 |
+| `settleTimeout`       | `0`        | Stable time required before an assertion passes                                                                    |
+| `retries`             | `0`        | Retry count for failed flow executions                                                                             |
+| `waitForIdleTimeout`  | `0`        | Pause after mutating actions such as tap or scroll                                                                 |
+| `typingDelay`         | `0`        | Delay between typed characters                                                                                     |
+| `initialPollInterval` | `50`       | First poll interval before adaptive backoff ramps up                                                               |
+| `hierarchyCacheTtl`   | `100`      | Hierarchy cache freshness window in ms; set `0` to disable                                                         |
+| `retryDelay`          | `0`        | Delay between failed flow retry attempts                                                                           |
+| `workers`             | —          | Default max workers per platform when `--parallel` is enabled                                                      |
+| `snapshotMaxDepth`    | `100`      | Max depth of iOS UI hierarchy snapshots                                                                            |
+| `tapMode`             | `"native"` | When a DOM channel finds the element: `"native"` real touch, or `"dom"` fast synthetic click                       |
+| `failFastWhenIdle`    | `false`    | On web, fail element waits early when the page is idle and fully loaded, instead of waiting the full `waitTimeout` |
 
 ## `artifacts`
 
@@ -304,20 +383,24 @@ artifacts?: {
   consoleLogs?:      boolean;
   jsErrors?:         boolean;
   har?:              boolean;
+  video?:            "off" | "on" | "retain-on-failure";
+  playback?:         boolean;
 }
 ```
 
-| Option             | Default            | Description                                       |
-| ------------------ | ------------------ | ------------------------------------------------- |
-| `outputDir`        | `"./spana-output"` | Directory to write captured artifacts             |
-| `captureOnFailure` | `true`             | Capture artifacts for failed flows                |
-| `captureOnSuccess` | `false`            | Capture final artifacts for passed flows          |
-| `captureSteps`     | `false`            | Capture screenshots after each recorded step      |
-| `screenshot`       | `true`             | Include screenshots in captures                   |
-| `uiHierarchy`      | `true`             | Include UI hierarchy dumps                        |
-| `consoleLogs`      | `true`             | Include captured browser console logs on web      |
-| `jsErrors`         | `true`             | Include uncaught browser JavaScript errors on web |
-| `har`              | `true`             | Include HAR network traces on web                 |
+| Option             | Default            | Description                                                                                    |
+| ------------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
+| `outputDir`        | `"./spana-output"` | Directory to write captured artifacts                                                          |
+| `captureOnFailure` | `true`             | Capture artifacts for failed flows                                                             |
+| `captureOnSuccess` | `false`            | Capture final artifacts for passed flows                                                       |
+| `captureSteps`     | `false`            | Capture screenshots after each recorded step                                                   |
+| `screenshot`       | `true`             | Include screenshots in captures                                                                |
+| `uiHierarchy`      | `true`             | Include UI hierarchy dumps                                                                     |
+| `consoleLogs`      | `true`             | Include captured browser console logs on web                                                   |
+| `jsErrors`         | `true`             | Include uncaught browser JavaScript errors on web                                              |
+| `har`              | `true`             | Include HAR network traces on web                                                              |
+| `video`            | `"off"`            | Record a video of each flow: `"on"`, or `"retain-on-failure"` to keep it only for failed flows |
+| `playback`         | `false`            | Keep a step-by-step visual playback timeline for the HTML report                               |
 
 ## `hooks`
 
@@ -339,7 +422,7 @@ hooks?: {
 | `afterEach`  | After each individual flow (always runs, even on failure) |
 | `afterAll`   | Once after all flows on a platform                        |
 
-`HookContext` provides `app`, `expect`, `platform`, `result` (in `afterEach`), and `summary` (in `afterAll`).
+`beforeEach` and `afterEach` receive `app` and `platform`, plus `result` in `afterEach`. `beforeAll` and `afterAll` run outside any flow, so they receive `platform` (and `summary` in `afterAll`) but no `app`. `beforeEach` runs before the flow's automatic launch.
 
 ### Error handling
 
@@ -391,7 +474,7 @@ flow(
 ```ts
 interface FlowConfig {
   tags?: string[];
-  platforms?: Array<"web" | "android" | "ios">;
+  platforms?: Platform[];
   timeout?: number;
   autoLaunch?: boolean;
   launchOptions?: LaunchOptions;
@@ -401,16 +484,16 @@ interface FlowConfig {
 }
 ```
 
-| Option          | Default | Description                                                         |
-| --------------- | ------- | ------------------------------------------------------------------- |
-| `tags`          | `[]`    | Tags for CLI filtering with `--tag`                                 |
-| `platforms`     | —       | Restrict a flow to specific platforms                               |
-| `timeout`       | —       | Overall flow timeout in ms                                          |
-| `autoLaunch`    | `true`  | Automatically launch the app before the flow starts                 |
-| `launchOptions` | —       | Per-flow launch defaults merged on top of project `launchOptions`   |
-| `artifacts`     | —       | Per-flow artifact overrides                                         |
-| `defaults`      | —       | Per-flow wait, typing, cache, and idle timing overrides             |
-| `when`          | —       | Runtime conditions such as `platform` or environment-variable gates |
+| Option          | Default                                 | Description                                                         |
+| --------------- | --------------------------------------- | ------------------------------------------------------------------- |
+| `tags`          | `[]`                                    | Tags for CLI filtering with `--tag`                                 |
+| `platforms`     | —                                       | Restrict a flow to specific platforms                               |
+| `timeout`       | `defaults.waitTimeout × 10`, or `60000` | Overall flow timeout in ms                                          |
+| `autoLaunch`    | `true`                                  | Automatically launch the app before the flow starts                 |
+| `launchOptions` | —                                       | Per-flow launch defaults merged on top of project `launchOptions`   |
+| `artifacts`     | —                                       | Per-flow artifact overrides                                         |
+| `defaults`      | —                                       | Per-flow wait, typing, cache, and idle timing overrides             |
+| `when`          | —                                       | Runtime conditions such as `platform` or environment-variable gates |
 
 The per-flow `artifacts` object is merged with the global `artifacts` config, so you only need to specify the fields you want to override. For example, enabling `captureSteps` on a single flow:
 
@@ -542,3 +625,11 @@ visualRegression?: {
 | `baselinesDir`      | `__baselines__` next to each flow file | Centralize baseline screenshots in one directory    |
 
 These values become defaults for `expect(selector).toMatchScreenshot(name, options?)`. Per-assertion options still win, and baseline rewrites are still controlled by `spana test --update-baselines`.
+
+## `filters`
+
+```ts
+filters?: TestFilter[]
+```
+
+CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana-test` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).

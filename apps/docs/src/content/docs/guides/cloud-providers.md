@@ -3,15 +3,16 @@ title: Cloud Providers
 description: Run tests on BrowserStack and Sauce Labs device clouds.
 ---
 
-Spana can run mobile tests on cloud device farms through Appium. It auto-detects BrowserStack and Sauce Labs from the server URL, reports test results back to the provider dashboard, and can manage provider-specific upload/tunnel helpers from config.
+Spana can run mobile (Android and iOS) tests on cloud device farms through Appium. It auto-detects BrowserStack and Sauce Labs from the server URL hostname, reports the run result back to the provider dashboard, and can manage provider-specific upload/tunnel helpers from config. Keep the credentials in the URL (`https://USER:KEY@...`): managed uploads, tunnels, and result reporting read them from there.
 
 ## Supported providers
 
-| Provider     | Auto-detected | Result reporting | Managed helpers |
-| ------------ | ------------- | ---------------- | --------------- |
-| BrowserStack | Yes           | Yes              | Yes             |
-| Sauce Labs   | Yes           | Yes              | Yes             |
-| Custom grid  | --            | No               | No              |
+| Provider                          | Auto-detected | Result reporting | Managed helpers           |
+| --------------------------------- | ------------- | ---------------- | ------------------------- |
+| BrowserStack                      | Yes           | Yes              | Yes                       |
+| Sauce Labs                        | Yes           | Yes              | Yes                       |
+| Custom provider (`cloudProvider`) | --            | No (see below)   | Yes (your `createHelper`) |
+| Other Appium grid                 | --            | No               | No                        |
 
 ## BrowserStack
 
@@ -94,11 +95,11 @@ export default defineConfig({
 });
 ```
 
-Use `browserstack.app.id` when you already have a `bs://...` reference. If `appium:app` or `bstack:options` are already set in raw capabilities, those explicit values win and helper config only fills what is missing.
+When an `execution.appium.browserstack` block is present, Spana uploads `browserstack.app.path`, or `apps.<platform>.appPath` when that is not set, and injects the returned `bs://...` URL as `appium:app`. Use `browserstack.app.id` when you already have a `bs://...` reference. If `appium:app` or `bstack:options` are already set in raw capabilities, those explicit values win and helper config only fills what is missing.
 
 ### 3. Result reporting
 
-Spana automatically reports pass/fail status to BrowserStack when a test run completes. This updates the session in the BrowserStack dashboard with the test name, status, and failure reason.
+Spana reports pass/fail status to BrowserStack once, after the whole run completes. This updates each Appium session in the BrowserStack dashboard with the name `spana <platforms>` and `passed` (no flow failed) or `failed`. No per-flow status or failure reason is sent.
 
 Disable reporting with `--no-provider-reporting` or in config:
 
@@ -182,23 +183,25 @@ export default defineConfig({
 });
 ```
 
-Use `saucelabs.app.id` when you already have a Sauce storage reference such as `storage:YOUR_APP_ID`. Explicit `appium:app` and `sauce:options` capability values still override helper-derived defaults.
+When an `execution.appium.saucelabs` block is present, Spana uploads `saucelabs.app.path`, or `apps.<platform>.appPath` when that is not set, to Sauce storage and injects `storage:<id>` as `appium:app`. Use `saucelabs.app.id` when you already have a Sauce storage reference such as `storage:YOUR_APP_ID`. Explicit `appium:app` and `sauce:options` capability values still override helper-derived defaults.
 
 ### 3. Result reporting
 
-Sauce Labs sessions are automatically updated with pass/fail status after each test. Region (US/EU) is detected from the server URL.
+Sauce Labs sessions are updated with pass/fail status once, after the whole run completes (same rules as BrowserStack). Region is detected from the server URL hostname: uploads and Sauce Connect use `eu-central`, `us-east`, or `us-west` (default); result reporting uses `eu-central-1` when the hostname contains `eu-central`, otherwise `us-west-1`.
 
 When `saucelabs.connect.enabled` is true, Spana starts and stops Sauce Connect for the run. Set `saucelabs.connect.binary` if the `sc` binary is not on `PATH`, or keep managing the tunnel yourself and pass `sauce:options.tunnelName` manually.
 
 ## Capability resolution
 
-Capabilities merge from three sources, with later sources overriding earlier ones:
+Capabilities merge from five sources, with later sources overriding earlier ones (`src/runtime/capabilities.ts`):
 
-1. **Config file** -- `execution.appium.capabilities` in `spana.config.ts`
-2. **Capabilities file** -- `--caps <path>` flag or `execution.appium.capabilitiesFile` in config
-3. **Inline CLI JSON** -- `--caps-json '{"key": "value"}'`
+1. **Launch device state** -- `launchOptions.deviceState` (`language` / `locale` / `timeZone`) mapped to Appium capabilities
+2. **Config file** -- `execution.appium.capabilities` in `spana.config.ts`
+3. **Platform-specific config** -- `execution.appium.platformCapabilities.android` or `.ios`, for the platform being run
+4. **Capabilities file** -- `--caps <path>` flag or `execution.appium.capabilitiesFile` in config
+5. **Inline CLI JSON** -- `--caps-json '{"key": "value"}'`
 
-This lets you keep shared capabilities in config, environment-specific ones in a file, and override individual values from the CLI.
+This lets you keep shared capabilities in config, platform or environment-specific ones in `platformCapabilities` or a file, and override individual values from the CLI. Cloud helper config is applied after this merge and only fills fields that are still missing.
 
 ## Custom cloud providers
 
@@ -217,6 +220,10 @@ export default defineConfig({
 ```
 
 The module path is resolved relative to `spana.config.ts`.
+
+:::caution
+Today the CLI only calls `createHelper()` (and the helper's `prepareCapabilities()` / `cleanup()`) on a custom provider. End-of-run result reporting is only wired for the built-in BrowserStack and Sauce Labs providers, so a custom `extractMeta()` / `reportResult()` is not called by `spana test`.
+:::
 
 ### `CloudProvider`
 
@@ -265,14 +272,14 @@ export default provider;
 
 ### Interface responsibilities
 
-| API                     | Responsibility                                                     |
-| ----------------------- | ------------------------------------------------------------------ |
-| `name()`                | Human-readable provider name                                       |
-| `createHelper()`        | Build a helper for capability mutation and lifecycle cleanup       |
-| `prepareCapabilities()` | Add provider-specific desired capabilities before session creation |
-| `cleanup()`             | Tear down uploads, tunnels, or temporary state after the run       |
-| `extractMeta()`         | Pull provider metadata from the created session for reporting      |
-| `reportResult()`        | Mark the remote session passed or failed                           |
+| API                     | Responsibility                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| `name()`                | Human-readable provider name                                                                  |
+| `createHelper()`        | Build a helper for capability mutation and lifecycle cleanup                                  |
+| `prepareCapabilities()` | Add provider-specific desired capabilities before session creation                            |
+| `cleanup()`             | Tear down uploads, tunnels, or temporary state after the run                                  |
+| `extractMeta()`         | Pull provider metadata from the created session for reporting (built-in providers only today) |
+| `reportResult()`        | Mark the remote session passed or failed (built-in providers only today)                      |
 
 ## CI example
 

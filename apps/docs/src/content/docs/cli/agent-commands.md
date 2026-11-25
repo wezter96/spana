@@ -7,7 +7,7 @@ spana is built for AI coding agents (Claude Code, Codex, Cursor, Antigravity) wi
 
 ## `spana mcp` (Model-Free Stdio MCP Server)
 
-Start Spana's stdio MCP server so any MCP-compatible agent can drive live Web, iOS, Android, Electron, or Electrobun sessions at sub-5 ms tool latency and export verified `.flow.ts` files:
+Start Spana's stdio MCP server so any MCP-compatible agent can drive a live Web, iOS, Android, Electron, or Electrobun session and export the recorded steps as a `.flow.ts` file:
 
 ```json
 {
@@ -22,26 +22,39 @@ Start Spana's stdio MCP server so any MCP-compatible agent can drive live Web, i
 
 ### Exposed MCP tools
 
-| Tool                                         | Description                                                                           | Typical Web Latency |
-| -------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------: |
-| `spana_session_start`                        | Launch/connect a live session (`web`, `android`, `ios`, `electron`, `electrobun`)     |             ~125 ms |
-| `spana_observe`                              | Return a compact interactive accessibility/DOM snapshot (~273 tokens avg)             |            1.4–8 ms |
-| `spana_tap`                                  | Tap an element by `{ testID }`, `{ text }`, `{ accessibilityLabel }`, or `systemUI()` |          2.8–4.0 ms |
-| `spana_input_text` / `spana_press_key`       | Type text or press keys in the focused control                                        |              1.4 ms |
-| `spana_assert_visible` / `spana_assert_text` | Run real auto-waiting assertions                                                      |             0.97 ms |
-| `spana_diagnostics`                          | Read captured browser console logs & uncaught JS errors                               |             0.82 ms |
-| `spana_screenshot`                           | Capture a PNG screenshot for visual inspection                                        |              ~35 ms |
-| `spana_export_flow`                          | Emit a clean, deterministic `.flow.ts` file from the verified session                 |             0.06 ms |
-| `spana_run_flow` / `spana_session_stop`      | Run an existing `.flow.ts` or close the session                                       |              ~14 ms |
+The server holds one session at a time. Each action tool that succeeds returns the matching `.flow.ts` line (`codeLine`) and records it for export.
+
+| Tool                      | Description                                                                                                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spana_session_start`     | Connect to a target (`web`, `android`, `ios`, `electron`, `electrobun`). Options: `baseUrl`, `packageName`, `bundleId`, `device`, `headless` (default `true`), and `cdpUrl` (Electron / Electrobun). Replaces any open session |
+| `spana_observe`           | Return actionable elements with suggested selectors (default max 60, set `maxElements`), plus the last 15 console logs and last 10 JS errors                                                                                   |
+| `spana_tap`               | Tap an element by `{ testID }`, `{ text }`, or `{ accessibilityLabel }` (add `"systemUI": true` for OS UI); records `app.tap(...)`                                                                                             |
+| `spana_input_text`        | Type text into the focused control; records `app.inputText(...)`                                                                                                                                                               |
+| `spana_fill`              | Tap the element, then type `value`; records `app.fill(selector, value)`                                                                                                                                                        |
+| `spana_open_link`         | Open a URL or deep link; records `app.openLink(...)`                                                                                                                                                                           |
+| `spana_assert_visible`    | Check the current element list once (no auto-wait) for a `testID`, `text`, or `accessibilityLabel` match; records `expect(...).toBeVisible()`. On a miss, returns up to 20 available test IDs                                  |
+| `spana_assert_accessible` | Record an `expect.screen().toBeAccessible(...)` line (`standard`, `failOnSeverity`). On web, it also returns up to 10 unlabeled controls as `quickIssues`                                                                      |
+| `spana_assert_screenshot` | Capture a PNG and record an `expect.screen().toMatchScreenshot(name, ...)` line (`mode`, `maxDiffPixelRatio`). It does not compare against a baseline                                                                          |
+
+The flow `expect` API has no `expect.screen()` today, so lines recorded by `spana_assert_accessible` and `spana_assert_screenshot` must be edited before the exported flow runs. Use `expect(selector).toPassAccessibilityAudit()` and `expect(selector).toMatchScreenshot(name)` instead.
+| `spana_screenshot` | Return a PNG screenshot of the current screen |
+| `spana_diagnostics` | Return element and `testID` counts, the last 25 console logs, and the last 15 JS errors |
+| `spana_export_flow` | Return the recorded steps as a `.flow.ts` file without disconnecting |
+| `spana_session_stop` | Disconnect and return the generated `.flow.ts` file |
+| `spana_run_flow` | Run an existing `.flow.ts` file (optional `platform`) and return `passed: true/false` |
 
 ## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
 
-`ReplaySession` and `ReplayCacheStore` record agentic actions only **after** real assertions pass, then replay them deterministically in CI with zero LLM calls (measured **238.8× faster**: `1,433 ms → 6 ms`).
+`ReplaySession` and `ReplayCacheStore` (exported from `spana-test`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
+
+`ReplaySession` has three modes: `read-write` (default: on a miss or mismatch, hand off to the executor and save the healed recording), `strict` (fail on a missing or mismatched recording), and `off`.
 
 ```bash
-# Enforce 0-LLM deterministic replay in CI (fails loudly on cache miss)
+# Accepted by the CLI, but not yet passed to the runner
 spana test --strict-cache
 ```
+
+Today, `spana test` accepts `--strict-cache` and the `replayCache` config key but does not use them. To get strict mode, create `ReplaySession` with `mode: "strict"` in your own code.
 
 ## `spana selectors`
 
@@ -60,29 +73,30 @@ spana selectors --platform android
 ```json
 [
   {
-    "testID": "login-button",
+    "suggestedSelector": { "testID": "login-button" },
+    "elementType": "android.widget.Button",
     "text": "Sign In",
-    "accessibilityLabel": null,
     "bounds": { "x": 24, "y": 480, "width": 328, "height": 48 },
-    "suggestedSelector": { "testID": "login-button" }
+    "id": "login-button"
   },
   {
-    "testID": null,
+    "suggestedSelector": { "text": "Forgot password?" },
+    "elementType": "android.widget.TextView",
     "text": "Forgot password?",
-    "accessibilityLabel": null,
-    "bounds": { "x": 120, "y": 544, "width": 136, "height": 20 },
-    "suggestedSelector": { "text": "Forgot password?" }
+    "bounds": { "x": 120, "y": 544, "width": 136, "height": 20 }
   }
 ]
 ```
 
-`suggestedSelector` follows priority: `testID` > `accessibilityLabel` > `text`. Feed this output directly to an agent to choose which element to interact with.
+Only visible elements with an `id`, `text`, or `accessibilityLabel` are listed. Fields without a value are left out.
+
+`suggestedSelector` follows priority: `testID` (from `id`) > `accessibilityLabel` > `text`. Feed this output directly to an agent to choose which element to interact with.
 
 ### Filtering with `jq`
 
 ```bash
 # Elements that have a testID
-spana selectors --platform web | jq '.[] | select(.testID != null)'
+spana selectors --platform web | jq '.[] | select(.id != null)'
 
 # Just the suggested selectors
 spana selectors --platform ios | jq '[.[].suggestedSelector]'
@@ -104,15 +118,16 @@ spana hierarchy --platform web --pretty
 
 ```json
 {
-  "role": "application",
+  "elementType": "body",
+  "bounds": { "x": 0, "y": 0, "width": 375, "height": 812 },
   "children": [
     {
-      "role": "main",
+      "elementType": "main",
+      "bounds": { "x": 0, "y": 0, "width": 375, "height": 812 },
       "children": [
         {
-          "role": "textbox",
-          "testID": "email-input",
-          "text": "",
+          "elementType": "textbox",
+          "id": "email-input",
           "bounds": { "x": 24, "y": 200, "width": 328, "height": 44 }
         }
       ]
@@ -120,6 +135,8 @@ spana hierarchy --platform web --pretty
   ]
 }
 ```
+
+On web, `elementType` is the ARIA role, or the HTML tag when there is no role. Each node can have `id`, `text`, `value`, `accessibilityLabel`, `resourceId`, `elementType`, `bounds`, `enabled`, `visible`, `clickable`, `focused`, `attributes`, and `children`.
 
 Use `spana hierarchy` when `spana selectors` does not include the element you need, or to understand the structural relationship between elements.
 
@@ -131,11 +148,11 @@ Validate flow files without a device connection. Catches common mistakes before 
 spana validate [path] [--json]
 ```
 
-`path` defaults to `flowDir`. Exits `0` if all flows are valid, non-zero if any errors found. Does not execute the flows.
+`path` defaults to `./flows`. Exits `0` if all flows are valid, non-zero if any errors found. Does not execute the flows.
 
 **Checks performed:**
 
-- Flow files have a valid default export with `name` and `fn`
+- Every flow loads and has a `name` and `fn`
 - No duplicate flow names across files
 - Platform values are valid (`web`, `android`, `ios` only)
 - Flow directory exists and contains flow files
@@ -146,8 +163,8 @@ spana validate
 
 spana validate flows/
 # ✗ flows/login.flow.ts: Duplicate flow name "Login test" (also in flows/auth.flow.ts)
-# ✗ flows/broken.flow.ts: Invalid platform "windows" — must be web, android, or ios
-# ✗ flows/empty.flow.ts: export default is not a FlowDefinition
+# ✗ flows/broken.flow.ts: Invalid platform "windows" - must be web, android, or ios
+# ✗ flows/empty.flow.ts: Invalid flow definition: missing name or fn
 ```
 
 Use `spana validate` in CI preflight or as part of an agent loop before committing generated flow files.
@@ -158,18 +175,18 @@ The typical agent-driven authoring loop:
 
 ```bash
 # 1. Navigate the app to the screen you want to test, then discover elements
-spana selectors --platform android | jq '.[] | select(.testID != null)'
+spana selectors --platform android | jq '.[] | select(.id != null)'
 
 # 2. Generate and write a flow file (done by the agent)
 
 # 3. Validate the flow without a device
 spana validate flows/my-new-flow.ts
 
-# 4. Run the flow and capture JSON results
-spana test flows/my-new-flow.ts --reporter json 2>&1
+# 4. Run the flow and capture JSON results (one JSON event per line)
+spana test flows/my-new-flow.ts --reporter json
 
-# 5. Read errors from JSON output and iterate
-spana test flows/my-new-flow.ts --reporter json 2>&1 | jq '.results[] | select(.status == "failed")'
+# 5. Read failures from the JSON events and iterate
+spana test flows/my-new-flow.ts --reporter json | jq -R 'fromjson? | select(.event == "flowFail")'
 ```
 
 This loop requires no manual interaction. `spana validate` catches structural errors before device time is spent. `--reporter json` gives the agent machine-readable pass/fail data with error messages.

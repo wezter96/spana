@@ -101,6 +101,49 @@ describe("createHtmlReporter", () => {
     expect(logs[0]).toContain(join(outputDir, "report.html"));
   });
 
+  test("playback JSON cannot break out of its <script> block", () => {
+    const outputDir = createTempDir();
+    const tracePath = join(createTempDir(), "flow-playback.json");
+    const evil = "</script><img src=x onerror=alert(1)> & \u2028";
+    writeFileSync(
+      tracePath,
+      JSON.stringify({
+        version: 1,
+        flowName: "f",
+        platform: "web",
+        startedAtIso: "2026-01-01T00:00:00Z",
+        durationMs: 10,
+        frames: [{ timestampMs: 0, dataBase64: "AA==", mimeType: "image/png" }],
+        steps: [{ index: 0, command: evil, startedAtMs: 0, durationMs: 1, status: "passed" }],
+      }),
+    );
+    createHtmlReporter(outputDir).onRunComplete({
+      total: 1,
+      passed: 1,
+      failed: 0,
+      skipped: 0,
+      flaky: 0,
+      durationMs: 10,
+      platforms: ["web"],
+      results: [
+        {
+          name: "f",
+          platform: "web",
+          status: "passed",
+          durationMs: 10,
+          attachments: [{ name: "playback", contentType: "application/json", path: tracePath }],
+        },
+      ],
+    });
+
+    const html = readFileSync(join(outputDir, "report.html"), "utf8");
+    const json = html.match(
+      /<script type="application\/json" class="pb-data">([^]*?)<\/script>/,
+    )![1]!;
+    expect(json).not.toMatch(/[<>&\u2028]/);
+    expect(JSON.parse(json).steps[0].command).toBe(evil);
+  });
+
   test("omits screenshot sections when files are missing", () => {
     const outputDir = createTempDir();
     const reporter = createHtmlReporter(outputDir);

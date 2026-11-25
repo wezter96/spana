@@ -3,7 +3,7 @@ title: Studio
 description: Local web UI for interactive element inspection and test management.
 ---
 
-Spana Studio is a local web interface that bundles an **Element Inspector** and a **Test Runner Dashboard** into a single tool. It lets you visually inspect device screens, explore element trees, and run test flows with real-time feedback — all from your browser.
+Spana Studio is a local web interface that bundles an **Element Inspector**, a **Test Runner Dashboard**, and a **Recorder** into a single tool. It lets you visually inspect device screens, explore element trees, record new flows, and run test flows with real-time feedback — all from your browser.
 
 ## Launching Studio
 
@@ -57,14 +57,25 @@ Discover and run flow files without leaving the browser.
 
 Two checkboxes control screenshot capture during a run:
 
-| Toggle            | Behavior                                                   |
-| ----------------- | ---------------------------------------------------------- |
-| **Screenshots**   | Capture a screenshot on each successful step               |
-| **Step captures** | Capture per-step screenshots (useful for visual debugging) |
+| Toggle            | Behavior                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| **Screenshots**   | Also capture artifacts when a flow passes (`artifacts.captureOnSuccess`)             |
+| **Step captures** | Capture per-step screenshots (`artifacts.captureSteps`), useful for visual debugging |
+
+When either toggle is on, failure capture, screenshots, and UI hierarchy dumps are also turned on for that run.
 
 ### Session persistence
 
-Test results persist across tab switches within the same Studio session. You can jump between the Inspector and the Runner without losing run history or step details.
+Test results persist across tab switches within the same Studio session. You can jump between the Inspector, Runner, and Recorder without losing run history or step details.
+
+## Recorder
+
+Record a new flow by driving a live web, Android, or iOS session from Studio.
+
+- **Start Recording** — open a recording session for the selected platform and device.
+- **Record actions** — click the screenshot to tap, double-tap, long-press, type text, or add an `expect(...).toBeVisible()` check; use the toolbar for tap, type text, scroll, swipe, and back. Each action runs on the device, and Studio stores the selector and alternative selectors for it.
+- **Delete** — remove a recorded action.
+- **Generate / Save** — generate flow code from the recorded actions, or save it to `<flowDir>/<flow name>.ts` (default `flows/`).
 
 ## How it works
 
@@ -79,4 +90,4 @@ cd apps/studio
 bun run dev
 ```
 
-The dev frontend connects directly to the CLI backend at `http://localhost:4400`.
+The Vite dev server runs on port `4401`. The frontend sends its API calls to `/rpc` on the page's own origin.

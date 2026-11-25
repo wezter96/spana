@@ -16,7 +16,7 @@ flows/
   dashboard.flow.ts        # Standard flow (both styles coexist)
 ```
 
-Step files must live in a `steps/` subdirectory next to the `.feature` file. Spana auto-discovers and loads them.
+When the run includes `.feature` files, spana searches the whole `flowDir` and loads every `*.steps.ts` file and every `.ts` file inside a `steps/` directory. Step definitions are global, so any step file can serve any feature.
 
 ## Writing a feature file
 
@@ -47,7 +47,9 @@ Feature: User login
 
 ### Tags as platform filters
 
-Tags like `@web`, `@android`, and `@ios` on a scenario control which platforms it runs on. Other tags (like `@smoke`, `@e2e`) can be used with `--tag` to filter runs.
+Tags like `@web`, `@android`, and `@ios` on a feature, scenario, or `Examples` block control which platforms the scenario runs on. `@timeout:90000` sets the scenario's flow timeout in ms. Other tags (like `@smoke`, `@e2e`) keep their `@` prefix, so filter them with `--tag @smoke`.
+
+Scenarios do not launch the app automatically (`autoLaunch` is `false`). Launch or navigate in a `Background` step or a `Before` hook.
 
 ### Background
 
@@ -101,13 +103,13 @@ Then("I should see the element {string}", async ({ expect }, testID) => {
 | `And`    | Continue the previous keyword |
 | `But`    | Negative continuation         |
 
-All five register steps the same way -- the keyword is for readability. `And` and `But` inherit the type of the preceding step.
+All five register steps the same way -- the keyword is for readability only. Matching ignores the keyword, so a step registered with `Given` also matches a `When` or `And` line with the same text. Registering the same pattern twice throws an error, and a step line that matches more than one definition fails as ambiguous.
 
 ### Pattern matching
 
 Step patterns support two forms:
 
-**String patterns** with `{string}`, `{int}`, and `{float}` placeholders:
+**[Cucumber expressions](https://github.com/cucumber/cucumber-expressions)** with placeholders such as `{string}`, `{int}`, `{float}`, and `{word}`:
 
 ```ts
 Then("I should see the element {string} within {int}ms", async ({ expect }, testID, timeout) => {
@@ -123,18 +125,21 @@ When(/^I swipe (left|right|up|down)$/, async ({ app }, direction) => {
 });
 ```
 
-Captured groups are passed as additional arguments after the context.
+Captured groups are passed as additional arguments after the context. A step's data table is passed as one more argument (`string[][]`), and a doc string as a `string`.
 
 ### Step context
 
 Every step function receives the same context available in standard flows:
 
-| Property   | Description                                          |
-| ---------- | ---------------------------------------------------- |
-| `app`      | Full `PromiseApp` API (tap, inputText, scroll, etc.) |
-| `expect`   | Assertion helper                                     |
-| `platform` | Current platform (`"web"`, `"android"`, `"ios"`)     |
-| `config`   | Resolved config object                               |
+| Property   | Description                                                |
+| ---------- | ---------------------------------------------------------- |
+| `app`      | Full `PromiseApp` API (tap, inputText, scroll, etc.)       |
+| `expect`   | Assertion helper                                           |
+| `platform` | Current platform (`"web"`, `"android"`, `"ios"`)           |
+| `sessions` | Open extra named web sessions                              |
+| `state`    | `Map<string, unknown>` shared by all steps of the scenario |
+
+If you define a world, its state fields and methods are also on the context.
 
 ## Hooks
 
@@ -193,7 +198,7 @@ export default defineWorld({
 });
 ```
 
-World state is created fresh for each scenario. The `state` map is also available for arbitrary key-value storage across steps.
+World state is created fresh for each scenario. The `state` map is also available for arbitrary key-value storage across steps. Only one world is active: the last `defineWorld()` call that spana loads wins.
 
 ## Running Gherkin tests
 
@@ -215,4 +220,4 @@ spana test --platform web,android
 
 ## Mixing flows and features
 
-Both `.flow.ts` and `.feature` files can live in the same `flowDir`. Spana discovers and runs both. Use whichever style fits the test -- Gherkin for behavior specs, flows for lower-level or exploratory tests.
+Both `.flow.ts` (or `.test.ts`) and `.feature` files can live in the same `flowDir`. Spana discovers and runs both. Use whichever style fits the test -- Gherkin for behavior specs, flows for lower-level or exploratory tests.
