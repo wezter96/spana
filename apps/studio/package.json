@@ -10,8 +10,8 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@orpc/client": "^1.13.13",
-    "@orpc/tanstack-query": "^1.13.13",
+    "@orpc/client": "1.14.10",
+    "@orpc/tanstack-query": "1.14.10",
     "@tanstack/react-query": "^5.75.0",
     "lucide-react": "catalog:",
     "react": "^19.0.0",
@@ -19,7 +19,7 @@
     "sonner": "catalog:"
   },
   "devDependencies": {
-    "@orpc/server": "^1.13.13",
+    "@orpc/server": "1.14.10",
     "@tailwindcss/vite": "^4.1.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "catalog:",
