@@ -6,7 +6,10 @@
     "suspicious": "error"
   },
   "rules": {
-    "unicorn/prefer-string-replace-all": "error"
+    "unicorn/prefer-string-replace-all": "error",
+    "eslint/no-underscore-dangle": "off",
+    "unicorn/no-array-fill-with-reference-type": "off",
+    "unicorn/consistent-function-scoping": "off"
   },
   "env": {
     "builtin": true

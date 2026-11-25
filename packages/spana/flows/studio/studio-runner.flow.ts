@@ -1,4 +1,4 @@
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow(
   "Studio - run all tests and verify results",

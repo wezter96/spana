@@ -1,4 +1,4 @@
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 /**
  * Proves `back` navigates to the previous screen on Android.

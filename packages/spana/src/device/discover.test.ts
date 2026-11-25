@@ -22,32 +22,35 @@ function resetDiscoverState(): void {
 
 function registerChildProcessMock(): void {
   mock.module("node:child_process", () => ({
-    execSync: (command: string) => {
-      if (command.endsWith(" version")) {
-        const candidate = command.slice(0, -8);
-        if (discoverState.versionCandidates.has(candidate)) {
+    execSync: () => "",
+    spawn: () => ({ unref: () => {}, kill: () => {} }),
+    execFileSync: (command: string, args: string[]) => {
+      const full = `${command} ${args.join(" ")}`;
+
+      if (args.length === 1 && args[0] === "version") {
+        if (discoverState.versionCandidates.has(command)) {
           return "Android Debug Bridge version";
         }
         throw new Error("missing adb");
       }
 
-      if (command.endsWith(" devices")) {
+      if (args.length === 1 && args[0] === "devices") {
         return discoverState.androidDevicesOutput;
       }
 
-      if (command === "xcrun simctl list devices -j") {
+      if (full === "xcrun simctl list devices -j") {
         return discoverState.iosDevicesJson;
       }
 
-      if (command.startsWith("xcrun devicectl list devices --json-output ")) {
+      if (command === "xcrun" && args[0] === "devicectl" && args[1] === "list") {
+        const outIdx = args.indexOf("--json-output");
         discoverState.lastDevicectlPath =
-          command.match(/--json-output\s+(\S+)/)?.[1] ?? "/tmp/spana-devicectl-test.json";
+          outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1]! : "/tmp/spana-devicectl-test.json";
         return "";
       }
 
-      throw new Error(`unexpected command: ${command}`);
+      throw new Error(`unexpected command: ${full}`);
     },
-    execFileSync: () => "",
   }));
 
   mock.module("node:fs", () => ({

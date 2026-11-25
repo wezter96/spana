@@ -1,10 +1,10 @@
 ---
-const setupPrompt = `Set up spana (spana-test) for fast, TypeScript-native E2E testing in this repository.
+const setupPrompt = `Set up spana for fast, TypeScript-native E2E testing in this repository.
 
 Follow these steps:
 1. Inspect the workspace to detect our targets (Web, Capacitor iOS/Android, React Native, Electron, or Electrobun) and package manager (bun / npm / pnpm).
-2. Install spana-test as a devDependency (\`bun add -d spana-test\` or \`npm install -D spana-test\`).
-3. Create \`spana.config.ts\` using \`defineConfig\` from \`spana-test\`:
+2. Install spana as a devDependency (\`bun add -d spana\` or \`npm install -D spana\`).
+3. Create \`spana.config.ts\` using \`defineConfig\` from \`spana\`:
    - Configure \`apps\` for our detected targets (e.g. \`apps.web.url\`, \`apps.android\`, \`apps.ios\`).
    - Enable fast web defaults: \`execution.web: { warmBrowser: true, instantAnimations: true }\`.
    - Configure \`artifacts: { outputDir: ".spana/artifacts", captureOnFailure: true }\` and \`reporters: ["console", "html"]\`.
@@ -18,15 +18,15 @@ const skillsPrompt = `Install the Spana E2E agent skill and connect the Spana MC
 
 Follow these steps:
 1. Fetch the official Spana testing skill from:
-   https://raw.githubusercontent.com/wezter96/spana/main/.agents/skills/spana-testing/SKILL.md
-   (or copy \`node_modules/spana-test/.agents/skills/spana-testing/SKILL.md\` if \`spana-test\` is already installed)
-   and install it in this project's or my global agent skills directory as \`spana-testing/SKILL.md\`.
+   https://raw.githubusercontent.com/wezter96/spana/main/.agents/skills/spanaing/SKILL.md
+   (or copy \`node_modules/spana/.agents/skills/spanaing/SKILL.md\` if \`spana\` is already installed)
+   and install it in this project's or my global agent skills directory as \`spanaing/SKILL.md\`.
 2. Register Spana's model-free stdio MCP server in my MCP config:
    - Command: \`npx\` (or \`bunx\`)
    - Args: \`["spana", "mcp"]\`
    This exposes \`spana_session_start\`, \`spana_observe\`, \`spana_tap\`, \`spana_input_text\`, \`spana_assert_visible\`, \`spana_diagnostics\`, \`spana_screenshot\`, and \`spana_export_flow\`.
 3. When I ask you to test a flow or debug a UI issue, drive the app via \`spana mcp\` (or \`spana selectors\` / \`spana hierarchy\`), verify assertions pass, and export a deterministic \`.flow.ts\` file.
-4. Keep https://spana.antonwester.se/llms-full.txt as the canonical API reference for \`spana-test\`.`;
+4. Keep https://spana.antonwester.se/llms-full.txt as the canonical API reference for \`spana\`.`;
 
 const cards = [
   {
@@ -34,7 +34,7 @@ const cards = [
     badge: "PROJECT SETUP",
     title: "Set up Spana in your repo",
     subtitle:
-      "Paste into Claude Code, Codex, Cursor, or Antigravity to install spana-test, generate spana.config.ts, write a smoke flow, and run spana doctor.",
+      "Paste into Claude Code, Codex, Cursor, or Antigravity to install spana, generate spana.config.ts, write a smoke flow, and run spana doctor.",
     buttonLabel: "Copy setup prompt for your agent",
     prompt: setupPrompt,
   },
@@ -43,7 +43,7 @@ const cards = [
     badge: "SKILLS + MCP",
     title: "Install Spana Skill & MCP Server",
     subtitle:
-      "Give your coding agent the spana-testing skill, stdio MCP tools (spana mcp), and llms-full.txt reference in one paste.",
+      "Give your coding agent the spanaing skill, stdio MCP tools (spana mcp), and llms-full.txt reference in one paste.",
     buttonLabel: "Copy skills + MCP prompt for your agent",
     prompt: skillsPrompt,
   },

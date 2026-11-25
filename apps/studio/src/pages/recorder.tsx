@@ -271,8 +271,9 @@ export function RecorderPage() {
       let selector: string | undefined;
       if (root) {
         const matches = elementsAtPoint(root as any, point.x, point.y);
-        if (matches.length > 0) {
-          const el = matches[0].element as any;
+        const first = matches[0];
+        if (first) {
+          const el = first.element as any;
           selector = el.resourceId || el.accessibilityLabel || el.text || undefined;
         }
       }

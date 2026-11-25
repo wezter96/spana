@@ -27,7 +27,10 @@ export function flattenTree(root: Element, depth = 0, path: number[] = []): Flat
   const result: FlatElement[] = [{ element: root, depth, path }];
   if (root.children) {
     for (let i = 0; i < root.children.length; i++) {
-      result.push(...flattenTree(root.children[i], depth + 1, [...path, i]));
+      const child = root.children[i];
+      if (child) {
+        result.push(...flattenTree(child, depth + 1, [...path, i]));
+      }
     }
   }
   return result;

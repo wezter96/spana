@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve } from "node:path";
@@ -72,7 +72,7 @@ async function defaultIsPortOpen(host: string, port: number): Promise<boolean> {
 
 function defaultCommandExists(bin: string): boolean {
   try {
-    execSync(`which ${bin}`, { stdio: "ignore" });
+    execFileSync("which", [bin], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -81,20 +81,28 @@ function defaultCommandExists(bin: string): boolean {
 
 function defaultGetAndroidWebViewVersion(serial: string): string | null {
   try {
-    const out = execSync(`adb -s ${serial} shell dumpsys package com.google.android.webview`, {
-      encoding: "utf-8",
-      timeout: 4000,
-    });
+    const out = execFileSync(
+      "adb",
+      ["-s", serial, "shell", "dumpsys", "package", "com.google.android.webview"],
+      {
+        encoding: "utf-8",
+        timeout: 4000,
+      },
+    );
     const match = out.match(/versionName=([^\s]+)/);
     if (match?.[1]) return match[1];
   } catch {
     // try Chrome (Android 7-9 / Trichrome)
   }
   try {
-    const out = execSync(`adb -s ${serial} shell dumpsys package com.android.chrome`, {
-      encoding: "utf-8",
-      timeout: 4000,
-    });
+    const out = execFileSync(
+      "adb",
+      ["-s", serial, "shell", "dumpsys", "package", "com.android.chrome"],
+      {
+        encoding: "utf-8",
+        timeout: 4000,
+      },
+    );
     const match = out.match(/versionName=([^\s]+)/);
     return match?.[1] ?? null;
   } catch {

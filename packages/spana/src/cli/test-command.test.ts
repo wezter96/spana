@@ -817,31 +817,39 @@ function registerUiInstallerMocks(): void {
     readdirSync: (path: string) => uiaInstallerState.directoryEntries.get(String(path)) ?? [],
   }));
   mock.module("node:child_process", () => ({
-    execSync: (command: string) => {
-      uiaInstallerState.execCalls.push(command);
+    execSync: () => "",
+    spawn: (command: string, args: string[]) => {
+      const full = `${command} ${args.join(" ")}`;
+      uiaInstallerState.execCalls.push(full);
+      if (full.includes(" shell am instrument") && uiaInstallerState.instrumentThrows) {
+        throw new Error("instrument timeout");
+      }
+      return { unref: () => {}, kill: () => true };
+    },
+    execFileSync: (command: string, args: string[]) => {
+      const full = `${command} ${args.join(" ")}`;
+      uiaInstallerState.execCalls.push(full);
 
-      if (command.endsWith(" version")) {
-        const candidate = command.slice(0, -8);
-        if (uiaInstallerState.versionCandidates.has(candidate)) {
+      if (args.length === 1 && args[0] === "version") {
+        if (uiaInstallerState.versionCandidates.has(command)) {
           return "Android Debug Bridge version";
         }
         throw new Error("missing adb");
       }
 
-      if (command.includes("pm list packages io.appium.uiautomator2.server")) {
+      if (full.includes("pm list packages io.appium.uiautomator2.server")) {
         if (uiaInstallerState.packageListThrows) {
           throw new Error("package lookup failed");
         }
         return uiaInstallerState.packageListOutput;
       }
 
-      if (command.includes(" shell am instrument") && uiaInstallerState.instrumentThrows) {
+      if (full.includes(" shell am instrument") && uiaInstallerState.instrumentThrows) {
         throw new Error("instrument timeout");
       }
 
       return "";
     },
-    execFileSync: () => "",
   }));
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url =
@@ -1039,7 +1047,7 @@ describe("uiautomator2 installer", () => {
     expect(
       uiaInstallerState.execCalls.some((command) =>
         command.includes(
-          "shell am instrument -w -e disableAnalytics true io.appium.uiautomator2.server.test/androidx.test.runner.AndroidJUnitRunner &",
+          "shell am instrument -w -e disableAnalytics true io.appium.uiautomator2.server.test/androidx.test.runner.AndroidJUnitRunner",
         ),
       ),
     ).toBe(true);

@@ -40,12 +40,14 @@ function ScreenshotList({ attachments, label }: { attachments: Attachment[]; lab
         ))}
       </div>
       {expanded && (
-        <div
-          className="mt-2 rounded border border-zinc-700 overflow-hidden cursor-pointer"
+        <button
+          type="button"
+          className="mt-2 block w-full rounded border border-zinc-700 overflow-hidden cursor-pointer text-left"
           onClick={() => setExpanded(null)}
+          aria-label="Collapse expanded screenshot"
         >
           <img src={expanded} alt="Expanded screenshot" className="w-full h-auto bg-zinc-900" />
-        </div>
+        </button>
       )}
     </div>
   );

@@ -184,7 +184,7 @@ describe("Spana v0.8.0 pilot feedback suite — unit coverage", () => {
     writeFileSync(
       flowFile,
       [
-        'import { flow } from "spana-test";',
+        'import { flow } from "spana";',
         'export default flow("checkout", async ({ app, expect }) => {',
         '  await app.tap({ role: "button", name: "Buy" });',
         '  await expect({ testID: "receipt" }).toBeVisible();',

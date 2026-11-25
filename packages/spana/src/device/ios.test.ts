@@ -32,52 +32,51 @@ function resetIOSState(): void {
 
 function registerIOSMocks(): void {
   mock.module("node:child_process", () => ({
-    execSync: (command: string) => {
-      iosState.execSyncCalls.push(command);
+    execSync: () => "",
+    spawn: () => ({ unref: () => {}, kill: () => {} }),
+    execFileSync: (command: string, args: string[]) => {
+      iosState.execFileCalls.push({ command, args });
+      const full = `${command} ${args.join(" ")}`;
+      iosState.execSyncCalls.push(full);
 
-      if (command === "xcrun simctl list devices -j") {
+      if (command === "plutil") {
+        return iosState.plistJson;
+      }
+
+      if (full === "xcrun simctl list devices -j") {
         return iosState.listDevicesJson;
       }
 
-      if (command.startsWith("xcrun devicectl list devices --json-output ")) {
+      if (command === "xcrun" && args[0] === "devicectl" && args[1] === "list") {
         if (iosState.devicectlShouldThrow) {
           throw new Error("missing devicectl");
         }
-
+        const outIdx = args.indexOf("--json-output");
         iosState.lastDevicectlPath =
-          command.match(/--json-output\s+(\S+)/)?.[1] ?? "/tmp/spana-devicectl-test.json";
+          outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1]! : "/tmp/spana-devicectl-test.json";
         return "";
       }
 
-      if (command.startsWith("xcrun simctl get_app_container ")) {
-        const [, , , udid, bundleId] = command.split(" ");
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "get_app_container") {
+        const [, , udid, bundleId] = args;
         if (iosState.installedApps.has(`${udid}:${bundleId}`)) {
           return "/Applications/App.app";
         }
         throw new Error("missing app");
       }
 
-      if (command.startsWith("xcrun simctl boot ")) {
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "boot") {
         if (iosState.bootShouldThrow) {
           throw new Error("already booted");
         }
         return "";
       }
 
-      if (command.startsWith("xcrun simctl terminate ")) {
+      if (command === "xcrun" && args[0] === "simctl" && args[1] === "terminate") {
         if (iosState.terminateShouldThrow) {
           throw new Error("not running");
         }
         return "";
-      }
-
-      return "";
-    },
-    execFileSync: (command: string, args: string[]) => {
-      iosState.execFileCalls.push({ command, args });
-
-      if (command === "plutil") {
-        return iosState.plistJson;
       }
 
       return "";
@@ -193,16 +192,14 @@ describe("ios device helpers", () => {
     ios.openUrlOnSimulator("SIM-1", "spana://checkout");
     ios.launchWithUrlOnSimulator("SIM-1", "com.example.shop", "spana://checkout");
 
-    expect(iosState.execFileCalls).toEqual([
-      {
-        command: "xcrun",
-        args: ["simctl", "openurl", "SIM-1", "spana://checkout"],
-      },
-      {
-        command: "xcrun",
-        args: ["simctl", "launch", "SIM-1", "com.example.shop", "--open-url", "spana://checkout"],
-      },
-    ]);
+    expect(iosState.execFileCalls).toContainEqual({
+      command: "xcrun",
+      args: ["simctl", "openurl", "SIM-1", "spana://checkout"],
+    });
+    expect(iosState.execFileCalls).toContainEqual({
+      command: "xcrun",
+      args: ["simctl", "launch", "SIM-1", "com.example.shop", "--open-url", "spana://checkout"],
+    });
   });
 
   test("lists only currently connected physical iOS devices from devicectl", async () => {

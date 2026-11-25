@@ -64,8 +64,8 @@ export function formatSelectorCode(selector: ExtendedSelector): string {
 export function buildFlowFileFromLines(flowName: string, lines: string[]): string {
   const usesSystemUI = lines.some((l) => l.includes("systemUI("));
   const imports = usesSystemUI
-    ? 'import { flow, systemUI } from "spana-test";'
-    : 'import { flow } from "spana-test";';
+    ? 'import { flow, systemUI } from "spana";'
+    : 'import { flow } from "spana";';
   const body =
     lines.length > 0 ? lines.map((l) => `  ${l}`).join("\n") : "  // Add verified steps here";
   return `${imports}\n\nexport default flow(${JSON.stringify(flowName)}, async ({ app, expect }) => {\n${body}\n});\n`;

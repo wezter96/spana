@@ -24,7 +24,7 @@ const INTERNAL_FRAME_PATTERNS = [
   /^bun:/,
   /^internal\//,
   /\/packages\/spana\/(?:src|dist)\/(?!.*\.test\.[jt]sx?$)/,
-  /\/spana-test\/dist\//,
+  /\/spana(?:-test)?\/dist\//,
 ];
 
 function normalizeStackFile(raw: string): string {

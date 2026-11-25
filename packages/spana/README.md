@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/spana-test"><img src="https://img.shields.io/npm/v/spana-test?color=06b6d4&label=spana-test" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/spana"><img src="https://img.shields.io/npm/v/spana?color=06b6d4&label=spana" alt="npm" /></a>
   <a href="https://github.com/wezter96/spana/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-10b981" alt="License" /></a>
   <a href="#platforms"><img src="https://img.shields.io/badge/targets-Web%20%C2%B7%20iOS%20%C2%B7%20Android%20%C2%B7%20Electron%20%C2%B7%20Electrobun-38bdf8" alt="Targets" /></a>
 </p>
@@ -83,15 +83,15 @@ bun run benchmarks/mcp-agent-bench/benchmark.ts --base-url http://127.0.0.1:8000
 ## Quick Start
 
 ```bash
-npm install spana-test
+npm install spana
 # or
-bun add spana-test
+bun add spana
 ```
 
 Create `spana.config.ts`:
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
@@ -117,7 +117,7 @@ export default defineConfig({
 Create `flows/login.flow.ts`:
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });
@@ -160,7 +160,7 @@ spana test
 ### Basic API
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow(
   "checkout flow",
@@ -271,7 +271,7 @@ spana studio --no-open
 ## Configuration
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
@@ -355,7 +355,7 @@ export default defineConfig({
 ### Browser runtime helpers (web)
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("web dashboard", async ({ app, platform }) => {
   if (platform !== "web") return;
@@ -378,7 +378,7 @@ export default flow("web dashboard", async ({ app, platform }) => {
 ### Storybook component flows (web)
 
 ```ts
-import { defineConfig, flow } from "spana-test";
+import { defineConfig, flow } from "spana";
 
 // spana.config.ts
 export default defineConfig({
@@ -412,7 +412,7 @@ export default flow("primary button story", async ({ app, expect, platform }) =>
 With Spana's dual-channel resolver, you rarely need manual `switchToWebView()` calls. `{ testID }` queries resolve inside WebViews (including Shadow DOM and same-origin `<iframe>`s) over `spana-bridge`, Android CDP, iOS WebKit Inspector, or Apple `webinspectord`, while `systemUI(...)` targets native sheets like `SFSafariViewController`, Chrome Custom Tabs, or OS permission prompts:
 
 ```ts
-import { flow, systemUI } from "spana-test";
+import { flow, systemUI } from "spana";
 
 export default flow("SSO sign-in across WebView and native sheet", async ({ app, expect }) => {
   await app.tap({ testID: "sign-in" }); // DOM lookup -> real native touch
@@ -475,7 +475,7 @@ Spana ships a few built-in workflows that are easy to miss from the minimal quic
 
 ```ts
 // spana.config.ts — PR-aware CI test filtering with a 1-token logprob decision model
-import { defineConfig, decisionFilter, createLogprobDecisionJudge } from "spana-test";
+import { defineConfig, decisionFilter, createLogprobDecisionJudge } from "spana";
 
 export default defineConfig({
   filters: [
@@ -516,7 +516,7 @@ spana test --driver appium --appium-url $SAUCE_URL --caps ./caps/saucelabs-andro
 Or configure it in `spana.config.ts`:
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   execution: {

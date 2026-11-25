@@ -8,7 +8,7 @@ either an input (a **stimulus**) or an expected output (a **sensor**). If the ap
 different value, the test fails. There are no `Given`/`When`/`Then` keywords.
 
 Varar runs inside Vitest. Spana does not run `.md` files itself. Instead, your step functions call
-Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana-test/agent`) to drive the
+Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana/agent`) to drive the
 app.
 
 :::note[Which one to pick]
@@ -24,7 +24,7 @@ A full working project is in
 ## Install
 
 ```bash
-npm install -D spana-test @varar/varar @varar/vitest @varar/cli vitest vite
+npm install -D spana @varar/varar @varar/vitest @varar/cli vitest vite
 ```
 
 Your `package.json` must have `"type": "module"`.
@@ -62,7 +62,7 @@ When the shopper adds 2 items to the cart, the cart shows 2 items.
 
 ```ts title="src/varar/cart.steps.ts"
 import { steps } from "@varar/varar";
-import { connect, type Session } from "spana-test/agent";
+import { connect, type Session } from "spana/agent";
 import { afterAll } from "vitest";
 
 let session: Session | undefined;

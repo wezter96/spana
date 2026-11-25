@@ -18,7 +18,7 @@ describe("generateFlowCode", () => {
   test("generates minimal flow with no actions", () => {
     const code = generateFlowCode("Empty Flow", []);
     expect(code).toBe(
-      `import { flow } from "spana-test";
+      `import { flow } from "spana";
 
 export default flow("Empty Flow", async ({ app, expect }) => {
 });`,
@@ -193,7 +193,7 @@ export default flow("Empty Flow", async ({ app, expect }) => {
     ];
     const code = generateFlowCode("Login Flow", actions);
     expect(code).toBe(
-      `import { flow } from "spana-test";
+      `import { flow } from "spana";
 
 export default flow("Login Flow", async ({ app, expect }) => {
   await app.tap({ testID: "login-btn" });

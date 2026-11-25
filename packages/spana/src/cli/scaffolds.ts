@@ -34,7 +34,7 @@ export function generateFlowStub(
   const configStr = `{ ${configParts.join(", ")} }`;
 
   if (preset === "blank") {
-    return `import { flow } from "spana-test";
+    return `import { flow } from "spana";
 
 export default flow(
   "${name}",
@@ -48,7 +48,7 @@ export default flow(
   }
 
   if (preset === "auth") {
-    return `import { flow } from "spana-test";
+    return `import { flow } from "spana";
 
 export default flow(
   "${name}",
@@ -77,7 +77,7 @@ export default flow(
   }
 
   // Default: "smoke"
-  return `import { flow } from "spana-test";
+  return `import { flow } from "spana";
 
 export default flow(
   "${name}",

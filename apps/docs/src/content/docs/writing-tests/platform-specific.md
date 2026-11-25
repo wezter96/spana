@@ -10,7 +10,7 @@ spana runs a single flow file against multiple platforms. There are two mechanis
 The `platform` value in `FlowContext` is `"web" | "android" | "ios" | "electron" | "electrobun"`. Use it for conditional logic within a flow that is mostly shared across platforms.
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("user can share content", async ({ app, expect, platform }) => {
   await app.tap({ testID: "share-button" });
@@ -38,7 +38,7 @@ export default flow("user can share content", async ({ app, expect, platform }) 
 Use `FlowConfig.platforms` to prevent a flow from running on platforms where it does not apply.
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow(
   "push notification permissions",
@@ -75,7 +75,7 @@ CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["
 Out-of-process OS UI (permission dialogs, share sheets, in-app browser tabs) is not part of the app's DOM. Mark those selectors with `systemUI` so spana goes straight to the native driver:
 
 ```ts
-import { flow, systemUI } from "spana-test";
+import { flow, systemUI } from "spana";
 
 export default flow("allow notifications", { platforms: ["android", "ios"] }, async ({ app }) => {
   await app.tap({ testID: "enable-notifications" });

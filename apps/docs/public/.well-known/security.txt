@@ -1,0 +1,5 @@
+Contact: https://github.com/wezter96/spana/security/advisories/new
+Expires: 2027-11-25T00:00:00.000Z
+Canonical: https://spana.antonwester.se/.well-known/security.txt
+Preferred-Languages: en
+Policy: https://github.com/wezter96/spana/blob/main/SECURITY.md

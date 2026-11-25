@@ -1,5 +1,5 @@
-import { flow } from "spana-test";
-import type { Platform } from "spana-test";
+import { flow } from "spana";
+import type { Platform } from "spana";
 import { navigateToHomeScreen } from "./support/navigation.js";
 
 interface RouteSpec {

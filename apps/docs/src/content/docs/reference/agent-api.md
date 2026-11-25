@@ -3,20 +3,20 @@ title: Agent API
 description: Programmatic API for connecting to local web, Android, iOS, Electron, and Electrobun targets from your own scripts.
 ---
 
-The `spana-test/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
+The `spana/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
 
 ## Installation
 
-The agent API ships with `spana-test`.
+The agent API ships with `spana`.
 
 ```ts
-import { connect, validateFlows } from "spana-test/agent";
+import { connect, validateFlows } from "spana/agent";
 ```
 
 ## Connecting
 
 ```ts
-import { connect } from "spana-test/agent";
+import { connect } from "spana/agent";
 
 const session = await connect({
   platform: "web",
@@ -211,7 +211,7 @@ await session.setNetworkConditions({
 The same package also exports programmatic validation. It takes a list of flow file paths and returns `{ file, error }` entries for the files that fail to import or have no valid default export:
 
 ```ts
-import { validateFlows } from "spana-test/agent";
+import { validateFlows } from "spana/agent";
 
 const issues = await validateFlows(["./flows/login.flow.ts", "./flows/checkout.flow.ts"]);
 if (issues.length > 0) {

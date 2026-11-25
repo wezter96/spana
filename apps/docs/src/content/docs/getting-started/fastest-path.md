@@ -57,7 +57,7 @@ before each DOM action, instead of acting on a loading screen. See [Debugging](/
 | --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | 1   | `spana mcp`                                            | One live session for all tool calls. The agent does not start a new browser each time.  | Your agent has no MCP support.                                                       |
 | 2   | `spana selectors`, `spana hierarchy`, `spana validate` | Plain CLI. Works in any agent.                                                          | You call them many times in a row: each call starts a new browser or driver session. |
-| 3   | `connect()` from `spana-test/agent`                    | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
+| 3   | `connect()` from `spana/agent`                         | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
 
 When the agent has a working flow, save it as a `.flow.ts` file and run it with `spana test`
 (suite option #1).

@@ -133,7 +133,7 @@ async function evaluateOnPage<T = unknown>(
 
 function resolveWarmBrowserKey(scope?: string): string {
   if (scope && scope.trim().length > 0) return scope.trim();
-  const cwdHash = createHash("sha1").update(process.cwd()).digest("hex").slice(0, 10);
+  const cwdHash = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 10);
   return `scope-${cwdHash}`;
 }
 

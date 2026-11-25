@@ -11,7 +11,7 @@
 
 ## Introduction
 
-**spana** (`spana-test`) is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
+**spana** is a web-first, TypeScript-native end-to-end testing framework across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun** — one `{ testID }` selector model, zero Appium required locally.
 
 ## Why spana
 
@@ -46,10 +46,10 @@ Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 
 ## Monorepo structure
 
-- `packages/spana` (`spana-test`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
+- `packages/spana` (`spana`) — core library, drivers, smart coordinator, MCP server, CI filters, Studio server, and CLI
 - `packages/spana-bridge` (`spana-bridge`) — optional in-app WebSocket bridge for hybrid/desktop targets
 - `apps/docs` — documentation & landing page (`https://spana.antonwester.se`)
-- `apps/studio` — Spana Studio web UI (embedded into `spana-test`)
+- `apps/studio` — Spana Studio web UI (embedded into `spana`)
 - `benchmarks/` — reproducible head-to-head framework and MCP agent benchmarks
 
 ---
@@ -59,9 +59,9 @@ Spana bridges both worlds with a **Dual-Channel Web-First Engine**:
 ## 1. Install
 
 ```bash
-npm install spana-test
+npm install spana
 # or
-bun add spana-test
+bun add spana
 ```
 
 spana works with Node.js 20+ and [Bun](https://bun.sh).
@@ -71,7 +71,7 @@ spana works with Node.js 20+ and [Bun](https://bun.sh).
 Create `spana.config.ts` at the root of your project:
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
@@ -90,7 +90,7 @@ Start with `platforms: ["web"]` while getting familiar with the framework, then 
 Create `flows/login.flow.ts`:
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });
@@ -205,7 +205,7 @@ before each DOM action, instead of acting on a loading screen. See [Debugging](/
 | --- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | 1   | `spana mcp`                                            | One live session for all tool calls. The agent does not start a new browser each time.  | Your agent has no MCP support.                                                       |
 | 2   | `spana selectors`, `spana hierarchy`, `spana validate` | Plain CLI. Works in any agent.                                                          | You call them many times in a row: each call starts a new browser or driver session. |
-| 3   | `connect()` from `spana-test/agent`                    | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
+| 3   | `connect()` from `spana/agent`                    | Custom scripts, or other test runners such as [Varar](/writing-tests/varar/) in Vitest. | You want speed: no shared pool, no warm browser, no bridge.                          |
 
 When the agent has a working flow, save it as a `.flow.ts` file and run it with `spana test`
 (suite option #1).
@@ -217,7 +217,7 @@ When the agent has a working flow, save it as a `.flow.ts` file and run it with 
 Configuration lives in `spana.config.ts` at the project root. Pass the config object to `defineConfig` for type safety.
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   // ...
@@ -231,7 +231,7 @@ Run `spana validate-config` to validate the file without starting drivers or dis
 ## Full example
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
@@ -666,7 +666,7 @@ export default defineConfig({
 The `flow()` function accepts an optional config object as its second argument, letting you override global settings for a single flow.
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 flow(
   "checkout",
@@ -843,7 +843,159 @@ These values become defaults for `expect(selector).toMatchScreenshot(name, optio
 filters?: TestFilter[]
 ```
 
-CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana-test` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).
+CI test filters that run only when you pass `spana test --changed-since <ref>`. Each filter gets the selected flows and the git changes since `<ref>`, and returns the flows to skip. `spana` exports `pathRuleFilter`, `deterministicImpactFilter`, and `decisionFilter`. Without `filters`, `--changed-since` warns and runs all flows. See [CI Integration](/guides/ci-integration/).
+
+---
+
+## Spana vs Playwright, WebdriverIO, Maestro & Appium
+
+Spana is a TypeScript E2E framework. One test runs on Web, iOS, Android, Electron and Electrobun.
+This page shows where it fits next to the tools you may already use, and where those tools are the
+better choice.
+
+:::note[Direct CDP + Playwright compatibility]
+On Chromium, Spana's `engine: "auto"` / `"cdp"` talks directly to Chromium over a raw CDP
+WebSocket (bypassing Playwright's Node client↔server pipe, including cross-origin OOPIF iframes,
+live screencast video playback, and pre-warmed isolated `BrowserContext` pools). When you choose
+Firefox, WebKit, or Playwright-specific options like HAR recording, Spana seamlessly uses its
+bundled Playwright driver with the exact same flow API.
+:::
+
+## At a glance
+
+<div class="spana-compare-table">
+
+| Feature               | Spana                                  | Playwright                       | WebdriverIO           | Maestro                   | Detox                         | Appium                               |
+| --------------------- | -------------------------------------- | -------------------------------- | --------------------- | ------------------------- | ----------------------------- | ------------------------------------ |
+| Test format           | TypeScript, Gherkin                    | JS/TS, Python, .NET, Java        | JS/TS                 | YAML                      | JavaScript (Jest)             | JS, Java, Python, Ruby, .NET clients |
+| Web                   | Yes (Playwright inside)                | Yes                              | Yes                   | Yes, still in development | No                            | Yes, through browser drivers         |
+| iOS app               | Yes, direct WebDriverAgent             | No                               | Yes, through Appium   | Yes, simulators only      | Yes, React Native, simulators | Yes, XCUITest driver                 |
+| Android app           | Yes, direct UiAutomator2               | Experimental, Chrome and WebView | Yes, through Appium   | Yes                       | Yes, React Native             | Yes, UiAutomator2 / Espresso         |
+| Electron              | Yes                                    | Experimental                     | Yes, official service | No                        | No                            | No official driver                   |
+| Electrobun            | Yes                                    | No                               | No                    | No                        | No                            | No                                   |
+| Appium server locally | Not needed                             | —                                | Needed for mobile     | Not needed                | Not needed                    | Is Appium                            |
+| Agent (MCP) server    | `spana mcp`, exports a `.flow.ts` test | `@playwright/mcp`                | `@wdio/mcp`           | Maestro MCP               | None official                 | `appium-mcp`                         |
+| License               | Apache-2.0                             | Apache-2.0                       | MIT                   | Apache-2.0                | MIT                           | Apache-2.0                           |
+
+</div>
+
+Facts about other tools come from their official docs and repositories, checked on 25 November 2026.
+"No" means their docs do not list it. If something here is out of date, please
+[open an issue](https://github.com/wezter96/spana/issues).
+
+## Benchmarks
+
+Web runs: Apple M4 Pro, Bun 1.4.5, headless Chrome. 20 flows with 14 steps each (280 steps in
+total). Playwright and Spana sign in once through the UI, then reuse the session for the other
+flows.
+
+How the other tools are run:
+
+- **Playwright** rows use the Playwright library directly (one browser, a new context per flow).
+  They do not use the `playwright test` runner.
+- **WebDriver HTTP** is a simulation of the W3C WebDriver protocol that WebdriverIO uses: plain HTTP
+  calls to a small local WebDriver server. It does not use the `webdriverio` package, so treat it
+  as a rough guide to protocol cost, not a WebdriverIO result.
+
+### 1. Strict apples-to-apples (fresh context per flow, full actionability, no bridge)
+
+Both Playwright and Spana open a brand-new isolated browser context per flow, execute all 20 flows
+(280 interactions) with full actionability checks (visibility, enabled, scroll-into-view, hit-test
+unobstructed, stability) and no app-side bridge script:
+
+| Setup                                            | Mode / Isolation           |  Total time | Compared with               |
+| ------------------------------------------------ | -------------------------- | ----------: | --------------------------- |
+| Playwright, `storageState`, 1 worker             | 1w, fresh context/flow     |     17.71 s | baseline (PW 1w)            |
+| **Spana Direct CDP (`engine: "cdp"`), 1 worker** | 1w, fresh context/flow     | **11.34 s** | **1.56× faster than PW 1w** |
+| Playwright, 4 parallel workers                   | 4w, fresh context/flow     |     15.57 s | baseline (PW 4w)            |
+| **Spana Direct CDP Pool, 4 workers**             | 4w, fresh context/flow     |  **9.34 s** | **1.67× faster than PW 4w** |
+| **Spana Direct CDP + Video Playback, 4 workers** | 4w, fresh ctx + screencast |  **9.73 s** | **1.60× faster than PW 4w** |
+
+### 2. Optional speed tiers (different isolation trade-offs)
+
+These modes trade creating a brand-new context per flow for faster state resets or an optional
+in-app bridge script. They are listed separately so you can choose the right trade-off for your suite:
+
+| Setup                                       | Trade-off vs fresh context                    | Total time | Reference vs PW 4w |
+| ------------------------------------------- | --------------------------------------------- | ---------: | ------------------ |
+| **Spana Direct CDP `hot-cache`, 1 worker**  | Keeps HTTP & V8 cache warm; wipes all state   | **6.01 s** | 3.0× vs PW 1w      |
+| **Spana Direct CDP `hot-cache`, 4 workers** | Keeps HTTP & V8 cache warm; wipes all state   | **4.06 s** | 3.8× vs PW 4w      |
+| **Spana + `spana-bridge`, 1 worker**        | App carries `spana-bridge` WS helper          | **3.10 s** | 5.7× vs PW 1w      |
+| **Spana Shared Pool, 4 workers**            | Reuses warm contexts (storage clear + reload) | **2.69 s** | 5.8× vs PW 4w      |
+
+_(The chart below also includes simulated W3C WebDriver HTTP rows for rough protocol context and a
+`pathRuleFilter` PR row that runs only 5 of 20 flows — see Pull requests below.)_
+
+<div class="spana-visual-frame" style="margin-bottom: 1.5rem">
+  <img
+    src="/assets/benchmark-20flows.svg"
+    alt="Spana vs Playwright vs WebdriverIO 20-flow benchmark chart"
+    width="920"
+    height="660"
+    loading="lazy"
+  />
+</div>
+
+### 3. Realistic 24-flow pilot (4,000-cell DOM + hydration overlay + offscreen scroll)
+
+Every single flow gets full actionability checks and zero skipped flows:
+
+| Runner                                      | Workers | Isolation                    |         Suite wall |      Median / test |         P95 / test |      Pass |
+| ------------------------------------------- | ------: | ---------------------------- | -----------------: | -----------------: | -----------------: | --------: |
+| Playwright                                  |      1w | fresh context/flow           |            11.88 s |             420 ms |             596 ms |     24/24 |
+| **Spana Direct CDP `hot-cache` (`1ctx/b`)** |  **1w** | full cookie/storage/IDB wipe | **3.53 s** (3.37×) |  **97 ms** (4.33×) | **131 ms** (4.55×) | **24/24** |
+| Playwright                                  |      4w | fresh context/flow           |            11.91 s |           1,031 ms |           1,339 ms |     24/24 |
+| **Spana Direct CDP `fresh` (`1ctx/b`)**     |  **4w** | fresh context/flow (strict)  | **7.80 s** (1.53×) | **770 ms** (1.34×) |       **1,330 ms** | **24/24** |
+| **Spana Direct CDP `hot-cache` (`2ctx/b`)** |  **4w** | full cookie/storage/IDB wipe | **3.66 s** (3.25×) | **278 ms** (3.71×) | **348 ms** (3.85×) | **24/24** |
+
+### Rust Native Visual Diff & Agent Replay Cache
+
+- **1920×1080 PNG visual regression diff:** Pure-JS `pixelmatch` `215.0 ms` → **Spana Rust FFI `11.2 ms`** (**19.2× faster**).
+- **Verified Replay Cache (`--strict-cache`) vs live local LLM (`qwen2.5:1.5b`):** `7,924 ms` → **`27 ms`** (**293.5× faster**, 0 LLM calls).
+
+### Mobile (iOS / Android)
+
+Mobile timings depend heavily on local Xcode Simulator / Android Emulator hardware and are **not**
+measured by `benchmarks/framework-comparison/benchmark.ts` (we removed earlier unmeasured constant
+estimates so every benchmark table only reports live-measured numbers). Spana avoids Appium server
+hops by talking directly to WebDriverAgent (iOS) and UiAutomator2 (Android) and resolving WebView
+elements over CDP / WebKit Inspector / `spana-bridge`.
+
+### Pull requests (subset filtering)
+
+With `--changed-since origin/main` and `pathRuleFilter`, Spana ran only the **5 of 20** flows a PR
+change could affect, in `2.76 s` (4w Direct CDP). This is **not** a full-suite speed comparison — it
+measures the wall time saved by skipping unaffected flows in CI.
+
+### Run it yourself
+
+```bash
+git clone https://github.com/wezter96/spana && cd spana && bun install
+bun run benchmarks/framework-comparison/benchmark.ts
+```
+
+Raw numbers: [`benchmarks/framework-comparison/results.json`](https://github.com/wezter96/spana/blob/main/benchmarks/framework-comparison/results.json).
+
+## When to pick something else
+
+- **Playwright** — your app is web only and you want the largest community, the trace viewer, and
+  many languages.
+- **WebdriverIO** — you already have a WebDriver or Appium grid, or you need its large plugin
+  ecosystem.
+- **Maestro** — you want YAML tests that non-developers can read and write.
+- **Detox** — you test only a React Native app and want gray-box sync with the app's JavaScript
+  thread.
+- **Appium** — you need a driver Spana does not have (for example Windows, macOS or TV apps), or
+  you write tests in Java, Python or Ruby.
+
+## When Spana fits best
+
+- One app on web **and** mobile **and** desktop, with one test suite.
+- A Capacitor, React Native or Electron app with `testID` attributes.
+- You want your coding agent to write and run E2E tests.
+- You want fast local runs without installing Appium.
+
+[Start with the Quick Start →](/getting-started/quick-start/)
 
 ---
 
@@ -866,7 +1018,7 @@ flow(name: string, config: FlowConfig, fn: FlowFn): FlowDefinition
 ### Basic flow
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });
@@ -1349,7 +1501,7 @@ Matches the OS-level accessibility label exactly (on web, the `aria-label` attri
 ### System UI
 
 ```ts
-import { systemUI } from "spana-test";
+import { systemUI } from "spana";
 
 await app.tap(systemUI({ text: "Allow" }));
 // equivalent to:
@@ -1614,7 +1766,7 @@ spana runs a single flow file against multiple platforms. There are two mechanis
 The `platform` value in `FlowContext` is `"web" | "android" | "ios" | "electron" | "electrobun"`. Use it for conditional logic within a flow that is mostly shared across platforms.
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("user can share content", async ({ app, expect, platform }) => {
   await app.tap({ testID: "share-button" });
@@ -1642,7 +1794,7 @@ export default flow("user can share content", async ({ app, expect, platform }) 
 Use `FlowConfig.platforms` to prevent a flow from running on platforms where it does not apply.
 
 ```ts
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow(
   "push notification permissions",
@@ -1679,7 +1831,7 @@ CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["
 Out-of-process OS UI (permission dialogs, share sheets, in-app browser tabs) is not part of the app's DOM. Mark those selectors with `systemUI` so spana goes straight to the native driver:
 
 ```ts
-import { flow, systemUI } from "spana-test";
+import { flow, systemUI } from "spana";
 
 export default flow("allow notifications", { platforms: ["android", "ios"] }, async ({ app }) => {
   await app.tap({ testID: "enable-notifications" });
@@ -1788,10 +1940,10 @@ Use `Scenario Outline` with an `Examples` table to run the same scenario with di
 
 ## Writing step definitions
 
-Step definitions map Gherkin steps to TypeScript functions. Import them from `spana-test/steps`:
+Step definitions map Gherkin steps to TypeScript functions. Import them from `spana/steps`:
 
 ```ts title="flows/login/steps/login.steps.ts"
-import { Given, When, Then } from "spana-test/steps";
+import { Given, When, Then } from "spana/steps";
 
 Given("I am on the login screen", async ({ app }) => {
   await app.launch({ deepLink: "myapp://login" });
@@ -1873,7 +2025,7 @@ If you define a world, its state fields and methods are also on the context.
 Run setup/teardown code before or after each scenario:
 
 ```ts
-import { Before, After } from "spana-test/steps";
+import { Before, After } from "spana/steps";
 
 // Runs before every scenario
 Before(async ({ app }) => {
@@ -1902,7 +2054,7 @@ Before("@auth", async ({ app }) => {
 Use `defineWorld` to share state and helper methods across steps within a scenario:
 
 ```ts title="flows/login/steps/world.ts"
-import { defineWorld } from "spana-test/steps";
+import { defineWorld } from "spana/steps";
 
 export default defineWorld({
   // Fresh state for each scenario
@@ -1958,7 +2110,7 @@ either an input (a **stimulus**) or an expected output (a **sensor**). If the ap
 different value, the test fails. There are no `Given`/`When`/`Then` keywords.
 
 Varar runs inside Vitest. Spana does not run `.md` files itself. Instead, your step functions call
-Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana-test/agent`) to drive the
+Spana's [Agent API](/reference/agent-api/) (`connect()` from `spana/agent`) to drive the
 app.
 
 :::note[Which one to pick]
@@ -1974,7 +2126,7 @@ A full working project is in
 ## Install
 
 ```bash
-npm install -D spana-test @varar/varar @varar/vitest @varar/cli vitest vite
+npm install -D spana @varar/varar @varar/vitest @varar/cli vitest vite
 ```
 
 Your `package.json` must have `"type": "module"`.
@@ -2012,7 +2164,7 @@ When the shopper adds 2 items to the cart, the cart shows 2 items.
 
 ```ts title="src/varar/cart.steps.ts"
 import { steps } from "@varar/varar";
-import { connect, type Session } from "spana-test/agent";
+import { connect, type Session } from "spana/agent";
 import { afterAll } from "vitest";
 
 let session: Session | undefined;
@@ -2391,7 +2543,7 @@ The flow `expect` API has no `expect.screen()` today, so lines recorded by `span
 
 ## Verified Replay Cache (`.spana/cache/` & `--strict-cache`)
 
-`ReplaySession` and `ReplayCacheStore` (exported from `spana-test`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
+`ReplaySession` and `ReplayCacheStore` (exported from `spana`) record agentic actions to `.spana/cache/` only **after** a real assertion verifies them. On a cache hit, `ReplaySession.act()` replays the recorded actions with no LLM call.
 
 `ReplaySession` has three modes: `read-write` (default: on a miss or mismatch, hand off to the executor and save the healed recording), `strict` (fail on a missing or mismatched recording), and `off`.
 
@@ -2549,15 +2701,15 @@ graph LR
 
 ## Agent skill file
 
-spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spana-testing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
+spana ships with a ready-made skill file for AI coding agents at `.agents/skills/spanaing/SKILL.md` in the repo. It covers element discovery, flow writing patterns, selectors, validation, error handling, and platform-specific notes.
 
 **To use it with your AI agent:**
 
 1. Copy the skill file into your project:
 
    ```bash
-   mkdir -p .agents/skills/spana-testing
-   cp node_modules/spana-test/.agents/skills/spana-testing/SKILL.md .agents/skills/spana-testing/
+   mkdir -p .agents/skills/spanaing
+   cp node_modules/spana/.agents/skills/spanaing/SKILL.md .agents/skills/spanaing/
    ```
 
 2. Or reference it in your `CLAUDE.md` / `AGENTS.md`:
@@ -2566,12 +2718,12 @@ spana ships with a ready-made skill file for AI coding agents at `.agents/skills
    ## Testing
 
    For writing E2E tests, follow the spana testing skill at:
-   .agents/skills/spana-testing/SKILL.md
+   .agents/skills/spanaing/SKILL.md
    ```
 
 3. Or point your agent to it directly:
    ```
-   Read .agents/skills/spana-testing/SKILL.md and use it to write a test for the login flow.
+   Read .agents/skills/spanaing/SKILL.md and use it to write a test for the login flow.
    ```
 
 The skill file is self-contained — it includes the full API reference, workflow loop, and common patterns so the agent can start writing tests immediately.
@@ -2617,7 +2769,7 @@ Then it creates:
 ## Generated config
 
 ```ts title="spana.config.ts"
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {
@@ -2636,7 +2788,7 @@ export default defineConfig({
 ## Generated flow
 
 ```ts title="flows/example.flow.ts"
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow(
   "Example - app loads successfully",
@@ -2666,7 +2818,7 @@ Install `spana-bridge` in your test builds to use the DOM bridge.
 
 After running `spana init`:
 
-1. Install spana: `npm install -D spana-test`
+1. Install spana: `npm install -D spana`
 2. Add `spana-output` to your `.gitignore`
 3. Edit `flows/example.flow.ts` with selectors from your app
 4. Discover selectors: `spana selectors`
@@ -2964,10 +3116,10 @@ Custom reporters let you push results into Slack, internal dashboards, CSV files
 
 ## Reporter shape
 
-Import reporter types from `spana-test`:
+Import reporter types from `spana`:
 
 ```ts
-import type { Reporter, FlowResult, RunSummary } from "spana-test";
+import type { Reporter, FlowResult, RunSummary } from "spana";
 
 const reporter: Reporter = {
   onFlowStart(name, platform, workerName) {
@@ -2991,7 +3143,7 @@ All hooks except `onRunComplete` are optional. `onFlowPass` and `onFlowFail` fir
 ## Registering a reporter
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   reporters: ["console", "./reporters/slack.ts"],
@@ -3005,7 +3157,7 @@ Paths that start with `.` are resolved relative to the directory of `spana.confi
 If your reporter needs options, export a factory function:
 
 ```ts
-import type { Reporter } from "spana-test";
+import type { Reporter } from "spana";
 
 export default function createCsvReporter(options: { outputDir: string }): Reporter {
   return {
@@ -3115,7 +3267,7 @@ interface FlowError {
 Spana does not await reporter hooks, and the process exits soon after `onRunComplete`. An async hook like this one can be cut off before the request finishes, so keep the work small or write to disk synchronously.
 
 ```ts
-import type { Reporter } from "spana-test";
+import type { Reporter } from "spana";
 
 const reporter: Reporter = {
   async onFlowFail(result) {
@@ -3145,20 +3297,20 @@ export default reporter;
 
 ## Agent API
 
-The `spana-test/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
+The `spana/agent` export gives you a persistent automation session outside the flow runner. It is useful for custom scripts, AI agents, internal tooling, and live debugging.
 
 ## Installation
 
-The agent API ships with `spana-test`.
+The agent API ships with `spana`.
 
 ```ts
-import { connect, validateFlows } from "spana-test/agent";
+import { connect, validateFlows } from "spana/agent";
 ```
 
 ## Connecting
 
 ```ts
-import { connect } from "spana-test/agent";
+import { connect } from "spana/agent";
 
 const session = await connect({
   platform: "web",
@@ -3353,7 +3505,7 @@ await session.setNetworkConditions({
 The same package also exports programmatic validation. It takes a list of flow file paths and returns `{ file, error }` entries for the files that fail to import or have no valid default export:
 
 ```ts
-import { validateFlows } from "spana-test/agent";
+import { validateFlows } from "spana/agent";
 
 const issues = await validateFlows(["./flows/login.flow.ts", "./flows/checkout.flow.ts"]);
 if (issues.length > 0) {
@@ -4578,7 +4730,7 @@ Today the CLI only calls `createHelper()` (and the helper's `prepareCapabilities
 ### `CloudProvider`
 
 ```ts
-import type { CloudProvider, CloudProviderHelper } from "spana-test";
+import type { CloudProvider, CloudProviderHelper } from "spana";
 
 const provider: CloudProvider = {
   name() {
@@ -4653,7 +4805,7 @@ jobs:
 
 ## CI/CD Integration
 
-spana is designed for CI from the ground up. It ships as a single npm package (`spana-test`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
+spana is designed for CI from the ground up. It ships as a single npm package (`spana`), produces machine-readable output via JSON and JUnit reporters, and uses standard exit codes so your pipeline can react to results without parsing logs.
 
 ## Exit codes
 
@@ -4691,7 +4843,7 @@ Run only the flows affected by a pull request while staying **fail-open**. `--ch
 
 `--changed-since` does nothing without a `filters` list in config: spana prints a warning and runs all flows. If git fails (for example, the base ref is missing in a shallow clone), spana also fails open and runs all flows. If one filter throws, that filter is skipped and keeps every flow it received (flows an earlier filter excluded stay excluded). If the filters exclude every flow, the run exits `0`.
 
-Built-in filters (all exported from `spana-test`):
+Built-in filters (all exported from `spana`):
 
 - **`pathRuleFilter`** — deterministic, no LLM. Maps flow tags or file prefixes to watched source paths. Flows that no rule owns always run.
 - **`deterministicImpactFilter`** — deterministic, no LLM. Uses path mappings and the import graph; by default, unmapped changes run everything.
@@ -4706,7 +4858,7 @@ import {
   decisionFilter,
   createLogprobDecisionJudge,
   pathRuleFilter,
-} from "spana-test";
+} from "spana";
 
 export default defineConfig({
   filters: [
@@ -4825,7 +4977,7 @@ jobs:
 | `tags`              | —                    | Filter by tags                                            |
 | `grep`              | —                    | Filter by name pattern                                    |
 | `working-directory` | `.`                  | Directory to run spana in                                 |
-| `version`           | `latest`             | `spana-test` version to install                           |
+| `version`           | `latest`             | `spana` version to install                           |
 | `upload-artifacts`  | `true`               | Upload `spana-output/` and `allure-results/` as artifacts |
 
 The action also sets a `result` output (`pass` or `fail`).
@@ -4853,7 +5005,7 @@ jobs:
         run: npm ci
 
       - name: Install spana
-        run: npm install -g spana-test
+        run: npm install -g spana
 
       - name: Install Chromium
         run: npx playwright install chromium
@@ -4904,7 +5056,7 @@ e2e-android:
         node-version: 24
 
     - name: Install spana
-      run: npm install -g spana-test
+      run: npm install -g spana
 
     - name: Set up Android emulator
       uses: reactivecircus/android-emulator-runner@v2
@@ -4937,7 +5089,7 @@ e2e-ios:
         node-version: 24
 
     - name: Install spana
-      run: npm install -g spana-test
+      run: npm install -g spana
 
     - name: Boot iOS Simulator
       run: |
@@ -4963,7 +5115,7 @@ e2e-web:
   stage: test
   script:
     - npm ci
-    - npm install -g spana-test
+    - npm install -g spana
     - npm run dev &
     - npx wait-on http://localhost:3000
     - spana test --platform web --reporter console,junit,html
@@ -4986,7 +5138,7 @@ GitLab natively parses JUnit XML when declared under `artifacts.reports.junit`, 
 - **Scale web workers.** `--workers <n>` runs `n` isolated browser contexts, spread over browser processes by `execution.web.maxContextsPerBrowser`.
 - **Split across jobs.** `--shard <current>/<total>` runs one slice of the flows per CI job.
 - **Use tags to split pipelines.** Run `spana test --tag smoke` on every push and `spana test --tag regression` on a nightly schedule to balance speed and coverage.
-- **Pin spana version.** Use `npm install -g spana-test@<version>` (for example `spana-test@0.7.0`) in CI to avoid unexpected breakage from new releases.
+- **Pin spana version.** Use `npm install -g spana@<version>` (for example `spana@0.7.0`) in CI to avoid unexpected breakage from new releases.
 
 ---
 
@@ -5101,3 +5253,144 @@ Spana catches both test flakiness and real application bugs. When a test fails, 
 | **Accessibility regressions**                       | `await expect().toPassAccessibilityAudit()` (and `spana_assert_accessible` in MCP) runs `axe-core` and reports WCAG rules, severity, and offending nodes.                                          | Fix missing `aria-label`, heading order, color contrast, and form `<label>` associations directly in the component rather than disabling rules.                            |
 | **Visual diff noise from timestamps/avatars**       | `toMatchScreenshot()` (Rust-accelerated when the native library is available) supports dynamic region masks and a `layout-tolerant` compare mode.                                                  | Pass `{ mask: [{ testID: "live-clock" }] }` to `toMatchScreenshot()`, set `visualRegression.mode: "layout-tolerant"` in config, or freeze clock/seed data in your fixture. |
 | **Slow repeated UI login & cross-test state leaks** | `freshContextPerFlow: true` isolates cookies/storage per flow while pre-warming the next context in the background.                                                                                | Use `definePersona()` + `PersonaAuthCache` or `createApiFixture()` to seed state via API instead of clicking through login in every test.                                  |
+
+---
+
+## Recommended Fast TypeScript Toolchain
+
+Fast E2E tests are only one part of a fast developer loop. If `install`, type-checking, linting,
+bundling, or unit tests take minutes, your team still waits on every push.
+
+Below are the **top 2–3 fastest TypeScript tools in every category**, organized by use case and
+trade-offs. Every pick focuses on real wall-clock speed without sacrificing ergonomics.
+
+:::tip[Opinionated, not dogmatic]
+Newer native tools (`tsgo`, `tsrs`, `turbo-dom`, `bun lint`, `bun fmt`) are moving rapidly. Each
+table notes when to pick the fastest native option vs. when to stay with a battle-tested default.
+:::
+
+---
+
+## 1. Runtime & Package Manager
+
+| Tool                                                | Best for                                          | Why it's fast / trade-offs                                                                                                                          |
+| --------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Bun](https://bun.sh)**                           | All-in-one TS apps, monorepos, CLI & test runners | Native Zig runtime + package manager + bundler + test runner + linter/formatter. Direct `.ts` execution with near-instant installs (`bun install`). |
+| **[pnpm](https://pnpm.io)**                         | Strict Node.js monorepos & enterprise CI          | Content-addressable global store + hard links save disk & install time while keeping 100% Node.js runtime compatibility.                            |
+| **[Node.js 24+ (strip-types)](https://nodejs.org)** | Conservative enterprise environments              | Native TypeScript type-stripping built in; pair with `pnpm` or Corepack when Bun isn't allowed in production.                                       |
+
+---
+
+## 2. Type-Checking
+
+| Tool                                                                                    | Best for                                    | Why it's fast / trade-offs                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`tsgo`](https://github.com/microsoft/typescript-go)** (`@typescript/native-preview`) | Official TypeScript 7 speedups              | Microsoft's native Go port of `tsc` — typically ~5–10× faster type-checking and lower memory across large monorepos.                                                                          |
+| **[`tsrs`](https://github.com/oxc-project)** (Oxc ecosystem)                            | Rust/WASM toolchains & ultra-low memory     | Rust port of the TypeScript compiler maintained in the Oxc ecosystem with WASM (`wasm32-wasip1`) support. Rapidly evolving — test against your repo before replacing `tsc` as the merge gate. |
+| **`tsc --noEmit --incremental`**                                                        | Codebases using TS language-service plugins | Still the source of truth when you rely on compiler/language-service plugins (e.g. `@effect/language-service`). Use `--incremental` + Turborepo caching to keep CI fast.                      |
+
+---
+
+## 3. Linting & Formatting
+
+| Tool                                                                            | Best for                                          | Why it's fast / trade-offs                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`bun lint` & `bun fmt`](https://bun.com)**                                   | Zero-dependency Bun repos                         | Built directly into Bun. `bun lint` covers 1,000+ ESLint / `typescript-eslint` / React / unicorn / a11y rules (including type-aware rules) and reads existing ESLint/Oxlint configs; `bun fmt` is a Prettier-compatible native formatter across TS, JSX, CSS, HTML, JSON, YAML, and Markdown (~569 ms on 12k files). |
+| **[`tidy`](https://github.com/lukeed/tidy)** (pair with `oxlint` or `bun lint`) | Maximum raw formatting speed with Prettier parity | Single Rust binary by Luke Edwards — checks 12,000+ files in **~280 ms** (~2× faster than `bun fmt`, ~4–8× faster than `oxfmt`, ~66–108× faster than Prettier), formats embedded HTML/Vue/Markdown/JS-template code, and fixes Prettier idempotency edge cases (`cargo binstall tidy` or `bun add tidyrs`).          |
+| **[Oxlint & Oxfmt](https://oxc.rs)**                                            | High-speed Node or Bun monorepos                  | Rust-native linter (50–100× faster than ESLint) and formatter from VoidZero/Oxc — what Spana's own monorepo uses (`oxlint .` checks 347 files in ~40 ms, pure npm devDependency with zero extra binary install).                                                                                                     |
+| **[Biome](https://biomejs.dev)**                                                | Single-binary lint + format with one config       | Mature Rust linter + formatter in a single `biome.json` file; great drop-in replacement for ESLint + Prettier in standard JS/TS repos.                                                                                                                                                                               |
+
+---
+
+## 4. Bundlers & Library Builds
+
+| Tool                                                                             | Best for                                     | Why it's fast / trade-offs                                                                                                  |
+| -------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **[Vite (Rolldown)](https://vite.dev) & [`tsdown`](https://tsdown.rolldown.rs)** | Web apps & npm TypeScript libraries          | Rust-backed Rollup-compatible bundling via Rolldown, keeping the full Vite plugin ecosystem with native build speeds.       |
+| **[`bun build`](https://bun.sh/docs/bundler)**                                   | CLIs, backend services & zero-config bundles | Built into Bun; single-file executables and sub-100 ms bundles with zero extra devDependencies.                             |
+| **[Rsbuild / Rspack](https://rsbuild.dev)**                                      | Large Webpack migrations                     | Rust drop-in compatible with Webpack configs/loaders when migrating legacy enterprise apps without rewriting build plugins. |
+
+---
+
+## 5. Monorepo Task Runners
+
+| Tool                                 | Best for                                        | Why it's fast / trade-offs                                                                        |
+| ------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **[Turborepo](https://turbo.build)** | Most TypeScript monorepos                       | Minimal `turbo.json` setup, content-hashed local + remote caching, parallel task graph execution. |
+| **[Nx](https://nx.dev)**             | Large orgs needing affected graphs & generators | Rich project-graph analysis, distributed CI task execution, and deep framework plugins.           |
+| **Bun Workspaces (`bun --filter`)**  | Small-to-medium repos (< 10 packages)           | Zero extra tooling; fast workspace filtering built directly into Bun.                             |
+
+---
+
+## 6. Unit & Component Testing (Below E2E)
+
+Keep business logic and UI component tests fast at the base of the pyramid, and save real-browser
+E2E for critical user journeys.
+
+| Tool                                                                                                                         | Best for                                         | Why it's fast / trade-offs                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[`bun test`](https://bun.sh/docs/cli/test)**                                                                               | Pure TypeScript logic, API & driver unit tests   | Native Jest-compatible runner with instant startup (Spana runs 850+ tests in ~30 s including live Chrome specs).                                                                                                                                                        |
+| **[Vitest](https://vitest.dev)** + **[`@miaskiewicz/turbo-dom`](https://github.com/miaskiewicz/turbo-dom)** (or `happy-dom`) | React / Vue / Svelte component tests             | Mature Vite-native runner paired with **`turbo-dom`** — a Rust `html5ever`-backed drop-in DOM environment with **99.94% `html5lib` conformance** (vs `happy-dom` 37.35%, `jsdom` 97.03%) that runs Testing Library, `user-event`, Radix UI, and Headless UI unmodified. |
+| **[`turbo-test`](https://github.com/miaskiewicz/turbo-test)**                                                                | Maximum-speed Vitest-compatible component suites | Runs standard `*.test.ts(x)` directly in a native V8 + Rust `turbo-dom` process, bypassing Node + `jsdom` bottlenecks entirely.                                                                                                                                         |
+
+:::note[Why not use `turbo-dom` for E2E?]
+`@miaskiewicz/turbo-dom`'s npm runtime intentionally has **no CSS layout engine** (`top`/`left` are
+`0`, `@media` and `:hover` rules aren't evaluated). That makes it ideal for fast component tests,
+while real E2E tests belong in real browsers and WebViews.
+:::
+
+---
+
+## 7. E2E Testing (Web, Mobile & Desktop)
+
+Pick the E2E tool that matches your target matrix:
+
+### Cross-Platform (Web + iOS + Android + Electron + Electrobun)
+
+| Tool                                        | Best for                                                       | Strengths                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Spana](/getting-started/quick-start/)**  | One TypeScript suite across Web, Capacitor/RN Mobile & Desktop | Direct CDP on Chromium (1.5–1.7× faster than Playwright in strict fresh-context mode, up to 3.8× with `hot-cache`), direct WDA/UiAutomator2 on mobile (no Appium), composable selectors (`byRole`, `within`, `inFrame`), WebAuthn passkeys, `--processes` dynamic work-stealing queue, `--changed-since` CI filters, and built-in `spana mcp`. |
+| **[`e2e`](https://github.com/e2e-inc/e2e)** | Agent-native web + mobile workflows                            | Blends TypeScript steps with natural-language agent actions, built-in MCP server, and deterministic replay caching.                                                                                                                                                                                                                            |
+
+### Web-Only
+
+| Tool                                        | Best for                                                         | Strengths                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| **[Spana](/getting-started/fastest-path/)** | Speed-first Chromium/WebKit/Firefox suites + MCP agent workflows | Direct CDP engine, `hot-cache` isolation, per-persona passkey store, and CI PR impact filtering. |
+| **[Playwright](https://playwright.dev)**    | Web-only teams wanting the largest ecosystem & Trace Viewer      | Battle-tested multi-language API, interactive `trace.zip` time-travel viewer, huge community.    |
+
+### React Native & Mobile-Focused
+
+| Tool                                                                                    | Best for                                                   | Strengths                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **[Spana](/guides/device-setup/)**                                                      | Shared Web + React Native / Capacitor suites in TypeScript | Single `.flow.ts` codebase across Web + iOS + Android, direct WDA/UiAutomator2 without Appium, plus BrowserStack / Sauce Labs cloud support.                                                                                               |
+| **[Argent (`@swmansion/argent`)](https://github.com/software-mansion/argent)**          | React Native-first teams & deep RN debugging               | Built by Software Mansion (core RN contributors). AI coding agents record flows into deterministic zero-AI YAML replays, with deep Hermes / React DevTools / Perfetto profiling, network/console capture, and physical USB device support. |
+| **[`e2e`](https://github.com/e2e-inc/e2e)** / **[Maestro](https://maestro.mobile.dev)** | Mobile flows with minimal boilerplate                      | `e2e` for agent-assisted TypeScript flows with replay cache; Maestro for simple YAML-first mobile scripts.                                                                                                                                 |
+
+---
+
+## Example: The "Zero-Wait" 2026 Stack
+
+If you are starting a fresh TypeScript monorepo targeting Web + Mobile:
+
+- **Runtime & installs:** `bun`
+- **Lint & format:** `bun lint` + `bun fmt` (or `oxlint` + `oxfmt`)
+- **Type-check:** `tsgo` (or `tsc --incremental` if using TS plugins)
+- **Bundler:** Vite (Rolldown) / `tsdown`
+- **Unit & component tests:** `bun test` + Vitest with `@miaskiewicz/turbo-dom`
+- **E2E tests:** **Spana** (`engine: "auto"`, `--workers 4 --processes 4`, `--changed-since origin/main`), paired with **Argent** if you want deep Hermes/RN performance profiling alongside your E2E runs.
+
+---
+
+## Privacy Policy
+
+# Privacy Policy
+
+The Spana documentation website (`https://spana.antonwester.se`) is a static documentation site.
+
+- **No tracking cookies:** This site does not set advertising, analytics, or cross-site tracking cookies.
+- **No personal data collection:** We do not collect, store, sell, or share personal data, form submissions, or user profiles.
+- **Hosting logs:** Static assets are served via GitHub Pages (and Cloudflare DNS/CDN), which may process standard HTTP request metadata (such as IP address and user agent) solely to deliver and protect the service.
+- **Open-source CLI:** The `spana` CLI runs locally on your machine and does not phone home or send telemetry by default.
+
+For privacy or security questions, open an issue or private advisory on [GitHub](https://github.com/wezter96/spana).

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://spana.antonwester.se/</loc></url>
+  <url><loc>https://spana.antonwester.se/getting-started/introduction/</loc></url>
+  <url><loc>https://spana.antonwester.se/getting-started/quick-start/</loc></url>
+  <url><loc>https://spana.antonwester.se/getting-started/fastest-path/</loc></url>
+  <url><loc>https://spana.antonwester.se/getting-started/configuration/</loc></url>
+  <url><loc>https://spana.antonwester.se/compare/</loc></url>
+  <url><loc>https://spana.antonwester.se/writing-tests/flows/</loc></url>
+  <url><loc>https://spana.antonwester.se/writing-tests/selectors/</loc></url>
+  <url><loc>https://spana.antonwester.se/writing-tests/assertions/</loc></url>
+  <url><loc>https://spana.antonwester.se/writing-tests/platform-specific/</loc></url>
+  <url><loc>https://spana.antonwester.se/writing-tests/gherkin/</loc></url>
+  <url><loc>https://spana.antonwester.se/writing-tests/varar/</loc></url>
+  <url><loc>https://spana.antonwester.se/cli/commands/</loc></url>
+  <url><loc>https://spana.antonwester.se/cli/agent-commands/</loc></url>
+  <url><loc>https://spana.antonwester.se/cli/init/</loc></url>
+  <url><loc>https://spana.antonwester.se/cli/studio/</loc></url>
+  <url><loc>https://spana.antonwester.se/reference/reporters/</loc></url>
+  <url><loc>https://spana.antonwester.se/reference/custom-reporters/</loc></url>
+  <url><loc>https://spana.antonwester.se/reference/agent-api/</loc></url>
+  <url><loc>https://spana.antonwester.se/reference/example/</loc></url>
+  <url><loc>https://spana.antonwester.se/architecture/overview/</loc></url>
+  <url><loc>https://spana.antonwester.se/architecture/drivers/</loc></url>
+  <url><loc>https://spana.antonwester.se/guides/device-setup/</loc></url>
+  <url><loc>https://spana.antonwester.se/guides/remote-execution/</loc></url>
+  <url><loc>https://spana.antonwester.se/guides/cloud-providers/</loc></url>
+  <url><loc>https://spana.antonwester.se/guides/ci-integration/</loc></url>
+  <url><loc>https://spana.antonwester.se/guides/debugging/</loc></url>
+  <url><loc>https://spana.antonwester.se/guides/fast-toolchain/</loc></url>
+  <url><loc>https://spana.antonwester.se/privacy/</loc></url>
+</urlset>

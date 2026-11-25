@@ -1,4 +1,4 @@
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 /**
  * Proves `openLink` routes a deep link to the target native screen.

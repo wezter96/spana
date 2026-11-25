@@ -1,5 +1,5 @@
 {
-  "name": "spana",
+  "name": "spana-monorepo",
   "version": "0.0.0",
   "private": true,
   "workspaces": {
@@ -8,13 +8,13 @@
       "packages/*"
     ],
     "catalog": {
-      "dotenv": "^17.2.2",
-      "zod": "^4.1.13",
+      "dotenv": "^17.4.2",
+      "zod": "^4.6.7",
       "lucide-react": "^0.546.0",
       "next-themes": "^0.4.6",
-      "sonner": "^2.0.5",
-      "@types/react-dom": "^19.2.3",
-      "tailwindcss": "^4.1.18"
+      "sonner": "^2.0.8",
+      "@types/react-dom": "^19.3.0",
+      "tailwindcss": "^4.3.5"
     }
   },
   "type": "module",
@@ -39,15 +39,18 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@babel/code-frame": "^7.29.0",
+    "@babel/code-frame": "^7.29.7",
     "@effect/language-service": "^0.84.3",
     "@spana/config": "workspace:*",
-    "@types/node": "^25.5.2",
-    "lefthook": "^2.0.13",
+    "@types/node": "^25.9.12",
+    "lefthook": "^2.2.2",
     "oxfmt": "^0.26.0",
-    "oxlint": "^1.41.0",
-    "turbo": "^2.8.12",
-    "typescript": "^5"
+    "oxlint": "^1.94.0",
+    "turbo": "^2.11.13",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "packageManager": "bun@1.3.11"
 }

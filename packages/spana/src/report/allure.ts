@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Reporter, FlowResult, StepResult } from "./types.js";
 
 function historyId(name: string, platform: string): string {
-  return createHash("md5").update(`${name}:${platform}`).digest("hex");
+  return createHash("sha256").update(`${name}:${platform}`).digest("hex").slice(0, 32);
 }
 
 function allureStatus(status: string): string {

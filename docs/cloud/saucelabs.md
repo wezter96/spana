@@ -15,7 +15,7 @@ Spana can upload the app for you from config, or you can upload it yourself and 
 Manual upload example:
 
 ```bash
-curl -u "USERNAME:ACCESS_KEY" \
+curl -u "$SAUCE_USERNAME:$SAUCE_ACCESS_KEY" \
   -X POST "https://api.us-west-1.saucelabs.com/v1/storage/upload" \
   -F "payload=@app.apk" \
   -F "name=app.apk"
@@ -62,7 +62,7 @@ Save as `caps/saucelabs-ios.json`:
 ## 3. Configure Spana
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {

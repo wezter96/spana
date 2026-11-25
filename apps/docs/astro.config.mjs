@@ -73,6 +73,27 @@ export default defineConfig({
             content: `${site.replace(/\/$/, "")}/assets/spana-social-card.png`,
           },
         },
+        {
+          tag: "script",
+          attrs: { type: "application/ld+json" },
+          content: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            name: "spana",
+            applicationCategory: "DeveloperApplication",
+            operatingSystem: "macOS, Linux, Windows, iOS, Android",
+            url: site,
+            codeRepository: "https://github.com/wezter96/spana",
+            license: "https://www.apache.org/licenses/LICENSE-2.0",
+            description:
+              "One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron and Electrobun — no Appium to set up, and an MCP server your coding agent can drive.",
+            offers: {
+              "@type": "Offer",
+              price: "0",
+              priceCurrency: "USD",
+            },
+          }),
+        },
       ],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/wezter96/spana" }],
       sidebar: [

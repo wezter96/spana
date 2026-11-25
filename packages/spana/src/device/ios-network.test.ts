@@ -3,27 +3,29 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 const realFs = { ...require("node:fs") } as typeof import("node:fs");
 
 const netState = {
-  execSyncCalls: [] as Array<{ command: string; options?: unknown }>,
-  execSyncErrors: new Set<string>(),
+  execCalls: [] as Array<{ command: string; args: string[]; options?: Record<string, unknown> }>,
+  execErrors: new Set<string>(),
 };
 
 function resetNetState(): void {
-  netState.execSyncCalls = [];
-  netState.execSyncErrors.clear();
+  netState.execCalls = [];
+  netState.execErrors.clear();
 }
 
 let importCounter = 0;
 
 function registerNetMocks(): void {
   mock.module("node:child_process", () => ({
-    execSync: (command: string, options?: unknown) => {
-      netState.execSyncCalls.push({ command, options });
-      if (netState.execSyncErrors.has(command)) {
-        throw new Error(`mock error: ${command}`);
+    execSync: () => "",
+    spawn: () => ({ unref: () => {}, kill: () => {} }),
+    execFileSync: (command: string, args: string[], options?: Record<string, unknown>) => {
+      const full = `${command} ${args.join(" ")}`;
+      netState.execCalls.push({ command, args, options });
+      if (netState.execErrors.has(full)) {
+        throw new Error(`mock error: ${full}`);
       }
       return "";
     },
-    execFileSync: () => "",
   }));
 
   mock.module("node:fs", () => ({
@@ -65,15 +67,15 @@ describe("iOS network helpers (pfctl/dnctl)", () => {
     const ios = await importFreshIOS();
     ios.pfctlSetOffline(true);
 
-    const commands = netState.execSyncCalls.map((c) => c.command);
-    expect(commands).toEqual([
-      'echo "block out all\n" | sudo pfctl -a com.spana.network -f -',
-      "sudo pfctl -e 2>/dev/null",
+    expect(netState.execCalls.map((c) => `${c.command} ${c.args.join(" ")}`)).toEqual([
+      "sudo pfctl -a com.spana.network -f -",
+      "sudo pfctl -e",
     ]);
+    expect(netState.execCalls[0]?.options?.input).toBe("block out all\n");
   });
 
   test("pfctlSetOffline(true) ignores pfctl -e errors", async () => {
-    netState.execSyncErrors.add("sudo pfctl -e 2>/dev/null");
+    netState.execErrors.add("sudo pfctl -e");
     const ios = await importFreshIOS();
     expect(() => ios.pfctlSetOffline(true)).not.toThrow();
   });
@@ -82,12 +84,13 @@ describe("iOS network helpers (pfctl/dnctl)", () => {
     const ios = await importFreshIOS();
     ios.pfctlSetOffline(false);
 
-    const commands = netState.execSyncCalls.map((c) => c.command);
-    expect(commands).toEqual(["sudo pfctl -a com.spana.network -F all"]);
+    expect(netState.execCalls.map((c) => `${c.command} ${c.args.join(" ")}`)).toEqual([
+      "sudo pfctl -a com.spana.network -F all",
+    ]);
   });
 
   test("pfctlSetOffline(false) ignores flush errors", async () => {
-    netState.execSyncErrors.add("sudo pfctl -a com.spana.network -F all");
+    netState.execErrors.add("sudo pfctl -a com.spana.network -F all");
     const ios = await importFreshIOS();
     expect(() => ios.pfctlSetOffline(false)).not.toThrow();
   });
@@ -96,16 +99,16 @@ describe("iOS network helpers (pfctl/dnctl)", () => {
     const ios = await importFreshIOS();
     ios.pfctlSetThrottle(500, 100);
 
-    const commands = netState.execSyncCalls.map((c) => c.command);
-    expect(commands).toEqual([
+    expect(netState.execCalls.map((c) => `${c.command} ${c.args.join(" ")}`)).toEqual([
       "sudo dnctl pipe 1 config bw 500Kbit/s delay 100ms",
-      'echo "dummynet out all pipe 1\n" | sudo pfctl -a com.spana.network -f -',
-      "sudo pfctl -e 2>/dev/null",
+      "sudo pfctl -a com.spana.network -f -",
+      "sudo pfctl -e",
     ]);
+    expect(netState.execCalls[1]?.options?.input).toBe("dummynet out all pipe 1\n");
   });
 
   test("pfctlSetThrottle ignores pfctl -e errors", async () => {
-    netState.execSyncErrors.add("sudo pfctl -e 2>/dev/null");
+    netState.execErrors.add("sudo pfctl -e");
     const ios = await importFreshIOS();
     expect(() => ios.pfctlSetThrottle(1000, 50)).not.toThrow();
   });
@@ -114,13 +117,15 @@ describe("iOS network helpers (pfctl/dnctl)", () => {
     const ios = await importFreshIOS();
     ios.pfctlResetNetwork();
 
-    const commands = netState.execSyncCalls.map((c) => c.command);
-    expect(commands).toEqual(["sudo pfctl -a com.spana.network -F all", "sudo dnctl -q flush"]);
+    expect(netState.execCalls.map((c) => `${c.command} ${c.args.join(" ")}`)).toEqual([
+      "sudo pfctl -a com.spana.network -F all",
+      "sudo dnctl -q flush",
+    ]);
   });
 
   test("pfctlResetNetwork ignores all errors", async () => {
-    netState.execSyncErrors.add("sudo pfctl -a com.spana.network -F all");
-    netState.execSyncErrors.add("sudo dnctl -q flush");
+    netState.execErrors.add("sudo pfctl -a com.spana.network -F all");
+    netState.execErrors.add("sudo dnctl -q flush");
     const ios = await importFreshIOS();
     expect(() => ios.pfctlResetNetwork()).not.toThrow();
   });

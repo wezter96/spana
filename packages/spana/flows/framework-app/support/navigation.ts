@@ -1,5 +1,5 @@
-import type { FlowContext } from "spana-test";
-import type { Platform } from "spana-test";
+import type { FlowContext } from "spana";
+import type { Platform } from "spana";
 
 export const WEB_BASE_URL = "http://127.0.0.1:8081";
 

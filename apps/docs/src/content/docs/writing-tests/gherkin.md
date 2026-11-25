@@ -61,10 +61,10 @@ Use `Scenario Outline` with an `Examples` table to run the same scenario with di
 
 ## Writing step definitions
 
-Step definitions map Gherkin steps to TypeScript functions. Import them from `spana-test/steps`:
+Step definitions map Gherkin steps to TypeScript functions. Import them from `spana/steps`:
 
 ```ts title="flows/login/steps/login.steps.ts"
-import { Given, When, Then } from "spana-test/steps";
+import { Given, When, Then } from "spana/steps";
 
 Given("I am on the login screen", async ({ app }) => {
   await app.launch({ deepLink: "myapp://login" });
@@ -146,7 +146,7 @@ If you define a world, its state fields and methods are also on the context.
 Run setup/teardown code before or after each scenario:
 
 ```ts
-import { Before, After } from "spana-test/steps";
+import { Before, After } from "spana/steps";
 
 // Runs before every scenario
 Before(async ({ app }) => {
@@ -175,7 +175,7 @@ Before("@auth", async ({ app }) => {
 Use `defineWorld` to share state and helper methods across steps within a scenario:
 
 ```ts title="flows/login/steps/world.ts"
-import { defineWorld } from "spana-test/steps";
+import { defineWorld } from "spana/steps";
 
 export default defineWorld({
   // Fresh state for each scenario

@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, unlinkSync } from "node:fs";
 import { allocatePort, releasePort } from "../core/port-allocator.js";
 
@@ -21,7 +21,9 @@ export interface IOSDevice {
 /** List iOS simulators */
 export function listIOSSimulators(): IOSSimulator[] {
   try {
-    const output = execSync("xcrun simctl list devices -j", { encoding: "utf-8" });
+    const output = execFileSync("xcrun", ["simctl", "list", "devices", "-j"], {
+      encoding: "utf-8",
+    });
     const data = JSON.parse(output);
     const simulators: IOSSimulator[] = [];
 
@@ -67,7 +69,9 @@ export function hasAppInstalledOnSimulator(udid: string, bundleId: string): bool
   if (!bundleId) return false;
 
   try {
-    execSync(`xcrun simctl get_app_container ${udid} ${bundleId} app`, { stdio: "ignore" });
+    execFileSync("xcrun", ["simctl", "get_app_container", udid, bundleId, "app"], {
+      stdio: "ignore",
+    });
     return true;
   } catch {
     return false;
@@ -109,7 +113,7 @@ export function ensureIOSSimulator(bundleId?: string): IOSSimulator | null {
 /** Boot a simulator by UDID */
 export function bootSimulator(udid: string): void {
   try {
-    execSync(`xcrun simctl boot ${udid}`, { stdio: "ignore" });
+    execFileSync("xcrun", ["simctl", "boot", udid], { stdio: "ignore" });
   } catch {
     // May already be booted — ignore
   }
@@ -117,12 +121,12 @@ export function bootSimulator(udid: string): void {
 
 /** Install app on simulator */
 export function installOnSimulator(udid: string, appPath: string): void {
-  execSync(`xcrun simctl install ${udid} ${appPath}`);
+  execFileSync("xcrun", ["simctl", "install", udid, appPath]);
 }
 
 /** Launch app on simulator */
 export function launchOnSimulator(udid: string, bundleId: string): void {
-  execSync(`xcrun simctl launch ${udid} ${bundleId}`);
+  execFileSync("xcrun", ["simctl", "launch", udid, bundleId]);
 }
 
 /** Launch app on simulator with a deep link URL (bypasses system confirmation dialog) */
@@ -135,7 +139,7 @@ export function installedUrlSchemesOnSimulator(udid: string, bundleId: string): 
   if (!bundleId) return [];
 
   try {
-    const appPath = execSync(`xcrun simctl get_app_container ${udid} ${bundleId} app`, {
+    const appPath = execFileSync("xcrun", ["simctl", "get_app_container", udid, bundleId, "app"], {
       encoding: "utf-8",
     }).trim();
 
@@ -165,7 +169,7 @@ export function openUrlOnSimulator(udid: string, url: string): void {
 /** Terminate app on simulator */
 export function terminateOnSimulator(udid: string, bundleId: string): void {
   try {
-    execSync(`xcrun simctl terminate ${udid} ${bundleId}`, { stdio: "ignore" });
+    execFileSync("xcrun", ["simctl", "terminate", udid, bundleId], { stdio: "ignore" });
   } catch {
     // May not be running
   }
@@ -214,8 +218,9 @@ export function listIOSPhysicalDevices(): IOSPhysicalDevice[] {
   // Try xcrun devicectl first (Xcode 15+)
   try {
     const tmpFile = `/tmp/spana-devicectl-${Date.now()}.json`;
-    execSync(`xcrun devicectl list devices --json-output ${tmpFile} 2>/dev/null`, {
+    execFileSync("xcrun", ["devicectl", "list", "devices", "--json-output", tmpFile], {
       timeout: 10_000,
+      stdio: "ignore",
     });
     const output = readFileSync(tmpFile, "utf-8");
     try {
@@ -255,9 +260,10 @@ export function listIOSPhysicalDevices(): IOSPhysicalDevice[] {
   }
 
   try {
-    const output = execSync("system_profiler SPUSBDataType -json 2>/dev/null", {
+    const output = execFileSync("system_profiler", ["SPUSBDataType", "-json"], {
       encoding: "utf-8",
       timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
     });
     const data = JSON.parse(output);
     const devices: IOSPhysicalDevice[] = [];
@@ -302,12 +308,11 @@ export function startIproxy(
 ): { host: string; port: number; cleanup: () => void } {
   // Check iproxy is available
   try {
-    execSync("which iproxy", { stdio: "ignore" });
+    execFileSync("which", ["iproxy"], { stdio: "ignore" });
   } catch {
     throw new Error("iproxy not found. Install with: brew install libimobiledevice");
   }
 
-  const { spawn } = require("node:child_process") as typeof import("node:child_process");
   const proc = spawn("iproxy", [`${localPort}:${devicePort}`, "-u", udid], {
     stdio: "ignore",
     detached: true,
@@ -368,7 +373,7 @@ export function connectPhysicalDevice(
  */
 export function installOnPhysicalDevice(udid: string, appPath: string): void {
   try {
-    execSync(`xcrun devicectl device install app --device ${udid} ${appPath}`, {
+    execFileSync("xcrun", ["devicectl", "device", "install", "app", "--device", udid, appPath], {
       stdio: "inherit",
       timeout: 120_000,
     });
@@ -386,9 +391,10 @@ export function hasAppOnPhysicalDevice(udid: string, bundleId: string): boolean 
   if (!bundleId) return false;
   try {
     const tmpFile = `/tmp/spana-applist-${Date.now()}.json`;
-    execSync(
-      `xcrun devicectl device info apps --device ${udid} --json-output ${tmpFile} 2>/dev/null`,
-      { timeout: 15_000 },
+    execFileSync(
+      "xcrun",
+      ["devicectl", "device", "info", "apps", "--device", udid, "--json-output", tmpFile],
+      { timeout: 15_000, stdio: "ignore" },
     );
     const output = readFileSync(tmpFile, "utf-8");
     try {
@@ -419,15 +425,18 @@ export const SPANA_ANCHOR = "com.spana.network";
  */
 export function pfctlSetOffline(enable: boolean): void {
   if (enable) {
-    execSync(`echo "block out all\n" | sudo pfctl -a ${SPANA_ANCHOR} -f -`, { stdio: "ignore" });
+    execFileSync("sudo", ["pfctl", "-a", SPANA_ANCHOR, "-f", "-"], {
+      input: "block out all\n",
+      stdio: ["pipe", "ignore", "ignore"],
+    });
     try {
-      execSync("sudo pfctl -e 2>/dev/null", { stdio: "ignore" });
+      execFileSync("sudo", ["pfctl", "-e"], { stdio: "ignore" });
     } catch {
       // May already be enabled
     }
   } else {
     try {
-      execSync(`sudo pfctl -a ${SPANA_ANCHOR} -F all`, { stdio: "ignore" });
+      execFileSync("sudo", ["pfctl", "-a", SPANA_ANCHOR, "-F", "all"], { stdio: "ignore" });
     } catch {
       // Ignore errors
     }
@@ -439,14 +448,19 @@ export function pfctlSetOffline(enable: boolean): void {
  * Configures bandwidth and delay for all outbound traffic.
  */
 export function pfctlSetThrottle(throughputKbps: number, delayMs: number): void {
-  execSync(`sudo dnctl pipe 1 config bw ${throughputKbps}Kbit/s delay ${delayMs}ms`, {
-    stdio: "ignore",
-  });
-  execSync(`echo "dummynet out all pipe 1\n" | sudo pfctl -a ${SPANA_ANCHOR} -f -`, {
-    stdio: "ignore",
+  execFileSync(
+    "sudo",
+    ["dnctl", "pipe", "1", "config", "bw", `${throughputKbps}Kbit/s`, "delay", `${delayMs}ms`],
+    {
+      stdio: "ignore",
+    },
+  );
+  execFileSync("sudo", ["pfctl", "-a", SPANA_ANCHOR, "-f", "-"], {
+    input: "dummynet out all pipe 1\n",
+    stdio: ["pipe", "ignore", "ignore"],
   });
   try {
-    execSync("sudo pfctl -e 2>/dev/null", { stdio: "ignore" });
+    execFileSync("sudo", ["pfctl", "-e"], { stdio: "ignore" });
   } catch {
     // May already be enabled
   }
@@ -457,12 +471,12 @@ export function pfctlSetThrottle(throughputKbps: number, delayMs: number): void 
  */
 export function pfctlResetNetwork(): void {
   try {
-    execSync(`sudo pfctl -a ${SPANA_ANCHOR} -F all`, { stdio: "ignore" });
+    execFileSync("sudo", ["pfctl", "-a", SPANA_ANCHOR, "-F", "all"], { stdio: "ignore" });
   } catch {
     // Ignore errors
   }
   try {
-    execSync("sudo dnctl -q flush", { stdio: "ignore" });
+    execFileSync("sudo", ["dnctl", "-q", "flush"], { stdio: "ignore" });
   } catch {
     // Ignore errors
   }
@@ -470,7 +484,7 @@ export function pfctlResetNetwork(): void {
 
 /** Reset simulator keychain (removes all stored passwords and certificates) */
 export function resetSimulatorKeychain(udid: string): void {
-  execSync(`xcrun simctl keychain ${udid} reset`, { stdio: "ignore" });
+  execFileSync("xcrun", ["simctl", "keychain", udid, "reset"], { stdio: "ignore" });
 }
 
 /**

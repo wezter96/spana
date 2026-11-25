@@ -82,8 +82,9 @@ export function InspectorPage() {
     (x: number, y: number) => {
       if (!root) return;
       const matches = elementsAtPoint(root, x, y);
-      if (matches.length > 0) {
-        setSelectedPath(matches[0].path);
+      const first = matches[0];
+      if (first) {
+        setSelectedPath(first.path);
       }
     },
     [root],
@@ -93,8 +94,9 @@ export function InspectorPage() {
     (x: number, y: number) => {
       if (!root) return;
       const matches = elementsAtPoint(root, x, y);
-      if (matches.length > 0) {
-        setHoveredPath(matches[0].path);
+      const first = matches[0];
+      if (first) {
+        setHoveredPath(first.path);
       } else {
         setHoveredPath(undefined);
       }

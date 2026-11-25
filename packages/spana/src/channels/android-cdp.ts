@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { allocatePort, releasePort } from "../core/port-allocator.js";
 import { findADB, adbShell } from "../device/android.js";
 import type { Selector } from "../schemas/selector.js";
@@ -112,15 +112,15 @@ export class AndroidWebViewCdpChannel implements DomChannel {
     this.options = options;
   }
 
-  private execAdb(args: string): string {
+  private execAdb(args: string[]): string {
     if (this.options.runAdb) {
-      return this.options.runAdb(args);
+      return this.options.runAdb(args.join(" "));
     }
     const adb = findADB();
     if (!adb) {
       throw new Error("adb not found on PATH or ANDROID_HOME");
     }
-    return execSync(`${adb} ${args}`, { encoding: "utf-8" });
+    return execFileSync(adb, args, { encoding: "utf-8" });
   }
 
   isConnected(): boolean {
@@ -165,7 +165,13 @@ export class AndroidWebViewCdpChannel implements DomChannel {
     this.activeSocketName = socketName;
 
     try {
-      this.execAdb(`-s ${this.options.serial} forward tcp:${port} localabstract:${socketName}`);
+      this.execAdb([
+        "-s",
+        this.options.serial,
+        "forward",
+        `tcp:${port}`,
+        `localabstract:${socketName}`,
+      ]);
       this.cdp = new CdpDomChannel({
         endpointUrl: `http://127.0.0.1:${port}`,
         timeoutMs: this.options.timeoutMs,
@@ -240,7 +246,7 @@ export class AndroidWebViewCdpChannel implements DomChannel {
       const port = this.forwardedPort;
       this.forwardedPort = null;
       try {
-        this.execAdb(`-s ${this.options.serial} forward --remove tcp:${port}`);
+        this.execAdb(["-s", this.options.serial, "forward", "--remove", `tcp:${port}`]);
       } catch {
         // best-effort forward cleanup
       }

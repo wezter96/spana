@@ -103,10 +103,11 @@ async function discoverAndLoad(flowDir: string): Promise<FlowDefinition[]> {
   // Flow files import from the spana source package, which requires bun/tsx to load.
   // Use bun subprocess to discover and serialize flow metadata.
   try {
-    const { execSync } = await import("node:child_process");
+    const { execFileSync } = await import("node:child_process");
+    const runnerPath = resolve(dir, "../../src/core/runner.ts");
     const script = `
-      import { discoverFlows, loadTestSource } from '${resolve(dir, "../../src/core/runner.ts")}';
-      const paths = await discoverFlows('${dir}');
+      import { discoverFlows, loadTestSource } from ${JSON.stringify(runnerPath)};
+      const paths = await discoverFlows(${JSON.stringify(dir)});
       const flows = [];
       for (const p of paths) {
         try {
@@ -116,7 +117,7 @@ async function discoverAndLoad(flowDir: string): Promise<FlowDefinition[]> {
       }
       console.log(JSON.stringify(flows));
     `;
-    const json = execSync(`bun -e "${script.replaceAll('"', '\\"')}"`, {
+    const json = execFileSync("bun", ["-e", script], {
       encoding: "utf-8",
       timeout: 15_000,
       cwd: dir,

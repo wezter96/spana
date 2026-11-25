@@ -34,10 +34,10 @@ import { LinkButton } from "@astrojs/starlight/components";
 import AgentPrompts from "../../components/AgentPrompts.astro";
 
 <div class="spana-install-bar">
-  <code>npm install -D spana-test</code>
+  <code>npm install -D spana</code>
   <span>
-    <a href="https://www.npmjs.com/package/spana-test">npm</a> · <a href="/llms.txt">llms.txt</a> ·{" "}
-    <a href="/llms-full.txt">llms-full.txt</a>
+    <a href="https://www.npmjs.com/package/spana">npm</a> · <a href="/llms.txt">llms.txt</a> ·{" "}
+    <a href="/llms-full.txt">llms-full.txt</a> · <a href="/privacy/">Privacy</a>
   </span>
 </div>
 
@@ -54,7 +54,7 @@ import AgentPrompts from "../../components/AgentPrompts.astro";
 <div class="spana-proof">
 
 ```ts title="flows/login.flow.ts"
-import { flow } from "spana-test";
+import { flow } from "spana";
 
 export default flow("user can log in", async ({ app, expect }) => {
   await app.tap({ testID: "email-input" });
@@ -179,7 +179,7 @@ export default flow("user can log in", async ({ app, expect }) => {
 <section class="spana-section spana-cta">
   <h2>Write your first flow in five minutes</h2>
   <p>
-    Install spana-test, add a config, and run <code>npx spana test</code>.
+    Install spana, add a config, and run <code>npx spana test</code>.
   </p>
   <div class="sl-flex">
     <LinkButton href="/getting-started/quick-start/" icon="right-arrow">

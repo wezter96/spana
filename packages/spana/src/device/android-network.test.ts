@@ -16,20 +16,21 @@ function resetState(): void {
 
 function registerMocks(): void {
   mock.module("node:child_process", () => ({
-    execSync: (command: string) => {
-      networkState.execSyncCalls.push(command);
+    execSync: () => "",
+    spawn: () => ({ unref: () => {} }),
+    execFileSync: (command: string, args: string[]) => {
+      const full = `${command} ${args.join(" ")}`;
+      networkState.execSyncCalls.push(full);
 
-      if (command.endsWith(" version")) {
-        const candidate = command.slice(0, -8);
-        if (networkState.versionCandidates.has(candidate)) {
+      if (args.length === 1 && args[0] === "version") {
+        if (networkState.versionCandidates.has(command)) {
           return "Android Debug Bridge version";
         }
-        throw new Error(`missing adb: ${candidate}`);
+        throw new Error(`missing adb: ${command}`);
       }
 
       return "";
     },
-    execFileSync: () => "",
   }));
 }
 

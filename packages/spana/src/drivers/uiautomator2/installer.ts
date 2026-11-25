@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve, join } from "node:path";
@@ -85,12 +85,25 @@ export function startUiAutomator2Server(serial: string): void {
   if (!adb) throw new Error("adb not found");
 
   try {
-    execSync(
-      `${adb} -s ${serial} shell am instrument -w -e disableAnalytics true io.appium.uiautomator2.server.test/androidx.test.runner.AndroidJUnitRunner &`,
-      { stdio: "ignore", timeout: 5000 },
+    const proc = spawn(
+      adb,
+      [
+        "-s",
+        serial,
+        "shell",
+        "am",
+        "instrument",
+        "-w",
+        "-e",
+        "disableAnalytics",
+        "true",
+        "io.appium.uiautomator2.server.test/androidx.test.runner.AndroidJUnitRunner",
+      ],
+      { detached: true, stdio: "ignore" },
     );
+    proc.unref();
   } catch {
-    // The command may timeout because it blocks — that's expected.
+    // Best-effort background launch
   }
 }
 
@@ -128,7 +141,7 @@ export async function setupUiAutomator2(
   const adb = findADB();
   if (adb) {
     try {
-      execSync(`${adb} -s ${serial} forward --remove tcp:${port}`, { stdio: "ignore" });
+      execFileSync(adb, ["-s", serial, "forward", "--remove", `tcp:${port}`], { stdio: "ignore" });
     } catch {
       /* ignore — may not exist */
     }
@@ -163,7 +176,9 @@ export async function setupUiAutomator2(
           if (warm) return;
           try {
             if (adb)
-              execSync(`${adb} -s ${serial} forward --remove tcp:${port}`, { stdio: "ignore" });
+              execFileSync(adb, ["-s", serial, "forward", "--remove", `tcp:${port}`], {
+                stdio: "ignore",
+              });
           } catch {
             /* ignore */
           }

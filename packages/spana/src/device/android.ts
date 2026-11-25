@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 export interface AndroidDevice {
   serial: string;
@@ -11,16 +11,16 @@ export function findADB(): string | null {
   // Check common locations
   const candidates = [
     "adb", // on PATH
-    `${process.env.ANDROID_HOME}/platform-tools/adb`,
-    `${process.env.ANDROID_SDK_ROOT}/platform-tools/adb`,
+    process.env.ANDROID_HOME ? `${process.env.ANDROID_HOME}/platform-tools/adb` : "",
+    process.env.ANDROID_SDK_ROOT ? `${process.env.ANDROID_SDK_ROOT}/platform-tools/adb` : "",
     "/usr/local/bin/adb",
-    `${process.env.HOME}/Library/Android/sdk/platform-tools/adb`,
+    process.env.HOME ? `${process.env.HOME}/Library/Android/sdk/platform-tools/adb` : "",
   ];
 
   for (const candidate of candidates) {
     if (!candidate) continue;
     try {
-      execSync(`${candidate} version`, { stdio: "ignore" });
+      execFileSync(candidate, ["version"], { stdio: "ignore" });
       return candidate;
     } catch {
       // try next
@@ -35,7 +35,7 @@ export function listAndroidDevices(): AndroidDevice[] {
   if (!adb) return [];
 
   try {
-    const output = execSync(`${adb} devices`, { encoding: "utf-8" });
+    const output = execFileSync(adb, ["devices"], { encoding: "utf-8" });
     return parseDeviceList(output);
   } catch {
     return [];
@@ -80,14 +80,14 @@ export function firstAndroidDevice(): AndroidDevice | null {
 export function findEmulator(): string | null {
   const candidates = [
     "emulator",
-    `${process.env.ANDROID_HOME}/emulator/emulator`,
-    `${process.env.ANDROID_SDK_ROOT}/emulator/emulator`,
-    `${process.env.HOME}/Library/Android/sdk/emulator/emulator`,
+    process.env.ANDROID_HOME ? `${process.env.ANDROID_HOME}/emulator/emulator` : "",
+    process.env.ANDROID_SDK_ROOT ? `${process.env.ANDROID_SDK_ROOT}/emulator/emulator` : "",
+    process.env.HOME ? `${process.env.HOME}/Library/Android/sdk/emulator/emulator` : "",
   ];
   for (const candidate of candidates) {
     if (!candidate) continue;
     try {
-      execSync(`${candidate} -version`, { stdio: "ignore" });
+      execFileSync(candidate, ["-version"], { stdio: "ignore" });
       return candidate;
     } catch {
       // try next
@@ -101,7 +101,7 @@ export function listAVDs(): string[] {
   const emulator = findEmulator();
   if (!emulator) return [];
   try {
-    const output = execSync(`${emulator} -list-avds`, { encoding: "utf-8" });
+    const output = execFileSync(emulator, ["-list-avds"], { encoding: "utf-8" });
     return output
       .split("\n")
       .map((l) => l.trim())
@@ -120,7 +120,6 @@ export function startEmulator(avdName: string, timeoutMs = 60_000): string {
   if (!emulator) throw new Error("Android emulator not found");
 
   // Launch in background
-  const { spawn } = require("node:child_process") as typeof import("node:child_process");
   const proc = spawn(emulator, ["-avd", avdName, "-no-snapshot-save", "-no-audio", "-no-window"], {
     detached: true,
     stdio: "ignore",
@@ -137,16 +136,20 @@ export function startEmulator(avdName: string, timeoutMs = 60_000): string {
     if (device) {
       // Wait for boot to complete
       try {
-        const bootAnim = execSync(`${adb} -s ${device.serial} shell getprop sys.boot_completed`, {
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
+        const bootAnim = execFileSync(
+          adb,
+          ["-s", device.serial, "shell", "getprop", "sys.boot_completed"],
+          {
+            encoding: "utf-8",
+            timeout: 5000,
+          },
+        ).trim();
         if (bootAnim === "1") return device.serial;
       } catch {
         // not ready yet
       }
     }
-    execSync("sleep 2");
+    execFileSync("sleep", ["2"]);
   }
 
   throw new Error(`Emulator "${avdName}" did not boot within ${timeoutMs / 1000}s`);
@@ -173,7 +176,7 @@ export function ensureAndroidDevice(timeoutMs = 60_000): AndroidDevice | null {
 export function adbForward(serial: string, hostPort: number, devicePort: number): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} forward tcp:${hostPort} tcp:${devicePort}`);
+  execFileSync(adb, ["-s", serial, "forward", `tcp:${hostPort}`, `tcp:${devicePort}`]);
 }
 
 /**
@@ -184,7 +187,9 @@ export function adbForward(serial: string, hostPort: number, devicePort: number)
 export function adbReverse(serial: string, devicePort: number, hostPort = devicePort): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} reverse tcp:${devicePort} tcp:${hostPort}`, { stdio: "ignore" });
+  execFileSync(adb, ["-s", serial, "reverse", `tcp:${devicePort}`, `tcp:${hostPort}`], {
+    stdio: "ignore",
+  });
 }
 
 /** Remove an adb reverse port mapping (best-effort). */
@@ -192,7 +197,9 @@ export function adbReverseRemove(serial: string, devicePort: number): void {
   const adb = findADB();
   if (!adb) return;
   try {
-    execSync(`${adb} -s ${serial} reverse --remove tcp:${devicePort}`, { stdio: "ignore" });
+    execFileSync(adb, ["-s", serial, "reverse", "--remove", `tcp:${devicePort}`], {
+      stdio: "ignore",
+    });
   } catch {
     // mapping may already be removed
   }
@@ -202,22 +209,33 @@ export function adbReverseRemove(serial: string, devicePort: number): void {
 export function adbShell(serial: string, command: string): string {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  return execSync(`${adb} -s ${serial} shell ${command}`, { encoding: "utf-8" });
+  return execFileSync(adb, ["-s", serial, "shell", command], { encoding: "utf-8" });
 }
 
 /** Install APK on device */
 export function adbInstall(serial: string, apkPath: string): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} install -r ${apkPath}`, { stdio: "ignore" });
+  execFileSync(adb, ["-s", serial, "install", "-r", apkPath], { stdio: "ignore" });
 }
 
 /** Launch an installed app via the launcher intent */
 export function adbLaunchApp(serial: string, packageName: string): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(
-    `${adb} -s ${serial} shell monkey -p ${packageName} -c android.intent.category.LAUNCHER 1`,
+  execFileSync(
+    adb,
+    [
+      "-s",
+      serial,
+      "shell",
+      "monkey",
+      "-p",
+      packageName,
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "1",
+    ],
     { stdio: "ignore" },
   );
 }
@@ -226,14 +244,14 @@ export function adbLaunchApp(serial: string, packageName: string): void {
 export function adbForceStop(serial: string, packageName: string): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} shell am force-stop ${packageName}`, { stdio: "ignore" });
+  execFileSync(adb, ["-s", serial, "shell", "am", "force-stop", packageName], { stdio: "ignore" });
 }
 
 /** Clear app data and cache */
 export function adbClearApp(serial: string, packageName: string): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} shell pm clear ${packageName}`, { stdio: "ignore" });
+  execFileSync(adb, ["-s", serial, "shell", "pm", "clear", packageName], { stdio: "ignore" });
 }
 
 // ── Network control helpers ──────────────────────────────────────────
@@ -251,23 +269,29 @@ export const ADB_PROFILE_MAP: Record<string, { speed: string; delay: string }> =
 export function adbSetAirplaneMode(serial: string, enable: boolean): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(
-    `${adb} -s ${serial} shell cmd connectivity airplane-mode ${enable ? "enable" : "disable"}`,
-  );
+  execFileSync(adb, [
+    "-s",
+    serial,
+    "shell",
+    "cmd",
+    "connectivity",
+    "airplane-mode",
+    enable ? "enable" : "disable",
+  ]);
 }
 
 /** Toggle Wi-Fi on/off */
 export function adbSetWifi(serial: string, enable: boolean): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} shell svc wifi ${enable ? "enable" : "disable"}`);
+  execFileSync(adb, ["-s", serial, "shell", "svc", "wifi", enable ? "enable" : "disable"]);
 }
 
 /** Toggle mobile data on/off */
 export function adbSetData(serial: string, enable: boolean): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} shell svc data ${enable ? "enable" : "disable"}`);
+  execFileSync(adb, ["-s", serial, "shell", "svc", "data", enable ? "enable" : "disable"]);
 }
 
 /** Apply a named network profile (emulator only) */
@@ -276,8 +300,8 @@ export function adbSetNetworkProfile(serial: string, profile: string): void {
   if (!adb) throw new Error("adb not found");
   const mapping = ADB_PROFILE_MAP[profile];
   if (!mapping) throw new Error(`Unknown network profile "${profile}"`);
-  execSync(`${adb} -s ${serial} emu network speed ${mapping.speed}`);
-  execSync(`${adb} -s ${serial} emu network delay ${mapping.delay}`);
+  execFileSync(adb, ["-s", serial, "emu", "network", "speed", mapping.speed]);
+  execFileSync(adb, ["-s", serial, "emu", "network", "delay", mapping.delay]);
 }
 
 /** Apply custom network throttling (emulator only) */
@@ -289,18 +313,18 @@ export function adbSetCustomNetwork(
 ): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} emu network speed ${downloadKbps}:${uploadKbps}`);
-  execSync(`${adb} -s ${serial} emu network delay ${delayMs}:${delayMs}`);
+  execFileSync(adb, ["-s", serial, "emu", "network", "speed", `${downloadKbps}:${uploadKbps}`]);
+  execFileSync(adb, ["-s", serial, "emu", "network", "delay", `${delayMs}:${delayMs}`]);
 }
 
 /** Reset network to full speed and disable airplane mode */
 export function adbResetNetwork(serial: string): void {
   const adb = findADB();
   if (!adb) throw new Error("adb not found");
-  execSync(`${adb} -s ${serial} emu network speed full`);
-  execSync(`${adb} -s ${serial} emu network delay none`);
+  execFileSync(adb, ["-s", serial, "emu", "network", "speed", "full"]);
+  execFileSync(adb, ["-s", serial, "emu", "network", "delay", "none"]);
   try {
-    execSync(`${adb} -s ${serial} shell cmd connectivity airplane-mode disable`);
+    execFileSync(adb, ["-s", serial, "shell", "cmd", "connectivity", "airplane-mode", "disable"]);
   } catch {
     // best-effort: may fail on physical devices
   }

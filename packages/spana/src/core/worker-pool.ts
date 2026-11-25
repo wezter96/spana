@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { readFile, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { TestResult } from "./engine.js";
@@ -196,7 +196,7 @@ export interface MultiProcessPoolOptions {
     workerCount: number,
   ) => ProcessShardCommand;
   spawnFn?: typeof spawn;
-  readReportFn?: (reportJsonPath: string) => TestResult[];
+  readReportFn?: (reportJsonPath: string) => TestResult[] | Promise<TestResult[]>;
   cleanupReportFiles?: boolean;
 }
 
@@ -211,9 +211,14 @@ export interface MultiProcessPoolResult {
   processResults: ProcessShardOutcome[];
 }
 
-function defaultReadJsonReport(reportJsonPath: string): TestResult[] {
-  if (!existsSync(reportJsonPath)) return [];
-  const raw = JSON.parse(readFileSync(reportJsonPath, "utf8")) as {
+async function defaultReadJsonReport(reportJsonPath: string): Promise<TestResult[]> {
+  let content: string;
+  try {
+    content = await readFile(reportJsonPath, "utf8");
+  } catch {
+    return [];
+  }
+  const raw = JSON.parse(content) as {
     results?: TestResult[];
   };
   return Array.isArray(raw.results) ? raw.results : [];
@@ -259,7 +264,7 @@ export async function runMultiProcessPool(
 
       let shardResults: TestResult[] = [];
       try {
-        shardResults = readReport(spec.reportJsonPath);
+        shardResults = await readReport(spec.reportJsonPath);
       } catch (err) {
         if (!spawnError) {
           spawnError = `Failed to parse shard ${shardIdx + 1} report: ${err instanceof Error ? err.message : String(err)}`;
@@ -268,7 +273,7 @@ export async function runMultiProcessPool(
 
       if (shouldCleanup) {
         try {
-          if (existsSync(spec.reportJsonPath)) unlinkSync(spec.reportJsonPath);
+          await unlink(spec.reportJsonPath);
         } catch {
           // ignore cleanup failure
         }

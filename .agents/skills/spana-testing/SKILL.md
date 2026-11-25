@@ -2,7 +2,7 @@
 
 ## When to use
 
-Use this skill when setting up, writing, debugging, or iterating on **spana (`spana-test`)** E2E tests across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun**. Spana uses pure TypeScript `flow()` files (plus optional Gherkin `.feature` files) with a dual-channel web-first engine — zero Appium required locally.
+Use this skill when setting up, writing, debugging, or iterating on **spana** E2E tests across **Web, Android (Capacitor/WebView & React Native), iOS (WKWebView & React Native), Electron, and Electrobun**. Spana uses pure TypeScript `flow()` files (plus optional Gherkin `.feature` files) with a dual-channel web-first engine — zero Appium required locally.
 
 Full online docs & LLM reference: `https://spana.antonwester.se/llms-full.txt`
 
@@ -62,7 +62,7 @@ spana daemon stop
 ### Standard `.flow.ts`
 
 ```ts
-import { flow, systemUI } from "spana-test";
+import { flow, systemUI } from "spana";
 
 export default flow(
   "SSO sign-in across WebView and native sheet",
@@ -80,7 +80,7 @@ export default flow(
 ### Composable Lazy Fixtures & Named Setups
 
 ```ts
-import { createFlowWithFixtures, defineSetup } from "spana-test";
+import { createFlowWithFixtures, defineSetup } from "spana";
 
 const adminSetup = defineSetup("admin", {
   storage: { localStorage: { auth_token: "test-admin-jwt" } },
@@ -128,12 +128,7 @@ export default testFlow(
 ## Fast Configuration & CI Filters (`spana.config.ts`)
 
 ```ts
-import {
-  defineConfig,
-  decisionFilter,
-  createLogprobDecisionJudge,
-  pathRuleFilter,
-} from "spana-test";
+import { defineConfig, decisionFilter, createLogprobDecisionJudge, pathRuleFilter } from "spana";
 
 export default defineConfig({
   apps: {

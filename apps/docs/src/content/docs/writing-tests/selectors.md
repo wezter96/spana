@@ -56,7 +56,7 @@ Matches the OS-level accessibility label exactly (on web, the `aria-label` attri
 ### System UI
 
 ```ts
-import { systemUI } from "spana-test";
+import { systemUI } from "spana";
 
 await app.tap(systemUI({ text: "Allow" }));
 // equivalent to:

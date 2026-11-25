@@ -50,7 +50,7 @@ function daemonKey(kind: WarmDaemonKind, deviceId: string): string {
 
 function scopeRecordPath(kind: WarmDaemonKind, deviceId: string): string {
   const safe = `${kind}-${deviceId}`.replaceAll(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
-  const hash = createHash("sha1").update(daemonKey(kind, deviceId)).digest("hex").slice(0, 10);
+  const hash = createHash("sha256").update(daemonKey(kind, deviceId)).digest("hex").slice(0, 10);
   return join(defaultDaemonStateDir(), `${safe}-${hash}.json`);
 }
 

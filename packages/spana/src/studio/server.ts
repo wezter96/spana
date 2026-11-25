@@ -2,9 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serve } from "@hono/node-server";
 import { onError } from "@orpc/server";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ManagedRuntime, Layer } from "effect";
 import { studioRouter } from "./api.js";
@@ -65,31 +64,37 @@ export async function startStudio(options: StudioOptions) {
   app.get("/artifacts/*", async (c) => {
     const artifactPath = decodeURIComponent(c.req.path.replace("/artifacts/", ""));
     const configOutputDir = config.artifacts?.outputDir ?? "spana-output";
-    const outputDir = configOutputDir.startsWith("/")
-      ? configOutputDir
-      : join(process.cwd(), configOutputDir);
-    const filePath = join(outputDir, artifactPath);
+    const outputDir = resolve(
+      configOutputDir.startsWith("/") ? configOutputDir : join(process.cwd(), configOutputDir),
+    );
+    const filePath = resolve(outputDir, artifactPath);
 
     // Security: ensure path stays within outputDir
-    if (!filePath.startsWith(outputDir)) {
+    if (filePath !== outputDir && !filePath.startsWith(outputDir + sep)) {
       return c.text("Forbidden", 403);
     }
 
-    if (existsSync(filePath)) {
-      const content = await readFile(filePath);
-      const ext = filePath.substring(filePath.lastIndexOf("."));
-      const mime =
-        ext === ".png"
-          ? "image/png"
-          : ext === ".json"
-            ? "application/json"
-            : "application/octet-stream";
-      return c.body(content, 200, { "Content-Type": mime });
+    try {
+      const info = await stat(filePath);
+      if (info.isFile()) {
+        const content = await readFile(filePath);
+        const ext = filePath.substring(filePath.lastIndexOf("."));
+        const mime =
+          ext === ".png"
+            ? "image/png"
+            : ext === ".json"
+              ? "application/json"
+              : "application/octet-stream";
+        return c.body(content, 200, { "Content-Type": mime });
+      }
+    } catch {
+      // Fall through to 404
     }
     return c.notFound();
   });
 
   if (staticDir) {
+    const resolvedStaticDir = resolve(staticDir);
     const mimeTypes: Record<string, string> = {
       ".html": "text/html",
       ".js": "application/javascript",
@@ -102,18 +107,25 @@ export async function startStudio(options: StudioOptions) {
 
     app.get("/*", async (c) => {
       const urlPath = c.req.path === "/" ? "/index.html" : c.req.path;
-      const filePath = join(staticDir, urlPath);
+      const filePath = resolve(resolvedStaticDir, urlPath.replace(/^\/+/, ""));
 
-      if (existsSync(filePath)) {
-        const content = await readFile(filePath);
-        const ext = urlPath.substring(urlPath.lastIndexOf("."));
-        return c.body(content, 200, {
-          "Content-Type": mimeTypes[ext] ?? "application/octet-stream",
-        });
+      if (filePath === resolvedStaticDir || filePath.startsWith(resolvedStaticDir + sep)) {
+        try {
+          const info = await stat(filePath);
+          if (info.isFile()) {
+            const content = await readFile(filePath);
+            const ext = urlPath.substring(urlPath.lastIndexOf("."));
+            return c.body(content, 200, {
+              "Content-Type": mimeTypes[ext] ?? "application/octet-stream",
+            });
+          }
+        } catch {
+          // Fall through to SPA fallback
+        }
       }
 
       // SPA fallback: serve index.html for unmatched routes
-      const indexPath = join(staticDir, "index.html");
+      const indexPath = join(resolvedStaticDir, "index.html");
       const html = await readFile(indexPath);
       return c.body(html, 200, { "Content-Type": "text/html" });
     });
@@ -124,10 +136,15 @@ export async function startStudio(options: StudioOptions) {
   console.log(`\n  Spana Studio running at http://localhost:${port}\n`);
 
   if (open) {
-    const { exec } = await import("node:child_process");
-    const cmd =
-      process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-    exec(`${cmd} http://localhost:${port}`, (error) => {
+    const { execFile } = await import("node:child_process");
+    const url = `http://localhost:${port}`;
+    const [cmd, args] =
+      process.platform === "darwin"
+        ? ["open", [url]]
+        : process.platform === "win32"
+          ? ["cmd", ["/c", "start", "", url]]
+          : ["xdg-open", [url]];
+    execFile(cmd, args, (error) => {
       if (error) {
         console.warn(`[studio] Failed to open browser:`, error.message);
       }

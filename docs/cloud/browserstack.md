@@ -15,7 +15,7 @@ Spana can upload the app for you from config, or you can upload it yourself and 
 Manual upload example:
 
 ```bash
-curl -u "USERNAME:ACCESS_KEY" \
+curl -u "$BROWSERSTACK_USERNAME:$BROWSERSTACK_ACCESS_KEY" \
   -X POST "https://api-cloud.browserstack.com/app-automate/upload" \
   -F "file=@app.apk"
 ```
@@ -69,7 +69,7 @@ Save as `caps/browserstack-ios.json`:
 Create or update `spana.config.ts`:
 
 ```ts
-import { defineConfig } from "spana-test";
+import { defineConfig } from "spana";
 
 export default defineConfig({
   apps: {

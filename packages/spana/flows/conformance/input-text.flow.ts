@@ -1,4 +1,4 @@
-import { flow } from "spana-test";
+import { flow } from "spana";
 import { openPlayground } from "./support.js";
 
 /**

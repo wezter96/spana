@@ -4,7 +4,7 @@
 >
 > For full inlined documentation (all content in one file), see: llms-full.txt
 
-spana favors TypeScript flows over YAML, ships an MCP server (`spana mcp`), agent CLI commands (`selectors`, `hierarchy`, `validate`), and a programmatic `spana-test/agent` API.
+spana favors TypeScript flows over YAML, ships an MCP server (`spana mcp`), agent CLI commands (`selectors`, `hierarchy`, `validate`), and a programmatic `spana/agent` API.
 
 The rendered documentation lives at https://spana.antonwester.se/.
 The links below intentionally point to the canonical Markdown sources in GitHub because they are cleaner for LLM and agent ingestion than the rendered HTML pages.
@@ -24,7 +24,7 @@ Running tests:
 6. Keep drivers warm: `execution.web.warmBrowser: true` (Chromium) and `execution.warmDaemons.enabled: true` (iOS / Android).
 7. Slowest fallback: a remote Appium server or device cloud (BrowserStack, Sauce Labs), only for devices you do not have locally.
 
-Coding agents exploring an app: use `spana mcp` first (one live session). Fall back to `spana selectors` / `spana hierarchy` (a new session per call), then to `connect()` from `spana-test/agent` for custom scripts. Save the result as a `.flow.ts` file and run it with `spana test`.
+Coding agents exploring an app: use `spana mcp` first (one live session). Fall back to `spana selectors` / `spana hierarchy` (a new session per call), then to `connect()` from `spana/agent` for custom scripts. Save the result as a `.flow.ts` file and run it with `spana test`.
 
 ## Start here
 
@@ -47,7 +47,7 @@ Coding agents exploring an app: use `spana mcp` first (one live session). Fall b
 - [Agent Commands](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/cli/agent-commands.md): `spana selectors`, `spana hierarchy`, `spana validate`, and the agent authoring loop.
 - [Agent API](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/reference/agent-api.md): `connect()` and `validateFlows()` for programmatic automation.
 - [Studio](https://raw.githubusercontent.com/wezter96/spana/main/apps/docs/src/content/docs/cli/studio.md): Local inspector UI for exploring screens and managing test runs.
-- [spana testing skill](https://raw.githubusercontent.com/wezter96/spana/main/.agents/skills/spana-testing/SKILL.md): Repo-shipped agent skill for selectors, flow writing, validation, and iteration loops.
+- [spana testing skill](https://raw.githubusercontent.com/wezter96/spana/main/.agents/skills/spanaing/SKILL.md): Repo-shipped agent skill for selectors, flow writing, validation, and iteration loops.
 
 ## CLI and reporting
 

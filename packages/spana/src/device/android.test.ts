@@ -20,25 +20,23 @@ function resetAndroidState(): void {
 
 function registerAndroidMocks(): void {
   mock.module("node:child_process", () => ({
-    execSync: (command: string) => {
-      androidState.execSyncCalls.push(command);
+    execSync: () => "",
+    spawn: () => ({ unref: () => {} }),
+    execFileSync: (command: string, args: string[]) => {
+      androidState.execFileCalls.push({ command, args });
+      androidState.execSyncCalls.push(`${command} ${args.join(" ")}`);
 
-      if (command.endsWith(" version")) {
-        const candidate = command.slice(0, -8);
-        if (androidState.versionCandidates.has(candidate)) {
+      if (args.length === 1 && args[0] === "version") {
+        if (androidState.versionCandidates.has(command)) {
           return "Android Debug Bridge version";
         }
-        throw new Error(`missing adb: ${candidate}`);
+        throw new Error(`missing adb: ${command}`);
       }
 
-      if (command.endsWith(" devices")) {
+      if (args.length === 1 && args[0] === "devices") {
         return androidState.devicesOutput;
       }
 
-      throw new Error(`unexpected command: ${command}`);
-    },
-    execFileSync: (command: string, args: string[]) => {
-      androidState.execFileCalls.push({ command, args });
       return "";
     },
   }));
@@ -105,16 +103,14 @@ describe("android device helpers", () => {
 
     android.adbOpenLink("emulator-5554", "spana://checkout?id=1", "com.example.shop");
 
-    expect(androidState.execFileCalls).toEqual([
-      {
-        command: "adb",
-        args: [
-          "-s",
-          "emulator-5554",
-          "shell",
-          "am start -W -a android.intent.action.VIEW -f 335544320 -d 'spana://checkout?id=1' 'com.example.shop'",
-        ],
-      },
-    ]);
+    expect(androidState.execFileCalls).toContainEqual({
+      command: "adb",
+      args: [
+        "-s",
+        "emulator-5554",
+        "shell",
+        "am start -W -a android.intent.action.VIEW -f 335544320 -d 'spana://checkout?id=1' 'com.example.shop'",
+      ],
+    });
   });
 });
