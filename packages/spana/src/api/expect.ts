@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve as resolvePath } from "node:path";
 import { inspect, isDeepStrictEqual } from "node:util";
 import { Effect } from "effect";
 import type { RawDriverService } from "../drivers/raw-driver.js";
-import type { ExtendedSelector } from "../schemas/selector.js";
+import { isRelativeSelector, type ExtendedSelector } from "../schemas/selector.js";
 import { createCoordinator, type CoordinatorConfig } from "../smart/coordinator.js";
 import type { WaitOptions } from "../smart/auto-wait.js";
 import type { StepRecorder } from "../core/step-recorder.js";
@@ -31,6 +33,10 @@ export interface PromiseExpectation<T extends string = string> {
   toBeFocused(opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element's computed accessible name matches string or RegExp. */
   toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  toMatchAriaSnapshot(
+    expected: string | { path: string },
+    opts?: RetryAssertionOptions,
+  ): Promise<void>;
 
   // Visual regression
   toMatchScreenshot(
@@ -84,6 +90,16 @@ export interface PromiseExpectFn<T extends string = string> {
 
 const retryScope = new AsyncLocalStorage<boolean>();
 const defaultRetryIntervals = [100, 250, 500, 1000] as const;
+
+function normalizeAriaSnapshot(snapshot: string): string {
+  const lines = snapshot.replaceAll("\r\n", "\n").trimEnd().split("\n");
+  while (lines[0]?.trim() === "" && lines.length > 1) lines.shift();
+  const indentation = lines.reduce(
+    (minimum, line) => (line.trim() ? Math.min(minimum, /^ */.exec(line)![0].length) : minimum),
+    Infinity,
+  );
+  return lines.map((line) => line.slice(indentation)).join("\n");
+}
 
 async function retryAssertion(
   check: () => unknown,
@@ -242,6 +258,44 @@ export function createPromiseExpect<T extends string = string, R extends string 
         selector,
         () => run(coord.assertAccessibleName(selector, expected, opts)),
       ),
+
+    toMatchAriaSnapshot: (expected, opts) =>
+      runStep("expect.toMatchAriaSnapshot", selector, async () => {
+        if (!driver.getAriaSnapshot) {
+          throw new Error(
+            `toMatchAriaSnapshot() is not supported on ${ctx.platform} with the current driver`,
+          );
+        }
+        if (isRelativeSelector(selector))
+          throw new Error("ARIA snapshots require a locator, not a relative selector");
+        const timeout = opts?.timeout ?? config.defaults?.timeout ?? 5000;
+        const path =
+          typeof expected === "string"
+            ? undefined
+            : resolvePath(dirname(ctx.flowFilePath), expected.path);
+        if (path && ctx.updateBaselines) {
+          const actual = await run(driver.getAriaSnapshot(selector, timeout));
+          await mkdir(dirname(path), { recursive: true });
+          await writeFile(path, `${normalizeAriaSnapshot(actual)}\n`, "utf8");
+          return;
+        }
+        const baseline = normalizeAriaSnapshot(
+          typeof expected === "string" ? expected : await readFile(path!, "utf8"),
+        );
+        await retryAssertion(
+          async () => {
+            const actual = normalizeAriaSnapshot(
+              await run(driver.getAriaSnapshot!(selector, timeout)),
+            );
+            if (actual !== baseline)
+              throw new Error(
+                `ARIA snapshot did not match.\nExpected:\n${baseline}\nReceived:\n${actual}`,
+              );
+          },
+          timeout,
+          opts?.intervals,
+        );
+      }),
 
     toMatchScreenshot: (name, options) =>
       runStep(`expect.toMatchScreenshot(${JSON.stringify(name)})`, selector, () =>

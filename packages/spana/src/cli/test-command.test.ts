@@ -4,6 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { FlowDefinition } from "../api/flow.js";
+import * as runner from "../core/runner.js";
+
+const { focusFlows, getFlowSkip } = runner;
 
 const cliState = {
   flowPaths: [] as string[],
@@ -162,6 +165,8 @@ function registerCliMocks(): void {
     },
     loadStepFiles: async () => {},
     discoverStepFiles: async () => [],
+    focusFlows,
+    getFlowSkip,
     filterFlows: (
       flows: FlowDefinition[],
       opts: { tags?: string[]; grep?: string; platforms: string[] },

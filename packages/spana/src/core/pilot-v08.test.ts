@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:http";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -341,6 +341,53 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
   let tempUploadDir: string;
   let uploadFileA: string;
   let uploadFileB: string;
+
+  test.each(["playwright", "cdp"] as const)(
+    "collects executed JavaScript on %s Chromium",
+    async (engine) => {
+      const driver = await Effect.runPromise(
+        engine === "playwright"
+          ? makePlaywrightDriver({ headless: true, baseUrl })
+          : makeLightweightCdpDriver({ cdpUrl: cdpHandle.browserWsUrl, baseUrl }),
+      );
+      try {
+        const result = await executeFlow(
+          flow(`coverage on ${engine}`, async ({ expect: browserExpect }) => {
+            await browserExpect({ text: "Pilot Dashboard" }).toBeVisible();
+            if (engine === "playwright") {
+              await browserExpect(byRole("heading", "Pilot Dashboard")).toMatchAriaSnapshot(
+                `- heading "Pilot Dashboard" [level=1]`,
+                { timeout: 300 },
+              );
+            }
+          }),
+          driver,
+          {
+            appId: baseUrl,
+            platform: "web",
+            coordinatorConfig: { parse: parseWebHierarchy },
+            artifactConfig: {
+              jsCoverage: true,
+              outputDir: tempUploadDir,
+              captureOnFailure: false,
+              captureOnSuccess: false,
+            },
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe("passed");
+        const attachment = result.attachments?.find(({ name }) => name === "js-coverage");
+        expect(attachment).toBeDefined();
+        const entries = JSON.parse(readFileSync(attachment!.path, "utf8"));
+        expect(entries).toContainEqual(
+          expect.objectContaining({ url: `${baseUrl}/`, functions: expect.any(Array) }),
+        );
+      } finally {
+        await Effect.runPromise(driver.killApp(baseUrl));
+      }
+    },
+    15_000,
+  );
 
   test("emulates geolocation, permissions, wall clock and viewport on Playwright Chromium", async () => {
     const driver = await Effect.runPromise(makePlaywrightDriver({ headless: true, baseUrl }));

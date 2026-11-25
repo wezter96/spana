@@ -191,8 +191,25 @@ export async function executeFlow(
   );
   flowCtx.sessions = sessions;
   let videoRecorder: VideoRecorderHandle | undefined;
+  let collectingCoverage = false;
   let recordingFinalized = false;
   const wantRecording = artifactConfig.video !== "off" || artifactConfig.playback;
+
+  const captureCoverage = async (attachments: Attachment[], status: "passed" | "failed") => {
+    if (!collectingCoverage || !driver.stopJSCoverage) return;
+    collectingCoverage = false;
+    try {
+      const entries = await Effect.runPromise(driver.stopJSCoverage());
+      const path = join(flowArtifactDir(artifactConfig, flow.name, platform), "js-coverage.json");
+      writeFileSync(path, JSON.stringify(entries), "utf8");
+      attachments.push({ name: "js-coverage", contentType: "application/json", path });
+    } catch (error) {
+      if (status === "passed") throw error;
+      console.warn(
+        `Failed to capture JavaScript coverage: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
 
   const finalizeRecording = async (
     status: "passed" | "failed",
@@ -284,6 +301,7 @@ export async function executeFlow(
       platform,
       "failed",
     );
+    await captureCoverage(attachments, "failed");
     const steps = stepRecorder.getSteps();
     const durationMs = Date.now() - start;
     await finalizeRecording("failed", attachments, steps, durationMs);
@@ -306,6 +324,22 @@ export async function executeFlow(
   if (driver.beginFlow) {
     try {
       await Effect.runPromise(driver.beginFlow(flow.name));
+    } catch (error) {
+      return buildFailureResult(error);
+    }
+  }
+
+  if (artifactConfig.jsCoverage && platform === "web") {
+    if (!driver.startJSCoverage || !driver.stopJSCoverage) {
+      return buildFailureResult(
+        new Error(
+          "JavaScript coverage is not supported on web with the current driver; use Playwright Chromium",
+        ),
+      );
+    }
+    try {
+      await Effect.runPromise(driver.startJSCoverage());
+      collectingCoverage = true;
     } catch (error) {
       return buildFailureResult(error);
     }
@@ -375,6 +409,7 @@ export async function executeFlow(
       platform,
       "passed",
     );
+    await captureCoverage(attachments, "passed");
     const steps = stepRecorder.getSteps();
     const durationMs = Date.now() - start;
     await finalizeRecording("passed", attachments, steps, durationMs);
@@ -396,6 +431,7 @@ export async function executeFlow(
       platform,
       "failed",
     );
+    await captureCoverage(attachments, "failed");
     const steps = stepRecorder.getSteps();
     const durationMs = Date.now() - start;
     await finalizeRecording("failed", attachments, steps, durationMs);

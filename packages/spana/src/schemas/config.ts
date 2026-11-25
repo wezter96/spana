@@ -257,6 +257,7 @@ export interface ArtifactConfig {
   consoleLogs?: boolean;
   jsErrors?: boolean;
   har?: boolean;
+  jsCoverage?: boolean;
   /** Video / screencast recording mode: "off" (default), "on", or "retain-on-failure". */
   video?: VideoRecordingMode;
   /** Embed interactive step-by-step visual playback timeline inside report.html (auto-enabled when video !== "off"). */
@@ -557,6 +558,7 @@ const artifactConfigSchema = z
     consoleLogs: z.boolean().optional(),
     jsErrors: z.boolean().optional(),
     har: z.boolean().optional(),
+    jsCoverage: z.boolean().optional(),
     video: z.enum(["off", "on", "retain-on-failure"]).optional(),
     playback: z.boolean().optional(),
   })

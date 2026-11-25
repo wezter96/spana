@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Effect } from "effect";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PNG } from "pngjs";
@@ -94,6 +94,33 @@ function createRecorder() {
 }
 
 const parse = (raw: string): Element => JSON.parse(raw) as Element;
+
+test("ARIA snapshots compare inline YAML and update or read golden files", async () => {
+  const root = makeTempDir();
+  const { driver } = createDriver([createElement()]);
+  const flowContext = {
+    flowName: "aria",
+    flowFilePath: join(root, "aria.flow.ts"),
+    platform: "web",
+  };
+  const expected = '- navigation "Menu":\n  - link "Home"';
+  const ariaDriver = { ...driver, getAriaSnapshot: () => Effect.succeed(expected) };
+  const browserExpect = createPromiseExpect(ariaDriver, { parse }, undefined, flowContext);
+  await browserExpect({ css: "nav" }).toMatchAriaSnapshot(
+    `\n    - navigation "Menu":\n      - link "Home"\n  `,
+  );
+  const snapshot = { path: "snapshots/menu.aria.yml" };
+  const update = createPromiseExpect(ariaDriver, { parse }, undefined, {
+    ...flowContext,
+    updateBaselines: true,
+  });
+  await update({ css: "nav" }).toMatchAriaSnapshot(snapshot);
+  expect(readFileSync(join(root, snapshot.path), "utf8")).toBe(`${expected}\n`);
+  await browserExpect({ css: "nav" }).toMatchAriaSnapshot(snapshot);
+  await expect(
+    browserExpect({ css: "nav" }).toMatchAriaSnapshot('- navigation "Other"', { timeout: 10 }),
+  ).rejects.toThrow("ARIA snapshot did not match");
+});
 
 test("poll retries an asynchronous probe and records the final result as one step", async () => {
   const { driver } = createDriver([createElement()]);

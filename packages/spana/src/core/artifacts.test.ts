@@ -63,6 +63,7 @@ describe("artifacts", () => {
       consoleLogs: true,
       jsErrors: true,
       har: true,
+      jsCoverage: false,
       video: "off",
       playback: false,
     });

@@ -43,6 +43,7 @@ if (command === "test") {
   let strictCache = false;
   let watch = false;
   let updateBaselines = false;
+  let jsCoverage = false;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
@@ -125,6 +126,8 @@ if (command === "test") {
       watch = true;
     } else if (arg === "--update-baselines") {
       updateBaselines = true;
+    } else if (arg === "--js-coverage") {
+      jsCoverage = true;
     } else if (!arg.startsWith("--")) {
       flowPath = arg;
     }
@@ -163,6 +166,7 @@ if (command === "test") {
     strictCache,
     watch,
     updateBaselines,
+    jsCoverage,
   });
   process.exit(success ? 0 : 1);
 } else if (command === "hierarchy" || command === "selectors") {
@@ -565,6 +569,7 @@ if (command === "test") {
     "  --processes <m>            OS worker processes sharing a dynamic longest-first queue",
   );
   console.log("  --browser <name>           Web browser target: chromium|firefox|webkit");
+  console.log("  --js-coverage              Save JavaScript coverage for Chromium web flows");
   console.log("  --devices <id1>,<id2>      Select specific devices for parallel execution");
   console.log("  --verbose                  Dump detailed failure diagnostics and hierarchy");
   console.log(

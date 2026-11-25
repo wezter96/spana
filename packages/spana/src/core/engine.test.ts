@@ -130,6 +130,35 @@ async function importFreshEngine() {
 }
 
 describe("engine", () => {
+  test("collects opted-in JavaScript coverage on a failed flow before teardown", async () => {
+    const calls: string[] = [];
+    const { driver } = createDriver(createElement(), {
+      startJSCoverage: () =>
+        Effect.sync(() => {
+          calls.push("start");
+        }),
+      stopJSCoverage: () =>
+        Effect.sync(() => {
+          calls.push("stop");
+          return [{ url: "https://example.test/main.js" }];
+        }),
+    });
+    const definition: FlowDefinition = {
+      name: "coverage failure",
+      config: { artifacts: { jsCoverage: true } },
+      fn: async () => {
+        calls.push("flow");
+        throw new Error("intentional failure");
+      },
+    };
+    const result = await executeFlow(definition, driver, createConfig(join(tempDir, "coverage")));
+    expect(result.status).toBe("failed");
+    expect(calls).toEqual(["start", "flow", "stop"]);
+    const coverage = result.attachments?.find(({ name }) => name === "js-coverage");
+    expect(JSON.parse(readFileSync(coverage!.path, "utf8"))).toEqual([
+      { url: "https://example.test/main.js" },
+    ]);
+  });
   test.each([false, true])(
     "aggregates soft assertions without stopping the flow (hard failure: %s)",
     async (hardFailure) => {

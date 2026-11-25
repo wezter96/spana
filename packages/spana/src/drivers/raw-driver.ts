@@ -368,6 +368,12 @@ export interface RawDriverService<_T extends string = string, R extends string =
 
   // Raw escape hatch & built-in WebAuthn virtual passkey support
   readonly getRawPage?: () => unknown;
+  readonly getAriaSnapshot?: (
+    selector: Selector,
+    timeout?: number,
+  ) => Effect.Effect<string, DriverError>;
+  readonly startJSCoverage?: () => Effect.Effect<void, DriverError>;
+  readonly stopJSCoverage?: () => Effect.Effect<unknown[], DriverError>;
   readonly getCdpSession?: () => CdpSessionHandle | undefined;
   readonly enableVirtualAuthenticator?: (
     opts?: VirtualAuthenticatorOptions,
@@ -541,6 +547,9 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     getJSErrors: wrapOptionalMethod(logs, "getJSErrors", driver.getJSErrors),
     getHAR: wrapOptionalMethod(logs, "getHAR", driver.getHAR),
     getRawPage: driver.getRawPage,
+    getAriaSnapshot: wrapOptionalMethod(logs, "getAriaSnapshot", driver.getAriaSnapshot),
+    startJSCoverage: wrapOptionalMethod(logs, "startJSCoverage", driver.startJSCoverage),
+    stopJSCoverage: wrapOptionalMethod(logs, "stopJSCoverage", driver.stopJSCoverage),
     getCdpSession: driver.getCdpSession,
     enableVirtualAuthenticator: wrapOptionalMethod(
       logs,

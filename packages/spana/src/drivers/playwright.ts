@@ -1125,6 +1125,7 @@ export function makePlaywrightDriver(
             },
           };
 
+    let coveragePage: Page | undefined;
     const service: RawDriverService = {
       ...(domChannel ? { domChannel } : {}),
       beginFlow: (flowName) =>
@@ -1395,6 +1396,41 @@ export function makePlaywrightDriver(
         }),
 
       getRawPage: () => page,
+
+      getAriaSnapshot: (selector, timeout) =>
+        deviceEffect("getAriaSnapshot", () => {
+          if (typeof selector === "string") {
+            return page
+              .getByLabel(selector, { exact: true })
+              .or(page.getByText(selector, { exact: true }))
+              .ariaSnapshot({ timeout });
+          }
+          if ("point" in selector) throw new Error("ARIA snapshots require a locator, not a point");
+          return resolvePlaywrightLocator(
+            page,
+            "text" in selector
+              ? { ...selector, css: `text=${JSON.stringify(selector.text)}` }
+              : selector,
+          ).ariaSnapshot({ timeout });
+        }),
+
+      ...(browserName === "chromium"
+        ? {
+            startJSCoverage: () =>
+              deviceEffect("startJSCoverage", async () => {
+                const target = page;
+                await target.coverage.startJSCoverage({ resetOnNavigation: false });
+                coveragePage = target;
+              }),
+            stopJSCoverage: () =>
+              deviceEffect("stopJSCoverage", async () => {
+                const target = coveragePage;
+                coveragePage = undefined;
+                if (!target) throw new Error("JavaScript coverage was not started");
+                return target.coverage.stopJSCoverage();
+              }),
+          }
+        : {}),
 
       setGeolocation: (point) =>
         deviceEffect("setGeolocation", () => context.setGeolocation(point)),

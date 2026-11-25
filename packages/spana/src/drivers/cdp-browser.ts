@@ -901,8 +901,54 @@ export function makeLightweightCdpDriver(
       await cdpChannel.sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
     };
 
+    let coverageSession: string | null | undefined;
     const service: RawDriverService = {
       domChannel: cdpChannel,
+
+      startJSCoverage: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const session = activeSlot?.sessionId ?? null;
+            await cdpChannel.sendCommand("Profiler.enable", {}, session);
+            try {
+              await cdpChannel.sendCommand(
+                "Profiler.startPreciseCoverage",
+                { callCount: true, detailed: true },
+                session,
+              );
+              coverageSession = session;
+            } catch (error) {
+              await cdpChannel.sendCommand("Profiler.disable", {}, session).catch(() => {});
+              throw error;
+            }
+          },
+          catch: (error) =>
+            new DriverError({ message: `CDP JavaScript coverage is unavailable: ${error}` }),
+        }),
+
+      stopJSCoverage: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const session = coverageSession;
+            coverageSession = undefined;
+            if (session === undefined) throw new Error("JavaScript coverage was not started");
+            try {
+              const { result } = await cdpChannel.sendCommand<{ result: Array<{ url: string }> }>(
+                "Profiler.takePreciseCoverage",
+                {},
+                session,
+              );
+              return result.filter(({ url }) => url && !url.startsWith("extensions::"));
+            } finally {
+              await cdpChannel
+                .sendCommand("Profiler.stopPreciseCoverage", {}, session)
+                .catch(() => {});
+              await cdpChannel.sendCommand("Profiler.disable", {}, session).catch(() => {});
+            }
+          },
+          catch: (error) =>
+            new DriverError({ message: `CDP JavaScript coverage collection failed: ${error}` }),
+        }),
 
       beginFlow: (_flowName) =>
         Effect.tryPromise({

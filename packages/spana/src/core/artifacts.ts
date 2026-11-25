@@ -15,6 +15,7 @@ export interface ResolvedArtifactConfig {
   consoleLogs: boolean;
   jsErrors: boolean;
   har: boolean;
+  jsCoverage: boolean;
   video: "off" | "on" | "retain-on-failure";
   playback: boolean;
 }
@@ -29,6 +30,7 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   consoleLogs: true,
   jsErrors: true,
   har: true,
+  jsCoverage: false,
   video: "off",
   playback: false,
 };

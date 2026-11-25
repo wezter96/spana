@@ -86,6 +86,7 @@ export interface TestCommandOptions {
   strictCache?: boolean;
   watch?: boolean;
   updateBaselines?: boolean;
+  jsCoverage?: boolean;
 }
 
 function validateOptions(opts: TestCommandOptions): string | null {
@@ -568,6 +569,7 @@ async function resolveExecutionContext(
   } else if (config.artifacts?.outputDir) {
     config.artifacts.outputDir = resolveFromConfig(config.artifacts.outputDir);
   }
+  if (opts.jsCoverage) config.artifacts = { ...config.artifacts, jsCoverage: true };
 
   // CLI --browser override and per-process warm daemon isolation scope
   if (opts.browser || process.env.SPANA_WARM_SCOPE) {
@@ -1076,6 +1078,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                 ...(opts.grep ? ["--grep", opts.grep] : []),
                 ...(opts.changedSince ? ["--changed-since", opts.changedSince] : []),
                 ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
+                ...(opts.jsCoverage ? ["--js-coverage"] : []),
                 ...(opts.bail !== undefined ? ["--bail", String(opts.bail)] : []),
               ];
               return {
