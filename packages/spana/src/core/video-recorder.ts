@@ -222,7 +222,31 @@ export async function startCdpScreencastRecorder(
       unsubscribe();
       await cdp.sendCommand("Page.stopScreencast").catch(() => {});
 
-      if (!stopOpts.keep || frames.length === 0) {
+      if (!stopOpts.keep) {
+        return { frameCount: 0 };
+      }
+
+      // Ultra-fast flows can finish before Chromium's compositor flushes the first screencast frame.
+      // Capture a single final JPEG frame so playback traces are never dropped on fast runs.
+      if (frames.length === 0) {
+        try {
+          const snap = (await cdp.sendCommand("Page.captureScreenshot", {
+            format: "jpeg",
+            quality: options.quality ?? 65,
+          })) as { data?: string } | undefined;
+          if (typeof snap?.data === "string" && snap.data.length > 0) {
+            frames.push({
+              timestampMs: Math.max(0, Date.now() - startedAt),
+              dataBase64: snap.data,
+              mimeType: "image/jpeg",
+            });
+          }
+        } catch {
+          // best-effort fallback
+        }
+      }
+
+      if (frames.length === 0) {
         return { frameCount: 0 };
       }
 

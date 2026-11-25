@@ -128,17 +128,21 @@ export async function executeFlow(
       }
     : coordinatorConfig;
 
-  const app = createPromiseApp(driver, appId, mergedCoordinatorConfig, stepRecorder, {
-    platform,
-    storybook: config.storybook,
-    launchOptions,
-  });
   const flowMeta = {
     flowFilePath: flow.sourcePath ?? "",
     flowName: flow.name,
     platform,
     updateBaselines: config.updateBaselines ?? false,
   };
+  const extraCleanups: Array<() => Promise<void>> = [];
+  const app = createPromiseApp(driver, appId, mergedCoordinatorConfig, stepRecorder, {
+    platform,
+    storybook: config.storybook,
+    launchOptions,
+    onRegisterCleanup: (fn) => extraCleanups.push(fn),
+    flowContext: flowMeta,
+    visualRegression: config.visualRegression,
+  });
   const expect = createPromiseExpect(
     driver,
     mergedCoordinatorConfig,
@@ -269,7 +273,10 @@ export async function executeFlow(
       platform,
       status: "failed",
       durationMs,
-      error: classifyError(normalized),
+      error: classifyError(normalized, {
+        flowFilePath: flow.sourcePath,
+        fallbackStack: stepRecorder.getLastFailureStack?.(),
+      }),
       attachments,
       steps,
       scenarioSteps: flowCtx.__scenarioSteps,
@@ -374,7 +381,10 @@ export async function executeFlow(
       platform,
       status: "failed",
       durationMs,
-      error: classifyError(flowError),
+      error: classifyError(flowError, {
+        flowFilePath: flow.sourcePath,
+        fallbackStack: stepRecorder.getLastFailureStack?.(),
+      }),
       attachments,
       steps,
       scenarioSteps: flowCtx.__scenarioSteps,
@@ -399,6 +409,7 @@ export async function executeFlow(
           result.error,
           artDir,
           attachments,
+          flow.sourcePath,
         );
         writeFailureBundle(bundle, artDir);
       } catch {
@@ -419,7 +430,14 @@ export async function executeFlow(
     }
   }
 
-  // Clean up all secondary sessions
+  // Clean up all secondary contexts created via app.newContext() and secondary sessions
+  for (const cleanup of extraCleanups.toReversed()) {
+    try {
+      await cleanup();
+    } catch {
+      // Best-effort cleanup — don't mask the primary result
+    }
+  }
   try {
     await sessionManager.disconnectAll();
   } catch {

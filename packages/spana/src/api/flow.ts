@@ -1,8 +1,8 @@
-import type { ExtendedSelector, Platform } from "../schemas/selector.js";
+import type { Platform } from "../schemas/selector.js";
 import type { ArtifactConfig } from "../schemas/config.js";
 import type { LaunchOptions } from "../drivers/raw-driver.js";
 import type { PromiseApp } from "./app.js";
-import type { PromiseExpectation } from "./expect.js";
+import type { PromiseExpectFn } from "./expect.js";
 import type { Sessions } from "../core/session-manager.js";
 
 export interface WhenCondition {
@@ -39,7 +39,7 @@ export interface FlowConfig<R extends string = string> {
 
 export interface FlowContext<T extends string = string, R extends string = string> {
   app: PromiseApp<T, R>;
-  expect: (selector: ExtendedSelector<T>) => PromiseExpectation<T>;
+  expect: PromiseExpectFn<T>;
   platform: Platform;
   sessions: Sessions;
 }

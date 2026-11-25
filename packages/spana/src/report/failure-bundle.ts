@@ -30,6 +30,8 @@ export interface FailureBundle {
     category: string;
     suggestion?: string;
     errorCode?: string;
+    location?: { file: string; line: number; column: number };
+    codeFrame?: string;
   };
   selectorContext?: {
     attempted: unknown;
@@ -313,6 +315,8 @@ export function createFailureBundle(
       category: error.category,
       suggestion: error.suggestion,
       errorCode: error.errorCode,
+      ...(error.location ? { location: error.location } : {}),
+      ...(error.codeFrame ? { codeFrame: error.codeFrame } : {}),
     },
     selectorContext,
     ...(runtimeDiagnostics ? { runtimeDiagnostics } : {}),

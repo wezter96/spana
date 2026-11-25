@@ -40,39 +40,48 @@
 
 ## Benchmarks
 
-All benchmarks are reproducible directly from this repository on Apple M4 Pro (Bun 1.4.5, Headless Chrome).
+All web benchmarks below are measured live on Apple M4 Pro (Bun 1.4.5, Headless Chrome) with **full actionability checks enabled** (visibility, enabled, scroll-into-view, hit-test unobstructed, stability). We separate **strict apples-to-apples** runs from **optional speed tiers** and **PR subset filtering** so every number is transparent and reproducible.
 
-### 20-Flow × 14-Step Chromium Suite (280 Interactions) & Mobile Hybrid
+### 1. Strict Apples-to-Apples (Fresh Context per Flow, Full Actionability, No Bridge)
+
+Both Playwright and Spana open a **brand-new isolated browser context per flow**, run all flows with zero skipped tests, no app-side bridge script, and full actionability checks:
+
+| Suite & Setup                                            | Workers | Isolation          | Flows | Total (ms) | Speedup vs Playwright |
+| -------------------------------------------------------- | ------: | ------------------ | ----: | ---------: | --------------------- |
+| **20-flow × 14-step local web app (280 steps)**          |         |                    |       |            |                       |
+| Playwright (`storageState`, library mode)                |      1w | fresh context/flow |    20 |     17,710 | baseline (1w)         |
+| **Spana Direct CDP (`engine: "cdp"`)**                   |      1w | fresh context/flow |    20 | **11,339** | **1.56× faster**      |
+| Playwright (4 parallel workers)                          |      4w | fresh context/flow |    20 |     15,574 | baseline (4w)         |
+| **Spana Direct CDP Pool (`engine: "cdp"`)**              |      4w | fresh context/flow |    20 |  **9,341** | **1.67× faster**      |
+| **Spana Direct CDP + Video Playback**                    |      4w | fresh ctx + video  |    20 |  **9,725** | **1.60× faster**      |
+| **24-flow realistic pilot (4,000-cell DOM + hydration)** |         |                    |       |            |                       |
+| Playwright                                               |      4w | fresh context/flow |    24 |     11,910 | baseline (4w)         |
+| **Spana Direct CDP (`contextIsolation: "fresh"`)**       |      4w | fresh context/flow |    24 |  **7,800** | **1.53× faster**      |
+
+_(In an independent real-world pilot of 24 full-stack E2E tests — real backend, WebAuthn passkeys, SSE, file uploads, 4 workers — Spana finished at ~0.6× of Playwright's suite wall time.)_
+
+### 2. Optional Speed Tiers & Utilities (Not Directly Comparable to Fresh Context)
+
+When your suite can trade a fresh browser context for an in-context state wipe, use an app bridge, or filter PR diffs:
+
+| Mode / Capability                                           | What changes vs strict fresh-context baseline                                       | Measured result                                                       |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **Spana Direct CDP `contextIsolation: "hot-cache"`**        | Keeps HTTP & V8 bytecode cache warm; wipes cookies, localStorage, IDB, SWs per flow | **6,011 ms** (1w) · **4,057 ms** (4w) · **3,530 ms** on 24-flow pilot |
+| **Spana + `spana-bridge`**                                  | Optional in-app WebSocket script (reuses session, injects storage directly)         | **3,100 ms** (1w, 20 flows)                                           |
+| **Spana Shared Pool (4w)**                                  | Reuses warm contexts across flows (clears storage & reloads instead of new context) | **2,690 ms** (4w, 20 flows)                                           |
+| **PR Subset Filter (`--changed-since` + `pathRuleFilter`)** | Runs only the **5 of 20** flows affected by a PR diff (not a full-suite comparison) | **2,759 ms** (5/20 flows)                                             |
+| **Rust Native Visual Regression Diff (1920×1080 PNG)**      | Native Rust FFI vs pure-JS `pixelmatch` (`215.0 ms` → `11.2 ms`)                    | **19.2× faster**                                                      |
+| **Verified Replay Cache (`--strict-cache`) vs Live LLM**    | Replays verified deterministic steps (`7,924 ms` → `27 ms`, 0 LLM calls)            | **293.5× faster**                                                     |
 
 <p align="center">
   <img src="./docs/assets/benchmark-20flows.svg" alt="Spana vs Playwright vs WebdriverIO 20-flow benchmark" width="100%" />
 </p>
 
-| Strategy                              | Mode            | Flows | Filter (ms) | Total (ms) | Speedup           |
-| ------------------------------------- | --------------- | ----: | ----------: | ---------: | ----------------- |
-| WebdriverIO (W3C HTTP, UI login)      | 1w, fresh       |    20 |           0 |     19,449 | baseline (WDIO)   |
-| Playwright (`storageState`, 1w)       | 1w, fresh ctx   |    20 |           0 |     17,710 | baseline (PW 1w)  |
-| WebdriverIO (W3C HTTP, state inject)  | 1w, inject      |    20 |           0 |     15,926 | —                 |
-| Playwright (4 parallel workers)       | 4w, fresh ctx   |    20 |           0 |     15,574 | baseline (PW 4w)  |
-| **Spana Direct CDP (1w)**             | 1w, fresh ctx   |    20 |           0 | **11,339** | **1.6× vs PW 1w** |
-| **Spana CDP + Video Playback (4w)**   | 4w, screencast  |    20 |           0 |  **9,725** | **1.6× vs PW 4w** |
-| **Spana Direct CDP Pool (4w)**        | 4w, fresh ctx   |    20 |           0 |  **9,341** | **1.7× vs PW 4w** |
-| **Spana CDP `hot-cache` (1w)**        | 1w, clean reset |    20 |           0 |  **6,011** | **3.0× vs PW 1w** |
-| **Spana CDP `hot-cache` (4w)**        | 4w, clean reset |    20 |           0 |  **4,057** | **3.8× vs PW 4w** |
-| **Spana + `spana-bridge` (1w)**       | 1w, bridge      |    20 |           0 |  **3,100** | **5.7× vs PW 1w** |
-| **Spana CDP + `pathRuleFilter` (4w)** | 4w, PR diff     |     5 |           0 |  **2,759** | **5.6× vs PW 4w** |
-| **Spana Shared Pool (4w)**            | 4w, warm pool   |    20 |           0 |  **2,690** | **5.8× vs PW 4w** |
-
-- **24-Flow Realistic Pilot (4,000-cell DOM + hydration overlay + offscreen scroll, full storage/cookie wipe):**
-  - 1 worker: Playwright `11.88 s` (`420 ms` med) → **Spana CDP `hot-cache` `3.53 s`** (**3.37× faster wall**, **`97 ms` median**, 24/24 pass)
-  - 4 workers: Playwright `11.91 s` (`1,031 ms` med) → **Spana CDP `hot-cache` `3.66 s`** (**3.25× faster wall**, **`278 ms` median**, 24/24 pass)
-- **Rust Native Visual Regression Diff (1920×1080 PNG):** Pure-JS `215.0 ms` → **`11.2 ms`** (**19.2× faster**)
-- **Verified Replay Cache (`--strict-cache`) vs Live LLM:** `7,924 ms` → **`27 ms`** (**293.5× faster**, 0 LLM calls)
-- **Capacitor Mobile Hybrid (5 flows, zero Appium):** iOS `28.4 s` (WDIO/Appium) → **`1.52 s`** (**18.7× faster**) · Android `22.9 s` → **`1.27 s`** (**18.0× faster**)
-
 ```bash
 bun run benchmarks/framework-comparison/benchmark.ts
 ```
+
+_(Note: WebDriver HTTP rows in the script simulate W3C WebDriver protocol overhead against a local server rather than running the `webdriverio` npm package, and mobile iOS/Android timings require a connected simulator/emulator and are not measured by the web script.)_
 
 ### MCP Server Tool Latency & Live Agent Performance
 

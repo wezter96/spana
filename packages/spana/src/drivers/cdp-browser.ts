@@ -6,23 +6,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { DriverError } from "../errors.js";
-import { allocatePort } from "../core/port-allocator.js";
+import { allocateFreePort } from "../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
 import { resolveNetworkConditions } from "./network-profiles.js";
 import type { Selector } from "../schemas/selector.js";
 import type {
   BrowserConsoleLog,
+  BrowserCookie,
   BrowserJSError,
   BrowserMockResponse,
+  BrowserResponseInfo,
   BrowserRouteMatcher,
+  CdpSessionHandle,
   NetworkConditions,
   RawDriverService,
   RawHierarchy,
   VirtualAuthenticatorOptions,
   VirtualCredential,
+  VirtualCredentialInput,
 } from "./raw-driver.js";
 import { CdpDomChannel, type WebSocketFactory } from "../channels/cdp-client.js";
-import { SPANA_INJECTED_RUNTIME_SCRIPT } from "../channels/dom-channel.js";
+import {
+  buildDomFindElementScript,
+  SPANA_INJECTED_RUNTIME_SCRIPT,
+} from "../channels/dom-channel.js";
 
 export interface DirectCdpBrowserLaunchOptions {
   /** Explicit Chromium/Chrome binary path. Auto-detects system Chrome or Playwright Chromium if omitted. */
@@ -160,7 +167,7 @@ export async function launchDirectCdpBrowser(
   }
   execPath = resolveChromiumExecutable(execPath);
 
-  const port = allocatePort(9350);
+  const port = await allocateFreePort(9350);
   // Fresh throwaway profile: never expose the user's real Chrome profile (cookies, logins) over CDP.
   const userDataDir = mkdtempSync(join(tmpdir(), "spana-cdp-profile-"));
   const chromeArgs = [
@@ -195,7 +202,18 @@ export async function launchDirectCdpBrowser(
   }
 
   const httpEndpoint = `http://127.0.0.1:${port}`;
-  const browserWsUrl = await fetchBrowserWsUrl(httpEndpoint, 10_000);
+  let browserWsUrl: string;
+  try {
+    browserWsUrl = await fetchBrowserWsUrl(httpEndpoint, 10_000);
+  } catch (err) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    rmSync(userDataDir, { recursive: true, force: true });
+    throw err;
+  }
 
   if (options.warmBrowser) {
     registerWarmDaemon({
@@ -204,6 +222,7 @@ export async function launchDirectCdpBrowser(
       host: "127.0.0.1",
       port,
       pid: child.pid,
+      userDataDir,
       startedAt: new Date().toISOString(),
     });
   }
@@ -321,6 +340,88 @@ function matchUrl(matcher: BrowserRouteMatcher, url: string): boolean {
     return new RegExp(escaped).test(url);
   }
   return url.includes(matcher);
+}
+
+const CDP_SPECIAL_KEYS: Record<string, { code: string; keyCode: number; text?: string }> = {
+  Enter: { code: "Enter", keyCode: 13, text: "\r" },
+  Backspace: { code: "Backspace", keyCode: 8 },
+  Tab: { code: "Tab", keyCode: 9 },
+  Escape: { code: "Escape", keyCode: 27 },
+  Delete: { code: "Delete", keyCode: 46 },
+  ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
+  ArrowUp: { code: "ArrowUp", keyCode: 38 },
+  ArrowRight: { code: "ArrowRight", keyCode: 39 },
+  ArrowDown: { code: "ArrowDown", keyCode: 40 },
+  Home: { code: "Home", keyCode: 36 },
+  End: { code: "End", keyCode: 35 },
+  PageUp: { code: "PageUp", keyCode: 33 },
+  PageDown: { code: "PageDown", keyCode: 34 },
+  Space: { code: "Space", keyCode: 32, text: " " },
+  " ": { code: "Space", keyCode: 32, text: " " },
+};
+
+function parseCdpKeyDescriptor(rawKey: string): {
+  key: string;
+  code: string;
+  windowsVirtualKeyCode: number;
+  modifiers: number;
+  text?: string;
+  commands?: string[];
+} {
+  const parts = rawKey.split("+");
+  let modifiers = 0;
+  let baseKey = rawKey;
+  if (parts.length > 1) {
+    baseKey = parts[parts.length - 1] ?? rawKey;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const mod = (parts[i] ?? "").toLowerCase();
+      if (mod === "alt" || mod === "option") modifiers |= 1;
+      else if (mod === "control" || mod === "ctrl") modifiers |= 2;
+      else if (mod === "meta" || mod === "cmd" || mod === "command") modifiers |= 4;
+      else if (mod === "shift") modifiers |= 8;
+    }
+  }
+
+  const special = CDP_SPECIAL_KEYS[baseKey];
+  if (special) {
+    return {
+      key: baseKey === "Space" ? " " : baseKey,
+      code: special.code,
+      windowsVirtualKeyCode: special.keyCode,
+      modifiers,
+      ...(special.text ? { text: special.text } : {}),
+    };
+  }
+
+  if (baseKey.length === 1) {
+    const upper = baseKey.toUpperCase();
+    const charCode = upper.charCodeAt(0);
+    const isLetter = charCode >= 65 && charCode <= 90;
+    const isDigit = charCode >= 48 && charCode <= 57;
+    const commands: string[] = [];
+    if ((modifiers & (2 | 4)) !== 0) {
+      if (baseKey.toLowerCase() === "a") commands.push("selectAll");
+      else if (baseKey.toLowerCase() === "c") commands.push("copy");
+      else if (baseKey.toLowerCase() === "v") commands.push("paste");
+      else if (baseKey.toLowerCase() === "x") commands.push("cut");
+      else if (baseKey.toLowerCase() === "z") commands.push("undo");
+    }
+    return {
+      key: baseKey,
+      code: isLetter ? `Key${upper}` : isDigit ? `Digit${baseKey}` : "",
+      windowsVirtualKeyCode: charCode,
+      modifiers,
+      ...(modifiers === 0 || modifiers === 8 ? { text: baseKey } : {}),
+      ...(commands.length > 0 ? { commands } : {}),
+    };
+  }
+
+  return {
+    key: baseKey,
+    code: baseKey,
+    windowsVirtualKeyCode: 0,
+    modifiers,
+  };
 }
 
 const RESOURCE_BLOCK_PATTERNS: Record<string, string[]> = {
@@ -963,10 +1064,78 @@ export function makeLightweightCdpDriver(
       pressKey: (key) =>
         Effect.tryPromise({
           try: async () => {
-            await cdpChannel.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key });
-            await cdpChannel.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key });
+            const desc = parseCdpKeyDescriptor(key);
+            await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
+              type: desc.text ? "keyDown" : "rawKeyDown",
+              key: desc.key,
+              ...(desc.code ? { code: desc.code } : {}),
+              ...(desc.windowsVirtualKeyCode
+                ? {
+                    windowsVirtualKeyCode: desc.windowsVirtualKeyCode,
+                    nativeVirtualKeyCode: desc.windowsVirtualKeyCode,
+                  }
+                : {}),
+              modifiers: desc.modifiers,
+              ...(desc.text ? { text: desc.text, unmodifiedText: desc.text } : {}),
+              ...(desc.commands ? { commands: desc.commands } : {}),
+            });
+            await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
+              type: "keyUp",
+              key: desc.key,
+              ...(desc.code ? { code: desc.code } : {}),
+              ...(desc.windowsVirtualKeyCode
+                ? {
+                    windowsVirtualKeyCode: desc.windowsVirtualKeyCode,
+                    nativeVirtualKeyCode: desc.windowsVirtualKeyCode,
+                  }
+                : {}),
+              modifiers: desc.modifiers,
+            });
           },
           catch: (e) => new DriverError({ message: `CDP pressKey failed: ${e}` }),
+        }),
+
+      hoverAtCoordinate: (x, y) =>
+        Effect.tryPromise({
+          try: async () => {
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x,
+              y,
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP hover failed at (${x}, ${y}): ${e}` }),
+        }),
+
+      reload: (reloadOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const waitUntil = reloadOpts?.waitUntil ?? options.waitUntil ?? "domcontentloaded";
+            const targetSid = activeSlot?.sessionId;
+            const eventName =
+              waitUntil === "domcontentloaded"
+                ? "Page.domContentEventFired"
+                : "Page.loadEventFired";
+            const waiter = cdpChannel.waitForEvent(
+              eventName,
+              15_000,
+              (_p, sid) => !targetSid || !sid || sid === targetSid,
+            );
+            await cdpChannel.sendCommand("Page.reload", {});
+            await waiter.catch(() => {});
+          },
+          catch: (e) => new DriverError({ message: `CDP reload failed: ${e}` }),
+        }),
+
+      getUrl: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const url = await cdpChannel.evaluate<string>(
+              "typeof window !== 'undefined' && window.location ? String(window.location.href || '') : ''",
+            );
+            return url ?? "";
+          },
+          catch: (e) => new DriverError({ message: `CDP getUrl failed: ${e}` }),
         }),
 
       hideKeyboard: () => Effect.void,
@@ -1093,6 +1262,22 @@ export function makeLightweightCdpDriver(
         browserContextId: activeSlot?.browserContextId ?? null,
       }),
 
+      getCdpSession: (): CdpSessionHandle => ({
+        send: <T = Record<string, unknown>>(method: string, params?: Record<string, unknown>) =>
+          cdpChannel.sendCommand<T>(method, params ?? {}),
+        on: (event: string, listener: (params: Record<string, unknown>) => void) =>
+          cdpChannel.onEvent(event, (params, sid) => {
+            if (activeSlot && sid && sid !== activeSlot.sessionId) return;
+            listener((params ?? {}) as Record<string, unknown>);
+          }),
+        get sessionId() {
+          return activeSlot?.sessionId;
+        },
+        get browserContextId() {
+          return activeSlot?.browserContextId;
+        },
+      }),
+
       mockNetwork: (matcher, response) =>
         Effect.tryPromise({
           try: async () => {
@@ -1143,6 +1328,124 @@ export function makeLightweightCdpDriver(
             }
           },
           catch: (e) => new DriverError({ message: `CDP loadCookies failed: ${e}` }),
+        }),
+
+      getCookies: (urls) =>
+        Effect.tryPromise({
+          try: async () => {
+            const res = (await cdpChannel.sendCommand(
+              "Network.getCookies",
+              urls && urls.length > 0 ? { urls } : {},
+            )) as { cookies?: BrowserCookie[] };
+            return Array.isArray(res?.cookies) ? res.cookies : [];
+          },
+          catch: (e) => new DriverError({ message: `CDP getCookies failed: ${e}` }),
+        }),
+
+      setCookies: (cookies) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (cookies.length === 0) return;
+            await cdpChannel.sendCommand("Network.setCookies", { cookies });
+          },
+          catch: (e) => new DriverError({ message: `CDP setCookies failed: ${e}` }),
+        }),
+
+      clearCookies: () =>
+        Effect.tryPromise({
+          try: async () => {
+            await cdpChannel.sendCommand("Network.clearBrowserCookies");
+          },
+          catch: (e) => new DriverError({ message: `CDP clearCookies failed: ${e}` }),
+        }),
+
+      waitForResponse: (matcher, waitOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const timeoutMs = waitOpts?.timeout ?? 15_000;
+            const targetSid = activeSlot?.sessionId;
+            await cdpChannel.sendCommand("Network.enable").catch(() => {});
+            const requestMethods = new Map<string, string>();
+            return await new Promise<BrowserResponseInfo>((resolve, reject) => {
+              const cleanup = () => {
+                clearTimeout(timer);
+                offReq();
+                offRes();
+              };
+              const timer = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timed out waiting for response after ${timeoutMs}ms`));
+              }, timeoutMs);
+              const offReq = cdpChannel.onEvent("Network.requestWillBeSent", (params, sid) => {
+                if (targetSid && sid && sid !== targetSid) return;
+                if (params?.requestId && params?.request?.method) {
+                  requestMethods.set(String(params.requestId), String(params.request.method));
+                }
+              });
+              const offRes = cdpChannel.onEvent("Network.responseReceived", (params, sid) => {
+                if (targetSid && sid && sid !== targetSid) return;
+                const resp = params?.response;
+                if (!resp) return;
+                const requestId = String(params?.requestId ?? "");
+                const rawHeaders = (resp.headers ?? {}) as Record<string, unknown>;
+                const headers: Record<string, string> = {};
+                for (const [k, v] of Object.entries(rawHeaders)) {
+                  headers[k.toLowerCase()] = String(v);
+                }
+                const info: BrowserResponseInfo = {
+                  url: String(resp.url ?? ""),
+                  status: Number(resp.status ?? 0),
+                  statusText: String(resp.statusText ?? ""),
+                  headers,
+                  method: requestMethods.get(requestId),
+                  body: async () => {
+                    const bodyRes = (await cdpChannel.sendCommand("Network.getResponseBody", {
+                      requestId,
+                    })) as { body?: string; base64Encoded?: boolean };
+                    if (bodyRes?.base64Encoded && bodyRes.body) {
+                      return Buffer.from(bodyRes.body, "base64").toString("utf8");
+                    }
+                    return bodyRes?.body ?? "";
+                  },
+                  json: async <T = unknown>() => {
+                    const text = await info.body!();
+                    return JSON.parse(text) as T;
+                  },
+                };
+                const matched =
+                  typeof matcher === "function" ? matcher(info) : matchUrl(matcher, info.url);
+                if (matched) {
+                  cleanup();
+                  resolve(info);
+                }
+              });
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP waitForResponse failed: ${e}` }),
+        }),
+
+      createIsolatedContext: (ctxOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const childDriver = await Effect.runPromise(
+              makeLightweightCdpDriver({
+                ...options,
+                cdpUrl: connectWsUrl ?? options.cdpUrl,
+                useBrowserContexts: true,
+                freshContextPerFlow: false,
+              }),
+            );
+            if (ctxOpts?.url) {
+              await Effect.runPromise(childDriver.openLink(ctxOpts.url));
+            }
+            return {
+              driver: childDriver,
+              close: async () => {
+                await Effect.runPromise(childDriver.killApp("isolated-context")).catch(() => {});
+              },
+            };
+          },
+          catch: (e) => new DriverError({ message: `CDP createIsolatedContext failed: ${e}` }),
         }),
 
       saveAuthState: (path) =>
@@ -1231,6 +1534,32 @@ export function makeLightweightCdpDriver(
           catch: (e) => new DriverError({ message: `CDP getVirtualCredentials failed: ${e}` }),
         }),
 
+      addVirtualCredential: (credential: VirtualCredentialInput, authenticatorId?: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            let id = authenticatorId ?? activeAuthenticatorId;
+            if (!id) {
+              id = await attachVirtualAuthenticatorForSession(activeSlot?.sessionId ?? null);
+              activeAuthenticatorId = id;
+            }
+            await cdpChannel.sendCommand("WebAuthn.addCredential", {
+              authenticatorId: id,
+              credential: {
+                credentialId: credential.credentialId,
+                isResidentCredential: credential.isResidentCredential,
+                privateKey: credential.privateKey,
+                signCount: credential.signCount ?? 0,
+                ...(credential.rpId !== undefined ? { rpId: credential.rpId } : {}),
+                ...(credential.userHandle !== undefined
+                  ? { userHandle: credential.userHandle }
+                  : {}),
+                ...(credential.userName !== undefined ? { userName: credential.userName } : {}),
+              },
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP addVirtualCredential failed: ${e}` }),
+        }),
+
       clearVirtualCredentials: (authenticatorId) =>
         Effect.tryPromise({
           try: async () => {
@@ -1265,38 +1594,37 @@ export function makeLightweightCdpDriver(
           catch: (e) => new DriverError({ message: `CDP setNetworkConditions failed: ${e}` }),
         }),
 
-      uploadFile: (selector: Selector, filePath: string) =>
+      uploadFile: (selector: Selector, filePath: string | string[]) =>
         Effect.tryPromise({
           try: async () => {
-            const serialized = JSON.stringify(selector);
-            const expr = `(function(sel) {
-              if (typeof sel === "object" && sel !== null && "testID" in sel) {
-                return document.querySelector('[data-testid="' + sel.testID + '"], [testID="' + sel.testID + '"]');
-              }
-              if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
-                return document.querySelector('[aria-label="' + sel.accessibilityLabel + '"]');
-              }
-              return document.querySelector('input[type="file"]');
-            })(${serialized})`;
+            const files = Array.isArray(filePath) ? filePath : [filePath];
+            const expr = buildDomFindElementScript(selector);
             await cdpChannel.sendCommand("DOM.enable");
+            await cdpChannel.sendCommand("DOM.getDocument", { depth: 0 }).catch(() => {});
             const evalRes = (await cdpChannel.sendCommand("Runtime.evaluate", {
               expression: expr,
               returnByValue: false,
             })) as { result?: { objectId?: string } };
             const objectId = evalRes?.result?.objectId;
             if (!objectId) {
-              throw new Error(`No matching file input found for selector ${serialized}`);
+              throw new Error(
+                `No matching file input found for selector ${JSON.stringify(selector)}`,
+              );
             }
-            const nodeRes = (await cdpChannel.sendCommand("DOM.requestNode", { objectId })) as {
-              nodeId?: number;
-            };
-            if (!nodeRes?.nodeId) {
-              throw new Error("Failed to resolve DOM nodeId for file input");
+            const nodeRes = (await cdpChannel
+              .sendCommand("DOM.requestNode", { objectId })
+              .catch(() => ({}))) as { nodeId?: number };
+            if (nodeRes?.nodeId && nodeRes.nodeId > 0) {
+              await cdpChannel.sendCommand("DOM.setFileInputFiles", {
+                nodeId: nodeRes.nodeId,
+                files,
+              });
+            } else {
+              await cdpChannel.sendCommand("DOM.setFileInputFiles", {
+                objectId,
+                files,
+              });
             }
-            await cdpChannel.sendCommand("DOM.setFileInputFiles", {
-              nodeId: nodeRes.nodeId,
-              files: [filePath],
-            });
           },
           catch: (e) => new DriverError({ message: `CDP uploadFile failed: ${e}` }),
         }),

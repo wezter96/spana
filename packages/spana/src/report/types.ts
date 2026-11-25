@@ -75,6 +75,10 @@ export interface FlowError {
   suggestion?: string;
   /** Machine-readable error code for programmatic handling. */
   errorCode?: string;
+  /** Source file location in the user's flow where the failure originated. */
+  location?: { file: string; line: number; column: number };
+  /** Annotated source code snippet centered on `location`. */
+  codeFrame?: string;
 }
 
 /** Result of a single flow execution on a specific platform. */

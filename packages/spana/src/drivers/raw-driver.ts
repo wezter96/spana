@@ -173,8 +173,56 @@ export interface VirtualCredential {
   credentialId: string;
   isResidentCredential: boolean;
   rpId?: string;
+  /** Base64-encoded PKCS#8 EC/RSA private key returned by CDP `WebAuthn.getCredentials`. */
+  privateKey?: string;
   userHandle?: string;
+  userName?: string;
   signCount: number;
+}
+
+export interface VirtualCredentialInput {
+  credentialId: string;
+  isResidentCredential: boolean;
+  rpId?: string;
+  /** Base64-encoded PKCS#8 private key (as returned by `getVirtualCredentials()`). */
+  privateKey: string;
+  userHandle?: string;
+  userName?: string;
+  signCount?: number;
+}
+
+export interface BrowserCookie {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  url?: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "Strict" | "Lax" | "None";
+}
+
+export interface BrowserResponseInfo {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  method?: string;
+  body?: () => Promise<string>;
+  json?: <T = unknown>() => Promise<T>;
+}
+
+/** Raw Chrome DevTools Protocol session handle (available on both Direct CDP and Chromium Playwright engines). */
+export interface CdpSessionHandle {
+  /** Send any CDP command (e.g. `WebAuthn.addCredential`, `Network.setExtraHTTPHeaders`). */
+  send<T = Record<string, unknown>>(method: string, params?: Record<string, unknown>): Promise<T>;
+  /** Subscribe to a CDP event. Returns an unsubscribe function. */
+  on(event: string, listener: (params: Record<string, unknown>) => void): () => void;
+  /** Target session ID when attached to a flat CDP target session. */
+  readonly sessionId?: string;
+  /** Browser context ID when running in an isolated CDP Target.createBrowserContext. */
+  readonly browserContextId?: string;
 }
 
 export interface RawDriverService<_T extends string = string, R extends string = string> {
@@ -237,6 +285,11 @@ export interface RawDriverService<_T extends string = string, R extends string =
   // Navigation
   readonly openLink: (url: string) => Effect.Effect<void, DriverError>;
   readonly back: () => Effect.Effect<void, DriverError>;
+  readonly reload?: (opts?: {
+    waitUntil?: "load" | "domcontentloaded" | "networkidle";
+  }) => Effect.Effect<void, DriverError>;
+  readonly hoverAtCoordinate?: (x: number, y: number) => Effect.Effect<void, DriverError>;
+  readonly getUrl?: () => Effect.Effect<string, DriverError>;
 
   // Scripting
   readonly evaluate: <T = unknown>(
@@ -266,10 +319,23 @@ export interface RawDriverService<_T extends string = string, R extends string =
   ) => Effect.Effect<void, DriverError>;
   readonly saveCookies?: (path: string) => Effect.Effect<void, DriverError>;
   readonly loadCookies?: (path: string) => Effect.Effect<void, DriverError>;
+  readonly getCookies?: (urls?: string[]) => Effect.Effect<BrowserCookie[], DriverError>;
+  readonly setCookies?: (cookies: BrowserCookie[]) => Effect.Effect<void, DriverError>;
+  readonly clearCookies?: () => Effect.Effect<void, DriverError>;
   readonly saveAuthState?: (path: string) => Effect.Effect<void, DriverError>;
   readonly loadAuthState?: (path: string) => Effect.Effect<void, DriverError>;
   readonly downloadFile?: (path: string) => Effect.Effect<void, DriverError>;
-  readonly uploadFile?: (selector: Selector, path: string) => Effect.Effect<void, DriverError>;
+  readonly uploadFile?: (
+    selector: Selector,
+    path: string | string[],
+  ) => Effect.Effect<void, DriverError>;
+  readonly waitForResponse?: (
+    matcher: BrowserRouteMatcher | ((res: BrowserResponseInfo) => boolean),
+    opts?: { timeout?: number },
+  ) => Effect.Effect<BrowserResponseInfo, DriverError>;
+  readonly createIsolatedContext?: (opts?: {
+    url?: string;
+  }) => Effect.Effect<{ driver: RawDriverService; close: () => Promise<void> }, DriverError>;
   readonly newTab?: (url?: string) => Effect.Effect<string, DriverError>;
   readonly switchToTab?: (index: number) => Effect.Effect<void, DriverError>;
   readonly closeTab?: () => Effect.Effect<void, DriverError>;
@@ -280,6 +346,7 @@ export interface RawDriverService<_T extends string = string, R extends string =
 
   // Raw escape hatch & built-in WebAuthn virtual passkey support
   readonly getRawPage?: () => unknown;
+  readonly getCdpSession?: () => CdpSessionHandle | undefined;
   readonly enableVirtualAuthenticator?: (
     opts?: VirtualAuthenticatorOptions,
   ) => Effect.Effect<string, DriverError>;
@@ -289,6 +356,10 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly getVirtualCredentials?: (
     authenticatorId?: string,
   ) => Effect.Effect<VirtualCredential[], DriverError>;
+  readonly addVirtualCredential?: (
+    credential: VirtualCredentialInput,
+    authenticatorId?: string,
+  ) => Effect.Effect<void, DriverError>;
   readonly clearVirtualCredentials?: (authenticatorId?: string) => Effect.Effect<void, DriverError>;
 }
 
@@ -393,6 +464,9 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     clearAppState: wrapLoggedMethod(logs, "clearAppState", driver.clearAppState),
     openLink: wrapLoggedMethod(logs, "openLink", driver.openLink),
     back: wrapLoggedMethod(logs, "back", driver.back),
+    reload: wrapOptionalMethod(logs, "reload", driver.reload),
+    hoverAtCoordinate: wrapOptionalMethod(logs, "hoverAtCoordinate", driver.hoverAtCoordinate),
+    getUrl: wrapOptionalMethod(logs, "getUrl", driver.getUrl),
     evaluate: wrapLoggedMethod(logs, "evaluate", driver.evaluate),
     getContexts: wrapOptionalMethod(logs, "getContexts", driver.getContexts),
     getCurrentContext: wrapOptionalMethod(logs, "getCurrentContext", driver.getCurrentContext),
@@ -409,10 +483,19 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     ),
     saveCookies: wrapOptionalMethod(logs, "saveCookies", driver.saveCookies),
     loadCookies: wrapOptionalMethod(logs, "loadCookies", driver.loadCookies),
+    getCookies: wrapOptionalMethod(logs, "getCookies", driver.getCookies),
+    setCookies: wrapOptionalMethod(logs, "setCookies", driver.setCookies),
+    clearCookies: wrapOptionalMethod(logs, "clearCookies", driver.clearCookies),
     saveAuthState: wrapOptionalMethod(logs, "saveAuthState", driver.saveAuthState),
     loadAuthState: wrapOptionalMethod(logs, "loadAuthState", driver.loadAuthState),
     downloadFile: wrapOptionalMethod(logs, "downloadFile", driver.downloadFile),
     uploadFile: wrapOptionalMethod(logs, "uploadFile", driver.uploadFile),
+    waitForResponse: wrapOptionalMethod(logs, "waitForResponse", driver.waitForResponse),
+    createIsolatedContext: wrapOptionalMethod(
+      logs,
+      "createIsolatedContext",
+      driver.createIsolatedContext,
+    ),
     newTab: wrapOptionalMethod(logs, "newTab", driver.newTab),
     switchToTab: wrapOptionalMethod(logs, "switchToTab", driver.switchToTab),
     closeTab: wrapOptionalMethod(logs, "closeTab", driver.closeTab),
@@ -421,6 +504,7 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     getJSErrors: wrapOptionalMethod(logs, "getJSErrors", driver.getJSErrors),
     getHAR: wrapOptionalMethod(logs, "getHAR", driver.getHAR),
     getRawPage: driver.getRawPage,
+    getCdpSession: driver.getCdpSession,
     enableVirtualAuthenticator: wrapOptionalMethod(
       logs,
       "enableVirtualAuthenticator",
@@ -435,6 +519,11 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
       logs,
       "getVirtualCredentials",
       driver.getVirtualCredentials,
+    ),
+    addVirtualCredential: wrapOptionalMethod(
+      logs,
+      "addVirtualCredential",
+      driver.addVirtualCredential,
     ),
     clearVirtualCredentials: wrapOptionalMethod(
       logs,

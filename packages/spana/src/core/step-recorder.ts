@@ -21,6 +21,8 @@ export interface StepRecorder {
     opts?: ScreenshotStepOptions,
   ): Promise<Uint8Array>;
   getSteps(): StepResult[];
+  /** Call-site stack captured synchronously when the most recent failed step was invoked. */
+  getLastFailureStack?(): string | undefined;
 }
 
 function errorMessage(error: unknown): string {
@@ -52,10 +54,12 @@ export function createStepRecorder(
   platform: string,
 ): StepRecorder {
   const steps: StepResult[] = [];
+  let lastFailureStack: string | undefined;
 
   return {
     async runStep<A>(command: string, action: () => Promise<A>, opts?: StepRecordOptions) {
       const startedAt = Date.now();
+      const callSiteStack = new Error().stack;
 
       try {
         const result = await action();
@@ -85,6 +89,7 @@ export function createStepRecorder(
         );
         return result;
       } catch (error) {
+        lastFailureStack = callSiteStack;
         steps.push(
           createStepResult(
             command,
@@ -104,6 +109,7 @@ export function createStepRecorder(
       opts?: ScreenshotStepOptions,
     ) {
       const startedAt = Date.now();
+      const callSiteStack = new Error().stack;
 
       try {
         const screenshot = await action();
@@ -129,6 +135,7 @@ export function createStepRecorder(
         );
         return screenshot;
       } catch (error) {
+        lastFailureStack = callSiteStack;
         steps.push(
           createStepResult(
             command,
@@ -144,6 +151,10 @@ export function createStepRecorder(
 
     getSteps() {
       return steps;
+    },
+
+    getLastFailureStack() {
+      return lastFailureStack;
     },
   };
 }

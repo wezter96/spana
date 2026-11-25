@@ -1,4 +1,9 @@
 import type { DomClearStorageOptions, DomStorageEntries } from "../channels/dom-channel.js";
+import type {
+  VirtualAuthenticatorOptions,
+  VirtualCredential,
+  VirtualCredentialInput,
+} from "../drivers/raw-driver.js";
 import type { FlowConfig, FlowContext, FlowDefinition } from "./flow.js";
 import type { PromiseApp } from "./app.js";
 
@@ -519,14 +524,20 @@ export function createApiFixture<
 
 export interface PersonaDefinition<T extends string = string, R extends string = string> {
   name: string;
-  /** Sign in once (via API, virtual passkey, or UI) and return storage entries or a saved storageStatePath. */
-  signIn: (
-    ctx: FlowContext<T, R>,
-  ) => Promise<{ storage?: DomStorageEntries; storageStatePath?: string } | void>;
+  /** Sign in once (via API, virtual passkey, or UI) and return storage entries, storageStatePath, or virtualCredentials. */
+  signIn: (ctx: FlowContext<T, R>) => Promise<{
+    storage?: DomStorageEntries;
+    storageStatePath?: string;
+    virtualCredentials?: VirtualCredential[];
+  } | void>;
   /** Optional cache key discriminator (e.g. base URL or tenant ID). */
   cacheKey?: string;
   /** Optional route to navigate to after restoring cached auth state. */
   navigateTo?: R;
+  /** Automatically capture active WebAuthn virtual credentials after `signIn` and re-import into fresh contexts (default: true). */
+  captureVirtualCredentials?: boolean;
+  /** Options used when re-enabling the virtual authenticator on cache hits. */
+  authenticatorOptions?: VirtualAuthenticatorOptions;
 }
 
 /** Define a reusable authenticated persona for `PersonaAuthCache`. */
@@ -540,17 +551,83 @@ export function definePersona<T extends string = string, R extends string = stri
 export interface CachedPersonaState {
   storage?: DomStorageEntries;
   storageStatePath?: string;
+  virtualCredentials?: VirtualCredential[];
   cachedAt: number;
+}
+
+function toImportableCredentials(creds: VirtualCredential[] | undefined): VirtualCredentialInput[] {
+  if (!creds) return [];
+  return creds
+    .filter(
+      (c): c is VirtualCredential & { privateKey: string } =>
+        typeof c.privateKey === "string" && c.privateKey.length > 0,
+    )
+    .map((c) => ({
+      credentialId: c.credentialId,
+      isResidentCredential: c.isResidentCredential,
+      privateKey: c.privateKey,
+      signCount: c.signCount,
+      ...(c.rpId !== undefined ? { rpId: c.rpId } : {}),
+      ...(c.userHandle !== undefined ? { userHandle: c.userHandle } : {}),
+      ...(c.userName !== undefined ? { userName: c.userName } : {}),
+    }));
+}
+
+/**
+ * Per-persona WebAuthn virtual passkey store that survives fresh browser contexts.
+ * Save credentials after registering once (`store.save("alice", await app.getVirtualCredentials())`)
+ * and restore them into any fresh context (`await store.restore("alice", app)`).
+ */
+export class VirtualCredentialStore {
+  private readonly store = new Map<string, VirtualCredentialInput[]>();
+
+  save(persona: string, credentials: VirtualCredential[]): void {
+    const importable = toImportableCredentials(credentials);
+    if (importable.length > 0) {
+      this.store.set(persona, importable);
+    }
+  }
+
+  get(persona: string): VirtualCredentialInput[] {
+    return [...(this.store.get(persona) ?? [])];
+  }
+
+  has(persona: string): boolean {
+    return (this.store.get(persona)?.length ?? 0) > 0;
+  }
+
+  clear(persona?: string): void {
+    if (!persona) {
+      this.store.clear();
+      return;
+    }
+    this.store.delete(persona);
+  }
+
+  async restore(
+    persona: string,
+    app: Pick<PromiseApp, "enableVirtualAuthenticator" | "addVirtualCredential">,
+    opts?: VirtualAuthenticatorOptions,
+  ): Promise<number> {
+    const creds = this.store.get(persona);
+    if (!creds || creds.length === 0) return 0;
+    const authId = await app.enableVirtualAuthenticator(opts);
+    for (const cred of creds) {
+      await app.addVirtualCredential(cred, authId);
+    }
+    return creds.length;
+  }
 }
 
 /**
  * In-memory per-persona auth state cache (single-flight safe across parallel workers).
- * Signs a persona in ONCE (including passkey / WebAuthn flows), caches its auth state,
- * and restores it in milliseconds across all remaining flows.
+ * Signs a persona in ONCE (including passkey / WebAuthn flows), caches its auth state
+ * AND virtual passkey credentials, and restores them in milliseconds across fresh contexts.
  */
 export class PersonaAuthCache {
   private readonly cache = new Map<string, CachedPersonaState>();
   private readonly inflight = new Map<string, Promise<CachedPersonaState>>();
+  readonly credentials = new VirtualCredentialStore();
 
   private keyFor(persona: PersonaDefinition<any, any>): string {
     return `${persona.name}::${persona.cacheKey ?? "default"}`;
@@ -563,20 +640,24 @@ export class PersonaAuthCache {
   invalidate(name?: string, cacheKey = "default"): void {
     if (!name) {
       this.cache.clear();
+      this.credentials.clear();
       return;
     }
     this.cache.delete(`${name}::${cacheKey}`);
+    this.credentials.clear(`${name}::${cacheKey}`);
   }
 
   /**
    * Ensure `persona` is authenticated in `ctx`. On cache miss, executes `persona.signIn(ctx)`
-   * once (coalescing concurrent callers); on cache hit, restores cookies/storageState directly.
+   * once (coalescing concurrent callers); on cache hit, restores cookies/storageState and
+   * imports any stored WebAuthn virtual passkeys directly into the fresh context.
    */
   async authenticate<T extends string = string, R extends string = string>(
     persona: PersonaDefinition<T, R>,
     ctx: FlowContext<T, R>,
   ): Promise<CachedPersonaState> {
     const key = this.keyFor(persona);
+    const app = ctx.app as PromiseApp<T, R>;
     let state = this.cache.get(key);
     let wasMiss = false;
 
@@ -586,9 +667,28 @@ export class PersonaAuthCache {
       if (!pending) {
         pending = (async () => {
           const produced = (await persona.signIn(ctx)) ?? {};
+          let virtualCredentials = produced.virtualCredentials;
+          if (
+            !virtualCredentials &&
+            persona.captureVirtualCredentials !== false &&
+            ctx.platform === "web"
+          ) {
+            try {
+              const captured = await app.getVirtualCredentials();
+              if (captured.length > 0) {
+                virtualCredentials = captured;
+              }
+            } catch {
+              // No virtual authenticator active on this signIn — totally fine
+            }
+          }
+          if (virtualCredentials && virtualCredentials.length > 0) {
+            this.credentials.save(key, virtualCredentials);
+          }
           const entry: CachedPersonaState = {
             storage: produced.storage,
             storageStatePath: produced.storageStatePath,
+            virtualCredentials,
             cachedAt: Date.now(),
           };
           this.cache.set(key, entry);
@@ -601,13 +701,15 @@ export class PersonaAuthCache {
       state = await pending;
     }
 
-    const app = ctx.app as PromiseApp<T, R>;
     if (!wasMiss) {
       if (state.storageStatePath && ctx.platform === "web") {
         await app.loadAuthState(state.storageStatePath);
       }
       if (state.storage) {
         await app.setStorage(state.storage);
+      }
+      if (ctx.platform === "web" && this.credentials.has(key)) {
+        await this.credentials.restore(key, app, persona.authenticatorOptions);
       }
     }
     if (persona.navigateTo) {

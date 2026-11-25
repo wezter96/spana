@@ -2,7 +2,11 @@ import { Duration, Effect } from "effect";
 import { type DriverError, ElementNotFoundError, WaitTimeoutError } from "../errors.js";
 import type { Element } from "../schemas/element.js";
 import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/selector.js";
-import { isSystemUISelector, isTestIDSelector } from "../schemas/selector.js";
+import {
+  isComposableDomSelector,
+  isSystemUISelector,
+  isTestIDSelector,
+} from "../schemas/selector.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import { formatSelector } from "./element-matcher.js";
 import type { HierarchyCache } from "./hierarchy-cache.js";
@@ -102,7 +106,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
     const canReactiveDomWait =
       !isSystemUISelector(selector) &&
       !isRelativeSelectorLike(selector) &&
-      (opts?.platform === "web" || isTestIDSelector(selector));
+      (opts?.platform === "web" || isTestIDSelector(selector) || isComposableDomSelector(selector));
 
     // Single-round-trip web fast path: waitForSelector performs visibility, enabled,
     // scrollIntoView, hit-test, and 2-rAF stability checks inside ONE in-page evaluate,
@@ -152,7 +156,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
       }
     }
 
-    while (Date.now() - start < timeout) {
+    while (isFirstPoll || Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
       isFirstPoll = false;
 
@@ -300,7 +304,7 @@ export function waitForNotVisible<T extends string = string, R extends string = 
     const canReactiveHidden =
       !isSystemUISelector(selector) &&
       !isRelativeSelectorLike(selector) &&
-      (opts?.platform === "web" || isTestIDSelector(selector));
+      (opts?.platform === "web" || isTestIDSelector(selector) || isComposableDomSelector(selector));
 
     if (canReactiveHidden && domChannel?.isConnected() && domChannel.waitForHidden) {
       const hidden = yield* Effect.tryPromise({
@@ -318,7 +322,7 @@ export function waitForNotVisible<T extends string = string, R extends string = 
       }
     }
 
-    while (Date.now() - start < timeout) {
+    while (isFirstPoll || Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
       isFirstPoll = false;
 

@@ -173,6 +173,16 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
           if (f.error) {
             console.log(`  Category: ${f.error.category}`);
             console.log(`  ${f.error.message}`);
+            if (f.error.location) {
+              console.log(
+                `  At: ${f.error.location.file}:${f.error.location.line}:${f.error.location.column}`,
+              );
+            }
+            if (f.error.codeFrame) {
+              for (const line of f.error.codeFrame.split("\n")) {
+                console.log(`  ${line}`);
+              }
+            }
             if (f.error.suggestion) {
               for (const line of f.error.suggestion.split("\n")) {
                 console.log(`  💡 ${line}`);

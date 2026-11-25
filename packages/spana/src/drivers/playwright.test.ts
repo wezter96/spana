@@ -282,6 +282,17 @@ function makePage(browserName: MockBrowserName, context: MockContext): MockPage 
       if (typeof script === "function") {
         return script(...args);
       }
+      if (
+        typeof script === "string" &&
+        script.trimStart().startsWith("(") &&
+        !script.includes("document") &&
+        !script.includes("window") &&
+        !script.includes("localStorage")
+      ) {
+        // Evaluate CSP-safe serialized multi-arg call expressions in mock
+        // eslint-disable-next-line no-eval
+        return (0, eval)(script);
+      }
       return undefined;
     },
     mouse: {

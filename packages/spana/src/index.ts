@@ -14,8 +14,13 @@ export {
   type DismissKeyboardOptions,
   type ScrollUntilVisibleOptions,
   type StorybookOpenOptions,
+  type BrowserRequestOptions,
+  type BrowserRequestResponse,
+  type BrowserRequestClient,
+  type IsolatedBrowserContext,
+  type FrameScope,
 } from "./api/app.js";
-export { type PromiseExpectation } from "./api/expect.js";
+export { type PromiseExpectation, type PromiseExpectFn } from "./api/expect.js";
 
 // Secondary sessions
 export {
@@ -27,9 +32,20 @@ export {
 // Schemas & selector helpers
 export {
   systemUI,
+  byRole,
+  byCss,
+  within,
+  inFrame,
+  nth,
+  first,
+  last,
+  filterSelector,
   isSystemUISelector,
   isTestIDSelector,
+  isComposableDomSelector,
   type Selector,
+  type ObjectSelector,
+  type SelectorModifiers,
   type ExtendedSelector,
   type RelativeSelector,
   type Platform,
@@ -61,14 +77,18 @@ export { type DeviceInfo } from "./schemas/device.js";
 export {
   type BrowserRouteMatcher,
   type BrowserMockResponse,
+  type BrowserCookie,
+  type BrowserResponseInfo,
   type BrowserNetworkConditions,
   type BrowserConsoleLog,
   type BrowserHAR,
   type BrowserJSError,
+  type CdpSessionHandle,
   type TouchAction,
   type TouchSequence,
   type VirtualAuthenticatorOptions,
   type VirtualCredential,
+  type VirtualCredentialInput,
 } from "./drivers/raw-driver.js";
 
 // Target × Channel Matrix & DOM Channels
@@ -179,8 +199,16 @@ export {
   stopAllWarmDaemons,
   getHealthyWarmDaemon,
   updateWarmDaemonSession,
+  defaultDaemonStateDir,
   type WarmDaemonRecord,
 } from "./runtime/daemon-manager.js";
+export { allocateFreePort, isPortAvailable, assertPortAvailable } from "./core/port-allocator.js";
+export {
+  extractCodeFrame,
+  formatCodeFrame,
+  type CodeLocation,
+  type ExtractedCodeFrame,
+} from "./report/code-frame.js";
 
 // Cloud provider API — for custom cloud provider authors
 export { type CloudProvider, type CloudProviderHelper } from "./cloud/provider.js";
@@ -244,6 +272,7 @@ export {
   createApiFixture,
   definePersona,
   PersonaAuthCache,
+  VirtualCredentialStore,
   type NamedSetupDefinition,
   type FixtureFn,
   type FixtureDefinition,
@@ -306,6 +335,9 @@ export {
   planProcessPool,
   partitionFlowsAcrossProcesses,
   runMultiProcessPool,
+  startSharedFlowQueueServer,
+  createRemoteFlowClaimer,
+  type SharedFlowQueueServer,
   type ProcessPartitionPlan,
   type ProcessShardCommand,
   type ProcessShardOutcome,

@@ -25,26 +25,74 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
     // String shorthand = text match (case-insensitive)
     return element.text?.toLowerCase().includes(selector.toLowerCase()) ?? false;
   }
+  let baseMatch = false;
   if ("testID" in selector) {
-    return element.id === selector.testID;
-  }
-  if ("text" in selector) {
-    return element.text?.toLowerCase().includes(selector.text.toLowerCase()) ?? false;
-  }
-  if ("accessibilityLabel" in selector) {
-    return element.accessibilityLabel === selector.accessibilityLabel;
-  }
-  if ("point" in selector) {
+    baseMatch = element.id === selector.testID;
+  } else if ("text" in selector) {
+    baseMatch = selector.exact
+      ? element.text === selector.text
+      : (element.text?.toLowerCase().includes(selector.text.toLowerCase()) ?? false);
+  } else if ("accessibilityLabel" in selector) {
+    baseMatch = element.accessibilityLabel === selector.accessibilityLabel;
+  } else if ("role" in selector) {
+    const elRole = (element.attributes?.role ?? element.elementType ?? "").toLowerCase();
+    const roleMatch = elRole === selector.role.toLowerCase();
+    if (!roleMatch) return false;
+    if (selector.name === undefined) {
+      baseMatch = true;
+    } else {
+      const candidateName = element.accessibilityLabel ?? element.text ?? "";
+      baseMatch =
+        selector.name instanceof RegExp
+          ? selector.name.test(candidateName)
+          : selector.exact
+            ? candidateName === selector.name
+            : candidateName.toLowerCase().includes(selector.name.toLowerCase());
+    }
+  } else if ("css" in selector) {
+    // Native hierarchy fallback cannot evaluate arbitrary CSS; DOM channel handles `{ css }`.
+    baseMatch = false;
+  } else if ("point" in selector) {
     const { x, y } = selector.point;
     const b = element.bounds;
-    return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+    baseMatch = x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
   }
-  return false;
+
+  if (!baseMatch) return false;
+
+  if (!("point" in selector)) {
+    const text = element.text ?? element.accessibilityLabel ?? "";
+    if (selector.hasText !== undefined) {
+      const ok =
+        selector.hasText instanceof RegExp
+          ? selector.hasText.test(text)
+          : text.toLowerCase().includes(selector.hasText.toLowerCase());
+      if (!ok) return false;
+    }
+    if (selector.hasNotText !== undefined) {
+      const bad =
+        selector.hasNotText instanceof RegExp
+          ? selector.hasNotText.test(text)
+          : text.toLowerCase().includes(selector.hasNotText.toLowerCase());
+      if (bad) return false;
+    }
+  }
+
+  return true;
 }
 
 /** Find all elements matching a selector */
 export function findElements(root: Element, selector: Selector): Element[] {
-  return flattenElements(root).filter((el) => matchesSelector(el, selector));
+  const matched = flattenElements(root).filter((el) => matchesSelector(el, selector));
+  if (typeof selector === "object" && selector !== null && !("point" in selector)) {
+    if (selector.first) return matched.length > 0 ? [matched[0]!] : [];
+    if (selector.last) return matched.length > 0 ? [matched[matched.length - 1]!] : [];
+    if (selector.nth !== undefined) {
+      const idx = selector.nth < 0 ? matched.length + selector.nth : selector.nth;
+      return idx >= 0 && idx < matched.length ? [matched[idx]!] : [];
+    }
+  }
+  return matched;
 }
 
 interface ElementPath {
@@ -148,11 +196,37 @@ export function formatSelector(sel: ExtendedSelector): string {
 
 function formatSimpleSelector(sel: Selector): string {
   if (typeof sel === "string") return `"${sel}"`;
-  if ("testID" in sel) return `testID: "${sel.testID}"`;
-  if ("text" in sel) return `text: "${sel.text}"`;
-  if ("accessibilityLabel" in sel) return `accessibilityLabel: "${sel.accessibilityLabel}"`;
-  if ("point" in sel) return `point: (${sel.point.x}, ${sel.point.y})`;
-  return JSON.stringify(sel);
+  let base: string;
+  if ("testID" in sel) base = `testID: "${sel.testID}"`;
+  else if ("text" in sel) base = `text: "${sel.text}"`;
+  else if ("accessibilityLabel" in sel) base = `accessibilityLabel: "${sel.accessibilityLabel}"`;
+  else if ("role" in sel) {
+    base =
+      sel.name !== undefined
+        ? `role: "${sel.role}", name: ${sel.name instanceof RegExp ? sel.name.toString() : JSON.stringify(sel.name)}`
+        : `role: "${sel.role}"`;
+  } else if ("css" in sel) base = `css: "${sel.css}"`;
+  else if ("point" in sel) return `point: (${sel.point.x}, ${sel.point.y})`;
+  else return JSON.stringify(sel);
+
+  const mods: string[] = [];
+  if (sel.frame) mods.push(`inFrame(${formatSimpleSelector(sel.frame)})`);
+  if (sel.within) mods.push(`within(${formatSimpleSelector(sel.within)})`);
+  if (sel.hasText !== undefined) {
+    mods.push(
+      `hasText(${sel.hasText instanceof RegExp ? sel.hasText.toString() : JSON.stringify(sel.hasText)})`,
+    );
+  }
+  if (sel.hasNotText !== undefined) {
+    mods.push(
+      `hasNotText(${sel.hasNotText instanceof RegExp ? sel.hasNotText.toString() : JSON.stringify(sel.hasNotText)})`,
+    );
+  }
+  if (sel.first) mods.push("first");
+  else if (sel.last) mods.push("last");
+  else if (sel.nth !== undefined) mods.push(`nth(${sel.nth})`);
+
+  return mods.length > 0 ? `${base} [${mods.join(", ")}]` : base;
 }
 
 /** Find an element using an extended selector (simple or relative) */

@@ -68,8 +68,10 @@ export default flow("user can log in", async ({ app, expect }) => {
 
 <div class="spana-stats">
   <div class="spana-stat">
-    <strong>3.4× – 5.8× faster</strong>
-    <span>than Playwright on Chromium via Direct CDP, hot-cache reset &amp; shared pools</span>
+    <strong>1.6× – 3.8× faster</strong>
+    <span>
+      than Playwright on Chromium (1.6–1.7× strict fresh context; up to 3.8× with hot-cache reset)
+    </span>
   </div>
   <div class="spana-stat">
     <strong>19.2× faster</strong>
@@ -135,11 +137,10 @@ export default flow("user can log in", async ({ app, expect }) => {
     <span class="spana-eyebrow">Benchmarks</span>
     <h2>Faster than the tools you know</h2>
     <p>
-      20 flows with 280 real interactions, headless Chrome, Apple M4 Pro. Direct CDP with
-      hot-cache isolation runs 3.8× faster than Playwright 4w (and 3.4× faster with 97 ms median
-      on a 24-flow 4,000-cell DOM pilot), while shared pools run 5.8× faster than Playwright and
-      7.2× faster than WebDriver HTTP. See the <a href="/compare/">comparison page</a> for every
-      mode.
+      20 flows with 280 real interactions, headless Chrome, Apple M4 Pro, full actionability on.
+      Strict fresh-context-per-flow Direct CDP runs 1.67× faster than Playwright 4w (and 1.53× on
+      a 24-flow 4,000-cell DOM pilot), while optional <code>hot-cache</code> reset runs up to 3.8×
+      faster. See the <a href="/compare/">comparison page</a> for full methodology and trade-offs.
     </p>
   </div>
 

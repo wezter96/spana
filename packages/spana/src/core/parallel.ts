@@ -20,6 +20,8 @@ export interface ParallelRunnerConfig {
    * (`flowName -> ms`) so slow flows start immediately on workers instead of straggling at the tail.
    */
   durationHintsMs?: Record<string, number>;
+  /** Optional dynamic cross-process queue claimer (used by `spana test --workers N --processes M`). */
+  claimNextFlow?: () => Promise<FlowDefinition | null>;
   onFlowStart?: (name: string, workerName: string) => void;
   onFlowComplete?: (result: TestResult, workerName: string) => void;
 }
@@ -56,6 +58,7 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
     retryDelay = 0,
     bail,
     durationHintsMs,
+    claimNextFlow,
   } = config;
   const flows = orderFlowsLongestFirst(rawFlows, durationHintsMs);
   const start = Date.now();
@@ -64,7 +67,7 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
   let failureCount = 0;
   let bailedOut = false;
 
-  // Each worker pulls from the shared queue
+  // Each worker pulls from the shared queue (local or cross-process HTTP work-stealing)
   const workerPromises = workers.map(async (worker) => {
     const stats = { flowCount: 0, totalMs: 0 };
 
@@ -72,14 +75,17 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
       // Check bail before picking up a new flow
       if (bail !== undefined && failureCount >= bail) break;
 
-      // Atomic: grab next flow index
-      // Safe in single-threaded JS/Bun — no mutex needed (unlike Go).
-      // Each worker awaits its flow before grabbing the next, so the
-      // increment is naturally sequential.
-      const flowIdx = nextFlowIndex++;
-      if (flowIdx >= flows.length) break;
-
-      const flow = flows[flowIdx]!;
+      let flow: FlowDefinition | undefined;
+      if (claimNextFlow) {
+        const claimed = await claimNextFlow();
+        if (!claimed) break;
+        flow = claimed;
+      } else {
+        // Atomic: grab next flow index
+        const flowIdx = nextFlowIndex++;
+        if (flowIdx >= flows.length) break;
+        flow = flows[flowIdx]!;
+      }
       let result: TestResult | undefined;
       let attempts = 0;
 
@@ -119,8 +125,8 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
 
   const workerResults = await Promise.all(workerPromises);
 
-  // Mark remaining un-processed flows as skipped if bailed out
-  if (bail !== undefined && failureCount >= bail) {
+  // Mark remaining un-processed flows as skipped if bailed out (local queue only)
+  if (!claimNextFlow && bail !== undefined && failureCount >= bail) {
     bailedOut = true;
     while (nextFlowIndex < flows.length) {
       const flow = flows[nextFlowIndex++]!;

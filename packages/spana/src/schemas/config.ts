@@ -298,6 +298,8 @@ export interface ProvConfig {
     retryDelay?: number;
     /** Max workers per platform when using --parallel. */
     workers?: number;
+    /** Number of isolated OS worker processes sharing a dynamic longest-first flow queue (`--processes M`). */
+    processes?: number;
     /** Max in-process workers before automatically sharding across multiple OS processes (default: 8). */
     maxWorkersPerProcess?: number;
     /** Default tap mode when a DOM channel resolves an element: "native" (real touch, default) or "dom" (fast synthetic click). */
@@ -603,6 +605,7 @@ export const provConfigSchema = z
         snapshotMaxDepth: z.number().int().positive().optional(),
         retryDelay: z.number().nonnegative().optional(),
         workers: z.number().int().positive().optional(),
+        processes: z.number().int().positive().optional(),
         maxWorkersPerProcess: z.number().int().positive().optional(),
         tapMode: z.enum(["native", "dom"]).optional(),
         locale: z.string().min(1).optional(),

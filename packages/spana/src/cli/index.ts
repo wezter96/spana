@@ -33,6 +33,8 @@ if (command === "test") {
   let quiet = false;
   let parallel = false;
   let workers: number | undefined;
+  let processes: number | undefined;
+  let browser: "chromium" | "firefox" | "webkit" | undefined;
   let devices: string[] | undefined;
   let verbose = false;
   let lastFailed = false;
@@ -103,6 +105,10 @@ if (command === "test") {
       parallel = true;
     } else if (arg === "--workers" && args[i + 1]) {
       workers = parseInt(args[++i]!, 10);
+    } else if (arg === "--processes" && args[i + 1]) {
+      processes = parseInt(args[++i]!, 10);
+    } else if (arg === "--browser" && args[i + 1]) {
+      browser = args[++i] as "chromium" | "firefox" | "webkit";
     } else if (arg === "--devices" && args[i + 1]) {
       devices = args[++i]!.split(",");
     } else if (arg === "--verbose") {
@@ -147,6 +153,8 @@ if (command === "test") {
     quiet,
     parallel,
     workers,
+    processes,
+    browser,
     devices,
     verbose,
     lastFailed,
@@ -510,7 +518,7 @@ if (command === "test") {
   const server = new SpanaMcpServer();
   await server.runStdio();
 } else if (command === "version" || args.includes("--version") || args.includes("-v")) {
-  console.log("spana v0.4.0");
+  console.log("spana v0.8.0");
 } else {
   console.log(
     "spana — One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron & Electrobun",
@@ -553,6 +561,10 @@ if (command === "test") {
   console.log("  --device <id>              Target a specific device by ID");
   console.log("  --parallel                 Auto-discover devices and run in parallel");
   console.log("  --workers <n>              Max parallel workers per platform");
+  console.log(
+    "  --processes <m>            OS worker processes sharing a dynamic longest-first queue",
+  );
+  console.log("  --browser <name>           Web browser target: chromium|firefox|webkit");
   console.log("  --devices <id1>,<id2>      Select specific devices for parallel execution");
   console.log("  --verbose                  Dump detailed failure diagnostics and hierarchy");
   console.log(

@@ -39,7 +39,13 @@ import {
   writeLastRunState,
 } from "./iteration.js";
 import { collectWatchRoots, runWatchLoop } from "./watch-mode.js";
-import { planProcessPool, runMultiProcessPool } from "../core/worker-pool.js";
+import {
+  createRemoteFlowClaimer,
+  planProcessPool,
+  runMultiProcessPool,
+  startSharedFlowQueueServer,
+} from "../core/worker-pool.js";
+import { orderFlowsLongestFirst } from "../core/parallel.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -65,6 +71,10 @@ export interface TestCommandOptions {
   quiet?: boolean;
   parallel?: boolean;
   workers?: number;
+  /** Number of isolated OS processes sharing a dynamic longest-first queue (`--processes M`). */
+  processes?: number;
+  /** Override web browser target (`chromium` | `firefox` | `webkit`). */
+  browser?: "chromium" | "firefox" | "webkit";
   devices?: string[];
   verbose?: boolean;
   lastFailed?: boolean;
@@ -80,6 +90,19 @@ export interface TestCommandOptions {
 function validateOptions(opts: TestCommandOptions): string | null {
   if (opts.driver && opts.driver !== "local" && opts.driver !== "appium") {
     return `Unknown --driver value "${opts.driver}". Use "local" or "appium".`;
+  }
+
+  if (
+    opts.browser &&
+    opts.browser !== "chromium" &&
+    opts.browser !== "firefox" &&
+    opts.browser !== "webkit"
+  ) {
+    return `Unknown --browser value "${opts.browser}". Use "chromium", "firefox", or "webkit".`;
+  }
+
+  if (opts.processes !== undefined && (!Number.isInteger(opts.processes) || opts.processes < 1)) {
+    return "Invalid --processes value. Use a positive integer.";
   }
 
   if (opts.shard) {
@@ -545,6 +568,18 @@ async function resolveExecutionContext(
     config.artifacts.outputDir = resolveFromConfig(config.artifacts.outputDir);
   }
 
+  // CLI --browser override and per-process warm daemon isolation scope
+  if (opts.browser || process.env.SPANA_WARM_SCOPE) {
+    config.execution = {
+      ...config.execution,
+      web: {
+        ...config.execution?.web,
+        ...(opts.browser ? { browser: opts.browser } : {}),
+        ...(process.env.SPANA_WARM_SCOPE ? { warmBrowserScope: process.env.SPANA_WARM_SCOPE } : {}),
+      },
+    };
+  }
+
   // Determine execution mode: CLI --driver flag overrides config
   const executionMode =
     opts.driver ?? (opts.appiumUrl ? "appium" : undefined) ?? config.execution?.mode ?? "local";
@@ -956,10 +991,13 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   //    and loading prior run duration hints for longest-first parallel scheduling.
   const outputDir = config.artifacts?.outputDir ?? resolveFromConfig("./spana-output");
 
-  // Auto-shard across multiple OS processes when --workers exceeds maxWorkersPerProcess (default 8)
-  // so 16–32+ worker CI suites get separate JS heaps, GCs, and event loops with zero event-loop contention.
+  // Dynamic multi-process worker pool: triggered explicitly via `--processes M`
+  // OR automatically when `--workers` exceeds `maxWorkersPerProcess` (default 8).
+  // Uses a shared loopback HTTP longest-first work-stealing queue so every OS process
+  // gets isolated JS heap + warm daemon scope with zero static-shard tail stragglers.
   const maxWorkersPerProcess = config.defaults?.maxWorkersPerProcess;
-  const requestedWorkers = opts.workers ?? config.defaults?.workers;
+  const requestedProcesses = opts.processes ?? config.defaults?.processes;
+  const requestedWorkers = opts.workers ?? config.defaults?.workers ?? requestedProcesses;
   if (
     requestedWorkers &&
     !opts.shard &&
@@ -969,83 +1007,143 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     !process.env.SPANA_WORKER_PROCESS &&
     process.argv[1]
   ) {
-    const plan = planProcessPool(requestedWorkers, maxWorkersPerProcess);
+    const plan = planProcessPool(requestedWorkers, maxWorkersPerProcess, requestedProcesses);
     if (plan.processCount > 1) {
-      console.log(
-        `Sharding ${requestedWorkers} workers across ${plan.processCount} OS processes (${plan.workersPerProcess.join("+")})...\n`,
-      );
-      const { redactor, reporters } = await setupReporters(
-        reporterNames,
-        config,
-        resolveFromConfig,
-        opts.appiumUrl,
-        opts,
-        [],
-      );
-      const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
-      const poolResult = await runMultiProcessPool({
-        totalWorkers: requestedWorkers,
-        maxWorkersPerProcess,
-        buildShardCommand: (shardIndex, shardTotal, workerCount) => {
-          const shardOutDir = join(tmpdir(), `spana-mp-${runTag}-s${shardIndex}`);
-          const args = [
-            process.argv[1]!,
-            "test",
-            ...(opts.flowPath ? [opts.flowPath] : []),
-            "--platform",
-            platforms.join(","),
-            "--shard",
-            `${shardIndex}/${shardTotal}`,
-            "--workers",
-            String(workerCount),
-            "--reporter",
-            "json",
-            ...(opts.configPath ? ["--config", opts.configPath] : []),
-            ...(opts.tags?.flatMap((t) => ["--tag", t]) ?? []),
-            ...(opts.grep ? ["--grep", opts.grep] : []),
-            ...(opts.changedSince ? ["--changed-since", opts.changedSince] : []),
-            ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
-          ];
-          return {
-            command: process.execPath,
-            args,
-            env: {
-              SPANA_WORKER_PROCESS: "1",
-              SPANA_OUTPUT_DIR: shardOutDir,
-            },
-            reportJsonPath: join(shardOutDir, "results.json"),
-          };
-        },
-      });
-      const redactedResults = poolResult.results.map((r) =>
-        r.error
-          ? {
-              ...r,
-              error: {
-                ...r.error,
-                message: redactor.redact(r.error.message),
-                stack: r.error.stack ? redactor.redact(r.error.stack) : undefined,
-                suggestion: r.error.suggestion ? redactor.redact(r.error.suggestion) : undefined,
-              },
-            }
-          : r,
-      );
-      for (const reporter of reporters) {
-        reporter.onRunComplete({
-          total: redactedResults.length,
-          passed: poolResult.passed,
-          failed: poolResult.failed,
-          skipped: poolResult.skipped,
-          flaky: poolResult.flaky,
-          durationMs: poolResult.totalDurationMs,
-          results: redactedResults,
+      const [mpFlowResult, mpPriorRunState] = await Promise.all([
+        discoverAndFilterFlows({
+          flowDir,
+          configPath,
+          tags: opts.tags,
+          grep: opts.grep,
           platforms,
-        });
+          lastFailed: opts.lastFailed,
+          changed: opts.changed,
+          changedSince: opts.changedSince,
+          filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
+          outputDir,
+        }),
+        readLastRunState(createLastRunStatePath(outputDir)),
+      ]);
+      if (!mpFlowResult.ok) {
+        return { success: mpFlowResult.success, watchRoots: mpFlowResult.watchRoots };
       }
-      return {
-        success: poolResult.failed === 0,
-        watchRoots: collectWatchRoots(flowDir, configPath),
-      };
+
+      const mpDurationHints = extractDurationHints(mpPriorRunState);
+      const orderedFlows = orderFlowsLongestFirst(mpFlowResult.selectedFlows, mpDurationHints);
+      const effectiveProcesses = Math.min(plan.processCount, Math.max(1, orderedFlows.length));
+      const effectivePlan = planProcessPool(
+        requestedWorkers,
+        maxWorkersPerProcess,
+        effectiveProcesses,
+      );
+
+      if (effectivePlan.processCount > 1) {
+        console.log(
+          `Running ${orderedFlows.length} flow(s) across ${effectivePlan.processCount} OS processes (${effectivePlan.workersPerProcess.join("+")} workers, dynamic longest-first queue)...\n`,
+        );
+        const { redactor, reporters } = await setupReporters(
+          reporterNames,
+          config,
+          resolveFromConfig,
+          opts.appiumUrl,
+          opts,
+          mpFlowResult.filterSummaries,
+        );
+        const queueServer = await startSharedFlowQueueServer(orderedFlows.map((f) => f.name));
+        const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
+        const baseWarmScope = config.execution?.web?.warmBrowserScope ?? `mp-${runTag}`;
+        try {
+          const poolResult = await runMultiProcessPool({
+            totalWorkers: requestedWorkers,
+            maxWorkersPerProcess,
+            processes: effectivePlan.processCount,
+            buildShardCommand: (shardIndex, _shardTotal, workerCount) => {
+              const shardOutDir = join(tmpdir(), `spana-mp-${runTag}-p${shardIndex}`);
+              const args = [
+                process.argv[1]!,
+                "test",
+                ...(opts.flowPath ? [opts.flowPath] : []),
+                "--platform",
+                platforms.join(","),
+                "--workers",
+                String(workerCount),
+                "--reporter",
+                "json",
+                ...(opts.browser ? ["--browser", opts.browser] : []),
+                ...(opts.configPath ? ["--config", opts.configPath] : []),
+                ...(opts.tags?.flatMap((t) => ["--tag", t]) ?? []),
+                ...(opts.grep ? ["--grep", opts.grep] : []),
+                ...(opts.changedSince ? ["--changed-since", opts.changedSince] : []),
+                ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
+                ...(opts.bail !== undefined ? ["--bail", String(opts.bail)] : []),
+              ];
+              return {
+                command: process.execPath,
+                args,
+                env: {
+                  SPANA_WORKER_PROCESS: "1",
+                  SPANA_QUEUE_URL: queueServer.url,
+                  SPANA_OUTPUT_DIR: shardOutDir,
+                  SPANA_WARM_SCOPE: `${baseWarmScope}-p${shardIndex}`,
+                },
+                reportJsonPath: join(shardOutDir, "results.json"),
+              };
+            },
+          });
+
+          const redactedResults = poolResult.results.map((r) =>
+            r.error
+              ? {
+                  ...r,
+                  error: {
+                    ...r.error,
+                    message: redactor.redact(r.error.message),
+                    stack: r.error.stack ? redactor.redact(r.error.stack) : undefined,
+                    suggestion: r.error.suggestion
+                      ? redactor.redact(r.error.suggestion)
+                      : undefined,
+                  },
+                }
+              : r,
+          );
+          for (const reporter of reporters) {
+            reporter.onRunComplete({
+              total: redactedResults.length,
+              passed: poolResult.passed,
+              failed: poolResult.failed,
+              skipped: poolResult.skipped,
+              flaky: poolResult.flaky,
+              durationMs: poolResult.totalDurationMs,
+              results: redactedResults,
+              platforms,
+            });
+          }
+
+          const sourcePathsByFlowName = new Map(
+            mpFlowResult.selectedLoadedFlows.map((loaded) => [loaded.flow.name, loaded.sourcePath]),
+          );
+          try {
+            await writeLastRunState(
+              createLastRunStatePath(outputDir),
+              buildLastRunState({
+                flowDir,
+                platforms,
+                results: poolResult.results,
+                sourcePathsByFlowName,
+              }),
+            );
+          } catch {
+            // best-effort state save
+          }
+
+          return {
+            success: poolResult.failed === 0,
+            watchRoots: mpFlowResult.watchRoots,
+          };
+        } finally {
+          await queueServer.close();
+        }
+      }
     }
   }
 
@@ -1219,7 +1317,28 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       };
     };
 
-    // 5. Run with real-time reporter callbacks
+    // 5. Run with real-time reporter callbacks (pull from dynamic shared queue if spawned by multi-process pool)
+    let claimNextFlow: (() => Promise<import("../api/flow.js").FlowDefinition | null>) | undefined;
+    if (process.env.SPANA_QUEUE_URL) {
+      const flowByName = new Map<string, import("../api/flow.js").FlowDefinition[]>();
+      for (const f of selectedFlows) {
+        const list = flowByName.get(f.name) ?? [];
+        list.push(f);
+        flowByName.set(f.name, list);
+      }
+      const remoteClaim = createRemoteFlowClaimer(process.env.SPANA_QUEUE_URL);
+      claimNextFlow = async () => {
+        while (true) {
+          const name = await remoteClaim();
+          if (!name) return null;
+          const bucket = flowByName.get(name);
+          if (bucket && bucket.length > 0) {
+            return bucket.shift()!;
+          }
+        }
+      };
+    }
+
     const retries = opts.retries ?? config.defaults?.retries ?? 0;
     const retryDelay = config.defaults?.retryDelay ?? 0;
     const onResult = createResultHandler(reporters, redactResult, redactor, opts);
@@ -1228,6 +1347,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       retryDelay,
       bail: opts.bail,
       durationHintsMs: Object.keys(durationHintsMs).length > 0 ? durationHintsMs : undefined,
+      claimNextFlow,
       parallelPlatforms:
         opts.parallel || config.parallelPlatforms || !!opts.workers || !!opts.devices,
       onFlowStart(name, platform, workerName) {

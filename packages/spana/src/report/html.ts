@@ -301,6 +301,14 @@ function renderPlatform(result: FlowResult, outputDir: string): string {
   const errorHtml =
     result.status === "failed" && result.error
       ? `<div class="error-msg"><strong>${escapeHtml(result.error.category)}</strong>: ${escapeHtml(result.error.message)}${
+          result.error.location
+            ? `<div class="error-location" style="margin-top:.35rem;font-family:'SF Mono',Menlo,monospace;font-size:.72rem;color:#a3a3a3">${escapeHtml(result.error.location.file)}:${result.error.location.line}:${result.error.location.column}</div>`
+            : ""
+        }${
+          result.error.codeFrame
+            ? `<pre class="error-code-frame" style="margin:.45rem 0;padding:.55rem .75rem;border-radius:.375rem;background:#0a0a0a;border:1px solid #262626;overflow-x:auto;font-family:'SF Mono',Menlo,monospace;font-size:.72rem;line-height:1.45;color:#e5e5e5">${escapeHtml(result.error.codeFrame)}</pre>`
+            : ""
+        }${
           result.error.suggestion
             ? `<pre class="error-suggestion">${escapeHtml(result.error.suggestion)}</pre>`
             : ""

@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import {
   buildDomFillScript,
@@ -14,7 +17,7 @@ import {
   type DomElementMatch,
   type DomWaitForMatchResult,
 } from "../channels/dom-channel.js";
-import { allocatePort } from "../core/port-allocator.js";
+import { allocateFreePort } from "../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
 import {
   chromium,
@@ -24,6 +27,8 @@ import {
   type BrowserContext,
   type CDPSession,
   type Download,
+  type FrameLocator,
+  type Locator,
   type Page,
   type Request,
   type Route,
@@ -38,7 +43,9 @@ import {
   type RawDriverService,
   type RawHierarchy,
   type LaunchOptions,
+  type BrowserCookie,
   type BrowserMockResponse,
+  type BrowserResponseInfo,
   type NetworkConditions,
   type BrowserRouteMatcher,
   type BrowserConsoleLog,
@@ -47,8 +54,10 @@ import {
   type BrowserHARHeader,
   type BrowserHARPage,
   type BrowserJSError,
+  type CdpSessionHandle,
   type VirtualAuthenticatorOptions,
   type VirtualCredential,
+  type VirtualCredentialInput,
 } from "./raw-driver.js";
 
 type RouteDefinition =
@@ -99,7 +108,8 @@ export interface PlaywrightConfig {
  * Evaluate a string or function with arbitrary positional arguments on a Playwright Page.
  * Playwright's native `page.evaluate(fn, arg)` only accepts a single argument and silently
  * drops `args[1..]`. For 0–1 args we call `page.evaluate` directly (fast & mock-friendly);
- * for 2+ args we forward all arguments cleanly inside a single wrapper call.
+ * for 2+ args we serialize a CSP-safe call expression evaluated via the browser protocol
+ * (avoiding runtime `(0, eval)` which strict page CSP blocks).
  */
 async function evaluateOnPage<T = unknown>(
   activePage: Page,
@@ -115,15 +125,10 @@ async function evaluateOnPage<T = unknown>(
   if (args.length === 1) {
     return (await activePage.evaluate(script as never, args[0] as never)) as T;
   }
-  const fnSource = script.toString();
-  return (await activePage.evaluate(
-    ({ src, params }: { src: string; params: unknown[] }) => {
-      // eslint-disable-next-line no-eval
-      const compiled = (0, eval)(`(${src})`);
-      return compiled(...params);
-    },
-    { src: fnSource, params: args },
-  )) as T;
+  const serializedArgs = args
+    .map((arg) => (arg === undefined ? "undefined" : JSON.stringify(arg)))
+    .join(", ");
+  return (await activePage.evaluate(`(${script.toString()})(${serializedArgs})`)) as T;
 }
 
 function resolveWarmBrowserKey(scope?: string): string {
@@ -170,19 +175,29 @@ export async function ensureWarmBrowserDaemon(
     }
   }
 
-  const port = allocatePort(9322);
+  const port = await allocateFreePort(9322);
+  const userDataDir = mkdtempSync(join(tmpdir(), "spana-warm-chrome-"));
   const execPath = config.executablePath ?? chromium.executablePath();
   const child = spawn(
     execPath,
     [
       ...(config.headless !== false ? ["--headless=new"] : []),
       `--remote-debugging-port=${port}`,
+      "--remote-debugging-address=127.0.0.1",
+      `--user-data-dir=${userDataDir}`,
       "--no-first-run",
       "--no-default-browser-check",
+      "--disable-background-networking",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",
       "--disable-ipc-flooding-protection",
+      "--disable-hang-monitor",
+      "--disable-default-apps",
+      "--disable-extensions",
+      "--disable-sync",
+      "--metrics-recording-only",
+      "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
       ...(config.headless !== false ? ["--disable-gpu"] : []),
       "about:blank",
     ],
@@ -206,6 +221,12 @@ export async function ensureWarmBrowserDaemon(
     await new Promise((r) => setTimeout(r, 80));
   }
   if (!ready) {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // already exited
+    }
+    rmSync(userDataDir, { recursive: true, force: true });
     throw new Error(`Warm Chromium daemon failed to start on ${cdpUrl}`);
   }
 
@@ -215,6 +236,7 @@ export async function ensureWarmBrowserDaemon(
     host: "127.0.0.1",
     port,
     pid: child.pid,
+    userDataDir,
     startedAt: new Date().toISOString(),
   });
 
@@ -350,6 +372,72 @@ function totalHarTime(timing: RequestTiming): number {
           ? timing.requestStart
           : 0;
   return Math.max(Math.round(end), 0);
+}
+
+function selectorToFrameCss(frameSel: Selector): string {
+  if (typeof frameSel === "string") return frameSel;
+  if (typeof frameSel === "object" && frameSel !== null) {
+    if ("css" in frameSel && frameSel.css) return frameSel.css;
+    if ("testID" in frameSel && frameSel.testID) return `[data-testid="${frameSel.testID}"]`;
+    if ("accessibilityLabel" in frameSel && frameSel.accessibilityLabel) {
+      return `[aria-label="${frameSel.accessibilityLabel}"], iframe[title="${frameSel.accessibilityLabel}"]`;
+    }
+  }
+  return "iframe";
+}
+
+function resolvePlaywrightLocator(
+  root: Page | Locator | FrameLocator,
+  selector: Selector,
+): Locator {
+  if (typeof selector === "string") {
+    return root.getByLabel(selector, { exact: true });
+  }
+  if ("point" in selector) {
+    throw new DriverError({
+      message:
+        "uploadFile() does not support point selectors on the web platform. Use testID, css, role, text, or accessibilityLabel.",
+    });
+  }
+
+  let scope: Page | Locator | FrameLocator = root;
+  if (selector.frame) {
+    scope = scope.frameLocator(selectorToFrameCss(selector.frame));
+  }
+  if (selector.within) {
+    scope = resolvePlaywrightLocator(scope, selector.within);
+  }
+
+  let locator: Locator;
+  if ("css" in selector) {
+    locator = scope.locator(selector.css);
+  } else if ("role" in selector) {
+    locator = scope.getByRole(selector.role as never, {
+      ...(selector.name !== undefined ? { name: selector.name } : {}),
+      ...(selector.exact !== undefined ? { exact: selector.exact } : {}),
+    });
+  } else if ("testID" in selector) {
+    locator = scope.getByTestId(selector.testID);
+  } else if ("accessibilityLabel" in selector) {
+    locator = scope.getByLabel(selector.accessibilityLabel, { exact: true });
+  } else {
+    locator = scope.getByLabel(selector.text, { exact: true });
+  }
+
+  if (selector.hasText !== undefined) {
+    locator = locator.filter({ hasText: selector.hasText });
+  }
+  if (selector.hasNotText !== undefined) {
+    locator = locator.filter({ hasNotText: selector.hasNotText });
+  }
+  if (selector.first) {
+    locator = locator.first();
+  } else if (selector.last) {
+    locator = locator.last();
+  } else if (typeof selector.nth === "number") {
+    locator = locator.nth(selector.nth);
+  }
+  return locator;
 }
 
 export function makePlaywrightDriver(
@@ -753,7 +841,7 @@ export function makePlaywrightDriver(
       }
     };
 
-    const setInputFiles = async (selector: Selector, path: string) => {
+    const setInputFiles = async (selector: Selector, path: string | string[]) => {
       if (typeof selector === "string") {
         try {
           await page.getByLabel(selector, { exact: true }).setInputFiles(path);
@@ -767,29 +855,43 @@ export function makePlaywrightDriver(
       if ("point" in selector) {
         throw new DriverError({
           message:
-            "uploadFile() does not support point selectors on the web platform. Use testID, text, or accessibilityLabel.",
+            "uploadFile() does not support point selectors on the web platform. Use testID, css, role, text, or accessibilityLabel.",
         });
       }
 
-      if ("testID" in selector) {
-        await page.getByTestId(selector.testID).setInputFiles(path);
-        return;
-      }
+      const hasModifiers = Boolean(
+        selector.within ||
+        selector.frame ||
+        selector.hasText !== undefined ||
+        selector.hasNotText !== undefined ||
+        selector.nth !== undefined ||
+        selector.first ||
+        selector.last,
+      );
 
-      if ("accessibilityLabel" in selector) {
-        await page.getByLabel(selector.accessibilityLabel, { exact: true }).setInputFiles(path);
-        return;
-      }
-
-      if ("text" in selector) {
-        try {
-          await page.getByLabel(selector.text, { exact: true }).setInputFiles(path);
-          return;
-        } catch {
-          await page.getByText(selector.text, { exact: true }).setInputFiles(path);
+      if (!hasModifiers) {
+        if ("testID" in selector) {
+          await page.getByTestId(selector.testID).setInputFiles(path);
           return;
         }
+
+        if ("accessibilityLabel" in selector) {
+          await page.getByLabel(selector.accessibilityLabel, { exact: true }).setInputFiles(path);
+          return;
+        }
+
+        if ("text" in selector) {
+          try {
+            await page.getByLabel(selector.text, { exact: true }).setInputFiles(path);
+            return;
+          } catch {
+            await page.getByText(selector.text, { exact: true }).setInputFiles(path);
+            return;
+          }
+        }
       }
+
+      await resolvePlaywrightLocator(page, selector).setInputFiles(path);
     };
 
     const applyContextSpeedOptions = async (ctx: BrowserContext) => {
@@ -1264,6 +1366,27 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to go back: ${e}` }),
         }),
 
+      reload: (reloadOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const waitUntil = reloadOpts?.waitUntil ?? config.waitUntil;
+            await page.reload(waitUntil ? { waitUntil } : undefined);
+            updateHarPage(page);
+            debugLog("reload", currentPageUrl(page));
+          },
+          catch: (e) => new DriverError({ message: `Failed to reload page: ${e}` }),
+        }),
+
+      hoverAtCoordinate: (x, y) =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.mouse.move(x, y);
+          },
+          catch: (e) => new DriverError({ message: `Failed to hover at (${x}, ${y}): ${e}` }),
+        }),
+
+      getUrl: () => Effect.sync(() => currentPageUrl(page)),
+
       evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
         Effect.tryPromise({
           try: () => evaluateOnPage<T>(page, script, args),
@@ -1271,6 +1394,39 @@ export function makePlaywrightDriver(
         }),
 
       getRawPage: () => page,
+
+      getCdpSession: (): CdpSessionHandle | undefined => {
+        if (browserName !== "chromium") return undefined;
+        return {
+          send: async <T = Record<string, unknown>>(
+            method: string,
+            params?: Record<string, unknown>,
+          ): Promise<T> => {
+            const session = await ensureCdpSession();
+            return (await session.send(method as never, params as never)) as T;
+          },
+          on: (event: string, listener: (params: Record<string, unknown>) => void) => {
+            let unsubscribed = false;
+            let attachedSession: CDPSession | undefined;
+            const wrapped = (params: unknown) => {
+              if (!unsubscribed) listener((params ?? {}) as Record<string, unknown>);
+            };
+            void ensureCdpSession()
+              .then((session) => {
+                if (unsubscribed) return;
+                attachedSession = session;
+                session.on(event as never, wrapped as never);
+              })
+              .catch(() => {});
+            return () => {
+              unsubscribed = true;
+              if (attachedSession && typeof attachedSession.off === "function") {
+                attachedSession.off(event as never, wrapped as never);
+              }
+            };
+          },
+        };
+      },
 
       enableVirtualAuthenticator: (opts) =>
         Effect.tryPromise({
@@ -1312,6 +1468,43 @@ export function makePlaywrightDriver(
             return Array.isArray(res?.credentials) ? res.credentials : [];
           },
           catch: (e) => new DriverError({ message: `Failed to read virtual credentials: ${e}` }),
+        }),
+
+      addVirtualCredential: (credential: VirtualCredentialInput, authenticatorId?: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (browserName !== "chromium") {
+              throw new DriverError({
+                message: "addVirtualCredential() is only supported on Chromium browsers.",
+              });
+            }
+            let id = authenticatorId ?? activeAuthenticatorId;
+            if (!id) {
+              const attached = await attachVirtualAuthenticatorOn(context, page);
+              id = attached.authenticatorId;
+              activeAuthenticatorId = id;
+            }
+            const session = await ensureCdpSession();
+            await session.send("WebAuthn.addCredential", {
+              authenticatorId: id,
+              credential: {
+                credentialId: credential.credentialId,
+                isResidentCredential: credential.isResidentCredential,
+                privateKey: credential.privateKey,
+                signCount: credential.signCount ?? 0,
+                ...(credential.rpId !== undefined ? { rpId: credential.rpId } : {}),
+                ...(credential.userHandle !== undefined
+                  ? { userHandle: credential.userHandle }
+                  : {}),
+                ...(credential.userName !== undefined ? { userName: credential.userName } : {}),
+              },
+            });
+            debugLog("addVirtualCredential", id, credential.credentialId);
+          },
+          catch: (e) =>
+            e instanceof DriverError
+              ? e
+              : new DriverError({ message: `Failed to import virtual credential: ${e}` }),
         }),
 
       clearVirtualCredentials: (authenticatorId) =>
@@ -1396,6 +1589,92 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to load cookies from ${path}: ${e}` }),
         }),
 
+      getCookies: (urls) =>
+        Effect.tryPromise({
+          try: async () => {
+            const cookies = await (urls && urls.length > 0
+              ? context.cookies(urls)
+              : context.cookies());
+            return cookies as unknown as BrowserCookie[];
+          },
+          catch: (e) => new DriverError({ message: `Failed to read cookies: ${e}` }),
+        }),
+
+      setCookies: (cookies) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (cookies.length === 0) return;
+            await context.addCookies(cookies as never);
+          },
+          catch: (e) => new DriverError({ message: `Failed to set cookies: ${e}` }),
+        }),
+
+      clearCookies: () =>
+        Effect.tryPromise({
+          try: async () => {
+            await context.clearCookies();
+          },
+          catch: (e) => new DriverError({ message: `Failed to clear cookies: ${e}` }),
+        }),
+
+      waitForResponse: (matcher, waitOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const timeout = waitOpts?.timeout ?? 15_000;
+            const response = await page.waitForResponse(
+              (res) => {
+                const info: BrowserResponseInfo = {
+                  url: res.url(),
+                  status: res.status(),
+                  statusText: res.statusText(),
+                  headers: res.headers(),
+                  method: res.request().method(),
+                };
+                if (typeof matcher === "function") return matcher(info);
+                if (matcher instanceof RegExp) return matcher.test(info.url);
+                return info.url.includes(matcher);
+              },
+              { timeout },
+            );
+            return {
+              url: response.url(),
+              status: response.status(),
+              statusText: response.statusText(),
+              headers: response.headers(),
+              method: response.request().method(),
+              body: () => response.text(),
+              json: <T = unknown>() => response.json() as Promise<T>,
+            };
+          },
+          catch: (e) => new DriverError({ message: `waitForResponse() failed: ${e}` }),
+        }),
+
+      createIsolatedContext: (ctxOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const childDriver = await Effect.runPromise(
+              makePlaywrightDriver({
+                ...config,
+                sharedBrowser: browser,
+                freshContextPerFlow: false,
+                warmBrowser: false,
+                cdpEndpoint: undefined,
+                wsEndpoint: undefined,
+              }),
+            );
+            if (ctxOpts?.url) {
+              await Effect.runPromise(childDriver.openLink(ctxOpts.url));
+            }
+            return {
+              driver: childDriver,
+              close: async () => {
+                await Effect.runPromise(childDriver.killApp("isolated-context")).catch(() => {});
+              },
+            };
+          },
+          catch: (e) => new DriverError({ message: `createIsolatedContext() failed: ${e}` }),
+        }),
+
       saveAuthState: (path) =>
         Effect.tryPromise({
           try: async () => {
@@ -1430,9 +1709,12 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await setInputFiles(selector, path);
-            debugLog("uploadFile", path);
+            debugLog("uploadFile", Array.isArray(path) ? path.join(", ") : path);
           },
-          catch: (e) => new DriverError({ message: `Failed to upload file ${path}: ${e}` }),
+          catch: (e) =>
+            new DriverError({
+              message: `Failed to upload file ${Array.isArray(path) ? path.join(", ") : path}: ${e}`,
+            }),
         }),
 
       newTab: (url) =>

@@ -1,4 +1,5 @@
 import type { FailureCategory, FlowError } from "./types.js";
+import { extractCodeFrame } from "./code-frame.js";
 
 const TAG_KEY = "_tag";
 
@@ -320,14 +321,21 @@ function categorize(error: TaggedLike): { category: FailureCategory; suggestion?
   return { category: "unknown" };
 }
 
-/** Classify an Error into a typed FlowError with category and actionable suggestion. */
-export function classifyError(error: Error): FlowError {
+/** Classify an Error into a typed FlowError with category, code frame, and actionable suggestion. */
+export function classifyError(
+  error: Error,
+  opts?: { flowFilePath?: string; fallbackStack?: string },
+): FlowError {
   const tagged = error as unknown as TaggedLike;
   const { category, suggestion } = categorize(tagged);
+  const extracted =
+    extractCodeFrame(error.stack, opts?.flowFilePath) ??
+    extractCodeFrame(opts?.fallbackStack, opts?.flowFilePath);
   return {
     message: error.message,
     stack: error.stack,
     category,
     suggestion,
+    ...(extracted ? { location: extracted.location, codeFrame: extracted.frame } : {}),
   };
 }

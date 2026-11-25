@@ -19,9 +19,11 @@ export interface DomRect {
 export interface DomElementMatch {
   id?: string;
   tag?: string;
+  role?: string;
   text?: string;
   value?: string;
   accessibilityLabel?: string;
+  accessibleName?: string;
   rect: DomRect;
   scrollX: number;
   scrollY: number;
@@ -72,14 +74,26 @@ export interface DomWaitForMatchOptions {
   /** Max time to wait in ms. Default: 5000. */
   timeoutMs?: number;
   /** Assertion kind evaluated reactively inside the page via MutationObserver. */
-  kind: "text" | "containsText" | "matchesText" | "value" | "attribute" | "accessibilityLabel";
+  kind:
+    | "text"
+    | "containsText"
+    | "matchesText"
+    | "value"
+    | "attribute"
+    | "accessibilityLabel"
+    | "accessibleName"
+    | "focused"
+    | "count"
+    | "url";
   /** Expected value/substring (optional when `kind === "attribute"` or `"accessibilityLabel"` checks presence). */
   expected?: string;
+  /** Expected element count when `kind === "count"`. */
+  expectedCount?: number;
   /** Attribute name when `kind === "attribute"`. */
   attributeName?: string;
-  /** RegExp source when `kind === "matchesText"`. */
+  /** RegExp source when `kind === "matchesText" | "accessibleName" | "url"`. */
   patternSource?: string;
-  /** RegExp flags when `kind === "matchesText"`. */
+  /** RegExp flags when `kind === "matchesText" | "accessibleName" | "url"`. */
   patternFlags?: string;
 }
 
@@ -210,15 +224,146 @@ export function buildEvaluateExpression(
 }
 
 /**
+ * Convert a `Selector` (which may contain RegExp values in `name`, `hasText`, `hasNotText`,
+ * and nested `within` / `frame` selectors) into a JSON-safe payload for remote DOM evaluation.
+ */
+export function serializeSelectorForDom(sel: unknown): unknown {
+  if (sel instanceof RegExp) {
+    return { __spanaRegex: sel.source, flags: sel.flags };
+  }
+  if (Array.isArray(sel)) {
+    return sel.map((item) => serializeSelectorForDom(item));
+  }
+  if (sel && typeof sel === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(sel as Record<string, unknown>)) {
+      if (v !== undefined) {
+        out[k] = serializeSelectorForDom(v);
+      }
+    }
+    return out;
+  }
+  return sel;
+}
+
+/**
  * Shared in-page helper snippet that recursively pierces open Shadow DOM
  * (`el.shadowRoot`, essential for Ionic/Capacitor `ion-button`/`ion-input`)
  * and accessible same-origin `<iframe>`s (accumulating top-level viewport
- * offsets so native tap coordinates remain pixel-accurate).
+ * offsets so native tap coordinates remain pixel-accurate), and supports
+ * full composable selectors (`role`+`name`, `css`, `within`, `frame`, `hasText`, `hasNotText`, `nth`/`first`/`last`).
  */
 const SHARED_DOM_TRAVERSAL_HELPERS = `
+  function matchSpec(actual, spec, exact) {
+    var str = String(actual || "");
+    if (spec && typeof spec === "object" && typeof spec.__spanaRegex === "string") {
+      try { return new RegExp(spec.__spanaRegex, spec.flags || "").test(str); } catch (e) { return false; }
+    }
+    var needle = String(spec == null ? "" : spec);
+    if (exact) return str.trim() === needle.trim();
+    return str.toLowerCase().indexOf(needle.toLowerCase()) !== -1;
+  }
+  function getImplicitRole(el) {
+    if (!el || !el.getAttribute) return "";
+    var explicit = (el.getAttribute("role") || "").trim().toLowerCase();
+    if (explicit) return explicit.split(/\\s+/)[0] || "";
+    var tag = el.tagName ? el.tagName.toUpperCase() : "";
+    if (tag === "BUTTON") return "button";
+    if (tag === "A") return el.hasAttribute("href") ? "link" : "";
+    if (tag === "TEXTAREA") return "textbox";
+    if (tag === "SELECT") return (el.hasAttribute("multiple") || Number(el.getAttribute("size") || 0) > 1) ? "listbox" : "combobox";
+    if (tag === "OPTION") return "option";
+    if (tag === "IMG") return el.getAttribute("alt") === "" ? "presentation" : "img";
+    if (tag === "DIALOG") return "dialog";
+    if (tag === "NAV") return "navigation";
+    if (tag === "MAIN") return "main";
+    if (tag === "HEADER") return "banner";
+    if (tag === "FOOTER") return "contentinfo";
+    if (tag === "ASIDE") return "complementary";
+    if (tag === "UL" || tag === "OL") return "list";
+    if (tag === "LI") return "listitem";
+    if (tag === "TABLE") return "table";
+    if (tag === "TR") return "row";
+    if (tag === "TD") return "cell";
+    if (tag === "TH") return "columnheader";
+    if (tag === "ARTICLE") return "article";
+    if (tag === "FORM") return "form";
+    if (tag === "PROGRESS") return "progressbar";
+    if (tag === "HR") return "separator";
+    if (tag === "SECTION") return (el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby")) ? "region" : "";
+    if (/^H[1-6]$/.test(tag)) return "heading";
+    if (tag === "INPUT") {
+      var t = (el.getAttribute("type") || "text").toLowerCase();
+      if (t === "button" || t === "submit" || t === "reset" || t === "image") return "button";
+      if (t === "checkbox") return "checkbox";
+      if (t === "radio") return "radio";
+      if (t === "search") return "searchbox";
+      if (t === "number") return "spinbutton";
+      if (t === "range") return "slider";
+      if (t === "hidden") return "";
+      return "textbox";
+    }
+    return "";
+  }
+  function getAccessibleName(el) {
+    if (!el) return "";
+    var doc = el.ownerDocument || document;
+    var labelledBy = el.getAttribute && el.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      var parts = [];
+      var ids = labelledBy.trim().split(/\\s+/);
+      for (var i = 0; i < ids.length; i++) {
+        var ref = doc.getElementById ? doc.getElementById(ids[i]) : null;
+        if (ref) {
+          var rt = (ref.innerText || ref.textContent || "").trim();
+          if (rt) parts.push(rt);
+        }
+      }
+      if (parts.length > 0) return parts.join(" ").replace(/\\s+/g, " ").trim();
+    }
+    var ariaLabel = el.getAttribute && el.getAttribute("aria-label");
+    if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
+    var tag = el.tagName ? el.tagName.toUpperCase() : "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      if (el.id && doc.querySelector) {
+        try {
+          var escId = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(el.id) : el.id;
+          var forLbl = doc.querySelector('label[for="' + escId + '"]');
+          if (forLbl) {
+            var ft = (forLbl.innerText || forLbl.textContent || "").trim();
+            if (ft) return ft.replace(/\\s+/g, " ");
+          }
+        } catch (e) {}
+      }
+      if (el.closest) {
+        var wrapLbl = el.closest("label");
+        if (wrapLbl) {
+          var wt = (wrapLbl.innerText || wrapLbl.textContent || "").trim();
+          if (wt) return wt.replace(/\\s+/g, " ");
+        }
+      }
+      var itype = tag === "INPUT" ? (el.getAttribute("type") || "text").toLowerCase() : "";
+      if ((itype === "button" || itype === "submit" || itype === "reset") && el.value) {
+        return String(el.value).trim();
+      }
+      var ph = el.getAttribute && el.getAttribute("placeholder");
+      if (ph && ph.trim()) return ph.trim();
+    }
+    if (tag === "IMG") {
+      var alt = el.getAttribute && el.getAttribute("alt");
+      if (alt && alt.trim()) return alt.trim();
+    }
+    var title = el.getAttribute && el.getAttribute("title");
+    var txt = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
+    if (txt) return txt;
+    return title ? title.trim() : "";
+  }
   function collectRoots(root, offsetX, offsetY, inShadow, inIframe, out) {
     if (!root) return;
     out.push({ root: root, offsetX: offsetX, offsetY: offsetY, inShadow: inShadow, inIframe: inIframe });
+    if (root.shadowRoot) {
+      collectRoots(root.shadowRoot, offsetX, offsetY, true, inIframe, out);
+    }
     var nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
@@ -236,14 +381,16 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       }
     }
   }
-  function findTextInRoot(root, needle, ctx, pushHit) {
+  function findTextInRoot(root, needle, exact, ctx, pushHit) {
     var doc = root.ownerDocument || (root.nodeType === 9 ? root : document);
     if (doc && typeof doc.createTreeWalker === "function" && typeof NodeFilter !== "undefined") {
       var walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       var txtNode;
       while ((txtNode = walker.nextNode())) {
-        var val = (txtNode.nodeValue || "").trim().toLowerCase();
-        if (val && val.indexOf(needle) !== -1 && txtNode.parentElement) {
+        var rawVal = (txtNode.nodeValue || "").trim();
+        var val = rawVal.toLowerCase();
+        var ok = exact ? rawVal === needle : (val && val.indexOf(needle.toLowerCase()) !== -1);
+        if (ok && txtNode.parentElement) {
           pushHit(txtNode.parentElement, ctx);
         }
       }
@@ -251,8 +398,9 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         var inputs = root.querySelectorAll("input, button");
         for (var ii = 0; ii < inputs.length; ii++) {
           var inp = inputs[ii];
-          var inputVal = String(inp.value || "").toLowerCase();
-          if (inputVal && inputVal.indexOf(needle) !== -1) {
+          var rawInp = String(inp.value || "").trim();
+          var inpOk = exact ? rawInp === needle : (rawInp && rawInp.toLowerCase().indexOf(needle.toLowerCase()) !== -1);
+          if (inpOk) {
             pushHit(inp, ctx);
           }
         }
@@ -266,14 +414,52 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       for (var c = 0; c < node.childNodes.length; c++) {
         if (node.childNodes[c].nodeType === 3) directText += node.childNodes[c].textContent || "";
       }
-      var trimmedDirect = directText.trim().toLowerCase();
-      var inpVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").toLowerCase() : "";
-      if ((trimmedDirect && trimmedDirect.indexOf(needle) !== -1) || (inpVal && inpVal.indexOf(needle) !== -1)) {
+      var trimmedDirect = directText.trim();
+      var inpVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").trim() : "";
+      var directOk = exact ? trimmedDirect === needle : (trimmedDirect && trimmedDirect.toLowerCase().indexOf(needle.toLowerCase()) !== -1);
+      var inputOk = exact ? inpVal === needle : (inpVal && inpVal.toLowerCase().indexOf(needle.toLowerCase()) !== -1);
+      if (directOk || inputOk) {
         pushHit(node, ctx);
       }
     }
   }
-  function findAcrossRoots(sel) {
+  function findRoleInRoot(root, roleLower, nameSpec, exact, ctx, pushHit) {
+    if (!root || !root.querySelectorAll) return;
+    var candidates = root.querySelectorAll("*");
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (getImplicitRole(el) !== roleLower) continue;
+      if (nameSpec !== undefined && nameSpec !== null) {
+        var accName = getAccessibleName(el);
+        if (!matchSpec(accName, nameSpec, Boolean(exact))) continue;
+      }
+      pushHit(el, ctx);
+    }
+  }
+  function applyModifiersAndSlice(hits, sel) {
+    if (!sel || typeof sel !== "object" || "point" in sel) return hits;
+    var filtered = hits;
+    if (sel.hasText !== undefined) {
+      filtered = filtered.filter(function(h) {
+        var txt = (h.el.innerText || h.el.textContent || h.el.value || getAccessibleName(h.el) || "");
+        return matchSpec(txt, sel.hasText, false);
+      });
+    }
+    if (sel.hasNotText !== undefined) {
+      filtered = filtered.filter(function(h) {
+        var txt = (h.el.innerText || h.el.textContent || h.el.value || getAccessibleName(h.el) || "");
+        return !matchSpec(txt, sel.hasNotText, false);
+      });
+    }
+    if (sel.first) return filtered.length > 0 ? [filtered[0]] : [];
+    if (sel.last) return filtered.length > 0 ? [filtered[filtered.length - 1]] : [];
+    if (typeof sel.nth === "number") {
+      var idx = sel.nth < 0 ? filtered.length + sel.nth : sel.nth;
+      return idx >= 0 && idx < filtered.length ? [filtered[idx]] : [];
+    }
+    return filtered;
+  }
+  function findInScope(sel, scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe) {
     var hits = [];
     var seen = typeof Set !== "undefined" ? new Set() : null;
     function pushHit(el, ctx) {
@@ -288,53 +474,123 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       if (atPt) pushHit(atPt, { offsetX: 0, offsetY: 0, inShadow: false, inIframe: false });
       return hits;
     }
+    // Frame scoping: find matching <iframe> first, then search inside its contentDocument
+    if (typeof sel === "object" && sel !== null && sel.frame) {
+      var frameHits = findInScope(sel.frame, scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+      var innerSel = Object.assign({}, sel);
+      delete innerSel.frame;
+      for (var fi = 0; fi < frameHits.length; fi++) {
+        var fEl = frameHits[fi].el;
+        if (fEl && fEl.tagName === "IFRAME") {
+          try {
+            var fDoc = fEl.contentDocument;
+            if (fDoc) {
+              var fRect = fEl.getBoundingClientRect();
+              var sub = findInScope(innerSel, fDoc, frameHits[fi].offsetX + fRect.left, frameHits[fi].offsetY + fRect.top, frameHits[fi].inShadow, true);
+              for (var si = 0; si < sub.length; si++) pushHit(sub[si].el, sub[si]);
+            }
+          } catch (e) {}
+        }
+      }
+      return hits;
+    }
+    // Parent scoping: resolve 'within' first, then search inside each matched container
+    if (typeof sel === "object" && sel !== null && sel.within) {
+      var parentHits = findInScope(sel.within, scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+      var childSel = Object.assign({}, sel);
+      delete childSel.within;
+      delete childSel.hasText;
+      delete childSel.hasNotText;
+      delete childSel.first;
+      delete childSel.last;
+      delete childSel.nth;
+      var combined = [];
+      var cSeen = typeof Set !== "undefined" ? new Set() : null;
+      for (var pi = 0; pi < parentHits.length; pi++) {
+        var ph = parentHits[pi];
+        var subHits = findInScope(childSel, ph.el, ph.offsetX, ph.offsetY, ph.inShadow, ph.inIframe);
+        for (var ci = 0; ci < subHits.length; ci++) {
+          if (cSeen && cSeen.has(subHits[ci].el)) continue;
+          if (cSeen) cSeen.add(subHits[ci].el);
+          combined.push(subHits[ci]);
+        }
+      }
+      return applyModifiersAndSlice(combined, sel);
+    }
+
     var esc = function(v) {
       return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
     };
-    var mainCtx = { root: document, offsetX: 0, offsetY: 0, inShadow: false, inIframe: false };
+    var mainCtx = { root: scopeRoot, offsetX: baseOffsetX, offsetY: baseOffsetY, inShadow: baseInShadow, inIframe: baseInIframe };
+    var hasModifiers = typeof sel === "object" && sel !== null && (sel.hasText !== undefined || sel.hasNotText !== undefined || sel.first || sel.last || typeof sel.nth === "number");
+
     // O(1)-ish Light-DOM fast path: avoids scanning thousands of nodes with querySelectorAll("*")
-    // on large SPAs unless Shadow DOM / iframe piercing is actually needed!
-    if (document.querySelectorAll) {
+    // unless Shadow DOM / iframe piercing is needed or no Light-DOM match exists.
+    if (scopeRoot && scopeRoot.querySelectorAll && !hasModifiers) {
       if (typeof sel === "object" && sel !== null && "testID" in sel) {
         var fastTid = esc(sel.testID);
-        var fastFound = document.querySelectorAll('[data-testid="' + fastTid + '"], [testID="' + fastTid + '"]');
+        var fastFound = scopeRoot.querySelectorAll('[data-testid="' + fastTid + '"], [testID="' + fastTid + '"]');
         if (fastFound.length > 0) {
-          for (var fi = 0; fi < fastFound.length; fi++) pushHit(fastFound[fi], mainCtx);
+          for (var fi2 = 0; fi2 < fastFound.length; fi2++) pushHit(fastFound[fi2], mainCtx);
           return hits;
         }
+      } else if (typeof sel === "object" && sel !== null && "css" in sel) {
+        try {
+          var fastCss = scopeRoot.querySelectorAll(sel.css);
+          if (fastCss.length > 0) {
+            for (var fc = 0; fc < fastCss.length; fc++) pushHit(fastCss[fc], mainCtx);
+            return hits;
+          }
+        } catch (e) {}
       } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
         var fastLbl = esc(sel.accessibilityLabel);
-        var fastFoundLbl = document.querySelectorAll('[aria-label="' + fastLbl + '"]');
+        var fastFoundLbl = scopeRoot.querySelectorAll('[aria-label="' + fastLbl + '"]');
         if (fastFoundLbl.length > 0) {
           for (var fj = 0; fj < fastFoundLbl.length; fj++) pushHit(fastFoundLbl[fj], mainCtx);
           return hits;
         }
+      } else if (typeof sel === "object" && sel !== null && "role" in sel) {
+        findRoleInRoot(scopeRoot, String(sel.role).toLowerCase(), sel.name, sel.exact, mainCtx, pushHit);
+        if (hits.length > 0) return hits;
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
-        var fastNeedle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
-        findTextInRoot(document, fastNeedle, mainCtx, pushHit);
+        var fastNeedle = typeof sel === "string" ? sel : sel.text;
+        var fastExact = typeof sel === "object" && sel !== null && Boolean(sel.exact);
+        findTextInRoot(scopeRoot, fastNeedle, fastExact, mainCtx, pushHit);
         if (hits.length > 0) return hits;
       }
     }
+
     var roots = [];
-    collectRoots(document, 0, 0, false, false, roots);
-    for (var r = 1; r < roots.length; r++) {
+    collectRoots(scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe, roots);
+    for (var r = 0; r < roots.length; r++) {
       var ctx = roots[r];
       var root = ctx.root;
-      if (!root.querySelectorAll) continue;
+      if (!root || !root.querySelectorAll) continue;
       if (typeof sel === "object" && sel !== null && "testID" in sel) {
         var tid = esc(sel.testID);
         var found = root.querySelectorAll('[data-testid="' + tid + '"], [testID="' + tid + '"]');
         for (var i = 0; i < found.length; i++) pushHit(found[i], ctx);
+      } else if (typeof sel === "object" && sel !== null && "css" in sel) {
+        try {
+          var foundCss = root.querySelectorAll(sel.css);
+          for (var ci2 = 0; ci2 < foundCss.length; ci2++) pushHit(foundCss[ci2], ctx);
+        } catch (e) {}
       } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
         var lbl = esc(sel.accessibilityLabel);
         var foundLbl = root.querySelectorAll('[aria-label="' + lbl + '"]');
         for (var j = 0; j < foundLbl.length; j++) pushHit(foundLbl[j], ctx);
+      } else if (typeof sel === "object" && sel !== null && "role" in sel) {
+        findRoleInRoot(root, String(sel.role).toLowerCase(), sel.name, sel.exact, ctx, pushHit);
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
-        var needle = (typeof sel === "string" ? sel : sel.text).toLowerCase();
-        findTextInRoot(root, needle, ctx, pushHit);
+        var needle = typeof sel === "string" ? sel : sel.text;
+        var isExact = typeof sel === "object" && sel !== null && Boolean(sel.exact);
+        findTextInRoot(root, needle, isExact, ctx, pushHit);
       }
     }
-    return hits;
+    return applyModifiersAndSlice(hits, sel);
+  }
+  function findAcrossRoots(sel) {
+    return findInScope(sel, document, 0, 0, false, false);
   }
   function isClickable(el) {
     var tag = el.tagName;
@@ -466,12 +722,16 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       ? String(el.value ?? "")
       : undefined;
     var text = (el.innerText || el.textContent || "").trim() || undefined;
+    var accName = getAccessibleName(el) || undefined;
+    var role = getImplicitRole(el) || undefined;
     return {
       id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
       tag: tag,
+      role: role,
       text: text,
       value: val,
       accessibilityLabel: el.getAttribute("aria-label") || undefined,
+      accessibleName: accName,
       rect: { x: rect.x + hit.offsetX, y: rect.y + hit.offsetY, width: rect.width, height: rect.height },
       scrollX: window.scrollX || window.pageXOffset || 0,
       scrollY: window.scrollY || window.pageYOffset || 0,
@@ -494,7 +754,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
  * `spana-bridge` is not injected. Pierces open Shadow DOM & same-origin iframes.
  */
 export function buildDomQueryScript(selector: Selector): string {
-  const serialized = JSON.stringify(selector);
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
   return `(function(sel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     return findAcrossRoots(sel).map(toMatch);
@@ -506,7 +766,7 @@ export function buildDomQueryScript(selector: Selector): string {
  * in the viewport and returns its fresh post-scroll `DomElementMatch`.
  */
 export function buildDomScrollIntoViewScript(selector: Selector): string {
-  const serialized = JSON.stringify(selector);
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
   return `(function(sel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var hits = findAcrossRoots(sel);
@@ -525,7 +785,7 @@ export function buildDomScrollIntoViewScript(selector: Selector): string {
  * Pierces open Shadow DOM & same-origin iframes.
  */
 export function buildDomTapScript(selector: Selector): string {
-  const serialized = JSON.stringify(selector);
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
   return `(function(sel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var hits = findAcrossRoots(sel);
@@ -565,7 +825,7 @@ export function buildDomWaitForSelectorScript(
   selector: Selector,
   opts: DomWaitForSelectorOptions = {},
 ): string {
-  const serialized = JSON.stringify(selector);
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
   const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
   const forAction = Boolean(opts.forAction);
   const failFastWhenIdle = Boolean(opts.failFastWhenIdle);
@@ -769,7 +1029,7 @@ export function buildDomWaitForHiddenScript(
   selector: Selector,
   opts: DomWaitForHiddenOptions = {},
 ): string {
-  const serialized = JSON.stringify(selector);
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
   const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
 
   return `(function(sel, timeoutMs) {
@@ -833,25 +1093,55 @@ export function buildDomWaitForMatchScript(
   selector: Selector,
   opts: DomWaitForMatchOptions,
 ): string {
-  const serialized = JSON.stringify(selector);
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
   const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
   const kind = JSON.stringify(opts.kind);
   const expected = JSON.stringify(opts.expected ?? null);
+  const expectedCount = JSON.stringify(opts.expectedCount ?? null);
   const attributeName = JSON.stringify(opts.attributeName ?? null);
   const patternSource = JSON.stringify(opts.patternSource ?? null);
   const patternFlags = JSON.stringify(opts.patternFlags ?? "");
 
-  return `(function(sel, timeoutMs, kind, expected, attributeName, patternSource, patternFlags) {
+  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, patternSource, patternFlags) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var lastActual = undefined;
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
 
     function evaluateMatch() {
+      if (kind === "url") {
+        var href = String(window.location.href || "");
+        lastActual = href;
+        if (regex) {
+          if (regex.test(href)) return { matched: true, actual: href };
+        } else if (expected !== null && (href === expected || href.indexOf(String(expected)) !== -1)) {
+          return { matched: true, actual: href };
+        }
+        return null;
+      }
       var hits = findAcrossRoots(sel);
+      if (kind === "count") {
+        var visibleCount = 0;
+        for (var ci = 0; ci < hits.length; ci++) {
+          if (toMatch(hits[ci]).visible) visibleCount += 1;
+        }
+        lastActual = String(visibleCount);
+        if (visibleCount === expectedCount) return { matched: true, actual: String(visibleCount) };
+        return null;
+      }
       for (var i = hits.length - 1; i >= 0; i--) {
         var m = toMatch(hits[i]);
         if (!m.visible) continue;
-        if (kind === "text") {
+        if (kind === "focused") {
+          var isFoc = Boolean(m.focused);
+          lastActual = isFoc ? "focused" : "not focused";
+          if (isFoc) return { matched: true, actual: "focused" };
+        } else if (kind === "accessibleName") {
+          var acc = m.accessibleName || "";
+          lastActual = acc;
+          if (regex ? regex.test(acc) : (expected === null ? acc.length > 0 : acc === expected)) {
+            return { matched: true, actual: acc };
+          }
+        } else if (kind === "text") {
           lastActual = m.text;
           if (m.text === expected) return { matched: true, actual: m.text };
         } else if (kind === "containsText") {
@@ -906,6 +1196,11 @@ export function buildDomWaitForMatchScript(
         if (typeof document !== "undefined") {
           document.removeEventListener("input", onChange, true);
           document.removeEventListener("change", onChange, true);
+          document.removeEventListener("focusin", onChange, true);
+        }
+        if (typeof window !== "undefined") {
+          window.removeEventListener("popstate", onChange);
+          window.removeEventListener("hashchange", onChange);
         }
         resolve(res);
       }
@@ -926,11 +1221,16 @@ export function buildDomWaitForMatchScript(
         finish(finalRes || { matched: false, actual: lastActual });
       }, timeoutMs);
 
-      fallbackInterval = setInterval(onChange, 120);
+      fallbackInterval = setInterval(onChange, kind === "url" ? 50 : 100);
 
       if (typeof document !== "undefined") {
         document.addEventListener("input", onChange, true);
         document.addEventListener("change", onChange, true);
+        document.addEventListener("focusin", onChange, true);
+      }
+      if (typeof window !== "undefined") {
+        window.addEventListener("popstate", onChange);
+        window.addEventListener("hashchange", onChange);
       }
 
       if (typeof MutationObserver !== "undefined") {
@@ -946,7 +1246,7 @@ export function buildDomWaitForMatchScript(
         }
       }
     });
-  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${attributeName}, ${patternSource}, ${patternFlags})`;
+  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${patternSource}, ${patternFlags})`;
 }
 
 /**
@@ -960,16 +1260,19 @@ export function buildDomFillScript(
   value: string,
   opts: DomFillOptions = {},
 ): string {
-  const serializedSel = JSON.stringify(selector);
+  const serializedSel = JSON.stringify(serializeSelectorForDom(selector));
   const serializedVal = JSON.stringify(value);
   const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
   const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : true;
 
   return `(function(sel, val, timeoutMs, checkHitTest) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
-    function applyFill(el) {
+    function writeValue(el) {
       if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
       var tag = el.tagName;
+      // Rich-text contenteditable editors (TipTap/ProseMirror/Lexical/Slate) require native keyboard input;
+      // return false so coordinator falls back cleanly to real tap + SelectAll + Input.insertText.
+      if (el.isContentEditable) return false;
       if (tag === "INPUT" || tag === "TEXTAREA") {
         var proto = tag === "TEXTAREA"
           ? (window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype)
@@ -980,10 +1283,12 @@ export function buildDomFillScript(
         } else {
           el.value = val;
         }
+        // Reset React's internal _valueTracker so synthetic controlled onChange always fires
+        if (el._valueTracker && typeof el._valueTracker.setValue === "function") {
+          try { el._valueTracker.setValue(val === "" ? " " : ""); } catch (e) {}
+        }
       } else if (tag === "SELECT") {
         el.value = val;
-      } else if (el.isContentEditable) {
-        el.textContent = val;
       } else {
         el.value = val;
       }
@@ -993,8 +1298,8 @@ export function buildDomFillScript(
       return true;
     }
 
-    function tryNow() {
-      if (!isAppReady()) return false;
+    function findEditableNow() {
+      if (!isAppReady()) return null;
       var hits = findAcrossRoots(sel);
       for (var i = hits.length - 1; i >= 0; i--) {
         var h = hits[i];
@@ -1002,12 +1307,38 @@ export function buildDomFillScript(
         if (!m.visible || !m.enabled) continue;
         ensureInViewport(h);
         if (checkHitTest && !isHitTestClear(h)) continue;
-        return applyFill(h.el);
+        return h.el;
       }
-      return false;
+      return null;
     }
 
-    if (tryNow()) return true;
+    function verifyAndRetryFill(attemptsLeft) {
+      var el = findEditableNow();
+      if (!el) return Promise.resolve(false);
+      if (el.isContentEditable) return Promise.resolve(false);
+      if (!writeValue(el)) return Promise.resolve(false);
+      return new Promise(function(resolve) {
+        // Let React/Vue microtask + single paint flush settle, then verify value survived remount/re-render
+        setTimeout(function() {
+          var latest = findEditableNow() || el;
+          if (latest && latest.isConnected && String(latest.value == null ? "" : latest.value) === val) {
+            resolve(true);
+            return;
+          }
+          if (attemptsLeft > 1) {
+            verifyAndRetryFill(attemptsLeft - 1).then(resolve);
+          } else {
+            resolve(false);
+          }
+        }, 12);
+      });
+    }
+
+    var immEl = findEditableNow();
+    if (immEl) {
+      if (immEl.isContentEditable) return false;
+      return verifyAndRetryFill(3);
+    }
 
     return new Promise(function(resolve) {
       var done = false;
@@ -1015,6 +1346,7 @@ export function buildDomFillScript(
       var timeoutTimer = null;
       var fallbackInterval = null;
       var scheduled = false;
+      var filling = false;
 
       function finish(ok) {
         if (done) return;
@@ -1026,16 +1358,25 @@ export function buildDomFillScript(
       }
 
       function onChange() {
-        if (done || scheduled) return;
+        if (done || scheduled || filling) return;
         scheduled = true;
         Promise.resolve().then(function() {
           scheduled = false;
-          if (!done && tryNow()) finish(true);
+          if (done || filling) return;
+          var target = findEditableNow();
+          if (!target) return;
+          if (target.isContentEditable) { finish(false); return; }
+          filling = true;
+          verifyAndRetryFill(3).then(function(ok) { finish(ok); });
         });
       }
 
       timeoutTimer = setTimeout(function() {
-        finish(tryNow());
+        if (filling) return;
+        var target = findEditableNow();
+        if (!target || target.isContentEditable) { finish(false); return; }
+        filling = true;
+        verifyAndRetryFill(2).then(function(ok) { finish(ok); });
       }, timeoutMs);
 
       fallbackInterval = setInterval(onChange, 40);
@@ -1306,6 +1647,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
     var kind = opts.kind;
     var expected = opts.expected !== undefined ? opts.expected : null;
+    var expectedCount = opts.expectedCount !== undefined ? opts.expectedCount : null;
     var attributeName = opts.attributeName !== undefined ? opts.attributeName : null;
     var patternSource = opts.patternSource !== undefined ? opts.patternSource : null;
     var patternFlags = opts.patternFlags || "";
@@ -1313,7 +1655,33 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
 
     function evaluateMatch() {
+      if (kind === "url") {
+        var href = typeof window !== "undefined" && window.location ? String(window.location.href || "") : "";
+        lastActual = href;
+        if (regex) {
+          if (regex.test(href)) return { matched: true, actual: href };
+        } else if (expected !== null) {
+          if (href === expected || href.indexOf(String(expected)) !== -1) {
+            return { matched: true, actual: href };
+          }
+        }
+        return null;
+      }
+
       var hits = findAcrossRoots(sel);
+
+      if (kind === "count") {
+        var visibleCount = 0;
+        for (var ci = 0; ci < hits.length; ci++) {
+          if (toMatch(hits[ci]).visible) visibleCount++;
+        }
+        lastActual = String(visibleCount);
+        if (expectedCount !== null && visibleCount === expectedCount) {
+          return { matched: true, actual: String(visibleCount) };
+        }
+        return null;
+      }
+
       for (var i = hits.length - 1; i >= 0; i--) {
         var m = toMatch(hits[i]);
         if (!m.visible) continue;
@@ -1346,6 +1714,17 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           if (expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected) {
             return { matched: true, actual: lbl };
           }
+        } else if (kind === "accessibleName") {
+          var accName = m.accessibleName || m.accessibilityLabel || m.text || "";
+          lastActual = accName;
+          if (regex) {
+            if (regex.test(accName)) return { matched: true, actual: accName };
+          } else if (expected === null ? accName.length > 0 : accName.trim() === String(expected).trim()) {
+            return { matched: true, actual: accName };
+          }
+        } else if (kind === "focused") {
+          lastActual = m.focused ? "focused" : "not focused";
+          if (m.focused) return { matched: true, actual: "focused" };
         }
       }
       return null;
@@ -1369,6 +1748,12 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         if (typeof document !== "undefined") {
           document.removeEventListener("input", onChange, true);
           document.removeEventListener("change", onChange, true);
+          document.removeEventListener("focusin", onChange, true);
+          document.removeEventListener("focusout", onChange, true);
+        }
+        if (typeof window !== "undefined") {
+          window.removeEventListener("popstate", onChange);
+          window.removeEventListener("hashchange", onChange);
         }
         resolve(res);
       }
@@ -1386,10 +1771,16 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         var finalRes = evaluateMatch();
         finish(finalRes || { matched: false, actual: lastActual });
       }, timeoutMs);
-      fallbackInterval = setInterval(onChange, 120);
+      fallbackInterval = setInterval(onChange, kind === "url" ? 50 : 120);
       if (typeof document !== "undefined") {
         document.addEventListener("input", onChange, true);
         document.addEventListener("change", onChange, true);
+        document.addEventListener("focusin", onChange, true);
+        document.addEventListener("focusout", onChange, true);
+      }
+      if (typeof window !== "undefined") {
+        window.addEventListener("popstate", onChange);
+        window.addEventListener("hashchange", onChange);
       }
       if (typeof MutationObserver !== "undefined") {
         var root = document.documentElement || document.body || document;
@@ -1405,20 +1796,23 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     opts = opts || {};
     var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
     var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : true;
-    function applyFill(el) {
+    function writeValue(el) {
+      if (el.isContentEditable) return false;
       if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
       var tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") {
+        var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
         var proto = tag === "TEXTAREA"
-          ? (window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype)
-          : (window.HTMLInputElement && window.HTMLInputElement.prototype);
+          ? (win.HTMLTextAreaElement && win.HTMLTextAreaElement.prototype)
+          : (win.HTMLInputElement && win.HTMLInputElement.prototype);
         var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
         if (desc && typeof desc.set === "function") desc.set.call(el, val);
         else el.value = val;
+        if (el._valueTracker && typeof el._valueTracker.setValue === "function") {
+          try { el._valueTracker.setValue(val === "" ? " " : ""); } catch (e) {}
+        }
       } else if (tag === "SELECT") {
         el.value = val;
-      } else if (el.isContentEditable) {
-        el.textContent = val;
       } else {
         el.value = val;
       }
@@ -1427,8 +1821,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
       return true;
     }
-    function tryNow() {
-      if (!isAppReady()) return false;
+    function findEditableNow() {
+      if (!isAppReady()) return null;
       var hits = findAcrossRoots(sel);
       for (var i = hits.length - 1; i >= 0; i--) {
         var h = hits[i];
@@ -1436,17 +1830,41 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         if (!m.visible || !m.enabled) continue;
         ensureInViewport(h);
         if (checkHitTest && !isHitTestClear(h)) continue;
-        return applyFill(h.el);
+        return h.el;
       }
-      return false;
+      return null;
     }
-    if (tryNow()) return true;
+    function verifyAndRetryFill(attemptsLeft) {
+      var el = findEditableNow();
+      if (!el || el.isContentEditable) return Promise.resolve(false);
+      if (!writeValue(el)) return Promise.resolve(false);
+      return new Promise(function(resolve) {
+        setTimeout(function() {
+          var latest = findEditableNow() || el;
+          if (latest && latest.isConnected && String(latest.value == null ? "" : latest.value) === val) {
+            resolve(true);
+            return;
+          }
+          if (attemptsLeft > 1) {
+            verifyAndRetryFill(attemptsLeft - 1).then(resolve);
+          } else {
+            resolve(false);
+          }
+        }, 12);
+      });
+    }
+    var immEl = findEditableNow();
+    if (immEl) {
+      if (immEl.isContentEditable) return false;
+      return verifyAndRetryFill(3);
+    }
     return new Promise(function(resolve) {
       var done = false;
       var observer = null;
       var timeoutTimer = null;
       var fallbackInterval = null;
       var scheduled = false;
+      var filling = false;
       function finish(ok) {
         if (done) return;
         done = true;
@@ -1456,14 +1874,25 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         resolve(ok);
       }
       function onChange() {
-        if (done || scheduled) return;
+        if (done || scheduled || filling) return;
         scheduled = true;
         Promise.resolve().then(function() {
           scheduled = false;
-          if (!done && tryNow()) finish(true);
+          if (done || filling) return;
+          var target = findEditableNow();
+          if (!target) return;
+          if (target.isContentEditable) { finish(false); return; }
+          filling = true;
+          verifyAndRetryFill(3).then(function(ok) { finish(ok); });
         });
       }
-      timeoutTimer = setTimeout(function() { finish(tryNow()); }, timeoutMs);
+      timeoutTimer = setTimeout(function() {
+        if (filling) return;
+        var target = findEditableNow();
+        if (!target || target.isContentEditable) { finish(false); return; }
+        filling = true;
+        verifyAndRetryFill(2).then(function(ok) { finish(ok); });
+      }, timeoutMs);
       fallbackInterval = setInterval(onChange, 40);
       if (typeof MutationObserver !== "undefined") {
         var root = document.documentElement || document.body || document;
@@ -1496,8 +1925,19 @@ export type InjectedRuntimeMethod =
   | "waitForMatch"
   | "fill";
 
+/** Build an in-page script returning the matching DOM Element (used for CDP `DOM.setFileInputFiles`). */
+export function buildDomFindElementScript(selector: Selector): string {
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
+  return `(function(sel) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return null;
+    return hits[hits.length - 1].el;
+  })(${serialized})`;
+}
+
 /** Build a ~70-byte call to the pre-injected `window.__spanaRt` runtime. */
 export function buildInjectedCallScript(method: InjectedRuntimeMethod, ...args: unknown[]): string {
-  const serializedArgs = args.map((arg) => JSON.stringify(arg)).join(",");
+  const serializedArgs = args.map((arg) => JSON.stringify(serializeSelectorForDom(arg))).join(",");
   return `window.__spanaRt?window.__spanaRt.${method}(${serializedArgs}):${JSON.stringify(SPANA_RUNTIME_MISSING_SENTINEL)}`;
 }

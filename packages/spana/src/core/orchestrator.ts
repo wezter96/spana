@@ -22,6 +22,8 @@ export interface OrchestrateOptions {
   parallelPlatforms?: boolean;
   /** Optional prior per-flow durations (ms) to schedule longest flows first in parallel mode. */
   durationHintsMs?: Record<string, number>;
+  /** Optional dynamic cross-process flow claimer (for `spana test --workers N --processes M`). */
+  claimNextFlow?: () => Promise<FlowDefinition | null>;
   /** Called before each flow starts executing. */
   onFlowStart?: (name: string, platform: Platform, workerName?: string) => void;
   /** Called after each flow finishes (pass, fail, or skip). */
@@ -110,6 +112,7 @@ async function runPlatform(
       retryDelay: options?.retryDelay ?? 0,
       bail: options?.bail,
       durationHintsMs: options?.durationHintsMs,
+      claimNextFlow: options?.claimNextFlow,
       onFlowStart: (name, workerName) => {
         options?.onFlowStart?.(name, platform, workerName);
       },
@@ -138,15 +141,7 @@ async function runPlatform(
     return { results: parallelResult.results, workerStats: parallelResult.workerStats };
   }
 
-  for (let index = 0; index < platformFlows.length; index++) {
-    const flow = platformFlows[index]!;
-    if (shouldBail()) {
-      for (const skippedFlow of platformFlows.slice(index)) {
-        results.push({ name: skippedFlow.name, platform, status: "skipped", durationMs: 0 });
-      }
-      break;
-    }
-
+  const runSingleFlow = async (flow: FlowDefinition) => {
     options?.onFlowStart?.(flow.name, platform);
     let result = await executeFlow(flow, driver, engineConfig);
     let attempts = 1;
@@ -172,6 +167,27 @@ async function runPlatform(
     options?.onResult?.(result);
     if (result.status === "failed") {
       noteFailure();
+    }
+  };
+
+  if (options?.claimNextFlow) {
+    while (!shouldBail()) {
+      const flow = await options.claimNextFlow();
+      if (!flow) break;
+      const fp = flow.config.platforms;
+      if (fp && !fp.includes(platform)) continue;
+      await runSingleFlow(flow);
+    }
+  } else {
+    for (let index = 0; index < platformFlows.length; index++) {
+      const flow = platformFlows[index]!;
+      if (shouldBail()) {
+        for (const skippedFlow of platformFlows.slice(index)) {
+          results.push({ name: skippedFlow.name, platform, status: "skipped", durationMs: 0 });
+        }
+        break;
+      }
+      await runSingleFlow(flow);
     }
   }
 

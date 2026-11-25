@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import type { Bounds, Element } from "../schemas/element.js";
 import {
+  isComposableDomSelector,
   isRelativeSelector,
   isSystemUISelector,
   isTestIDSelector,
@@ -224,15 +225,15 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
       !isSystemUI &&
       !isRelativeSelector(selector) &&
       domChannel !== undefined &&
-      (isTestIDSelector(selector) || domChannel.isConnected());
+      (isTestIDSelector(selector) || isComposableDomSelector(selector) || domChannel.isConnected());
 
     if (canTryDom) {
       const domMatches = yield* Effect.tryPromise({
         try: async () => {
           if (!domChannel.isConnected()) {
-            // Only attempt lazy connect for testID queries so non-webview
+            // Only attempt lazy connect for DOM-targeted queries so non-webview
             // native apps don't stall on every text query.
-            if (!isTestIDSelector(selector)) return [];
+            if (!isTestIDSelector(selector) && !isComposableDomSelector(selector)) return [];
             try {
               await domChannel.connect();
             } catch {

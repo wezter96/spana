@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { TestResult } from "./engine.js";
 
 export const DEFAULT_MAX_WORKERS_PER_PROCESS = 8;
@@ -11,20 +13,89 @@ export interface ProcessPartitionPlan {
   workersPerProcess: number[];
 }
 
+export interface SharedFlowQueueServer {
+  /** Local loopback HTTP URL (e.g. `http://127.0.0.1:54321`) passed to child processes via `SPANA_QUEUE_URL`. */
+  url: string;
+  /** Number of unclaimed flows left in the queue. */
+  remaining(): number;
+  /** Shut down the loopback queue server cleanly. */
+  close(): Promise<void>;
+}
+
+/**
+ * Start a lightweight local HTTP work-stealing queue serving an already-ordered
+ * (longest-first) list of flow names to `M` isolated OS worker processes.
+ * Eliminates static `--shard` tail stragglers when running `spana test --workers N --processes M`.
+ */
+export async function startSharedFlowQueueServer(
+  orderedFlowNames: string[],
+): Promise<SharedFlowQueueServer> {
+  const queue = [...orderedFlowNames];
+  let cursor = 0;
+
+  const server = createServer((req, res) => {
+    if (req.url === "/claim" && (req.method === "POST" || req.method === "GET")) {
+      const flowName = cursor < queue.length ? queue[cursor++]! : null;
+      const body = JSON.stringify({ flowName });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(body);
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const addr = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${addr.port}`;
+
+  return {
+    url,
+    remaining: () => Math.max(0, queue.length - cursor),
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** Client helper for a worker process to claim the next flow name from `SPANA_QUEUE_URL`. */
+export function createRemoteFlowClaimer(queueUrl: string): () => Promise<string | null> {
+  const endpoint = `${queueUrl.replace(/\/+$/, "")}/claim`;
+  return async () => {
+    const res = await fetch(endpoint, { method: "POST" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { flowName?: string | null };
+    return typeof data.flowName === "string" ? data.flowName : null;
+  };
+}
+
 /**
  * Plan how to split `totalWorkers` across OS processes.
- * - Up to `maxWorkersPerProcess` (default 8): 1 single in-process Bun event loop (zero IPC overhead).
- * - Above `maxWorkersPerProcess` (e.g. 16 or 32 workers on large CI boxes): evenly divides
- *   workers across `Math.ceil(totalWorkers / maxWorkersPerProcess)` OS processes so each
- *   process gets its own JS heap, GC, and event loop.
+ * - When `explicitProcesses` is set (`--processes M`), splits `totalWorkers` evenly across
+ *   `min(explicitProcesses, totalWorkers)` isolated OS processes.
+ * - Otherwise, up to `maxWorkersPerProcess` (default 8) runs in 1 in-process event loop,
+ *   and above that splits evenly across `Math.ceil(totalWorkers / maxWorkersPerProcess)` OS processes.
  */
 export function planProcessPool(
   totalWorkers: number,
   maxWorkersPerProcess: number = DEFAULT_MAX_WORKERS_PER_PROCESS,
+  explicitProcesses?: number,
 ): ProcessPartitionPlan {
   const safeTotal = Math.max(1, Math.floor(totalWorkers));
   const safeMax = Math.max(1, Math.floor(maxWorkersPerProcess));
-  if (safeTotal <= safeMax) {
+  const processCount =
+    explicitProcesses !== undefined && explicitProcesses >= 1
+      ? Math.min(Math.floor(explicitProcesses), safeTotal)
+      : safeTotal <= safeMax
+        ? 1
+        : Math.ceil(safeTotal / safeMax);
+
+  if (processCount <= 1) {
     return {
       totalWorkers: safeTotal,
       maxWorkersPerProcess: safeMax,
@@ -33,7 +104,6 @@ export function planProcessPool(
     };
   }
 
-  const processCount = Math.ceil(safeTotal / safeMax);
   const base = Math.floor(safeTotal / processCount);
   const remainder = safeTotal % processCount;
   const workersPerProcess = Array.from(
@@ -118,6 +188,8 @@ export interface ProcessShardOutcome {
 export interface MultiProcessPoolOptions {
   totalWorkers: number;
   maxWorkersPerProcess?: number;
+  /** Explicit OS process count (`--processes M`). */
+  processes?: number;
   buildShardCommand: (
     shardIndex: number,
     shardTotal: number,
@@ -154,7 +226,11 @@ function defaultReadJsonReport(reportJsonPath: string): TestResult[] {
 export async function runMultiProcessPool(
   options: MultiProcessPoolOptions,
 ): Promise<MultiProcessPoolResult> {
-  const plan = planProcessPool(options.totalWorkers, options.maxWorkersPerProcess);
+  const plan = planProcessPool(
+    options.totalWorkers,
+    options.maxWorkersPerProcess,
+    options.processes,
+  );
   const spawnFn = options.spawnFn ?? spawn;
   const readReport = options.readReportFn ?? defaultReadJsonReport;
   const shouldCleanup = options.cleanupReportFiles !== false;

@@ -7,7 +7,7 @@ import type { DomWaitForMatchOptions } from "../channels/dom-channel.js";
 import type { WaitTimeoutError } from "../errors.js";
 import { DriverError, ElementNotFoundError, TextMismatchError } from "../errors.js";
 import { splitGraphemes } from "../core/graphemes.js";
-import { centerOf, formatSelector } from "./element-matcher.js";
+import { centerOf, findElements, formatSelector } from "./element-matcher.js";
 import {
   waitForActionElement,
   waitForElement,
@@ -685,6 +685,196 @@ export function createCoordinator<T extends string = string, R extends string = 
         { kind: "accessibilityLabel", expected },
       ),
 
+    assertAccessibleName: (
+      selector: ExtendedSelector,
+      expected: string | RegExp,
+      opts?: WaitOptions,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.accessibilityLabel || el.text || "";
+          const matched =
+            expected instanceof RegExp ? expected.test(actual) : actual.trim() === expected.trim();
+          return { matched, actual };
+        },
+        (actual, timeout) => ({
+          message: `Expected accessible name ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: String(expected),
+        }),
+        expected instanceof RegExp
+          ? {
+              kind: "accessibleName",
+              patternSource: expected.source,
+              patternFlags: expected.flags,
+            }
+          : { kind: "accessibleName", expected },
+      ),
+
+    assertFocused: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => ({
+          matched: el.focused === true,
+          actual: el.focused ? "focused" : "not focused",
+        }),
+        (actual, timeout) => ({
+          message: `Expected element to be focused but it was "${actual ?? "not focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: "focused",
+        }),
+        { kind: "focused" },
+      ),
+
+    assertCount: (
+      selector: ExtendedSelector,
+      expectedCount: number,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, TextMismatchError | DriverError> =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
+        const start = Date.now();
+        let lastCount = -1;
+
+        const domChannel = driver.domChannel;
+        if (
+          config.platform === "web" &&
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          domChannel?.isConnected() &&
+          domChannel.waitForMatch
+        ) {
+          const reactive = yield* Effect.tryPromise({
+            try: () =>
+              domChannel.waitForMatch!(selector as Selector, {
+                kind: "count",
+                expectedCount,
+                timeoutMs: timeout,
+              }),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (reactive) {
+            if (reactive.matched) return;
+            return yield* new TextMismatchError({
+              message: `Expected count ${expectedCount} but got ${reactive.actual ?? "0"} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+              expected: String(expectedCount),
+              actual: reactive.actual ?? "0",
+              selector,
+            });
+          }
+        }
+
+        while (Date.now() - start < timeout) {
+          cache.invalidate();
+          if (
+            !isSystemUISelector(selector) &&
+            !isRelativeSelectorLike(selector) &&
+            domChannel?.isConnected()
+          ) {
+            const matches = yield* Effect.tryPromise({
+              try: () => domChannel.query(selector as Selector),
+              catch: () => null,
+            }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+            if (matches) {
+              const count = matches.filter((m) => m.visible).length;
+              lastCount = count;
+              if (count === expectedCount) return;
+              yield* Effect.sleep(Duration.millis(pollInterval));
+              continue;
+            }
+          }
+
+          const raw = yield* driver.dumpHierarchy();
+          const root = parse(raw);
+          const count = findElements(root, selector as Selector).filter(
+            (el) => el.visible !== false,
+          ).length;
+          lastCount = count;
+          if (count === expectedCount) return;
+          yield* Effect.sleep(Duration.millis(pollInterval));
+        }
+
+        return yield* new TextMismatchError({
+          message: `Expected count ${expectedCount} but got ${lastCount >= 0 ? lastCount : 0} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: String(expectedCount),
+          actual: String(lastCount >= 0 ? lastCount : 0),
+          selector,
+        });
+      }),
+
+    waitForURL: (
+      expected: string | RegExp,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, TextMismatchError | DriverError> =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+        const start = Date.now();
+        let lastUrl = "";
+
+        const matchesUrl = (url: string): boolean =>
+          expected instanceof RegExp
+            ? expected.test(url)
+            : url === expected || url.includes(expected);
+
+        const domChannel = driver.domChannel;
+        if (config.platform === "web" && domChannel?.isConnected() && domChannel.waitForMatch) {
+          const reactive = yield* Effect.tryPromise({
+            try: () =>
+              domChannel.waitForMatch!("", {
+                kind: "url",
+                ...(expected instanceof RegExp
+                  ? { patternSource: expected.source, patternFlags: expected.flags }
+                  : { expected }),
+                timeoutMs: timeout,
+              }),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (reactive) {
+            if (reactive.matched) return;
+            return yield* new TextMismatchError({
+              message: `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`,
+              expected: String(expected),
+              actual: reactive.actual ?? "",
+              selector: "url",
+            });
+          }
+        }
+
+        while (Date.now() - start < timeout) {
+          const url = driver.getUrl
+            ? yield* driver.getUrl()
+            : yield* driver
+                .evaluate<string>(
+                  "typeof window !== 'undefined' && window.location ? window.location.href : ''",
+                )
+                .pipe(Effect.catchAll(() => Effect.succeed("")));
+          lastUrl = url;
+          if (matchesUrl(url)) return;
+          yield* Effect.sleep(Duration.millis(pollInterval));
+        }
+
+        return yield* new TextMismatchError({
+          message: `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`,
+          expected: String(expected),
+          actual: lastUrl,
+          selector: "url",
+        });
+      }),
+
     assertFocusable: (
       selector: ExtendedSelector,
       platform: string,
@@ -962,9 +1152,56 @@ export function createCoordinator<T extends string = string, R extends string = 
       }),
 
     /**
+     * Hover the pointer over an actionable element (moves pointer to its center).
+     */
+    hover: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const mergedOpts: WaitOptions = {
+          ...defaults,
+          ...opts,
+          platform: opts?.platform ?? config.platform,
+        };
+        const resolved = yield* waitForResolvedElementResult(
+          driver,
+          selector,
+          parse,
+          true,
+          mergedOpts,
+          cache,
+        );
+        const { x, y } = centerOf(resolved.element);
+        if (driver.hoverAtCoordinate) {
+          yield* driver.hoverAtCoordinate(x, y);
+        } else if (config.platform === "web") {
+          yield* driver.evaluate(
+            `(() => {
+              const el = document.elementFromPoint(${x}, ${y});
+              if (!el) return;
+              const init = { bubbles: true, cancelable: true, composed: true, clientX: ${x}, clientY: ${y} };
+              try { el.dispatchEvent(new PointerEvent("pointerover", init)); } catch {}
+              try { el.dispatchEvent(new PointerEvent("pointerenter", { ...init, bubbles: false })); } catch {}
+              try { el.dispatchEvent(new MouseEvent("mouseover", init)); } catch {}
+              try { el.dispatchEvent(new MouseEvent("mouseenter", { ...init, bubbles: false })); } catch {}
+              try { el.dispatchEvent(new MouseEvent("mousemove", init)); } catch {}
+            })()`,
+          );
+        } else {
+          return yield* new DriverError({
+            message: "hover() is not supported on this driver/platform",
+          });
+        }
+        yield* afterMutation();
+      }),
+
+    /**
      * Atomic 1-round-trip form fill: on web/DOM channels, waits for actionability,
-     * focuses, clears, sets the React/Vue-safe value, and dispatches `input` + `change`
-     * in ONE single round trip (~1-2ms). Falls back to `tap` + `inputText` on native mobile.
+     * focuses, clears, sets the React/Vue-safe value, verifies the value survived
+     * React re-render/remount, and retries up to 3x. For contenteditable editors
+     * (TipTap/ProseMirror/Lexical/Slate) or stubborn controlled inputs, falls back
+     * seamlessly to native tap + SelectAll + Backspace + keyboard input.
      */
     fill: (
       selector: ExtendedSelector,
@@ -973,6 +1210,7 @@ export function createCoordinator<T extends string = string, R extends string = 
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const fillStart = Date.now();
         const domChannel = driver.domChannel;
         if (
           !isSystemUISelector(selector) &&
@@ -988,6 +1226,38 @@ export function createCoordinator<T extends string = string, R extends string = 
             yield* afterMutation();
             return;
           }
+
+          // Fallback for contenteditable editors (TipTap/ProseMirror/Lexical) or
+          // stubborn React controlled inputs that rejected/reset synthetic DOM writes:
+          // check if an actionable element is actually present, then tap + SelectAll + Backspace + inputText.
+          const remaining = Math.max(50, timeout - (Date.now() - fillStart));
+          const fallbackEl = yield* Effect.either(
+            waitForActionElement(
+              driver,
+              selector,
+              parse,
+              {
+                ...defaults,
+                ...opts,
+                timeout: Math.min(remaining, 1500),
+                platform: opts?.platform ?? config.platform,
+              },
+              cache,
+            ),
+          );
+          if (fallbackEl._tag === "Right") {
+            const { x, y } = centerOf(fallbackEl.right);
+            yield* driver.tapAtCoordinate(x, y);
+            const selectAllKey = process.platform === "darwin" ? "Meta+a" : "Control+a";
+            yield* Effect.either(driver.pressKey(selectAllKey));
+            yield* Effect.either(driver.pressKey("Backspace"));
+            if (text.length > 0) {
+              yield* driver.inputText(text);
+            }
+            yield* afterMutation();
+            return;
+          }
+
           return yield* new ElementNotFoundError({
             message: `Element not fillable within ${timeout}ms — selector: ${formatSelector(selector)}`,
             selector,

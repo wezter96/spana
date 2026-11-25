@@ -22,6 +22,12 @@ export interface PromiseExpectation<T extends string = string> {
   toBeEnabled(opts?: WaitOptions): Promise<void>;
   toBeDisabled(opts?: WaitOptions): Promise<void>;
   toContainText(expected: string, opts?: WaitOptions): Promise<void>;
+  /** Assert that the number of visible matching elements equals `expected`. */
+  toHaveCount(expected: number, opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element currently has focus (`document.activeElement`). */
+  toBeFocused(opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element's computed accessible name matches string or RegExp. */
+  toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
 
   // Visual regression
   toMatchScreenshot(
@@ -46,8 +52,17 @@ export interface PromiseExpectation<T extends string = string> {
   toHaveMinTouchTarget(size?: number): Promise<void>;
 }
 
+/** Callable `expect(selector)` helper with attached page-level matchers like `expect.toHaveURL(...)`. */
+export type PromiseExpectFn<T extends string = string> = ((
+  selector: ExtendedSelector<T>,
+) => PromiseExpectation<T>) & {
+  /** Assert that the current page URL matches a substring/exact string or RegExp. */
+  toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+};
+
 function selectorToCss<T extends string = string>(sel: ExtendedSelector<T>): string {
   if (typeof sel === "string") return sel;
+  if (typeof sel === "object" && sel !== null && "css" in sel && sel.css) return sel.css;
   if (typeof sel === "object" && sel !== null && "testID" in sel && sel.testID)
     return `[data-testid="${sel.testID}"]`;
   if (
@@ -70,7 +85,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
     maxDiffPixelRatio?: number;
     baselinesDir?: string;
   },
-): (selector: ExtendedSelector<T>) => PromiseExpectation<T> {
+): PromiseExpectFn<T> {
   const ctx: FlowContext = flowContext ?? {
     flowFilePath: "",
     flowName: "unknown",
@@ -84,7 +99,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
   const runStep = <A>(command: string, selector: ExtendedSelector<T>, action: () => Promise<A>) =>
     recorder ? recorder.runStep(command, action, { selector, captureScreenshot: false }) : action();
 
-  return (selector: ExtendedSelector<T>): PromiseExpectation<T> => ({
+  const expectFn = ((selector: ExtendedSelector<T>): PromiseExpectation<T> => ({
     toBeVisible: (opts) =>
       runStep("expect.toBeVisible", selector, () =>
         run(coord.assertVisible(selector, opts)).then(() => {}),
@@ -114,6 +129,18 @@ export function createPromiseExpect<T extends string = string, R extends string 
     toContainText: (expected, opts) =>
       runStep(`expect.toContainText(${JSON.stringify(expected)})`, selector, () =>
         run(coord.assertContainsText(selector, expected, opts)),
+      ),
+    toHaveCount: (expected, opts) =>
+      runStep(`expect.toHaveCount(${expected})`, selector, () =>
+        run(coord.assertCount(selector, expected, opts)),
+      ),
+    toBeFocused: (opts) =>
+      runStep("expect.toBeFocused", selector, () => run(coord.assertFocused(selector, opts))),
+    toHaveAccessibleName: (expected, opts) =>
+      runStep(
+        `expect.toHaveAccessibleName(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertAccessibleName(selector, expected, opts)),
       ),
 
     toMatchScreenshot: (name, options) =>
@@ -165,5 +192,16 @@ export function createPromiseExpect<T extends string = string, R extends string 
       runStep(`expect.toHaveMinTouchTarget(${size})`, selector, () =>
         run(coord.assertMinTouchTarget(selector, size)),
       ),
-  });
+  })) as PromiseExpectFn<T>;
+
+  expectFn.toHaveURL = (expected: string | RegExp, opts?: WaitOptions) => {
+    const label = `expect.toHaveURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
+    return recorder
+      ? recorder.runStep(label, () => run(coord.waitForURL(expected, opts)), {
+          captureScreenshot: false,
+        })
+      : run(coord.waitForURL(expected, opts));
+  };
+
+  return expectFn;
 }

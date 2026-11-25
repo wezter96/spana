@@ -1,6 +1,6 @@
 {
   "name": "spana-test",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron, and Electrobun — no Appium to set up, agent-ready via MCP",
   "keywords": [
     "android",
