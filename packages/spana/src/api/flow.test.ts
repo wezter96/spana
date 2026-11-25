@@ -4,6 +4,15 @@ import { flow } from "./flow.js";
 const fn = async () => {};
 
 describe("flow", () => {
+  test("supports modifier helpers with typed configs and reasons", () => {
+    expect(flow.skip("skip", fn).config.skip).toBe(true);
+    const condition = { platform: "ios", reason: "Needs new simulator" } as const;
+    expect(flow.fixme("fixme", { fixme: condition, retries: 2 }, fn).config).toEqual({
+      fixme: condition,
+      retries: 2,
+    });
+    expect(flow.only("focused", fn).config.only).toBe(true);
+  });
   test("supports the name + function overload", () => {
     const definition = flow("simple flow", fn);
 

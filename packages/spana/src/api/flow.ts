@@ -12,6 +12,8 @@ export interface WhenCondition {
   env?: string;
 }
 
+export type FlowSkipCondition = boolean | (WhenCondition & { reason?: string });
+
 export interface FlowDefaults {
   waitTimeout?: number;
   pollInterval?: number;
@@ -33,6 +35,10 @@ export interface FlowConfig<R extends string = string> {
   launchOptions?: LaunchOptions<R>;
   artifacts?: ArtifactConfig;
   when?: WhenCondition;
+  skip?: FlowSkipCondition;
+  fixme?: FlowSkipCondition;
+  only?: boolean;
+  retries?: number;
   /** Per-flow overrides for timing defaults. Merged with global defaults. */
   defaults?: FlowDefaults;
 }
@@ -74,6 +80,24 @@ export function flow<T extends string = string, R extends string = string>(
     return { name, fn: configOrFn, config: {} };
   }
   return { name, fn: maybeFn!, config: configOrFn };
+}
+
+function modifyFlow(modifier: "skip" | "fixme" | "only"): typeof flow {
+  return function <T extends string = string, R extends string = string>(
+    name: string,
+    configOrFn: FlowConfig<R> | FlowFn<T, R>,
+    maybeFn?: FlowFn<T, R>,
+  ) {
+    const config = typeof configOrFn === "function" ? {} : configOrFn;
+    const fn = typeof configOrFn === "function" ? configOrFn : maybeFn!;
+    return flow(name, { ...config, [modifier]: config[modifier] ?? true }, fn);
+  };
+}
+
+export namespace flow {
+  export const skip = modifyFlow("skip");
+  export const fixme = modifyFlow("fixme");
+  export const only = modifyFlow("only");
 }
 
 /** Helper to create a typed flow function for your project. */

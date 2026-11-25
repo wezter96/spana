@@ -21,6 +21,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createFailureBundle, writeFailureBundle } from "../report/failure-bundle.js";
 import { SessionManager, createSessions } from "./session-manager.js";
+import { getFlowSkip } from "./runner.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import {
@@ -72,6 +73,8 @@ export interface TestResult {
   name: string;
   platform: Platform;
   status: "passed" | "failed" | "skipped";
+  modifier?: "skip" | "fixme";
+  skipReason?: string;
   flaky?: boolean;
   attempts?: number;
   durationMs: number;
@@ -103,6 +106,8 @@ export async function executeFlow(
 ): Promise<TestResult> {
   const start = Date.now();
   const { platform, coordinatorConfig, appId } = config;
+  const skip = getFlowSkip(flow, platform);
+  if (skip) return skip;
   const autoLaunch = flow.config.autoLaunch ?? config.autoLaunch ?? true;
   const timeout = flow.config.timeout ?? config.flowTimeout ?? 60_000;
   const artifactConfig = resolveArtifactConfig(config.artifactConfig, flow.config.artifacts);

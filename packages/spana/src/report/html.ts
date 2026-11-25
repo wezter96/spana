@@ -324,6 +324,7 @@ function renderPlatform(result: FlowResult, outputDir: string): string {
       ${statusBadge(result.status)}
     </div>
   </div>
+  ${result.modifier ? `<div>${escapeHtml(result.modifier)}${result.skipReason ? `: ${escapeHtml(result.skipReason)}` : ""}</div>` : ""}
   ${renderVideoPlayback(result, outputDir)}
   ${scenarioStepsHtml}
   ${driverStepsHtml}

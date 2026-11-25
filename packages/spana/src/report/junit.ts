@@ -50,7 +50,8 @@ function buildJUnitXML(summary: RunSummary): string {
         }
         lines.push(`      </failure>`);
       } else if (result.status === "skipped") {
-        lines.push(`      <skipped/>`);
+        const reason = result.skipReason ?? result.modifier;
+        lines.push(reason ? `      <skipped message="${escapeXml(reason)}"/>` : `      <skipped/>`);
       }
 
       const systemOut = buildSystemOut(result);

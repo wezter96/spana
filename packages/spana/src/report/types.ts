@@ -89,6 +89,9 @@ export interface FlowResult {
   platform: Platform;
   /** Final status after all retry attempts. */
   status: "passed" | "failed" | "skipped";
+  /** Declaration responsible for skipping the flow, if explicitly skipped. */
+  modifier?: "skip" | "fixme";
+  skipReason?: string;
   /** True if the flow failed initially but passed on retry. */
   flaky?: boolean;
   /** Number of attempts made (present when retries > 0). */

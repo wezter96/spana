@@ -1,6 +1,7 @@
 import type { FlowDefinition } from "../api/flow.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import { executeFlow, type TestResult, type EngineConfig } from "./engine.js";
+import { focusFlows, getFlowSkip } from "./runner.js";
 
 export interface DeviceWorkerConfig {
   id: string;
@@ -60,7 +61,7 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
     durationHintsMs,
     claimNextFlow,
   } = config;
-  const flows = orderFlowsLongestFirst(rawFlows, durationHintsMs);
+  const flows = orderFlowsLongestFirst(focusFlows(rawFlows), durationHintsMs);
   const start = Date.now();
   const results: TestResult[] = [];
   let nextFlowIndex = 0;
@@ -86,38 +87,42 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
         if (flowIdx >= flows.length) break;
         flow = flows[flowIdx]!;
       }
-      let result: TestResult | undefined;
-      let attempts = 0;
+      const skip = getFlowSkip(flow, worker.engineConfig.platform);
+      if (skip) {
+        results.push(skip);
+        onFlowComplete?.(skip, worker.name);
+        continue;
+      }
+      const flowRetries = flow.config.retries ?? retries;
 
       onFlowStart?.(flow.name, worker.name);
 
-      for (let attempt = 0; attempt <= retries; attempt++) {
-        if (attempt > 0 && retryDelay > 0) {
+      let result = await executeFlow(flow, worker.driver, worker.engineConfig);
+      let attempts = 1;
+      while (result.status === "failed" && attempts <= flowRetries) {
+        if (retryDelay > 0) {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
 
         result = await executeFlow(flow, worker.driver, worker.engineConfig);
         attempts++;
-
-        if (result.status === "passed") break;
-        // If still failing and more retries remain, continue loop
       }
 
       // Mark flaky if it eventually passed after failing
-      if (result!.status === "passed" && attempts > 1) {
-        result!.flaky = true;
+      if (result.status === "passed" && attempts > 1) {
+        result.flaky = true;
       }
-      result!.attempts = attempts;
+      result.attempts = attempts;
 
-      results.push(result!);
+      results.push(result);
       stats.flowCount++;
-      stats.totalMs += result!.durationMs;
+      stats.totalMs += result.durationMs;
 
-      if (result!.status === "failed") {
+      if (result.status === "failed") {
         failureCount++;
       }
 
-      onFlowComplete?.(result!, worker.name);
+      onFlowComplete?.(result, worker.name);
     }
 
     return { workerId: worker.id, stats };
@@ -130,13 +135,15 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
     bailedOut = true;
     while (nextFlowIndex < flows.length) {
       const flow = flows[nextFlowIndex++]!;
-      results.push({
-        name: flow.name,
-        platform: workers[0]!.engineConfig.platform,
-        status: "skipped",
-        durationMs: 0,
-        attempts: 0,
-      });
+      results.push(
+        getFlowSkip(flow, workers[0]!.engineConfig.platform) ?? {
+          name: flow.name,
+          platform: workers[0]!.engineConfig.platform,
+          status: "skipped",
+          durationMs: 0,
+          attempts: 0,
+        },
+      );
     }
   }
 

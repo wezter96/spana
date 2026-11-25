@@ -1,7 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { FlowDefinition, FlowConfig } from "../api/flow.js";
+import type { FlowDefinition, FlowConfig, FlowSkipCondition } from "../api/flow.js";
 import type { Platform } from "../schemas/selector.js";
+import type { FlowResult } from "../report/types.js";
 
 export interface DiscoverOptions {
   tags?: string[];
@@ -167,6 +168,36 @@ export function filterFlows(flows: FlowDefinition[], opts: DiscoverOptions): Flo
     }
     return true;
   });
+}
+
+export function focusFlows(flows: FlowDefinition[]): FlowDefinition[] {
+  return flows.some((flow) => flow.config.only) ? flows.filter((flow) => flow.config.only) : flows;
+}
+
+export function getFlowSkip(flow: FlowDefinition, platform: Platform): FlowResult | undefined {
+  const matches = (condition: FlowSkipCondition | undefined) => {
+    if (typeof condition !== "object") return condition === true;
+    const platforms = [condition.platform ?? []].flat();
+    return (
+      (!platforms.length || platforms.includes(platform)) &&
+      (!condition.env || Boolean(process.env[condition.env]))
+    );
+  };
+  for (const modifier of ["fixme", "skip"] as const) {
+    const condition = flow.config[modifier];
+    if (matches(condition)) {
+      return {
+        name: flow.name,
+        platform,
+        status: "skipped",
+        durationMs: 0,
+        modifier,
+        ...(typeof condition === "object" && condition.reason
+          ? { skipReason: condition.reason }
+          : {}),
+      };
+    }
+  }
 }
 
 export interface BalancedShardOptions<T> {

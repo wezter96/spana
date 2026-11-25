@@ -154,12 +154,20 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
         const passed = results.filter((r) => r.status === "passed").length;
         const totalCount = results.length;
         const symbols = results
-          .map((r) => (r.flaky ? "~" : r.status === "passed" ? "✓" : "✗"))
+          .map((r) =>
+            r.flaky ? "~" : r.status === "passed" ? "✓" : r.status === "skipped" ? "–" : "✗",
+          )
           .join("");
         const label = `${platform} (${driverNames[platform]})`;
         const duration = Math.max(...results.map((r) => r.durationMs));
         console.log(
           `${label.padEnd(25)} ${symbols}  ${passed}/${totalCount} passed (${(duration / 1000).toFixed(1)}s)`,
+        );
+      }
+
+      for (const result of summary.results.filter((r) => r.status === "skipped" && r.modifier)) {
+        console.log(
+          `  – [${result.platform}] ${result.name} (${result.modifier}${result.skipReason ? `: ${result.skipReason}` : ""})`,
         );
       }
 

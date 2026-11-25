@@ -5,6 +5,7 @@ import {
   loadStepFiles,
   discoverStepFiles,
   filterFlows,
+  focusFlows,
   applyShard,
   type ShardOptions,
 } from "../core/runner.js";
@@ -758,7 +759,7 @@ async function discoverAndFilterFlows(
     loadedFlows.map((l) => l.flow),
     { tags: input.tags, grep: input.grep, platforms: input.platforms },
   );
-  const allowedFlows = new Set(filteredFlows);
+  const allowedFlows = new Set(focusFlows(filteredFlows));
   let filteredLoadedFlows = loadedFlows.filter((l) => allowedFlows.has(l.flow));
   let filterSummaries: string[] = [];
 
@@ -1305,7 +1306,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       ? import("../core/engine.js").TestResult
       : never;
     const redactResult = <T extends ResultLike>(r: T): T => {
-      if (!r.error) return r;
+      if (!r.error) return r.skipReason ? { ...r, skipReason: redactor.redact(r.skipReason) } : r;
       return {
         ...r,
         error: {

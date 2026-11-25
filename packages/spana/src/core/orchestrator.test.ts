@@ -55,6 +55,61 @@ function createFlow(
 }
 
 describe("orchestrate", () => {
+  test.each([false, true])(
+    "uses focus, conditional skips and retry overrides (parallel: %s)",
+    async (parallel) => {
+      let failures = 0;
+      const driver = createDriver("android");
+      const engineConfig = {
+        appId: "com.example",
+        platform: "android" as const,
+        autoLaunch: false,
+        artifactConfig: { captureOnFailure: false },
+        coordinatorConfig: {
+          parse: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, children: [] }),
+        },
+      };
+      const result = await orchestrate(
+        [
+          { ...createFlow("focused"), config: { only: true, skip: { platform: "ios" } } },
+          {
+            name: "retry disabled",
+            config: { only: true, retries: 0 },
+            fn: async () => {
+              failures++;
+              throw new Error("fail once");
+            },
+          },
+          {
+            ...createFlow("repair"),
+            config: { only: true, fixme: { platform: "android", reason: "needs repair" } },
+          },
+          createFlow("not focused"),
+        ],
+        [
+          {
+            platform: "android",
+            driver,
+            engineConfig,
+            additionalWorkers: parallel
+              ? [{ id: "extra", name: "extra", driver, engineConfig }]
+              : undefined,
+          },
+        ],
+        { retries: 2 },
+      );
+      expect(result.results.map((entry) => [entry.name, entry.status]).toSorted()).toEqual([
+        ["focused", "passed"],
+        ["repair", "skipped"],
+        ["retry disabled", "failed"],
+      ]);
+      expect(result.results.find((entry) => entry.name === "repair")).toMatchObject({
+        modifier: "fixme",
+        skipReason: "needs repair",
+      });
+      expect(failures).toBe(1);
+    },
+  );
   test("filters flows per platform and aggregates pass and fail counts", async () => {
     const result = await orchestrate(
       [

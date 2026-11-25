@@ -4,6 +4,7 @@ import type { Platform } from "../schemas/selector.js";
 import { executeFlow, type TestResult, type EngineConfig } from "./engine.js";
 import { classifyError } from "../report/classify-error.js";
 import { runParallel, type DeviceWorkerConfig } from "./parallel.js";
+import { focusFlows, getFlowSkip } from "./runner.js";
 
 export interface PlatformConfig {
   platform: Platform;
@@ -58,7 +59,6 @@ async function runPlatform(
   workerStats?: Map<string, { flowCount: number; totalMs: number }>;
 }> {
   const { platform, driver, engineConfig } = platformConfig;
-  const retries = options?.retries ?? 0;
   const retryDelay = options?.retryDelay ?? 0;
   const results: TestResult[] = [];
 
@@ -69,7 +69,14 @@ async function runPlatform(
 
   if (shouldBail()) {
     for (const flow of platformFlows) {
-      results.push({ name: flow.name, platform, status: "skipped", durationMs: 0 });
+      results.push(
+        getFlowSkip(flow, platform) ?? {
+          name: flow.name,
+          platform,
+          status: "skipped",
+          durationMs: 0,
+        },
+      );
     }
     return { results };
   }
@@ -80,15 +87,17 @@ async function runPlatform(
       await hooks.beforeAll({ app: undefined, platform } as any);
     } catch (error) {
       for (const flow of platformFlows) {
-        results.push({
+        const result: TestResult = getFlowSkip(flow, platform) ?? {
           name: flow.name,
           platform,
           status: "failed",
           durationMs: 0,
           error: classifyError(error instanceof Error ? error : new Error(String(error))),
-        });
+        };
+        results.push(result);
+        options?.onResult?.(result);
       }
-      noteFailure(platformFlows.length);
+      noteFailure(results.filter((result) => result.status === "failed").length);
       return { results };
     }
   }
@@ -142,6 +151,13 @@ async function runPlatform(
   }
 
   const runSingleFlow = async (flow: FlowDefinition) => {
+    const skip = getFlowSkip(flow, platform);
+    if (skip) {
+      results.push(skip);
+      options?.onResult?.(skip);
+      return;
+    }
+    const retries = flow.config.retries ?? options?.retries ?? 0;
     options?.onFlowStart?.(flow.name, platform);
     let result = await executeFlow(flow, driver, engineConfig);
     let attempts = 1;
@@ -183,7 +199,14 @@ async function runPlatform(
       const flow = platformFlows[index]!;
       if (shouldBail()) {
         for (const skippedFlow of platformFlows.slice(index)) {
-          results.push({ name: skippedFlow.name, platform, status: "skipped", durationMs: 0 });
+          results.push(
+            getFlowSkip(skippedFlow, platform) ?? {
+              name: skippedFlow.name,
+              platform,
+              status: "skipped",
+              durationMs: 0,
+            },
+          );
         }
         break;
       }
@@ -210,6 +233,7 @@ export async function orchestrate(
   options?: OrchestrateOptions,
 ): Promise<OrchestratorResult> {
   const start = Date.now();
+  flows = focusFlows(flows);
   const bail = options?.bail;
   let failureCount = 0;
   let bailedOut = false;

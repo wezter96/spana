@@ -144,6 +144,10 @@ function writeResult(result: FlowResult, outputDir: string): void {
       message: result.error.message,
       trace: result.error.stack,
     };
+  } else if (result.modifier) {
+    allureResult.statusDetails = {
+      message: result.skipReason ? `${result.modifier}: ${result.skipReason}` : result.modifier,
+    };
   } else if (result.flaky) {
     allureResult.statusDetails = {
       message: `Flaky: passed on attempt ${result.attempts}`,

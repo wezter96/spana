@@ -1,6 +1,7 @@
 export {
   flow,
   type FlowConfig,
+  type FlowSkipCondition,
   type FlowContext,
   type FlowFn,
   type FlowDefinition,
