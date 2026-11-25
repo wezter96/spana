@@ -48,22 +48,26 @@ All benchmarks are reproducible directly from this repository on Apple M4 Pro (B
   <img src="./docs/assets/benchmark-20flows.svg" alt="Spana vs Playwright vs WebdriverIO 20-flow benchmark" width="100%" />
 </p>
 
-| Strategy                              | Mode           | Flows | Filter (ms) | Total (ms) | Speedup           |
-| ------------------------------------- | -------------- | ----: | ----------: | ---------: | ----------------- |
-| WebdriverIO (W3C HTTP, UI login)      | 1w, fresh      |    20 |           0 |     22,244 | baseline (WDIO)   |
-| WebdriverIO (W3C HTTP, state inject)  | 1w, inject     |    20 |           0 |     16,265 | —                 |
-| Playwright (`storageState`, 1w)       | 1w, fresh ctx  |    20 |           0 |     14,619 | baseline (PW 1w)  |
-| Playwright (4 parallel workers)       | 4w, fresh ctx  |    20 |           0 |     10,744 | baseline (PW 4w)  |
-| **Spana Direct CDP (1w)**             | 1w, fresh ctx  |    20 |           0 |  **8,942** | **1.6× vs PW 1w** |
-| **Spana Direct CDP Pool (4w)**        | 4w, fresh ctx  |    20 |           0 |  **7,658** | **1.4× vs PW 4w** |
-| **Spana CDP + Video Playback (4w)**   | 4w, screencast |    20 |           0 |  **7,161** | **1.5× vs PW 4w** |
-| **Spana + `spana-bridge` (1w)**       | 1w, bridge     |    20 |           0 |  **3,923** | **3.7× vs PW 1w** |
-| **Spana Shared Pool (4w)**            | 4w, warm pool  |    20 |           0 |  **3,041** | **3.5× vs PW 4w** |
-| **Spana CDP + `pathRuleFilter` (4w)** | 4w, PR diff    |     5 |           0 |  **2,149** | **5.0× vs PW 4w** |
+| Strategy                              | Mode            | Flows | Filter (ms) | Total (ms) | Speedup           |
+| ------------------------------------- | --------------- | ----: | ----------: | ---------: | ----------------- |
+| WebdriverIO (W3C HTTP, UI login)      | 1w, fresh       |    20 |           0 |     19,449 | baseline (WDIO)   |
+| Playwright (`storageState`, 1w)       | 1w, fresh ctx   |    20 |           0 |     17,710 | baseline (PW 1w)  |
+| WebdriverIO (W3C HTTP, state inject)  | 1w, inject      |    20 |           0 |     15,926 | —                 |
+| Playwright (4 parallel workers)       | 4w, fresh ctx   |    20 |           0 |     15,574 | baseline (PW 4w)  |
+| **Spana Direct CDP (1w)**             | 1w, fresh ctx   |    20 |           0 | **11,339** | **1.6× vs PW 1w** |
+| **Spana CDP + Video Playback (4w)**   | 4w, screencast  |    20 |           0 |  **9,725** | **1.6× vs PW 4w** |
+| **Spana Direct CDP Pool (4w)**        | 4w, fresh ctx   |    20 |           0 |  **9,341** | **1.7× vs PW 4w** |
+| **Spana CDP `hot-cache` (1w)**        | 1w, clean reset |    20 |           0 |  **6,011** | **3.0× vs PW 1w** |
+| **Spana CDP `hot-cache` (4w)**        | 4w, clean reset |    20 |           0 |  **4,057** | **3.8× vs PW 4w** |
+| **Spana + `spana-bridge` (1w)**       | 1w, bridge      |    20 |           0 |  **3,100** | **5.7× vs PW 1w** |
+| **Spana CDP + `pathRuleFilter` (4w)** | 4w, PR diff     |     5 |           0 |  **2,759** | **5.6× vs PW 4w** |
+| **Spana Shared Pool (4w)**            | 4w, warm pool   |    20 |           0 |  **2,690** | **5.8× vs PW 4w** |
 
-- **24-Flow Realistic Pilot (4,000-cell DOM + hydration overlay + offscreen scroll, fresh context/test):** Playwright 4w `11.70 s` (`1,177 ms` median) → **Spana Direct CDP 4w `7.29 s`** (**1.60× faster wall**, `865 ms` median, 24/24 pass)
-- **Rust Native Visual Regression Diff (1920×1080 PNG):** Pure-JS `168.4 ms` → **`15.3 ms`** (**11.0× faster**)
-- **Verified Replay Cache (`--strict-cache`) vs Live LLM:** `10,859 ms` → **`5 ms`** (**2,171× faster**, 0 LLM calls)
+- **24-Flow Realistic Pilot (4,000-cell DOM + hydration overlay + offscreen scroll, full storage/cookie wipe):**
+  - 1 worker: Playwright `11.88 s` (`420 ms` med) → **Spana CDP `hot-cache` `3.53 s`** (**3.37× faster wall**, **`97 ms` median**, 24/24 pass)
+  - 4 workers: Playwright `11.91 s` (`1,031 ms` med) → **Spana CDP `hot-cache` `3.66 s`** (**3.25× faster wall**, **`278 ms` median**, 24/24 pass)
+- **Rust Native Visual Regression Diff (1920×1080 PNG):** Pure-JS `215.0 ms` → **`11.2 ms`** (**19.2× faster**)
+- **Verified Replay Cache (`--strict-cache`) vs Live LLM:** `7,924 ms` → **`27 ms`** (**293.5× faster**, 0 LLM calls)
 - **Capacitor Mobile Hybrid (5 flows, zero Appium):** iOS `28.4 s` (WDIO/Appium) → **`1.52 s`** (**18.7× faster**) · Android `22.9 s` → **`1.27 s`** (**18.0× faster**)
 
 ```bash

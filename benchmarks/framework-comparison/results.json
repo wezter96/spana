@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-11-25T10:37:06.184Z",
+  "measuredAt": "2026-11-25T11:24:41.480Z",
   "environment": {
     "os": "darwin",
     "arch": "arm64",
@@ -13,82 +13,92 @@
   },
   "liveMultiStep20Flows": {
     "webdriverioHttpUiLogin": {
-      "totalMs": 22244,
-      "avgFlowMs": 1112,
+      "totalMs": 19449,
+      "avgFlowMs": 972,
       "httpCalls": 600,
       "flowCount": 20
     },
     "webdriverioHttpStateInject": {
-      "totalMs": 16265,
-      "avgFlowMs": 813,
+      "totalMs": 15926,
+      "avgFlowMs": 796,
       "httpCalls": 562,
       "flowCount": 20
     },
     "playwrightStorageStateSerial": {
-      "totalMs": 14619,
-      "avgFlowMs": 731,
+      "totalMs": 17710,
+      "avgFlowMs": 886,
       "flowCount": 20
     },
     "playwrightParallel4": {
-      "totalMs": 10744,
-      "avgFlowMs": 537,
+      "totalMs": 15574,
+      "avgFlowMs": 779,
       "flowCount": 20
     },
     "spanaBridgeSerial": {
-      "totalMs": 3923,
-      "avgFlowMs": 196,
+      "totalMs": 3100,
+      "avgFlowMs": 155,
       "flowCount": 20
     },
     "spanaDirectCdpSerial1w": {
-      "totalMs": 8942,
-      "avgFlowMs": 447,
+      "totalMs": 11339,
+      "avgFlowMs": 567,
       "flowCount": 20
     },
     "spanaSharedPoolParallel4": {
-      "totalMs": 3041,
-      "avgFlowMs": 152,
+      "totalMs": 2690,
+      "avgFlowMs": 135,
       "flowCount": 20
     },
     "spanaDirectCdpPool4w": {
-      "totalMs": 7658,
-      "avgFlowMs": 383,
+      "totalMs": 9341,
+      "avgFlowMs": 467,
       "flowCount": 20
     },
     "spanaDirectCdpPlayback4w": {
-      "totalMs": 7161,
-      "avgFlowMs": 358,
+      "totalMs": 9725,
+      "avgFlowMs": 486,
       "flowCount": 20,
       "framesCaptured": 0
     },
+    "spanaDirectCdpHotCache1w": {
+      "totalMs": 6011,
+      "avgFlowMs": 301,
+      "flowCount": 20
+    },
+    "spanaDirectCdpHotCache4w": {
+      "totalMs": 4057,
+      "avgFlowMs": 203,
+      "flowCount": 20
+    },
     "spanaLocalDecisionBridge1w": {
-      "filterMs": 15010,
-      "runMs": 4501,
-      "totalMs": 19511,
-      "flowsKept": 20,
+      "filterMs": 14115,
+      "runMs": 946,
+      "totalMs": 15061,
+      "flowsKept": 2,
       "flowsTotal": 20,
-      "tokens": 0,
+      "tokens": 936,
       "costUsd": 0
     },
     "spanaLocalDecisionPool4w": {
-      "filterMs": 15010,
-      "runMs": 4403,
-      "totalMs": 19413,
-      "flowsKept": 20,
+      "filterMs": 14115,
+      "runMs": 1058,
+      "totalMs": 15173,
+      "flowsKept": 2,
       "flowsTotal": 20,
-      "tokens": 0,
+      "tokens": 936,
       "costUsd": 0
     },
     "spanaPathRulePool4w": {
       "filterMs": 0,
-      "runMs": 2294,
-      "totalMs": 2294,
+      "runMs": 2144,
+      "totalMs": 2144,
       "flowsKept": 5,
       "flowsTotal": 20
     },
     "spanaDirectCdpPathRule4w": {
       "filterMs": 0,
-      "runMs": 2149,
-      "totalMs": 2149,
+      "runMs": 2759,
+      "totalMs": 2759,
       "flowsKept": 5,
       "flowsTotal": 20
     }
@@ -96,15 +106,15 @@
   "rustNativePngDiff": {
     "nativeActive": true,
     "resolution": "1920x1080",
-    "jsMs": 168.4,
-    "rustMs": 15.3,
-    "speedup": 11
+    "jsMs": 215,
+    "rustMs": 11.2,
+    "speedup": 19.2
   },
   "agenticVsReplayCache": {
     "model": "qwen2.5:1.5b",
-    "liveLlmActMs": 10859,
-    "strictReplayCacheMs": 5,
-    "speedup": 2171.8,
+    "liveLlmActMs": 7924,
+    "strictReplayCacheMs": 27,
+    "speedup": 293.5,
     "llmTokens": 219,
     "stepsRecorded": 7
   },
@@ -112,45 +122,45 @@
     {
       "platform": "web",
       "mode": "harness",
-      "uiSignInMs": 140,
-      "bridgeSignInMs": 23,
-      "speedup": 6.1,
+      "uiSignInMs": 142,
+      "bridgeSignInMs": 30,
+      "speedup": 4.7,
       "nativeDumpsUI": 1,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "android",
       "mode": "harness",
-      "uiSignInMs": 1078,
-      "bridgeSignInMs": 54,
-      "speedup": 20,
+      "uiSignInMs": 1082,
+      "bridgeSignInMs": 45,
+      "speedup": 24,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "ios",
       "mode": "harness",
-      "uiSignInMs": 1327,
-      "bridgeSignInMs": 45,
-      "speedup": 29.5,
+      "uiSignInMs": 1321,
+      "bridgeSignInMs": 42,
+      "speedup": 31.5,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "electron",
       "mode": "harness",
-      "uiSignInMs": 179,
-      "bridgeSignInMs": 34,
-      "speedup": 5.3,
+      "uiSignInMs": 172,
+      "bridgeSignInMs": 32,
+      "speedup": 5.4,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "electrobun",
       "mode": "harness",
-      "uiSignInMs": 170,
-      "bridgeSignInMs": 30,
-      "speedup": 5.7,
+      "uiSignInMs": 177,
+      "bridgeSignInMs": 27,
+      "speedup": 6.6,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     }

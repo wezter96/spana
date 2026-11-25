@@ -68,11 +68,11 @@ export default flow("user can log in", async ({ app, expect }) => {
 
 <div class="spana-stats">
   <div class="spana-stat">
-    <strong>1.6× – 3.7× faster</strong>
-    <span>than Playwright on Chromium via Direct CDP (zero Node IPC pipe) &amp; warm pools</span>
+    <strong>3.4× – 5.8× faster</strong>
+    <span>than Playwright on Chromium via Direct CDP, hot-cache reset &amp; shared pools</span>
   </div>
   <div class="spana-stat">
-    <strong>11.0× faster</strong>
+    <strong>19.2× faster</strong>
     <span>1080p PNG visual regression diffing via bundled Rust FFI accelerator</span>
   </div>
   <div class="spana-stat">
@@ -135,19 +135,20 @@ export default flow("user can log in", async ({ app, expect }) => {
     <span class="spana-eyebrow">Benchmarks</span>
     <h2>Faster than the tools you know</h2>
     <p>
-      20 flows with 280 real interactions, headless Chrome, Apple M4 Pro. Direct CDP beats Playwright
-      even with fresh isolated contexts and live video playback enabled, while shared pools run
-      3.5× faster than Playwright and 7.3× faster than WebDriver HTTP. See the{" "}
-      <a href="/compare/">comparison page</a> for every mode and the 24-flow pilot suite.
+      20 flows with 280 real interactions, headless Chrome, Apple M4 Pro. Direct CDP with
+      hot-cache isolation runs 3.8× faster than Playwright 4w (and 3.4× faster with 97 ms median
+      on a 24-flow 4,000-cell DOM pilot), while shared pools run 5.8× faster than Playwright and
+      7.2× faster than WebDriver HTTP. See the <a href="/compare/">comparison page</a> for every
+      mode.
     </p>
   </div>
 
   <div class="spana-visual-frame">
     <img
       src="/assets/benchmark-20flows.svg"
-      alt="Bar chart comparing WebdriverIO, Playwright, and Spana v0.7 modes on a 20-flow 280-interaction suite, plus Rust 11x visual diff, 24-flow pilot 1.6x speedup, and Verified Replay Cache"
+      alt="Bar chart comparing WebdriverIO, Playwright, and Spana v0.7 modes on a 20-flow 280-interaction suite, plus 3.4x 24-flow hot-cache pilot, Rust 19.2x visual diff, and Verified Replay Cache"
       width="920"
-      height="620"
+      height="660"
       loading="lazy"
     />
   </div>
