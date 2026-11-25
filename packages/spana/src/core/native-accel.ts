@@ -43,9 +43,13 @@ function findNativeLibraryPath(): string | null {
   if (envOverride && existsSync(envOverride)) return envOverride;
 
   const file = libFileName();
+  const platformArch = `${process.platform}-${process.arch}`;
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    // Bundled inside packages/spana/native/
+    // Prebuilt platform-arch binaries bundled in npm package (packages/spana/native/<platform>-<arch>/)
+    resolve(here, "../../native", platformArch, file),
+    resolve(here, "../native", platformArch, file),
+    // Flat bundled path
     resolve(here, "../../native", file),
     resolve(here, "../native", file),
     // Monorepo cargo release / debug output

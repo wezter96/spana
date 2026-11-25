@@ -459,6 +459,13 @@ export function makeLightweightCdpDriver(
       await Promise.all([
         cdpChannel.sendCommand("Page.enable", {}, sessionId).catch(() => {}),
         cdpChannel.sendCommand("Runtime.enable", {}, sessionId).catch(() => {}),
+        cdpChannel
+          .sendCommand(
+            "Target.setAutoAttach",
+            { autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
+            sessionId,
+          )
+          .catch(() => {}),
         ...(needsNetworkDomain
           ? [cdpChannel.sendCommand("Network.enable", {}, sessionId).catch(() => {})]
           : []),
@@ -591,6 +598,48 @@ export function makeLightweightCdpDriver(
       });
     };
 
+    // Auto-track cross-origin iframe (OOPIF) child targets & resolve their viewport offset
+    cdpChannel.onEvent("Target.attachedToTarget", (params) => {
+      const targetInfo = params?.targetInfo;
+      const childSid = params?.sessionId;
+      if (targetInfo?.type === "iframe" && typeof childSid === "string") {
+        cdpChannel.addChildSession(childSid, {
+          targetId: typeof targetInfo.targetId === "string" ? targetInfo.targetId : undefined,
+          url: typeof targetInfo.url === "string" ? targetInfo.url : undefined,
+        });
+        void cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
+      }
+    });
+
+    cdpChannel.onEvent("Target.detachedFromTarget", (params) => {
+      if (typeof params?.sessionId === "string") {
+        cdpChannel.removeChildSession(params.sessionId);
+      }
+    });
+
+    cdpChannel.setFrameOffsetResolver(async (child) => {
+      if (!child.targetId) return { x: 0, y: 0 };
+      try {
+        await cdpChannel.sendCommand("DOM.enable");
+        const owner = (await cdpChannel.sendCommand("DOM.getFrameOwner", {
+          frameId: child.targetId,
+        })) as { backendNodeId?: number; nodeId?: number };
+        const boxParams = owner.backendNodeId
+          ? { backendNodeId: owner.backendNodeId }
+          : { nodeId: owner.nodeId };
+        const box = (await cdpChannel.sendCommand("DOM.getBoxModel", boxParams)) as {
+          model?: { content?: number[]; border?: number[] };
+        };
+        const quad = box?.model?.content ?? box?.model?.border;
+        if (Array.isArray(quad) && quad.length >= 2) {
+          return { x: quad[0] ?? 0, y: quad[1] ?? 0 };
+        }
+      } catch {
+        // Cross-origin frame owner unavailable — default to (0, 0)
+      }
+      return { x: 0, y: 0 };
+    });
+
     // Capture console logs, JS errors, and Fetch interception over the single raw WS
     cdpChannel.onEvent("Runtime.consoleAPICalled", (params, sid) => {
       if (activeSlot && sid && sid !== activeSlot.sessionId) return;
@@ -719,6 +768,7 @@ export function makeLightweightCdpDriver(
           try: async () => {
             consoleLogs.length = 0;
             jsErrors.length = 0;
+            cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
               const previousSlot = activeSlot;
               const pending = prefetchedSlotPromise;

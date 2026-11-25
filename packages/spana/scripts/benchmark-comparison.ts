@@ -15,6 +15,11 @@ import { join, resolve } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import { Effect } from "effect";
 import { launchPlaywrightBrowser, makePlaywrightDriver } from "../src/drivers/playwright.js";
+import { launchDirectCdpBrowser, makeLightweightCdpDriver } from "../src/drivers/cdp-browser.js";
+import { startCdpScreencastRecorder, type CdpScreencastLike } from "../src/core/video-recorder.js";
+import { comparePngNative, isNativeAcceleratorActive } from "../src/core/native-accel.js";
+import { PNG } from "pngjs";
+import pixelmatch from "pixelmatch";
 import { createSpanaBridgeChannel } from "../src/channels/bridge-server.js";
 import { parseWebHierarchy } from "../src/drivers/playwright-parser.js";
 import { createCoordinator } from "../src/smart/coordinator.js";
@@ -263,15 +268,18 @@ function buildMultiModuleAppHtml(bridgeUrl: string): string {
 
     const root = document.getElementById("app");
     let activeModule = "billing";
+    let renderSeq = 0;
 
     function renderModule(mod) {
       activeModule = mod;
+      const seq = ++renderSeq;
       const content = document.getElementById("module-content");
       if (!content) return;
       content.innerHTML = '<div data-testid="module-loading">Loading ' + mod + '...</div>';
       fetch("/api/module?tab=" + encodeURIComponent(mod))
         .then((r) => r.json())
         .then((data) => {
+          if (seq !== renderSeq) return;
           content.innerHTML = \`
             <h2 data-testid="module-ready">\${mod.toUpperCase()} Workspace</h2>
             <div>
@@ -778,6 +786,156 @@ async function runSpanaSharedPoolMultiStepSuite(
   return { totalMs, avgFlowMs: Math.round(totalMs / flows.length), flowCount: flows.length };
 }
 
+async function runSpanaDirectCdpMultiStepSuite(
+  browserWsUrls: string[],
+  appUrl: string,
+  flows: BenchmarkFlowSpec[],
+  workerCount: number,
+  options?: { recordPlayback?: boolean },
+): Promise<{ totalMs: number; avgFlowMs: number; flowCount: number; framesCaptured?: number }> {
+  const start = performance.now();
+  const actualWorkers = Math.min(workerCount, flows.length);
+  const drivers = await Promise.all(
+    Array.from({ length: actualWorkers }, (_v, idx) =>
+      Effect.runPromise(
+        makeLightweightCdpDriver({
+          cdpUrl: browserWsUrls[idx % browserWsUrls.length]!,
+          baseUrl: appUrl,
+          useBrowserContexts: true,
+          freshContextPerFlow: true,
+        }),
+      ),
+    ),
+  );
+
+  const queue = [...flows];
+  let didFirstLogin = false;
+  let totalFrames = 0;
+
+  await Promise.all(
+    drivers.map(async (driver) => {
+      const coord = createCoordinator(driver, {
+        parse: parseWebHierarchy,
+        platform: "web",
+        defaults: { timeout: 5000, pollInterval: 20, initialPollInterval: 10 },
+      });
+      while (queue.length > 0) {
+        const flow = queue.shift()!;
+        const runUiOAuth = !didFirstLogin;
+        didFirstLogin = true;
+
+        await Effect.runPromise(driver.beginFlow!(flow.name));
+        let recorder: Awaited<ReturnType<typeof startCdpScreencastRecorder>> | undefined;
+        if (options?.recordPlayback && driver.domChannel) {
+          recorder = await startCdpScreencastRecorder(
+            driver.domChannel as unknown as CdpScreencastLike,
+            { flowName: flow.name, platform: "web", exportMp4: false },
+          ).catch(() => undefined);
+        }
+
+        await Effect.runPromise(driver.launchApp(appUrl));
+        if (runUiOAuth) {
+          await Effect.runPromise(coord.tap({ testID: "sign-in" }));
+          await Effect.runPromise(coord.tap({ testID: "oauth-continue" }));
+        } else {
+          await Effect.runPromise(
+            driver.evaluate('localStorage.setItem("auth_token", "jwt-m4-pro-2026")'),
+          );
+          await Effect.runPromise(driver.openLink(`${appUrl}/dashboard`));
+        }
+
+        await Effect.runPromise(coord.assertVisible({ testID: "profile-id" }));
+        await Effect.runPromise(coord.tap({ testID: `nav-${flow.module}` }));
+        await Effect.runPromise(coord.assertVisible({ testID: "module-ready" }));
+        await Effect.runPromise(coord.fill({ testID: "filter-input" }, "alpha"));
+        await Effect.runPromise(coord.tap({ testID: "apply-filter" }));
+        await Effect.runPromise(coord.assertVisible({ testID: "item-0" }));
+        await Effect.runPromise(coord.fill({ testID: "field-title" }, flow.name));
+        await Effect.runPromise(coord.fill({ testID: "field-notes" }, `step-${flow.index}`));
+        await Effect.runPromise(coord.tap({ testID: "submit-create" }));
+        await Effect.runPromise(coord.assertVisible({ testID: "confirm-modal" }));
+        await Effect.runPromise(coord.tap({ testID: "confirm-ok" }));
+        await Effect.runPromise(coord.assertVisible({ testID: "created-row" }));
+        await Effect.runPromise(coord.tap({ testID: "cleanup-row" }));
+        await Effect.runPromise(coord.assertVisible({ testID: "toast-done" }));
+
+        if (recorder) {
+          const stopped = await recorder.stop({
+            keep: false,
+            outputDir: tmpdir(),
+            fileStem: "bench",
+          });
+          totalFrames += stopped.frameCount;
+        }
+      }
+      await driver.domChannel?.disconnect();
+    }),
+  );
+
+  const totalMs = Math.round(performance.now() - start);
+  return {
+    totalMs,
+    avgFlowMs: Math.round(totalMs / flows.length),
+    flowCount: flows.length,
+    ...(options?.recordPlayback ? { framesCaptured: totalFrames } : {}),
+  };
+}
+
+function benchmarkRustVsJsPngDiff(): {
+  nativeActive: boolean;
+  resolution: string;
+  jsMs: number;
+  rustMs: number | null;
+  speedup: number | null;
+} {
+  const width = 1920;
+  const height = 1080;
+  const imgA = new PNG({ width, height });
+  const imgB = new PNG({ width, height });
+  for (let i = 0; i < imgA.data.length; i += 4) {
+    imgA.data[i] = 40;
+    imgA.data[i + 1] = 120;
+    imgA.data[i + 2] = 200;
+    imgA.data[i + 3] = 255;
+    imgB.data[i] = 40;
+    imgB.data[i + 1] = 120;
+    imgB.data[i + 2] = 200;
+    imgB.data[i + 3] = 255;
+  }
+  // Mutate a 100×100 region so diff runs full comparison path (not byte-identical short-circuit)
+  for (let y = 100; y < 200; y++) {
+    for (let x = 100; x < 200; x++) {
+      const idx = (y * width + x) * 4;
+      imgB.data[idx] = 240;
+    }
+  }
+  const bufA = PNG.sync.write(imgA);
+  const bufB = PNG.sync.write(imgB);
+
+  const jsStart = performance.now();
+  const decodedA = PNG.sync.read(bufA);
+  const decodedB = PNG.sync.read(bufB);
+  const diffOut = new PNG({ width, height });
+  pixelmatch(decodedA.data, decodedB.data, diffOut.data, width, height, { threshold: 0.1 });
+  PNG.sync.write(diffOut);
+  const jsMs = Number((performance.now() - jsStart).toFixed(1));
+
+  let rustMs: number | null = null;
+  if (isNativeAcceleratorActive()) {
+    const rStart = performance.now();
+    comparePngNative(bufA, bufB, 0.1, false);
+    rustMs = Number((performance.now() - rStart).toFixed(1));
+  }
+
+  return {
+    nativeActive: isNativeAcceleratorActive(),
+    resolution: `${width}x${height}`,
+    jsMs,
+    rustMs,
+    speedup: rustMs && rustMs > 0 ? Number((jsMs / rustMs).toFixed(1)) : null,
+  };
+}
+
 /**
  * Live benchmark of Local M4 Pro Ollama (`qwen2.5:1.5b`) agentic execution vs
  * Spana Verified Replay Cache (`--strict-cache`, 0 LLM calls) on the same multi-step flow.
@@ -927,6 +1085,11 @@ const browser = await launchPlaywrightBrowser({
   headless: true,
   executablePath,
 });
+const cdpBrowsers = await Promise.all([
+  launchDirectCdpBrowser({ headless: true, executablePath }),
+  launchDirectCdpBrowser({ headless: true, executablePath }),
+]);
+const cdpWsUrls = cdpBrowsers.map((b) => b.browserWsUrl);
 const { server: wdServer, baseUrl: wdBaseUrl } = await startW3CWebDriverBridge(browser);
 
 try {
@@ -969,6 +1132,25 @@ try {
     appUrl,
     SUITE_FLOWS,
     4,
+  );
+  const spanaDirectCdpSerial1w = await runSpanaDirectCdpMultiStepSuite(
+    [cdpWsUrls[0]!],
+    appUrl,
+    SUITE_FLOWS,
+    1,
+  );
+  const spanaDirectCdpPool4w = await runSpanaDirectCdpMultiStepSuite(
+    cdpWsUrls,
+    appUrl,
+    SUITE_FLOWS,
+    4,
+  );
+  const spanaDirectCdpPlayback4w = await runSpanaDirectCdpMultiStepSuite(
+    cdpWsUrls,
+    appUrl,
+    SUITE_FLOWS,
+    4,
+    { recordPlayback: true },
   );
 
   // 2. Real Local M4 Pro Decision Model Filter (--changed-since origin/main on Billing PR)
@@ -1045,6 +1227,13 @@ try {
     pathRes.kept,
     4,
   );
+  const spanaDirectCdpPathRule4w = await runSpanaDirectCdpMultiStepSuite(
+    cdpWsUrls,
+    appUrl,
+    pathRes.kept,
+    4,
+  );
+  const rustPngDiff = benchmarkRustVsJsPngDiff();
 
   // 4. Live Agentic LLM vs Verified Replay Cache (--strict-cache)
   const replayCacheBench = await runAgenticVsReplayCacheBenchmark(
@@ -1090,7 +1279,10 @@ try {
       playwrightStorageStateSerial: pwSerial20,
       playwrightParallel4: pwParallel4_20,
       spanaBridgeSerial: spanaBridgeSerial20,
+      spanaDirectCdpSerial1w,
       spanaSharedPoolParallel4: spanaPoolParallel4_20,
+      spanaDirectCdpPool4w,
+      spanaDirectCdpPlayback4w,
       spanaLocalDecisionBridge1w: {
         filterMs: decisionFilterMs,
         runMs: spanaDecisionBridge.totalMs,
@@ -1116,7 +1308,15 @@ try {
         flowsKept: pathRes.kept.length,
         flowsTotal: SUITE_FLOWS.length,
       },
+      spanaDirectCdpPathRule4w: {
+        filterMs: pathFilterMs,
+        runMs: spanaDirectCdpPathRule4w.totalMs,
+        totalMs: pathFilterMs + spanaDirectCdpPathRule4w.totalMs,
+        flowsKept: pathRes.kept.length,
+        flowsTotal: SUITE_FLOWS.length,
+      },
     },
+    rustNativePngDiff: rustPngDiff,
     agenticVsReplayCache: replayCacheBench,
     fiveTargetSignIn: fiveTargetRows,
     mobileHybridComparison: mobileComparison,
@@ -1151,16 +1351,34 @@ try {
       "Total (ms)": spanaBridgeSerial20.totalMs,
     },
     {
+      Strategy: "Spana Direct CDP (1w, zero Playwright pipe, 20 flows)",
+      Flows: 20,
+      "Filter (ms)": 0,
+      "Total (ms)": spanaDirectCdpSerial1w.totalMs,
+    },
+    {
       Strategy: "Playwright (4 parallel workers, 20 flows)",
       Flows: 20,
       "Filter (ms)": 0,
       "Total (ms)": pwParallel4_20.totalMs,
     },
     {
-      Strategy: "Spana Shared Pool (4w, 20 flows)",
+      Strategy: "Spana Playwright Pool (4w, 20 flows)",
       Flows: 20,
       "Filter (ms)": 0,
       "Total (ms)": spanaPoolParallel4_20.totalMs,
+    },
+    {
+      Strategy: "Spana Direct CDP Pool (4w, 20 flows)",
+      Flows: 20,
+      "Filter (ms)": 0,
+      "Total (ms)": spanaDirectCdpPool4w.totalMs,
+    },
+    {
+      Strategy: "Spana Direct CDP + Video Playback (4w, 20 flows)",
+      Flows: 20,
+      "Filter (ms)": 0,
+      "Total (ms)": spanaDirectCdpPlayback4w.totalMs,
     },
     {
       Strategy: `Spana + Local ${OLLAMA_MODEL} Filter + Bridge (1w)`,
@@ -1175,17 +1393,21 @@ try {
       "Total (ms)": decisionFilterMs + spanaDecisionPool4.totalMs,
     },
     {
-      Strategy: "Spana + pathRuleFilter + Pool (4w)",
+      Strategy: "Spana Direct CDP + pathRuleFilter (4w, PR diff)",
       Flows: pathRes.kept.length,
       "Filter (ms)": pathFilterMs,
-      "Total (ms)": pathFilterMs + spanaPathRulePool4.totalMs,
+      "Total (ms)": pathFilterMs + spanaDirectCdpPathRule4w.totalMs,
     },
   ]);
+  console.log("\n=== RUST NATIVE VISUAL DIFF (1920x1080 PNG) ===");
+  console.table([rustPngDiff]);
   console.log("\n=== AGENTIC LIVE LLM vs VERIFIED REPLAY CACHE (--strict-cache) ===");
   console.table([replayCacheBench]);
 } finally {
   await browser.close();
+  await Promise.all(cdpBrowsers.map((b) => b.close()));
   wdServer.close();
   appServer.close();
   await bridge.disconnect();
 }
+process.exit(0);

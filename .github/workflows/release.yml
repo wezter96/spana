@@ -16,7 +16,61 @@ permissions:
   id-token: write
 
 jobs:
+  build-native:
+    name: Build Rust native (${{ matrix.platform_arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform_arch: darwin-arm64
+            file: libspana_native.dylib
+          - os: macos-13
+            target: x86_64-apple-darwin
+            platform_arch: darwin-x64
+            file: libspana_native.dylib
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform_arch: linux-x64
+            file: libspana_native.so
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform_arch: linux-arm64
+            file: libspana_native.so
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform_arch: win32-x64
+            file: spana_native.dll
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/spana-native
+
+      - name: Compile spana-native
+        working-directory: packages/spana-native
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage native binary
+        shell: bash
+        run: |
+          mkdir -p staged-native/${{ matrix.platform_arch }}
+          cp packages/spana-native/target/${{ matrix.target }}/release/${{ matrix.file }} staged-native/${{ matrix.platform_arch }}/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spana-native-${{ matrix.platform_arch }}
+          path: staged-native/${{ matrix.platform_arch }}/${{ matrix.file }}
+
   publish:
+    needs: build-native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +81,22 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Download prebuilt Rust native binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: spana-native-*
+          path: packages/spana/native
+          merge-multiple: false
+
+      - name: Normalize native binary directories
+        run: |
+          for dir in packages/spana/native/spana-native-*; do
+            [ -d "$dir" ] || continue
+            target_name="${dir##*spana-native-}"
+            mv "$dir" "packages/spana/native/$target_name"
+          done
+          ls -la packages/spana/native/
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

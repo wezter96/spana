@@ -46,6 +46,7 @@ export {
   type WarmDaemonConfig,
   type BrowserName,
   type WebBrowserEngine,
+  type VideoRecordingMode,
   type WebResourceBlockType,
   type StorybookConfig,
   type StorybookValue,
@@ -104,6 +105,8 @@ export {
   createCdpDomChannel,
   CdpDomChannel,
   type CdpDomChannelOptions,
+  type CdpChildSessionInfo,
+  type CdpFrameOffsetResolver,
 } from "./channels/cdp-client.js";
 export {
   createAndroidWebViewCdpChannel,
@@ -146,7 +149,11 @@ export {
   connectPlaywrightOverCDP,
   connectPlaywrightOverWS,
 } from "./drivers/playwright.js";
-export { speculativelyPrelaunchWebBrowser, type PrelaunchedWebBrowser } from "./runtime/local.js";
+export {
+  resolveWebEngine,
+  speculativelyPrelaunchWebBrowser,
+  type PrelaunchedWebBrowser,
+} from "./runtime/local.js";
 export {
   launchDirectCdpBrowser,
   makeLightweightCdpDriver,
@@ -271,6 +278,36 @@ export {
   type NativePngCompareResult,
   type NativeXmlRawNode,
 } from "./core/native-accel.js";
+
+// Cross-platform video recording & interactive playback trace
+export {
+  startCdpScreencastRecorder,
+  exportFramesToMp4,
+  startAndroidVideoRecorder,
+  startIosSimulatorVideoRecorder,
+  buildPlaybackTraceFromSteps,
+  type PlaybackFrame,
+  type PlaybackStepMarker,
+  type FlowPlaybackTrace,
+  type StopRecordingOptions,
+  type StopRecordingResult,
+  type VideoRecorderHandle,
+  type CdpScreencastLike,
+  type CdpScreencastRecorderOptions,
+} from "./core/video-recorder.js";
+
+// Hybrid multi-process × in-process worker pool (16–32+ CI workers)
+export {
+  DEFAULT_MAX_WORKERS_PER_PROCESS,
+  planProcessPool,
+  partitionFlowsAcrossProcesses,
+  runMultiProcessPool,
+  type ProcessPartitionPlan,
+  type ProcessShardCommand,
+  type ProcessShardOutcome,
+  type MultiProcessPoolOptions,
+  type MultiProcessPoolResult,
+} from "./core/worker-pool.js";
 
 // Stdio MCP Server (spana mcp)
 export {

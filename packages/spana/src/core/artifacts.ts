@@ -15,6 +15,8 @@ export interface ResolvedArtifactConfig {
   consoleLogs: boolean;
   jsErrors: boolean;
   har: boolean;
+  video: "off" | "on" | "retain-on-failure";
+  playback: boolean;
 }
 
 export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
@@ -27,9 +29,11 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   consoleLogs: true,
   jsErrors: true,
   har: true,
+  video: "off",
+  playback: false,
 };
 
-function safeName(value: string): string {
+export function safeArtifactName(value: string): string {
   return (
     value
       .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
@@ -39,7 +43,9 @@ function safeName(value: string): string {
   );
 }
 
-function flowArtifactDir(
+const safeName = safeArtifactName;
+
+export function flowArtifactDir(
   config: ResolvedArtifactConfig,
   flowName: string,
   platform: string,

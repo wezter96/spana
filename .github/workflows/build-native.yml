@@ -1,0 +1,63 @@
+name: Build Native Rust Accelerator (spana-native)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/spana-native/**"
+      - ".github/workflows/build-native.yml"
+  pull_request:
+    paths:
+      - "packages/spana-native/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: spana-native-darwin-arm64
+            file: libspana_native.dylib
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: spana-native-darwin-x64
+            file: libspana_native.dylib
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: spana-native-linux-x64
+            file: libspana_native.so
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: spana-native-linux-arm64
+            file: libspana_native.so
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: spana-native-win32-x64
+            file: spana_native.dll
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/spana-native
+
+      - name: Build release cdylib
+        working-directory: packages/spana-native
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload native binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: packages/spana-native/target/${{ matrix.target }}/release/${{ matrix.file }}
+          if-no-files-found: error

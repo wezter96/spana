@@ -8,15 +8,65 @@ import { mergeLaunchOptions } from "../drivers/launch-options.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { Attachment, StepResult, ScenarioStepResult, FlowError } from "../report/types.js";
 import type { ArtifactConfig, ProvConfig, StorybookConfig } from "../schemas/config.js";
-import { captureArtifacts, resolveArtifactConfig } from "./artifacts.js";
+import {
+  captureArtifacts,
+  flowArtifactDir,
+  resolveArtifactConfig,
+  safeArtifactName,
+} from "./artifacts.js";
 import { runDebugReplOnce } from "./debug-repl.js";
 import { createStepRecorder } from "./step-recorder.js";
 import { classifyError } from "../report/classify-error.js";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createFailureBundle, writeFailureBundle } from "../report/failure-bundle.js";
 import { SessionManager, createSessions } from "./session-manager.js";
 import { makePlaywrightDriver } from "../drivers/playwright.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
+import {
+  buildPlaybackTraceFromSteps,
+  startAndroidVideoRecorder,
+  startCdpScreencastRecorder,
+  startIosSimulatorVideoRecorder,
+  type CdpScreencastLike,
+  type PlaybackStepMarker,
+  type VideoRecorderHandle,
+} from "./video-recorder.js";
+
+function isCdpScreencastCapable(channel: unknown): channel is CdpScreencastLike {
+  return (
+    Boolean(channel) &&
+    typeof (channel as CdpScreencastLike).sendCommand === "function" &&
+    typeof (channel as CdpScreencastLike).onEvent === "function"
+  );
+}
+
+function buildPlaybackStepMarkers(steps: StepResult[]): PlaybackStepMarker[] {
+  let cursorMs = 0;
+  return steps.map((step, index) => {
+    const startedAtMs = cursorMs;
+    cursorMs += Math.max(1, step.durationMs);
+    const sel = step.selector as Record<string, unknown> | undefined;
+    const pt =
+      sel && typeof sel === "object"
+        ? (sel["point"] as Record<string, unknown> | undefined)
+        : undefined;
+    const tapPoint =
+      pt && typeof pt["x"] === "number" && typeof pt["y"] === "number"
+        ? { x: pt["x"], y: pt["y"] }
+        : undefined;
+    return {
+      index,
+      command: step.command,
+      selector: step.selector,
+      startedAtMs,
+      durationMs: step.durationMs,
+      status: step.status,
+      error: step.error,
+      ...(tapPoint ? { tapPoint } : {}),
+    };
+  });
+}
 
 export interface TestResult {
   name: string;
@@ -116,6 +166,92 @@ export async function executeFlow(
     { parse: (raw: string) => parseWebHierarchy(raw) },
   );
   flowCtx.sessions = sessions;
+  let videoRecorder: VideoRecorderHandle | undefined;
+  let recordingFinalized = false;
+  const wantRecording = artifactConfig.video !== "off" || artifactConfig.playback;
+
+  const finalizeRecording = async (
+    status: "passed" | "failed",
+    attachments: Attachment[],
+    steps: StepResult[],
+    durationMs: number,
+  ): Promise<void> => {
+    if (recordingFinalized || !wantRecording) return;
+    recordingFinalized = true;
+
+    const keep =
+      artifactConfig.video === "on" ||
+      artifactConfig.playback ||
+      (artifactConfig.video === "retain-on-failure" && status === "failed");
+
+    const fileStem = safeArtifactName(flow.name);
+    const outputDir = keep
+      ? flowArtifactDir(artifactConfig, flow.name, platform)
+      : artifactConfig.outputDir;
+
+    let viewport: { width: number; height: number } | undefined;
+    try {
+      const info = await Effect.runPromise(Effect.orDie(driver.getDeviceInfo()));
+      if (info.screenWidth > 0 && info.screenHeight > 0) {
+        viewport = { width: info.screenWidth, height: info.screenHeight };
+      }
+    } catch {
+      // viewport lookup best-effort
+    }
+
+    let stopRes: { playbackJsonPath?: string; videoPath?: string; frameCount: number } | undefined;
+    if (videoRecorder) {
+      try {
+        stopRes = await videoRecorder.stop({
+          keep,
+          outputDir,
+          fileStem,
+          steps: buildPlaybackStepMarkers(steps),
+          viewport,
+        });
+      } catch {
+        // best-effort stop
+      }
+    }
+
+    if (!keep) return;
+
+    if (stopRes?.videoPath) {
+      attachments.push({
+        name: "video",
+        contentType: stopRes.videoPath.endsWith(".webm") ? "video/webm" : "video/mp4",
+        path: stopRes.videoPath,
+      });
+    }
+
+    if (stopRes?.playbackJsonPath) {
+      attachments.push({
+        name: "playback",
+        contentType: "application/json",
+        path: stopRes.playbackJsonPath,
+      });
+      return;
+    }
+
+    const fallbackTrace = buildPlaybackTraceFromSteps({
+      flowName: flow.name,
+      platform,
+      durationMs,
+      steps,
+      viewport,
+      videoPath: stopRes?.videoPath,
+    });
+    if (fallbackTrace) {
+      const playbackPath = join(outputDir, `${fileStem}-playback.json`);
+      writeFileSync(playbackPath, JSON.stringify(fallbackTrace), "utf8");
+      attachments.push({
+        name: "playback",
+        contentType: "application/json",
+        path: playbackPath,
+      });
+    }
+  };
+
   const buildFailureResult = async (error: unknown): Promise<TestResult> => {
     const attachments = await captureArtifacts(
       driver,
@@ -124,15 +260,18 @@ export async function executeFlow(
       platform,
       "failed",
     );
+    const steps = stepRecorder.getSteps();
+    const durationMs = Date.now() - start;
+    await finalizeRecording("failed", attachments, steps, durationMs);
     const normalized = error instanceof Error ? error : new Error(String(error));
     return {
       name: flow.name,
       platform,
       status: "failed",
-      durationMs: Date.now() - start,
+      durationMs,
       error: classifyError(normalized),
       attachments,
-      steps: stepRecorder.getSteps(),
+      steps,
       scenarioSteps: flowCtx.__scenarioSteps,
     };
   };
@@ -142,6 +281,32 @@ export async function executeFlow(
       await Effect.runPromise(driver.beginFlow(flow.name));
     } catch (error) {
       return buildFailureResult(error);
+    }
+  }
+
+  if (wantRecording) {
+    try {
+      if (isCdpScreencastCapable(driver.domChannel)) {
+        videoRecorder = await startCdpScreencastRecorder(driver.domChannel, {
+          flowName: flow.name,
+          platform,
+          exportMp4: artifactConfig.video !== "off",
+        });
+      } else if (artifactConfig.video !== "off" && (platform === "android" || platform === "ios")) {
+        const info = await Effect.runPromise(Effect.orDie(driver.getDeviceInfo())).catch(
+          () => undefined,
+        );
+        if (info?.deviceId) {
+          const outDir = flowArtifactDir(artifactConfig, flow.name, platform);
+          const videoOut = join(outDir, `${safeArtifactName(flow.name)}.mp4`);
+          videoRecorder =
+            platform === "android"
+              ? startAndroidVideoRecorder(info.deviceId, { outputPath: videoOut })
+              : startIosSimulatorVideoRecorder(info.deviceId, { outputPath: videoOut });
+        }
+      }
+    } catch {
+      // Recording startup is best-effort — never block test execution
     }
   }
 
@@ -178,14 +343,17 @@ export async function executeFlow(
       platform,
       "passed",
     );
+    const steps = stepRecorder.getSteps();
+    const durationMs = Date.now() - start;
+    await finalizeRecording("passed", attachments, steps, durationMs);
 
     result = {
       name: flow.name,
       platform,
       status: "passed",
-      durationMs: Date.now() - start,
+      durationMs,
       attachments,
-      steps: stepRecorder.getSteps(),
+      steps,
       scenarioSteps: flowCtx.__scenarioSteps,
     };
   } catch (error) {
@@ -196,16 +364,19 @@ export async function executeFlow(
       platform,
       "failed",
     );
+    const steps = stepRecorder.getSteps();
+    const durationMs = Date.now() - start;
+    await finalizeRecording("failed", attachments, steps, durationMs);
 
     const flowError = error instanceof Error ? error : new Error(String(error));
     result = {
       name: flow.name,
       platform,
       status: "failed",
-      durationMs: Date.now() - start,
+      durationMs,
       error: classifyError(flowError),
       attachments,
-      steps: stepRecorder.getSteps(),
+      steps,
       scenarioSteps: flowCtx.__scenarioSteps,
     };
 

@@ -87,6 +87,16 @@ export function selectCdpTarget(
   return pageTarget ?? attachable[0];
 }
 
+export interface CdpChildSessionInfo {
+  sessionId: string;
+  targetId?: string;
+  url?: string;
+}
+
+export type CdpFrameOffsetResolver = (
+  child: CdpChildSessionInfo,
+) => Promise<{ x: number; y: number }>;
+
 export class CdpDomChannel implements DomChannel {
   readonly kind = "cdp" as const;
 
@@ -104,6 +114,8 @@ export class CdpDomChannel implements DomChannel {
   private eventListeners = new Map<string, Set<(params: any, sessionId?: string) => void>>();
   private currentTargetId: string | null = null;
   private activeSessionId: string | null = null;
+  private childSessions = new Map<string, CdpChildSessionInfo>();
+  private frameOffsetResolver?: CdpFrameOffsetResolver;
 
   constructor(options: CdpDomChannelOptions) {
     this.endpointUrl = options.endpointUrl.replace(/\/+$/, "");
@@ -278,6 +290,27 @@ export class CdpDomChannel implements DomChannel {
     return this.activeSessionId;
   }
 
+  /** Register an attached cross-origin iframe (OOPIF) flattened CDP session. */
+  addChildSession(sessionId: string, meta?: { targetId?: string; url?: string }): void {
+    this.childSessions.set(sessionId, { sessionId, ...meta });
+  }
+
+  removeChildSession(sessionId: string): void {
+    this.childSessions.delete(sessionId);
+  }
+
+  clearChildSessions(): void {
+    this.childSessions.clear();
+  }
+
+  getChildSessions(): CdpChildSessionInfo[] {
+    return Array.from(this.childSessions.values());
+  }
+
+  setFrameOffsetResolver(resolver: CdpFrameOffsetResolver | undefined): void {
+    this.frameOffsetResolver = resolver;
+  }
+
   onEvent(method: string, listener: (params: any, sessionId?: string) => void): () => void {
     let set = this.eventListeners.get(method);
     if (!set) {
@@ -336,7 +369,8 @@ export class CdpDomChannel implements DomChannel {
     });
   }
 
-  async evaluate<T = unknown>(
+  async evaluateOnSession<T = unknown>(
+    sessionId: string | null | undefined,
     script: string | ((...args: any[]) => T),
     ...args: any[]
   ): Promise<T> {
@@ -345,11 +379,15 @@ export class CdpDomChannel implements DomChannel {
       result?: { type?: string; value?: T; description?: string };
       exceptionDetails?: { text?: string; exception?: { description?: string } };
       wasThrown?: boolean;
-    }>("Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    });
+    }>(
+      "Runtime.evaluate",
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      },
+      sessionId,
+    );
 
     if (response?.exceptionDetails) {
       const detail =
@@ -367,51 +405,173 @@ export class CdpDomChannel implements DomChannel {
     return response?.result?.value as T;
   }
 
+  async evaluate<T = unknown>(
+    script: string | ((...args: any[]) => T),
+    ...args: any[]
+  ): Promise<T> {
+    return this.evaluateOnSession<T>(undefined, script, ...args);
+  }
+
+  private async applyChildOffset(
+    matches: DomElementMatch[],
+    child: CdpChildSessionInfo,
+  ): Promise<DomElementMatch[]> {
+    const offset = this.frameOffsetResolver
+      ? await this.frameOffsetResolver(child).catch(() => ({ x: 0, y: 0 }))
+      : { x: 0, y: 0 };
+    return matches.map((m) => ({
+      ...m,
+      inIframe: true,
+      rect: {
+        ...m.rect,
+        x: m.rect.x + offset.x,
+        y: m.rect.y + offset.y,
+      },
+    }));
+  }
+
   async query(selector: Selector): Promise<DomElementMatch[]> {
-    const result = await this.evaluate<DomElementMatch[]>(buildDomQueryScript(selector));
-    return Array.isArray(result) ? result : [];
+    const script = buildDomQueryScript(selector);
+    const result = await this.evaluate<DomElementMatch[]>(script);
+    if (Array.isArray(result) && result.length > 0) return result;
+    if (this.childSessions.size === 0) return [];
+
+    for (const child of this.childSessions.values()) {
+      const childRes = await this.evaluateOnSession<DomElementMatch[]>(
+        child.sessionId,
+        script,
+      ).catch(() => []);
+      if (Array.isArray(childRes) && childRes.length > 0) {
+        return this.applyChildOffset(childRes, child);
+      }
+    }
+    return [];
   }
 
   async waitForSelector(
     selector: Selector,
     opts?: DomWaitForSelectorOptions,
   ): Promise<DomElementMatch[]> {
-    const result = await this.evaluate<DomElementMatch[]>(
-      buildDomWaitForSelectorScript(selector, opts),
-    );
-    return Array.isArray(result) ? result : [];
+    if (this.childSessions.size === 0) {
+      const result = await this.evaluate<DomElementMatch[]>(
+        buildDomWaitForSelectorScript(selector, opts),
+      );
+      return Array.isArray(result) ? result : [];
+    }
+
+    // Fast immediate check on main frame first, then attached OOPIF frames
+    const immediate = await this.query(selector);
+    const filtered = immediate.filter((m) => m.visible && (!opts?.forAction || m.enabled));
+    if (filtered.length > 0 && !opts?.forAction) return filtered;
+
+    // Race reactive MutationObserver wait across main frame and attached OOPIF sessions
+    const script = buildDomWaitForSelectorScript(selector, opts);
+    const racers: Array<Promise<DomElementMatch[]>> = [
+      this.evaluate<DomElementMatch[]>(script).catch(() => []),
+      ...Array.from(this.childSessions.values()).map(async (child) => {
+        const res = await this.evaluateOnSession<DomElementMatch[]>(child.sessionId, script).catch(
+          () => [],
+        );
+        return Array.isArray(res) && res.length > 0 ? this.applyChildOffset(res, child) : [];
+      }),
+    ];
+
+    return new Promise<DomElementMatch[]>((resolve) => {
+      let remaining = racers.length;
+      let resolved = false;
+      for (const p of racers) {
+        void p.then((matches) => {
+          if (resolved) return;
+          if (Array.isArray(matches) && matches.length > 0) {
+            resolved = true;
+            resolve(matches);
+            return;
+          }
+          remaining -= 1;
+          if (remaining <= 0) {
+            resolved = true;
+            resolve([]);
+          }
+        });
+      }
+    });
   }
 
   async waitForHidden(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean> {
-    const result = await this.evaluate<boolean>(buildDomWaitForHiddenScript(selector, opts));
-    return Boolean(result);
+    const script = buildDomWaitForHiddenScript(selector, opts);
+    const mainHidden = Boolean(await this.evaluate<boolean>(script));
+    if (!mainHidden || this.childSessions.size === 0) return mainHidden;
+    for (const child of this.childSessions.values()) {
+      const ok = Boolean(
+        await this.evaluateOnSession<boolean>(child.sessionId, script).catch(() => true),
+      );
+      if (!ok) return false;
+    }
+    return true;
   }
 
   async waitForMatch(
     selector: Selector,
     opts: DomWaitForMatchOptions,
   ): Promise<DomWaitForMatchResult> {
-    const result = await this.evaluate<DomWaitForMatchResult>(
-      buildDomWaitForMatchScript(selector, opts),
-    );
+    const script = buildDomWaitForMatchScript(selector, opts);
+    const result = await this.evaluate<DomWaitForMatchResult>(script);
+    if (result && typeof result === "object" && result.matched) return result;
+    if (this.childSessions.size > 0) {
+      for (const child of this.childSessions.values()) {
+        const childRes = await this.evaluateOnSession<DomWaitForMatchResult>(
+          child.sessionId,
+          script,
+        ).catch(() => ({ matched: false }));
+        if (childRes?.matched) return childRes;
+      }
+    }
     return result && typeof result === "object" ? result : { matched: false };
   }
 
   async fillDom(selector: Selector, value: string, opts?: DomFillOptions): Promise<boolean> {
-    const result = await this.evaluate<boolean>(buildDomFillScript(selector, value, opts));
-    return Boolean(result);
+    const script = buildDomFillScript(selector, value, opts);
+    const mainFilled = Boolean(await this.evaluate<boolean>(script));
+    if (mainFilled || this.childSessions.size === 0) return mainFilled;
+    for (const child of this.childSessions.values()) {
+      const ok = Boolean(
+        await this.evaluateOnSession<boolean>(child.sessionId, script).catch(() => false),
+      );
+      if (ok) return true;
+    }
+    return false;
   }
 
   async tapDom(selector: Selector): Promise<boolean> {
-    const result = await this.evaluate<boolean>(buildDomTapScript(selector));
-    return Boolean(result);
+    const script = buildDomTapScript(selector);
+    const mainTapped = Boolean(await this.evaluate<boolean>(script));
+    if (mainTapped || this.childSessions.size === 0) return mainTapped;
+    for (const child of this.childSessions.values()) {
+      const ok = Boolean(
+        await this.evaluateOnSession<boolean>(child.sessionId, script).catch(() => false),
+      );
+      if (ok) return true;
+    }
+    return false;
   }
 
   async scrollIntoView(selector: Selector): Promise<DomElementMatch | null> {
-    const result = await this.evaluate<DomElementMatch | null>(
-      buildDomScrollIntoViewScript(selector),
-    );
-    return result ?? null;
+    const script = buildDomScrollIntoViewScript(selector);
+    const result = await this.evaluate<DomElementMatch | null>(script);
+    if (result) return result;
+    if (this.childSessions.size > 0) {
+      for (const child of this.childSessions.values()) {
+        const childRes = await this.evaluateOnSession<DomElementMatch | null>(
+          child.sessionId,
+          script,
+        ).catch(() => null);
+        if (childRes) {
+          const adjusted = await this.applyChildOffset([childRes], child);
+          return adjusted[0] ?? null;
+        }
+      }
+    }
+    return null;
   }
 
   async reload(): Promise<void> {

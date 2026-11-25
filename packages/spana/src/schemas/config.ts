@@ -107,8 +107,9 @@ export interface ElectrobunAppConfig {
 }
 
 export type BrowserName = "chromium" | "firefox" | "webkit";
-export type WebBrowserEngine = "playwright" | "cdp" | "lightpanda";
+export type WebBrowserEngine = "auto" | "playwright" | "cdp" | "lightpanda";
 export type WebResourceBlockType = "image" | "font" | "media" | "stylesheet";
+export type VideoRecordingMode = "off" | "on" | "retain-on-failure";
 
 export type StorybookValue = string | number | boolean | null;
 
@@ -248,6 +249,10 @@ export interface ArtifactConfig {
   consoleLogs?: boolean;
   jsErrors?: boolean;
   har?: boolean;
+  /** Video / screencast recording mode: "off" (default), "on", or "retain-on-failure". */
+  video?: VideoRecordingMode;
+  /** Embed interactive step-by-step visual playback timeline inside report.html (auto-enabled when video !== "off"). */
+  playback?: boolean;
 }
 
 export interface HookContext {
@@ -285,6 +290,8 @@ export interface ProvConfig {
     retryDelay?: number;
     /** Max workers per platform when using --parallel. */
     workers?: number;
+    /** Max in-process workers before automatically sharding across multiple OS processes (default: 8). */
+    maxWorkersPerProcess?: number;
     /** Default tap mode when a DOM channel resolves an element: "native" (real touch, default) or "dom" (fast synthetic click). */
     tapMode?: TapMode;
     /** Pin device locale across targets so system UI sheet labels stay deterministic. */
@@ -498,7 +505,7 @@ const virtualAuthenticatorOptionsSchema = z
 const webExecutionConfigSchema = z
   .object({
     browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
-    engine: z.enum(["playwright", "cdp", "lightpanda"]).optional(),
+    engine: z.enum(["auto", "playwright", "cdp", "lightpanda"]).optional(),
     cdpUrl: z.string().url().optional(),
     wsEndpoint: z.string().url().optional(),
     executablePath: z.string().min(1).optional(),
@@ -539,6 +546,8 @@ const artifactConfigSchema = z
     consoleLogs: z.boolean().optional(),
     jsErrors: z.boolean().optional(),
     har: z.boolean().optional(),
+    video: z.enum(["off", "on", "retain-on-failure"]).optional(),
+    playback: z.boolean().optional(),
   })
   .strict();
 
@@ -585,6 +594,7 @@ export const provConfigSchema = z
         snapshotMaxDepth: z.number().int().positive().optional(),
         retryDelay: z.number().nonnegative().optional(),
         workers: z.number().int().positive().optional(),
+        maxWorkersPerProcess: z.number().int().positive().optional(),
         tapMode: z.enum(["native", "dom"]).optional(),
         locale: z.string().min(1).optional(),
         failFastWhenIdle: z.boolean().optional(),

@@ -1,5 +1,5 @@
 {
-  "measuredAt": "2026-11-24T21:55:49.956Z",
+  "measuredAt": "2026-11-25T10:37:06.184Z",
   "environment": {
     "os": "darwin",
     "arch": "arm64",
@@ -13,68 +13,98 @@
   },
   "liveMultiStep20Flows": {
     "webdriverioHttpUiLogin": {
-      "totalMs": 10901,
-      "avgFlowMs": 545,
+      "totalMs": 22244,
+      "avgFlowMs": 1112,
       "httpCalls": 600,
       "flowCount": 20
     },
     "webdriverioHttpStateInject": {
-      "totalMs": 8400,
-      "avgFlowMs": 420,
+      "totalMs": 16265,
+      "avgFlowMs": 813,
       "httpCalls": 562,
       "flowCount": 20
     },
     "playwrightStorageStateSerial": {
-      "totalMs": 9231,
-      "avgFlowMs": 462,
+      "totalMs": 14619,
+      "avgFlowMs": 731,
       "flowCount": 20
     },
     "playwrightParallel4": {
-      "totalMs": 6309,
-      "avgFlowMs": 315,
+      "totalMs": 10744,
+      "avgFlowMs": 537,
       "flowCount": 20
     },
     "spanaBridgeSerial": {
-      "totalMs": 2965,
-      "avgFlowMs": 148,
+      "totalMs": 3923,
+      "avgFlowMs": 196,
+      "flowCount": 20
+    },
+    "spanaDirectCdpSerial1w": {
+      "totalMs": 8942,
+      "avgFlowMs": 447,
       "flowCount": 20
     },
     "spanaSharedPoolParallel4": {
-      "totalMs": 1239,
-      "avgFlowMs": 62,
+      "totalMs": 3041,
+      "avgFlowMs": 152,
       "flowCount": 20
     },
+    "spanaDirectCdpPool4w": {
+      "totalMs": 7658,
+      "avgFlowMs": 383,
+      "flowCount": 20
+    },
+    "spanaDirectCdpPlayback4w": {
+      "totalMs": 7161,
+      "avgFlowMs": 358,
+      "flowCount": 20,
+      "framesCaptured": 0
+    },
     "spanaLocalDecisionBridge1w": {
-      "filterMs": 2931,
-      "runMs": 443,
-      "totalMs": 3374,
-      "flowsKept": 2,
+      "filterMs": 15010,
+      "runMs": 4501,
+      "totalMs": 19511,
+      "flowsKept": 20,
       "flowsTotal": 20,
-      "tokens": 936,
+      "tokens": 0,
       "costUsd": 0
     },
     "spanaLocalDecisionPool4w": {
-      "filterMs": 2931,
-      "runMs": 409,
-      "totalMs": 3340,
-      "flowsKept": 2,
+      "filterMs": 15010,
+      "runMs": 4403,
+      "totalMs": 19413,
+      "flowsKept": 20,
       "flowsTotal": 20,
-      "tokens": 936,
+      "tokens": 0,
       "costUsd": 0
     },
     "spanaPathRulePool4w": {
-      "filterMs": 1,
-      "runMs": 705,
-      "totalMs": 706,
+      "filterMs": 0,
+      "runMs": 2294,
+      "totalMs": 2294,
+      "flowsKept": 5,
+      "flowsTotal": 20
+    },
+    "spanaDirectCdpPathRule4w": {
+      "filterMs": 0,
+      "runMs": 2149,
+      "totalMs": 2149,
       "flowsKept": 5,
       "flowsTotal": 20
     }
   },
+  "rustNativePngDiff": {
+    "nativeActive": true,
+    "resolution": "1920x1080",
+    "jsMs": 168.4,
+    "rustMs": 15.3,
+    "speedup": 11
+  },
   "agenticVsReplayCache": {
     "model": "qwen2.5:1.5b",
-    "liveLlmActMs": 1433,
-    "strictReplayCacheMs": 6,
-    "speedup": 238.8,
+    "liveLlmActMs": 10859,
+    "strictReplayCacheMs": 5,
+    "speedup": 2171.8,
     "llmTokens": 219,
     "stepsRecorded": 7
   },
@@ -82,45 +112,45 @@
     {
       "platform": "web",
       "mode": "harness",
-      "uiSignInMs": 137,
+      "uiSignInMs": 140,
       "bridgeSignInMs": 23,
-      "speedup": 6,
+      "speedup": 6.1,
       "nativeDumpsUI": 1,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "android",
       "mode": "harness",
-      "uiSignInMs": 1073,
-      "bridgeSignInMs": 41,
-      "speedup": 26.2,
+      "uiSignInMs": 1078,
+      "bridgeSignInMs": 54,
+      "speedup": 20,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "ios",
       "mode": "harness",
-      "uiSignInMs": 1313,
-      "bridgeSignInMs": 40,
-      "speedup": 32.8,
+      "uiSignInMs": 1327,
+      "bridgeSignInMs": 45,
+      "speedup": 29.5,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "electron",
       "mode": "harness",
-      "uiSignInMs": 165,
-      "bridgeSignInMs": 26,
-      "speedup": 6.3,
+      "uiSignInMs": 179,
+      "bridgeSignInMs": 34,
+      "speedup": 5.3,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     },
     {
       "platform": "electrobun",
       "mode": "harness",
-      "uiSignInMs": 157,
-      "bridgeSignInMs": 25,
-      "speedup": 6.3,
+      "uiSignInMs": 170,
+      "bridgeSignInMs": 30,
+      "speedup": 5.7,
       "nativeDumpsUI": 2,
       "nativeDumpsBridge": 0
     }

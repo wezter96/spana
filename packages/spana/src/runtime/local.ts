@@ -105,6 +105,29 @@ function buildEngineConfig(
   };
 }
 
+/**
+ * Resolve the effective web browser engine.
+ * - `"auto"`: automatically selects direct CDP (`"cdp"`, zero Playwright pipe) for Chromium
+ *   when no Playwright-only features (`wsEndpoint`, `channel`, `artifacts.har`) are requested,
+ *   and falls back seamlessly to `"playwright"` otherwise.
+ * - Explicit `"cdp"`, `"playwright"`, or `"lightpanda"` is respected verbatim.
+ */
+export function resolveWebEngine(config: ProvConfig): "playwright" | "cdp" | "lightpanda" {
+  const webExecution = config.execution?.web;
+  const requested = webExecution?.engine;
+  if (requested === "cdp" || requested === "lightpanda" || requested === "playwright") {
+    return requested;
+  }
+  if (requested === "auto") {
+    const isChromium = (webExecution?.browser ?? "chromium") === "chromium";
+    const needsPlaywrightOnly = Boolean(
+      webExecution?.wsEndpoint || webExecution?.channel || config.artifacts?.har,
+    );
+    return isChromium && !needsPlaywrightOnly ? "cdp" : "playwright";
+  }
+  return "playwright";
+}
+
 export interface PrelaunchedWebBrowser {
   browserPromise: Promise<Browser>;
   ownsBrowser: boolean;
@@ -120,18 +143,19 @@ export function speculativelyPrelaunchWebBrowser(
   config: ProvConfig,
 ): PrelaunchedWebBrowser | undefined {
   const webExecution = config.execution?.web;
-  if (webExecution?.engine === "lightpanda") {
+  const engine = resolveWebEngine(config);
+  if (engine === "lightpanda") {
     return undefined;
   }
 
-  if (webExecution?.engine === "cdp") {
-    if (webExecution.cdpUrl) return undefined;
-    const useWarm = webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
+  if (engine === "cdp") {
+    if (webExecution?.cdpUrl) return undefined;
+    const useWarm = webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
     const cdpBrowserPromise = launchDirectCdpBrowser({
-      executablePath: webExecution.executablePath,
-      headless: webExecution.headless ?? true,
+      executablePath: webExecution?.executablePath,
+      headless: webExecution?.headless ?? true,
       warmBrowser: useWarm,
-      warmBrowserScope: webExecution.warmBrowserScope
+      warmBrowserScope: webExecution?.warmBrowserScope
         ? `${webExecution.warmBrowserScope}-w0`
         : undefined,
     });
@@ -182,18 +206,19 @@ export async function buildWebRuntime(
   let launchedDirectCdp: DirectCdpBrowserHandle | undefined;
 
   let rawDriver;
-  if (webExecution?.engine === "cdp" || webExecution?.engine === "lightpanda") {
-    let targetCdpUrl = webExecution.cdpUrl;
-    const useContexts = webExecution.engine === "cdp";
-    if (!targetCdpUrl && webExecution.engine === "cdp") {
+  const engine = resolveWebEngine(config);
+  if (engine === "cdp" || engine === "lightpanda") {
+    let targetCdpUrl = webExecution?.cdpUrl;
+    const useContexts = engine === "cdp";
+    if (!targetCdpUrl && engine === "cdp") {
       launchedDirectCdp = prelaunched?.cdpBrowserPromise
         ? await prelaunched.cdpBrowserPromise
         : await launchDirectCdpBrowser({
-            executablePath: webExecution.executablePath,
-            headless: webExecution.headless ?? true,
+            executablePath: webExecution?.executablePath,
+            headless: webExecution?.headless ?? true,
             warmBrowser:
-              webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
-            warmBrowserScope: webExecution.warmBrowserScope
+              webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
+            warmBrowserScope: webExecution?.warmBrowserScope
               ? `${webExecution.warmBrowserScope}-w0`
               : undefined,
           });
@@ -203,14 +228,14 @@ export async function buildWebRuntime(
       makeLightweightCdpDriver({
         cdpUrl: targetCdpUrl ?? "http://127.0.0.1:9222",
         baseUrl: webUrl,
-        engineLabel: webExecution.engine,
+        engineLabel: engine,
         useBrowserContexts: useContexts,
-        freshContextPerFlow: webExecution.freshContextPerFlow,
-        waitUntil: webExecution.waitUntil,
-        instantAnimations: webExecution.instantAnimations,
-        blockResources: webExecution.blockResources,
-        virtualAuthenticator: webExecution.virtualAuthenticator,
-        storageState: webExecution.storageState,
+        freshContextPerFlow: webExecution?.freshContextPerFlow,
+        waitUntil: webExecution?.waitUntil,
+        instantAnimations: webExecution?.instantAnimations,
+        blockResources: webExecution?.blockResources,
+        virtualAuthenticator: webExecution?.virtualAuthenticator,
+        storageState: webExecution?.storageState,
       }),
     );
   } else {
@@ -280,19 +305,20 @@ export async function buildWebRuntimePool(
   prelaunched?: PrelaunchedWebBrowser,
 ): Promise<RuntimeResult[]> {
   const webExecution = config.execution?.web;
-  if (workerCount <= 1 || webExecution?.engine === "lightpanda") {
+  const engine = resolveWebEngine(config);
+  if (workerCount <= 1 || engine === "lightpanda") {
     return [await buildWebRuntime(config, prelaunched)];
   }
 
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
   const maxPerBrowser = Math.max(
     1,
-    webExecution?.maxContextsPerBrowser ?? (webExecution?.engine === "cdp" ? 1 : 2),
+    webExecution?.maxContextsPerBrowser ?? (engine === "cdp" ? 1 : 2),
   );
 
   // Direct CDP multi-browser worker pool (zero Playwright Node client↔server pipe!)
-  if (webExecution?.engine === "cdp") {
-    const useExternalCdp = Boolean(webExecution.cdpUrl);
+  if (engine === "cdp") {
+    const useExternalCdp = Boolean(webExecution?.cdpUrl);
     const browserCount = useExternalCdp ? 1 : Math.ceil(workerCount / maxPerBrowser);
     const handles: Array<{
       cdpUrl: string;
@@ -301,17 +327,17 @@ export async function buildWebRuntimePool(
     }> = [];
 
     if (useExternalCdp) {
-      handles.push({ cdpUrl: webExecution.cdpUrl!, remaining: workerCount });
+      handles.push({ cdpUrl: webExecution!.cdpUrl!, remaining: workerCount });
     } else {
-      const useWarm = webExecution.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
-      const baseScope = webExecution.warmBrowserScope ?? "pool";
+      const useWarm = webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
+      const baseScope = webExecution?.warmBrowserScope ?? "pool";
       const launched = await Promise.all(
         Array.from({ length: browserCount }, (_v, bIdx) =>
           bIdx === 0 && prelaunched?.cdpBrowserPromise
             ? prelaunched.cdpBrowserPromise
             : launchDirectCdpBrowser({
-                executablePath: webExecution.executablePath,
-                headless: webExecution.headless ?? true,
+                executablePath: webExecution?.executablePath,
+                headless: webExecution?.headless ?? true,
                 warmBrowser: useWarm,
                 warmBrowserScope: `${baseScope}-w${bIdx}`,
               }),
@@ -334,12 +360,12 @@ export async function buildWebRuntimePool(
           baseUrl: webUrl,
           engineLabel: "cdp",
           useBrowserContexts: true,
-          freshContextPerFlow: webExecution.freshContextPerFlow,
-          waitUntil: webExecution.waitUntil,
-          instantAnimations: webExecution.instantAnimations,
-          blockResources: webExecution.blockResources,
-          virtualAuthenticator: webExecution.virtualAuthenticator,
-          storageState: webExecution.storageState,
+          freshContextPerFlow: webExecution?.freshContextPerFlow,
+          waitUntil: webExecution?.waitUntil,
+          instantAnimations: webExecution?.instantAnimations,
+          blockResources: webExecution?.blockResources,
+          virtualAuthenticator: webExecution?.virtualAuthenticator,
+          storageState: webExecution?.storageState,
         }),
       );
       const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());

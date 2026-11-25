@@ -63,6 +63,8 @@ describe("artifacts", () => {
       consoleLogs: true,
       jsErrors: true,
       har: true,
+      video: "off",
+      playback: false,
     });
   });
 
