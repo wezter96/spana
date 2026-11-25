@@ -130,6 +130,31 @@ async function importFreshEngine() {
 }
 
 describe("engine", () => {
+  test.each([false, true])(
+    "aggregates soft assertions without stopping the flow (hard failure: %s)",
+    async (hardFailure) => {
+      const { driver, events } = createDriver(
+        createElement({ children: [createElement({ text: "Ready" })] }),
+      );
+      const flow: FlowDefinition = {
+        name: "Soft assertions",
+        config: {},
+        fn: async ({ app, expect: flowExpect }) => {
+          await flowExpect.soft({ text: "Ready" }).toHaveText("First mismatch", { timeout: 1 });
+          await flowExpect.soft({ text: "Ready" }).toHaveText("Second mismatch", { timeout: 1 });
+          await app.inputText("continued");
+          if (hardFailure) throw new Error("hard failure");
+        },
+      };
+      const result = await executeFlow(flow, driver, createConfig(join(tempDir, "soft")));
+      expect(result.status).toBe("failed");
+      expect(result.error?.message).toContain("2 soft assertion(s) failed:");
+      expect(result.error?.message).toContain("First mismatch");
+      expect(result.error?.message).toContain("Second mismatch");
+      if (hardFailure) expect(result.error?.message).toContain("hard failure");
+      expect(events).toContainEqual(["inputText", "continued"]);
+    },
+  );
   test("executeFlow auto-launches by default and records app/expect steps", async () => {
     const { driver, events } = createDriver(
       createElement({

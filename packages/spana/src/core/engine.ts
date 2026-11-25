@@ -133,11 +133,25 @@ export async function executeFlow(
       }
     : coordinatorConfig;
 
+  const softFailures: unknown[] = [];
+  const aggregateFailures = (hardFailure?: Error) => {
+    const messages = softFailures.map(
+      (error, i) => `${i + 1}. ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return new AggregateError(
+      hardFailure ? [hardFailure, ...softFailures] : softFailures,
+      `${hardFailure ? `${hardFailure.message}\n` : ""}${softFailures.length} soft assertion(s) failed:\n${messages.join("\n")}`,
+      { cause: hardFailure ?? softFailures[0] },
+    );
+  };
   const flowMeta = {
     flowFilePath: flow.sourcePath ?? "",
     flowName: flow.name,
     platform,
     updateBaselines: config.updateBaselines ?? false,
+    recordSoftFailure: (error: unknown) => {
+      softFailures.push(error);
+    },
   };
   const extraCleanups: Array<() => Promise<void>> = [];
   const app = createPromiseApp(driver, appId, mergedCoordinatorConfig, stepRecorder, {
@@ -173,6 +187,7 @@ export async function executeFlow(
       return pwDriver;
     },
     { parse: (raw: string) => parseWebHierarchy(raw) },
+    { ...flowMeta, platform: "web" },
   );
   flowCtx.sessions = sessions;
   let videoRecorder: VideoRecorderHandle | undefined;
@@ -332,6 +347,7 @@ export async function executeFlow(
   }
 
   let result: TestResult;
+  let softFailureError: Error | undefined;
 
   try {
     if (autoLaunch) {
@@ -347,6 +363,10 @@ export async function executeFlow(
         ),
       ),
     ]);
+    if (softFailures.length > 0) {
+      softFailureError = aggregateFailures();
+      throw softFailureError;
+    }
 
     const attachments = await captureArtifacts(
       driver,
@@ -380,7 +400,11 @@ export async function executeFlow(
     const durationMs = Date.now() - start;
     await finalizeRecording("failed", attachments, steps, durationMs);
 
-    const flowError = error instanceof Error ? error : new Error(String(error));
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    const flowError =
+      softFailures.length > 0 && error !== softFailureError
+        ? aggregateFailures(normalized)
+        : normalized;
     result = {
       name: flow.name,
       platform,

@@ -2,10 +2,9 @@ import { Effect } from "effect";
 import { createPromiseApp } from "../api/app.js";
 import type { PromiseApp } from "../api/app.js";
 import { createPromiseExpect } from "../api/expect.js";
-import type { PromiseExpectation } from "../api/expect.js";
+import type { FlowContext as ExpectFlowContext, PromiseExpectFn } from "../api/expect.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
-import type { ExtendedSelector } from "../schemas/selector.js";
 import type { BrowserName, StorybookConfig } from "../schemas/config.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 
@@ -24,7 +23,7 @@ export interface SecondarySession {
   readonly name: string;
   readonly platform: "web";
   readonly app: PromiseApp;
-  readonly expect: (selector: ExtendedSelector) => PromiseExpectation;
+  readonly expect: PromiseExpectFn;
   disconnect(): Promise<void>;
 }
 
@@ -38,6 +37,7 @@ export function createSessions(
   manager: SessionManager,
   driverFactory: DriverFactory,
   coordinatorConfig?: CoordinatorConfig,
+  flowContext?: ExpectFlowContext,
 ): Sessions {
   const coordConfig: CoordinatorConfig = coordinatorConfig ?? { parse: parseWebHierarchy };
 
@@ -55,8 +55,9 @@ export function createSessions(
 
       const app = createPromiseApp(driver, baseUrl, coordConfig, undefined, {
         platform: "web",
+        flowContext,
       });
-      const expect = createPromiseExpect(driver, coordConfig);
+      const expect = createPromiseExpect(driver, coordConfig, undefined, flowContext);
 
       const session: SecondarySession = {
         name: opts.name,

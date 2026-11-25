@@ -95,6 +95,33 @@ function createRecorder() {
 
 const parse = (raw: string): Element => JSON.parse(raw) as Element;
 
+test("poll retries an asynchronous probe and records the final result as one step", async () => {
+  const { driver } = createDriver([createElement()]);
+  const { recorder, stepCalls } = createRecorder();
+  const browserExpect = createPromiseExpect(driver, { parse }, recorder);
+  let attempts = 0;
+  await browserExpect
+    .poll(async () => ({ ready: ++attempts === 3 }), { intervals: [1] })
+    .toEqual({ ready: true });
+  expect(attempts).toBe(3);
+  expect(stepCalls.map((step) => step.command)).toEqual(["expect.poll.toEqual"]);
+});
+
+test("toPass retries throwing callbacks and reports the last failure at the deadline", async () => {
+  const { driver } = createDriver([createElement()]);
+  const browserExpect = createPromiseExpect(driver, { parse });
+  let attempts = 0;
+  await browserExpect(() => {
+    if (++attempts < 2) throw new Error("not ready");
+  }).toPass({ timeout: 100, intervals: [1] });
+  expect(attempts).toBe(2);
+  await expect(
+    browserExpect(() => {
+      throw new Error("still not ready");
+    }).toPass({ timeout: 20, intervals: [1] }),
+  ).rejects.toThrow("Assertion timed out after 20ms: still not ready");
+});
+
 let tempDir = "";
 
 afterEach(() => {

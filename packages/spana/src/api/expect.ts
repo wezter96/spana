@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { inspect, isDeepStrictEqual } from "node:util";
 import { Effect } from "effect";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { ExtendedSelector } from "../schemas/selector.js";
@@ -10,6 +12,7 @@ export interface FlowContext {
   flowName: string;
   platform: string;
   updateBaselines?: boolean;
+  recordSoftFailure?: (error: unknown) => void;
 }
 
 export interface PromiseExpectation<T extends string = string> {
@@ -52,13 +55,88 @@ export interface PromiseExpectation<T extends string = string> {
   toHaveMinTouchTarget(size?: number): Promise<void>;
 }
 
-/** Callable `expect(selector)` helper with attached page-level matchers like `expect.toHaveURL(...)`. */
-export type PromiseExpectFn<T extends string = string> = ((
-  selector: ExtendedSelector<T>,
-) => PromiseExpectation<T>) & {
+export interface RetryAssertionOptions {
+  timeout?: number;
+  intervals?: readonly number[];
+}
+
+export interface PollExpectation<T> {
+  toBe(expected: T): Promise<void>;
+  toEqual(expected: T): Promise<void>;
+  toBeTruthy(): Promise<void>;
+  toBeFalsy(): Promise<void>;
+  toContain(expected: unknown): Promise<void>;
+  toMatch(expected: string | RegExp): Promise<void>;
+  toBeGreaterThan(expected: number): Promise<void>;
+  toBeLessThan(expected: number): Promise<void>;
+}
+
+export interface PromiseExpectFn<T extends string = string> {
+  (selector: ExtendedSelector<T>): PromiseExpectation<T>;
+  (check: () => unknown): { toPass(options?: RetryAssertionOptions): Promise<void> };
+  soft: ((selector: ExtendedSelector<T>) => PromiseExpectation<T>) & {
+    toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  };
+  poll<A>(probe: () => A, options?: RetryAssertionOptions): PollExpectation<Awaited<A>>;
   /** Assert that the current page URL matches a substring/exact string or RegExp. */
   toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
-};
+}
+
+const retryScope = new AsyncLocalStorage<boolean>();
+const defaultRetryIntervals = [100, 250, 500, 1000] as const;
+
+async function retryAssertion(
+  check: () => unknown,
+  timeout: number,
+  intervals: readonly number[] = defaultRetryIntervals,
+): Promise<void> {
+  if (
+    !Number.isFinite(timeout) ||
+    timeout < 0 ||
+    intervals.some((ms) => !Number.isFinite(ms) || ms < 0)
+  ) {
+    throw new RangeError("Assertion timeout and intervals must be finite, non-negative numbers");
+  }
+  if (intervals.length === 0) intervals = defaultRetryIntervals;
+  let lastFailure: unknown;
+  let expired = false;
+  let delayTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutTimer = setTimeout(() => {
+      expired = true;
+      const detail = lastFailure instanceof Error ? lastFailure.message : String(lastFailure);
+      reject(
+        new Error(
+          `Assertion timed out after ${timeout}ms${lastFailure === undefined ? "" : `: ${detail}`}`,
+          { cause: lastFailure },
+        ),
+      );
+    }, timeout);
+  });
+  const attempts = async () => {
+    for (let attempt = 0; ; attempt++) {
+      if (expired) return;
+      try {
+        await retryScope.run(true, check);
+        return;
+      } catch (error) {
+        if (expired) return;
+        lastFailure = error;
+        const interval = intervals[Math.min(attempt, intervals.length - 1)]!;
+        await new Promise<void>((resolve) => {
+          delayTimer = setTimeout(resolve, interval);
+        });
+      }
+    }
+  };
+  try {
+    await Promise.race([deadline, attempts()]);
+  } finally {
+    clearTimeout(timeoutTimer);
+    clearTimeout(delayTimer);
+  }
+}
 
 function selectorToCss<T extends string = string>(sel: ExtendedSelector<T>): string {
   if (typeof sel === "string") return sel;
@@ -96,10 +174,32 @@ export function createPromiseExpect<T extends string = string, R extends string 
 
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
-  const runStep = <A>(command: string, selector: ExtendedSelector<T>, action: () => Promise<A>) =>
-    recorder ? recorder.runStep(command, action, { selector, captureScreenshot: false }) : action();
+  const record = (command: string, action: () => Promise<void>, selector?: ExtendedSelector<T>) =>
+    recorder && !retryScope.getStore()
+      ? recorder.runStep(command, action, { selector, captureScreenshot: false })
+      : action();
 
-  const expectFn = ((selector: ExtendedSelector<T>): PromiseExpectation<T> => ({
+  const recordSoft = async (action: () => Promise<void>) => {
+    if (!ctx.recordSoftFailure || retryScope.getStore()) return action();
+    try {
+      await action();
+    } catch (error) {
+      ctx.recordSoftFailure(error);
+    }
+  };
+
+  const hardRunStep = (
+    command: string,
+    selector: ExtendedSelector<T>,
+    action: () => Promise<void>,
+  ) => record(command, action, selector);
+  const softRunStep: typeof hardRunStep = (command, selector, action) =>
+    recordSoft(() => hardRunStep(command, selector, action));
+
+  const matchSelector = (
+    selector: ExtendedSelector<T>,
+    runStep: typeof hardRunStep,
+  ): PromiseExpectation<T> => ({
     toBeVisible: (opts) =>
       runStep("expect.toBeVisible", selector, () =>
         run(coord.assertVisible(selector, opts)).then(() => {}),
@@ -192,15 +292,90 @@ export function createPromiseExpect<T extends string = string, R extends string 
       runStep(`expect.toHaveMinTouchTarget(${size})`, selector, () =>
         run(coord.assertMinTouchTarget(selector, size)),
       ),
-  })) as PromiseExpectFn<T>;
+  });
 
-  expectFn.toHaveURL = (expected: string | RegExp, opts?: WaitOptions) => {
+  const expectFn = ((selector: ExtendedSelector<T> | (() => unknown)) =>
+    typeof selector === "function"
+      ? {
+          toPass: (options?: RetryAssertionOptions) =>
+            record("expect.toPass", () =>
+              retryAssertion(
+                selector,
+                options?.timeout ?? config.defaults?.timeout ?? 5000,
+                options?.intervals,
+              ),
+            ),
+        }
+      : matchSelector(selector, hardRunStep)) as PromiseExpectFn<T>;
+
+  const toHaveURL = (expected: string | RegExp, opts?: WaitOptions) => {
     const label = `expect.toHaveURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
-    return recorder
-      ? recorder.runStep(label, () => run(coord.waitForURL(expected, opts)), {
-          captureScreenshot: false,
-        })
-      : run(coord.waitForURL(expected, opts));
+    return record(label, () => run(coord.waitForURL(expected, opts)));
+  };
+  expectFn.toHaveURL = toHaveURL;
+  expectFn.soft = Object.assign(
+    (selector: ExtendedSelector<T>) => matchSelector(selector, softRunStep),
+    {
+      toHaveURL: (expected: string | RegExp, opts?: WaitOptions) =>
+        recordSoft(() => toHaveURL(expected, opts)),
+    },
+  );
+  expectFn.poll = <A>(
+    probe: () => A,
+    options?: RetryAssertionOptions,
+  ): PollExpectation<Awaited<A>> => {
+    const match = (name: string, predicate: (actual: Awaited<A>) => boolean, expected?: unknown) =>
+      record(`expect.poll.${name}`, () =>
+        retryAssertion(
+          async () => {
+            const actual = await probe();
+            if (!predicate(actual)) {
+              throw new Error(`Expected ${inspect(actual)} ${name} ${inspect(expected)}`);
+            }
+          },
+          options?.timeout ?? config.defaults?.timeout ?? 5000,
+          options?.intervals,
+        ),
+      );
+    return {
+      toBe: (expected) => match("toBe", (actual) => Object.is(actual, expected), expected),
+      toEqual: (expected) =>
+        match("toEqual", (actual) => isDeepStrictEqual(actual, expected), expected),
+      toBeTruthy: () => match("toBeTruthy", Boolean),
+      toBeFalsy: () => match("toBeFalsy", (actual) => !actual),
+      toContain: (expected) =>
+        match(
+          "toContain",
+          (actual) =>
+            (typeof actual === "string" &&
+              typeof expected === "string" &&
+              actual.includes(expected)) ||
+            (Array.isArray(actual) && actual.includes(expected)),
+          expected,
+        ),
+      toMatch: (expected) =>
+        match(
+          "toMatch",
+          (actual) =>
+            typeof actual === "string" &&
+            (typeof expected === "string"
+              ? actual.includes(expected)
+              : new RegExp(expected).test(actual)),
+          expected,
+        ),
+      toBeGreaterThan: (expected) =>
+        match(
+          "toBeGreaterThan",
+          (actual) => typeof actual === "number" && actual > expected,
+          expected,
+        ),
+      toBeLessThan: (expected) =>
+        match(
+          "toBeLessThan",
+          (actual) => typeof actual === "number" && actual < expected,
+          expected,
+        ),
+    };
   };
 
   return expectFn;

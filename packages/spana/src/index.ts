@@ -21,7 +21,12 @@ export {
   type IsolatedBrowserContext,
   type FrameScope,
 } from "./api/app.js";
-export { type PromiseExpectation, type PromiseExpectFn } from "./api/expect.js";
+export {
+  type PollExpectation,
+  type PromiseExpectation,
+  type PromiseExpectFn,
+  type RetryAssertionOptions,
+} from "./api/expect.js";
 
 // Secondary sessions
 export {
