@@ -73,7 +73,8 @@ jobs:
     permissions:
       contents: read
       id-token: write # npm provenance; only the publish job needs it
-    runs-on: ubuntu-latest
+    # Pinned: Playwright has no Chromium build for ubuntu-latest (26.04) yet.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -105,6 +106,9 @@ jobs:
 
       - name: Install Playwright Chromium for CI test suite
         run: ./packages/spana/node_modules/.bin/playwright-core install chromium
+
+      - name: Allow Chromium sandbox (Ubuntu 24.04 AppArmor userns restriction)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Verify lint, types & tests
         run: |
