@@ -154,22 +154,25 @@ export function compareScreenshots(
 }
 
 /**
- * Crop a screenshot PNG to element bounds using sharp.
+ * Crop a screenshot PNG to element bounds using pure-JS pngjs (zero native addon dependency).
  */
 export async function cropToElement(
   screenshot: Buffer | Uint8Array,
   bounds: { x: number; y: number; width: number; height: number },
 ): Promise<Buffer> {
-  const sharp = (await import("sharp")).default;
-  return sharp(Buffer.from(screenshot))
-    .extract({
-      left: Math.round(bounds.x),
-      top: Math.round(bounds.y),
-      width: Math.round(bounds.width),
-      height: Math.round(bounds.height),
-    })
-    .png()
-    .toBuffer();
+  const src = PNG.sync.read(Buffer.from(screenshot));
+  const left = Math.max(0, Math.min(src.width - 1, Math.round(bounds.x)));
+  const top = Math.max(0, Math.min(src.height - 1, Math.round(bounds.y)));
+  const width = Math.max(1, Math.min(src.width - left, Math.round(bounds.width)));
+  const height = Math.max(1, Math.min(src.height - top, Math.round(bounds.height)));
+
+  const out = new PNG({ width, height });
+  for (let row = 0; row < height; row++) {
+    const srcStart = ((top + row) * src.width + left) * 4;
+    const dstStart = row * width * 4;
+    src.data.copy(out.data, dstStart, srcStart, srcStart + width * 4);
+  }
+  return PNG.sync.write(out);
 }
 
 /**
@@ -180,37 +183,26 @@ export async function applyMask(
   screenshot: Buffer | Uint8Array,
   regions: Array<{ x: number; y: number; width: number; height: number }>,
 ): Promise<Buffer> {
-  const sharp = (await import("sharp")).default;
-
+  const buf = Buffer.from(screenshot);
   if (regions.length === 0) {
-    return sharp(Buffer.from(screenshot)).png().toBuffer();
+    return buf;
   }
 
-  const overlays = await Promise.all(
-    regions.map(async (region) => {
-      const w = Math.round(region.width);
-      const h = Math.round(region.height);
-      // Create a gray rectangle as a raw buffer (RGBA)
-      const grayPixel = Buffer.alloc(w * h * 4);
-      for (let i = 0; i < w * h; i++) {
-        grayPixel[i * 4] = 128; // R
-        grayPixel[i * 4 + 1] = 128; // G
-        grayPixel[i * 4 + 2] = 128; // B
-        grayPixel[i * 4 + 3] = 255; // A (fully opaque)
+  const png = PNG.sync.read(buf);
+  for (const region of regions) {
+    const startX = Math.max(0, Math.round(region.x));
+    const startY = Math.max(0, Math.round(region.y));
+    const endX = Math.min(png.width, Math.round(region.x + region.width));
+    const endY = Math.min(png.height, Math.round(region.y + region.height));
+    for (let y = startY; y < endY; y++) {
+      for (let x = startX; x < endX; x++) {
+        const idx = (y * png.width + x) * 4;
+        png.data[idx] = 128; // R
+        png.data[idx + 1] = 128; // G
+        png.data[idx + 2] = 128; // B
+        png.data[idx + 3] = 255; // A
       }
-      const overlayBuffer = await sharp(grayPixel, {
-        raw: { width: w, height: h, channels: 4 },
-      })
-        .png()
-        .toBuffer();
-
-      return {
-        input: overlayBuffer,
-        left: Math.round(region.x),
-        top: Math.round(region.y),
-      };
-    }),
-  );
-
-  return sharp(Buffer.from(screenshot)).composite(overlays).png().toBuffer();
+    }
+  }
+  return PNG.sync.write(png);
 }

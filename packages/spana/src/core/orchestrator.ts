@@ -82,9 +82,14 @@ async function runPlatform(
   }
 
   const hooks = engineConfig.hooks;
-  if (hooks?.beforeAll) {
+  const isChildWorkerProcess = process.env.SPANA_WORKER_PROCESS === "1";
+  const workerOffset = Number.parseInt(process.env.SPANA_WORKER_INDEX_OFFSET ?? "0", 10) || 0;
+  const workerIndex = engineConfig.workerIndex ?? workerOffset;
+  const parallelIndex = engineConfig.parallelIndex ?? 0;
+
+  if (hooks?.beforeAll && !isChildWorkerProcess) {
     try {
-      await hooks.beforeAll({ app: undefined, platform } as any);
+      await hooks.beforeAll({ app: undefined, platform, workerIndex, parallelIndex } as any);
     } catch (error) {
       for (const flow of platformFlows) {
         const result: TestResult = getFlowSkip(flow, platform) ?? {
@@ -93,6 +98,7 @@ async function runPlatform(
           status: "failed",
           durationMs: 0,
           error: classifyError(error instanceof Error ? error : new Error(String(error))),
+          ...(flow.config.tags ? { tags: flow.config.tags } : {}),
         };
         results.push(result);
         options?.onResult?.(result);
@@ -132,12 +138,14 @@ async function runPlatform(
       },
     });
 
-    // Run afterAll hook
-    if (hooks?.afterAll) {
+    // Run afterAll hook (once per run, skipped in child worker processes)
+    if (hooks?.afterAll && !isChildWorkerProcess) {
       try {
         await hooks.afterAll({
           app: undefined,
           platform,
+          workerIndex,
+          parallelIndex,
           summary: { results: parallelResult.results },
         } as any);
       } catch (hookError) {
@@ -150,7 +158,29 @@ async function runPlatform(
     return { results: parallelResult.results, workerStats: parallelResult.workerStats };
   }
 
+  const singleEngineConfig: EngineConfig = {
+    ...engineConfig,
+    workerIndex,
+    parallelIndex,
+  };
+  const failedSerialGroups = new Set<string>();
+
   const runSingleFlow = async (flow: FlowDefinition) => {
+    const sg = flow.config.serialGroup;
+    if (sg && failedSerialGroups.has(sg)) {
+      const skipped: TestResult = {
+        name: flow.name,
+        platform,
+        status: "skipped",
+        skipReason: "Skipped because an earlier flow in this serial suite failed",
+        durationMs: 0,
+        ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+        ...(flow.config.annotations ? { annotations: flow.config.annotations } : {}),
+      };
+      results.push(skipped);
+      options?.onResult?.(skipped);
+      return;
+    }
     const skip = getFlowSkip(flow, platform);
     if (skip) {
       results.push(skip);
@@ -159,14 +189,14 @@ async function runPlatform(
     }
     const retries = flow.config.retries ?? options?.retries ?? 0;
     options?.onFlowStart?.(flow.name, platform);
-    let result = await executeFlow(flow, driver, engineConfig);
+    let result = await executeFlow(flow, driver, singleEngineConfig);
     let attempts = 1;
 
     if (result.status === "failed" && retries > 0) {
       for (let retry = 0; retry < retries; retry++) {
         if (shouldBail()) break;
         await sleep(retryDelay);
-        const retryResult = await executeFlow(flow, driver, engineConfig);
+        const retryResult = await executeFlow(flow, driver, singleEngineConfig);
         attempts++;
         if (retryResult.status === "passed") {
           result = { ...retryResult, flaky: true, attempts };
@@ -182,6 +212,7 @@ async function runPlatform(
     results.push(result);
     options?.onResult?.(result);
     if (result.status === "failed") {
+      if (sg) failedSerialGroups.add(sg);
       noteFailure();
     }
   };
@@ -205,6 +236,7 @@ async function runPlatform(
               platform,
               status: "skipped",
               durationMs: 0,
+              ...(skippedFlow.config.tags ? { tags: skippedFlow.config.tags } : {}),
             },
           );
         }
@@ -214,9 +246,15 @@ async function runPlatform(
     }
   }
 
-  if (hooks?.afterAll) {
+  if (hooks?.afterAll && !isChildWorkerProcess) {
     try {
-      await hooks.afterAll({ app: undefined, platform, summary: { results } } as any);
+      await hooks.afterAll({
+        app: undefined,
+        platform,
+        workerIndex,
+        parallelIndex,
+        summary: { results },
+      } as any);
     } catch (hookError) {
       console.warn(
         `afterAll hook failed: ${hookError instanceof Error ? hookError.message : hookError}`,

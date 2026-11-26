@@ -9,17 +9,21 @@ import type {
   BrowserEmulationOptions,
   BrowserMockResponse,
   BrowserNetworkConditions,
+  BrowserRequestInfo,
   BrowserResponseInfo,
+  BrowserRouteHandler,
   BrowserRouteMatcher,
   BrowserHAR,
   BrowserConsoleLog,
   BrowserJSError,
   CdpSessionHandle,
   TouchSequence,
+  UploadFileInput,
   VirtualAuthenticatorOptions,
   VirtualCredential,
   VirtualCredentialInput,
 } from "../drivers/raw-driver.js";
+import type { AccessibilityViolation } from "../core/accessibility-audit.js";
 import { mergeLaunchOptions } from "../drivers/launch-options.js";
 import type {
   BiometricOptions,
@@ -86,7 +90,50 @@ export interface BrowserRequestOptions {
   headers?: Record<string, string>;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
+  /** Multipart form fields (strings, Blobs, or `{ name, mimeType, buffer }` file objects). */
+  multipart?: Record<
+    string,
+    | string
+    | number
+    | boolean
+    | Blob
+    | { name: string; mimeType?: string; buffer: Buffer | Uint8Array }
+  >;
+  /** Maximum redirect hops to follow while updating the browser cookie jar (default: 10). Set `0` to disable redirects. */
+  maxRedirects?: number;
   signal?: AbortSignal;
+}
+
+export interface BrowserKeyboard {
+  down(key: string): Promise<void>;
+  up(key: string): Promise<void>;
+  press(key: string): Promise<void>;
+  type(text: string, opts?: { delay?: number }): Promise<void>;
+  insertText(text: string): Promise<void>;
+}
+
+export interface BrowserMouse {
+  move(x: number, y: number): Promise<void>;
+  down(x: number, y: number, opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
+  up(x: number, y: number, opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
+  click(x: number, y: number): Promise<void>;
+}
+
+export interface BrowserClock {
+  install(opts?: { time?: Date | number | string }): Promise<void>;
+  setFixedTime(time: Date | number | string): Promise<void>;
+  fastForward(ticks: number): Promise<void>;
+  runFor(ticks: number): Promise<void>;
+  resume(): Promise<void>;
+}
+
+export interface AccessibilityAuditOptions {
+  rules?: string[];
+  disableRules?: string[];
+  tags?: string[];
+  include?: string[];
+  exclude?: string[];
+  targetSelector?: string;
 }
 
 export interface BrowserRequestResponse<T = unknown> {
@@ -154,8 +201,9 @@ export interface FrameScope<T extends string = string> {
     opts?: WaitOptions,
   ): Promise<string[]>;
   focus(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
+  blur(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
   dragTo(source: Selector<T>, target: Selector<T>, opts?: WaitOptions): Promise<void>;
-  uploadFile(selector: Selector<T>, path: string | string[]): Promise<void>;
+  uploadFile(selector: Selector<T>, path: UploadFileInput): Promise<void>;
   getText(selector: Selector<T>, opts?: WaitOptions): Promise<string>;
   getAttribute(
     selector: Selector<T>,
@@ -181,6 +229,18 @@ export interface PromiseApp<T extends string = string, R extends string = string
   /** Move pointer over an actionable element (triggers hover tooltips/menus). */
   hover(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
   inputText(text: string): Promise<void>;
+  /** Type text character-by-character dispatching keyDown/keyUp events (triggers per-key listeners). */
+  type(text: string, opts?: { delay?: number }): Promise<void>;
+  /** Low-level keyboard primitives (`down`, `up`, `press`, `type`, `insertText`). */
+  readonly keyboard: BrowserKeyboard;
+  /** Low-level pointer primitives (`move`, `down`, `up`, `click`). */
+  readonly mouse: BrowserMouse;
+  /** Deterministic fake clock (`install`, `setFixedTime`, `fastForward`, `runFor`, `resume`) on both CDP and Playwright. */
+  readonly clock: BrowserClock;
+  /** Run an axe-core accessibility audit and return `{ violations }` for custom inspection. */
+  accessibilityAudit(
+    opts?: AccessibilityAuditOptions,
+  ): Promise<{ violations: AccessibilityViolation[] }>;
   /** Atomic 1-round-trip form fill: waits for actionability, focuses, replaces value, and dispatches input/change. */
   fill(selector: ExtendedSelector<T>, value: string, opts?: WaitOptions): Promise<void>;
   /** Clear the text value of an input, textarea, or contenteditable element. */
@@ -197,6 +257,8 @@ export interface PromiseApp<T extends string = string, R extends string = string
   ): Promise<string[]>;
   /** Focus an element. */
   focus(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
+  /** Remove focus from an element (triggers blur/change validation). */
+  blur(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
   /** Drag a source element onto a target element. */
   dragTo(
     source: ExtendedSelector<T>,
@@ -244,22 +306,55 @@ export interface PromiseApp<T extends string = string, R extends string = string
   openLink(url: R): Promise<void>;
   openStory(storyId: string, opts?: StorybookOpenOptions): Promise<void>;
   back(): Promise<void>;
+  /** Navigate forward in browser session history. */
+  forward(): Promise<void>;
   /** Reload the current page and wait for navigation readiness. */
   reload(opts?: { waitUntil?: "load" | "domcontentloaded" | "networkidle" }): Promise<void>;
   /** Return the current page URL. */
   url(): Promise<string>;
   /** Wait until the current page URL matches a substring/exact string or RegExp. */
   waitForURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Wait for page load state (`load`, `domcontentloaded`, or `networkidle`). */
+  waitForLoadState(
+    state?: "load" | "domcontentloaded" | "networkidle",
+    opts?: { timeout?: number },
+  ): Promise<void>;
+  /** Subscribe to outgoing network requests. Returns an unsubscribe function. */
+  onRequest(listener: (req: BrowserRequestInfo) => void): () => void;
+  /** Wait for an outgoing HTTP request matching a URL substring, RegExp, or predicate. */
+  waitForRequest(
+    matcher: BrowserRouteMatcher | ((req: BrowserRequestInfo) => boolean),
+    opts?: { timeout?: number },
+  ): Promise<BrowserRequestInfo>;
   /** Wait for an HTTP response matching a URL substring, RegExp, or predicate. */
   waitForResponse(
     matcher: BrowserRouteMatcher | ((res: BrowserResponseInfo) => boolean),
     opts?: { timeout?: number },
   ): Promise<BrowserResponseInfo>;
+  /** Poll a predicate function in the page until it returns a truthy value. */
+  waitForFunction<Result = unknown>(
+    fn: ((...args: any[]) => Result | Promise<Result>) | string,
+    arg?: unknown,
+    opts?: { timeout?: number; pollInterval?: number },
+  ): Promise<Awaited<Result>>;
+  /** Wait for a popup tab opened by `triggerFn` and return its tab ID. */
+  waitForPopup(triggerFn: () => Promise<unknown>, opts?: { timeout?: number }): Promise<string>;
+  /** Inject a script to run before every new document load in the context. */
+  addInitScript(script: string | ((...args: any[]) => unknown), ...args: unknown[]): Promise<void>;
+  /** Expose a Node/Bun callback function onto `window[name]` in the browser page. */
+  exposeFunction(name: string, fn: (...args: any[]) => any): Promise<void>;
   takeScreenshot(name?: string): Promise<Uint8Array>;
+  evaluate<Result = unknown>(fn: () => Result | Promise<Result>): Promise<Awaited<Result>>;
+  evaluate<Arg, Result = unknown>(
+    fn: (arg: Arg) => Result | Promise<Result>,
+    arg: Arg,
+  ): Promise<Awaited<Result>>;
   evaluate<Result = unknown>(
-    fn: ((...args: any[]) => Result) | string,
+    fn: ((...args: any[]) => Result | Promise<Result>) | string,
     ...args: any[]
-  ): Promise<Result>;
+  ): Promise<Awaited<Result>>;
+  /** Register a dynamic request interceptor callback (`route.continue`, `route.fulfill`, `route.abort`, `route.fetch`). */
+  route(matcher: BrowserRouteMatcher, handler: BrowserRouteHandler): Promise<void>;
   mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void>;
   setGeolocation(point: Geolocation): Promise<void>;
   setSystemTime(time: Date | number | string): Promise<void>;
@@ -285,7 +380,7 @@ export interface PromiseApp<T extends string = string, R extends string = string
   saveAuthState(path: string): Promise<void>;
   loadAuthState(path: string): Promise<void>;
   downloadFile(path: string): Promise<void>;
-  uploadFile(selector: Selector<T>, path: string | string[]): Promise<void>;
+  uploadFile(selector: Selector<T>, path: UploadFileInput): Promise<void>;
   newTab(url?: R): Promise<string>;
   switchToTab(index: number): Promise<void>;
   closeTab(): Promise<void>;
@@ -296,7 +391,11 @@ export interface PromiseApp<T extends string = string, R extends string = string
   /** Cookie-sharing API request client (Playwright `context.request` equivalent). */
   readonly request: BrowserRequestClient;
   /** Spawn a second isolated browser context inside this flow (auto-closed when flow ends). */
-  newContext(opts?: { url?: string }): Promise<IsolatedBrowserContext<T, R>>;
+  newContext(opts?: {
+    url?: string;
+    locale?: string;
+    viewport?: { width: number; height: number };
+  }): Promise<IsolatedBrowserContext<T, R>>;
   /** Scope all subsequent selectors/actions/assertions inside a matching iframe (`frameLocator` equivalent). */
   frame(frameSelector: Selector<T>): FrameScope<T>;
   /** Escape hatch: access the underlying Playwright `Page` (or CDP session) on web runs. */
@@ -562,55 +661,116 @@ export function createPromiseApp<T extends string = string, R extends string = s
     rawUrl: string,
     init?: BrowserRequestOptions,
   ): Promise<BrowserRequestResponse<Res>> => {
-    const targetUrl = await resolveRequestUrl(rawUrl);
+    let currentUrl = await resolveRequestUrl(rawUrl);
     if (init?.query) {
       for (const [k, v] of Object.entries(init.query)) {
-        if (v !== undefined) targetUrl.searchParams.set(k, String(v));
+        if (v !== undefined) currentUrl.searchParams.set(k, String(v));
       }
     }
 
-    const headers: Record<string, string> = { ...init?.headers };
-    const hasCookieHeader = Object.keys(headers).some((k) => k.toLowerCase() === "cookie");
-    if (!hasCookieHeader && driver.getCookies) {
-      const cookies = await run(driver.getCookies([targetUrl.toString()])).catch(() => []);
-      if (cookies.length > 0) {
-        headers["cookie"] = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-      }
-    }
+    const baseHeaders: Record<string, string> = { ...init?.headers };
+    const hasExplicitCookie = Object.keys(baseHeaders).some((k) => k.toLowerCase() === "cookie");
 
-    let requestBody: string | undefined;
-    if (init?.body !== undefined) {
-      if (typeof init.body === "string") {
+    let currentMethod = method.toUpperCase();
+    let requestBody: string | FormData | Blob | Uint8Array | undefined;
+    if (init?.multipart) {
+      const form = new FormData();
+      for (const [fieldName, fieldVal] of Object.entries(init.multipart)) {
+        if (fieldVal instanceof Blob) {
+          form.append(fieldName, fieldVal);
+        } else if (
+          fieldVal &&
+          typeof fieldVal === "object" &&
+          "buffer" in fieldVal &&
+          "name" in fieldVal
+        ) {
+          const blob = new Blob([new Uint8Array(fieldVal.buffer)], {
+            type: fieldVal.mimeType ?? "application/octet-stream",
+          });
+          form.append(fieldName, blob, fieldVal.name);
+        } else {
+          form.append(fieldName, String(fieldVal));
+        }
+      }
+      requestBody = form;
+      // Remove any explicit content-type so fetch generates the multipart boundary
+      for (const key of Object.keys(baseHeaders)) {
+        if (key.toLowerCase() === "content-type") delete baseHeaders[key];
+      }
+    } else if (init?.body !== undefined) {
+      if (
+        typeof init.body === "string" ||
+        init.body instanceof FormData ||
+        init.body instanceof Blob ||
+        init.body instanceof Uint8Array
+      ) {
         requestBody = init.body;
       } else {
         requestBody = JSON.stringify(init.body);
-        if (!Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) {
-          headers["content-type"] = "application/json";
+        if (!Object.keys(baseHeaders).some((k) => k.toLowerCase() === "content-type")) {
+          baseHeaders["content-type"] = "application/json";
         }
       }
     }
 
-    const res = await fetch(targetUrl.toString(), {
-      method,
-      headers,
-      ...(requestBody !== undefined ? { body: requestBody } : {}),
-      ...(init?.signal ? { signal: init.signal } : {}),
-    });
+    const maxRedirects = init?.maxRedirects ?? 10;
+    let res!: Response;
 
-    // Sync any Set-Cookie headers back into the browser context
-    if (driver.setCookies) {
-      const rawSetCookies: string[] =
-        typeof (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie ===
-        "function"
-          ? (res.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
-          : res.headers.get("set-cookie")
-            ? [res.headers.get("set-cookie")!]
-            : [];
-      const parsedCookies = rawSetCookies
-        .map((line) => parseSetCookieHeader(line, targetUrl))
-        .filter((c): c is BrowserCookie => c !== null);
-      if (parsedCookies.length > 0) {
-        await run(driver.setCookies(parsedCookies)).catch(() => {});
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      const hopHeaders: Record<string, string> = { ...baseHeaders };
+      if (!hasExplicitCookie && driver.getCookies) {
+        const cookies = await run(driver.getCookies([currentUrl.toString()])).catch(() => []);
+        if (cookies.length > 0) {
+          hopHeaders["cookie"] = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+        }
+      }
+
+      res = await fetch(currentUrl.toString(), {
+        method: currentMethod,
+        headers: hopHeaders,
+        redirect: "manual",
+        ...(requestBody !== undefined ? { body: requestBody as never } : {}),
+        ...(init?.signal ? { signal: init.signal } : {}),
+      });
+
+      // Sync any Set-Cookie headers on EVERY hop (including 3xx redirects!) back into the browser context (2.12)
+      if (driver.setCookies) {
+        const rawSetCookies: string[] =
+          typeof (res.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie ===
+          "function"
+            ? (res.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
+            : res.headers.get("set-cookie")
+              ? [res.headers.get("set-cookie")!]
+              : [];
+        const parsedCookies = rawSetCookies
+          .map((line) => parseSetCookieHeader(line, currentUrl))
+          .filter((c): c is BrowserCookie => c !== null);
+        if (parsedCookies.length > 0) {
+          await run(driver.setCookies(parsedCookies)).catch(() => {});
+        }
+      }
+
+      const isRedirect =
+        res.status === 301 ||
+        res.status === 302 ||
+        res.status === 303 ||
+        res.status === 307 ||
+        res.status === 308;
+      const location = res.headers.get("location");
+      if (!isRedirect || !location || hop === maxRedirects) {
+        break;
+      }
+
+      currentUrl = new URL(location, currentUrl);
+      if (
+        res.status === 303 ||
+        ((res.status === 301 || res.status === 302) && currentMethod === "POST")
+      ) {
+        currentMethod = "GET";
+        requestBody = undefined;
+        for (const key of Object.keys(baseHeaders)) {
+          if (key.toLowerCase() === "content-type") delete baseHeaders[key];
+        }
       }
     }
 
@@ -635,7 +795,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
       status: res.status,
       statusText: res.statusText,
       ok: res.ok,
-      url: res.url || targetUrl.toString(),
+      url: res.url || currentUrl.toString(),
       headers: res.headers,
       data: data as Res,
       text: async () => rawText,
@@ -666,6 +826,204 @@ export function createPromiseApp<T extends string = string, R extends string = s
       ),
     delete: <Res = unknown>(url: string, opts?: BrowserRequestOptions) =>
       runStep(`request.DELETE(${url})`, () => performBrowserRequest<Res>("DELETE", url, opts)),
+  };
+
+  const buildFakeClockScript = (initialMs: number) => `(() => {
+    if (window.__spanaClock) {
+      window.__spanaClock.setFixedTime(${initialMs});
+      return;
+    }
+    const OrigDate = window.Date;
+    const origSetTimeout = window.setTimeout.bind(window);
+    const origClearTimeout = window.clearTimeout.bind(window);
+    const origSetInterval = window.setInterval.bind(window);
+    const origClearInterval = window.clearInterval.bind(window);
+    const origPerfNow = window.performance && window.performance.now ? window.performance.now.bind(window.performance) : null;
+    let fakeNow = ${initialMs};
+    let installed = true;
+    let nextTimerId = 100000;
+    const timers = new Map();
+
+    function FakeDate(...args) {
+      if (!(this instanceof FakeDate)) return new OrigDate(fakeNow).toString();
+      if (args.length === 0) return new OrigDate(fakeNow);
+      return new OrigDate(...args);
+    }
+    FakeDate.prototype = OrigDate.prototype;
+    FakeDate.now = () => (installed ? fakeNow : OrigDate.now());
+    FakeDate.parse = OrigDate.parse;
+    FakeDate.UTC = OrigDate.UTC;
+    Object.setPrototypeOf(FakeDate, OrigDate);
+    window.Date = FakeDate;
+
+    const basePerf = origPerfNow ? origPerfNow() : 0;
+    const baseEpoch = fakeNow;
+    if (window.performance) {
+      try {
+        window.performance.now = () => (installed ? basePerf + (fakeNow - baseEpoch) : (origPerfNow ? origPerfNow() : 0));
+      } catch {}
+    }
+
+    window.setTimeout = (fn, delay = 0, ...args) => {
+      if (!installed) return origSetTimeout(fn, delay, ...args);
+      const id = nextTimerId++;
+      const d = Math.max(0, Number(delay) || 0);
+      timers.set(id, { id, fn, args, due: fakeNow + d, interval: null });
+      return id;
+    };
+    window.clearTimeout = (id) => {
+      timers.delete(id);
+      origClearTimeout(id);
+    };
+    window.setInterval = (fn, delay = 0, ...args) => {
+      if (!installed) return origSetInterval(fn, delay, ...args);
+      const id = nextTimerId++;
+      const d = Math.max(1, Number(delay) || 1);
+      timers.set(id, { id, fn, args, due: fakeNow + d, interval: d });
+      return id;
+    };
+    window.clearInterval = (id) => {
+      timers.delete(id);
+      origClearInterval(id);
+    };
+
+    const runDue = (targetTime, fireTimers) => {
+      while (true) {
+        let next = null;
+        for (const t of timers.values()) {
+          if (t.due <= targetTime && (!next || t.due < next.due)) next = t;
+        }
+        if (!next) break;
+        fakeNow = next.due;
+        if (next.interval !== null) {
+          next.due += next.interval;
+        } else {
+          timers.delete(next.id);
+        }
+        if (fireTimers) {
+          try {
+            if (typeof next.fn === "function") next.fn(...next.args);
+          } catch {}
+        }
+      }
+      fakeNow = targetTime;
+    };
+
+    window.__spanaClock = {
+      setFixedTime(ms) {
+        fakeNow = ms;
+      },
+      fastForward(ms) {
+        runDue(fakeNow + Math.max(0, Number(ms) || 0), true);
+      },
+      runFor(ms) {
+        runDue(fakeNow + Math.max(0, Number(ms) || 0), true);
+      },
+      resume() {
+        installed = false;
+        window.Date = OrigDate;
+        window.setTimeout = origSetTimeout;
+        window.clearTimeout = origClearTimeout;
+        window.setInterval = origSetInterval;
+        window.clearInterval = origClearInterval;
+        if (window.performance && origPerfNow) {
+          try { window.performance.now = origPerfNow; } catch {}
+        }
+        timers.clear();
+        delete window.__spanaClock;
+      },
+    };
+  })();`;
+
+  const parseClockTime = (time?: Date | number | string): number => {
+    if (time === undefined) return Date.now();
+    if (time instanceof Date) return time.getTime();
+    if (typeof time === "number") return time;
+    const parsed = Date.parse(time);
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  };
+
+  const clockClient: BrowserClock = {
+    install: (opts) =>
+      runStep("clock.install", async () => {
+        const initialMs = parseClockTime(opts?.time);
+        const script = buildFakeClockScript(initialMs);
+        if (driver.addInitScript) {
+          await run(driver.addInitScript(script));
+        }
+        await run(driver.evaluate(script)).catch(() => {});
+      }),
+    setFixedTime: (time) =>
+      runStep("clock.setFixedTime", async () => {
+        const ms = parseClockTime(time);
+        const script = buildFakeClockScript(ms);
+        if (driver.addInitScript) {
+          await run(driver.addInitScript(script));
+        }
+        await run(driver.evaluate(script)).catch(() => {});
+      }),
+    fastForward: (ticks) =>
+      runStep(`clock.fastForward(${ticks})`, async () => {
+        await run(
+          driver.evaluate(
+            `(() => { if (!window.__spanaClock) throw new Error("Call app.clock.install() before app.clock.fastForward()"); window.__spanaClock.fastForward(${Number(ticks) || 0}); })()`,
+          ),
+        );
+      }),
+    runFor: (ticks) =>
+      runStep(`clock.runFor(${ticks})`, async () => {
+        await run(
+          driver.evaluate(
+            `(() => { if (!window.__spanaClock) throw new Error("Call app.clock.install() before app.clock.runFor()"); window.__spanaClock.runFor(${Number(ticks) || 0}); })()`,
+          ),
+        );
+      }),
+    resume: () =>
+      runStep("clock.resume", async () => {
+        await run(
+          driver.evaluate(`(() => { if (window.__spanaClock) window.__spanaClock.resume(); })()`),
+        );
+      }),
+  };
+
+  const keyboardClient: BrowserKeyboard = {
+    down: (key) =>
+      runStep(`keyboard.down(${key})`, () =>
+        run(optionalMethod("keyboard.down", driver.keyDown)(key)),
+      ),
+    up: (key) =>
+      runStep(`keyboard.up(${key})`, () => run(optionalMethod("keyboard.up", driver.keyUp)(key))),
+    press: (key) => runStep(`keyboard.press(${key})`, () => run(coord.pressKey(key))),
+    type: (text, opts) =>
+      runStep("keyboard.type", async () => {
+        if (driver.typeText) {
+          await run(driver.typeText(text, opts));
+          return;
+        }
+        for (const ch of Array.from(text)) {
+          await run(driver.pressKey(ch));
+          if (opts?.delay && opts.delay > 0) {
+            await new Promise((r) => setTimeout(r, opts.delay));
+          }
+        }
+      }),
+    insertText: (text) => runStep("keyboard.insertText", () => run(coord.inputText(text))),
+  };
+
+  const mouseClient: BrowserMouse = {
+    move: (x, y) =>
+      runStep(`mouse.move(${x},${y})`, () =>
+        run(optionalMethod("mouse.move", driver.hoverAtCoordinate)(x, y)),
+      ),
+    down: (x, y, opts) =>
+      runStep(`mouse.down(${x},${y})`, () =>
+        run(optionalMethod("mouse.down", driver.mouseDown)(x, y, opts)),
+      ),
+    up: (x, y, opts) =>
+      runStep(`mouse.up(${x},${y})`, () =>
+        run(optionalMethod("mouse.up", driver.mouseUp)(x, y, opts)),
+      ),
+    click: (x, y) => runStep(`mouse.click(${x},${y})`, () => run(coord.tapXY(x, y))),
   };
 
   const appExpect = createPromiseExpect<T, R>(
@@ -719,6 +1077,23 @@ export function createPromiseApp<T extends string = string, R extends string = s
       }),
     inputText: (text) =>
       runStep("inputText", () => run(coord.inputText(text)), { captureScreenshot: true }),
+    type: (text, opts) => keyboardClient.type(text, opts),
+    keyboard: keyboardClient,
+    mouse: mouseClient,
+    clock: clockClient,
+    accessibilityAudit: (auditOpts) =>
+      runStep("accessibilityAudit", () =>
+        run(
+          coord.runAccessibilityAudit(platform ?? "web", {
+            rules: auditOpts?.rules,
+            disableRules: auditOpts?.disableRules,
+            tags: auditOpts?.tags,
+            targetSelector: auditOpts?.targetSelector,
+            includeSelectors: auditOpts?.include,
+            excludeSelectors: auditOpts?.exclude,
+          }),
+        ),
+      ),
     fill: (selector, value, opts) =>
       runStep("fill", () => run(coord.fill(selector, value, opts)), {
         selector,
@@ -746,6 +1121,11 @@ export function createPromiseApp<T extends string = string, R extends string = s
       }),
     focus: (selector, opts) =>
       runStep("focus", () => run(coord.focus(selector, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    blur: (selector, opts) =>
+      runStep("blur", () => run(coord.blur(selector, opts)), {
         selector,
         captureScreenshot: true,
       }),
@@ -893,6 +1273,18 @@ export function createPromiseApp<T extends string = string, R extends string = s
         },
       ),
     back: () => runStep("back", () => run(driver.back()), { captureScreenshot: true }),
+    forward: () =>
+      runStep(
+        "forward",
+        async () => {
+          if (driver.forward) {
+            await run(driver.forward());
+            return;
+          }
+          await run(driver.evaluate("window.history.forward()"));
+        },
+        { captureScreenshot: true },
+      ),
     reload: (opts) =>
       runStep(
         "reload",
@@ -915,10 +1307,56 @@ export function createPromiseApp<T extends string = string, R extends string = s
         `waitForURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
         () => run(coord.waitForURL(expected, opts)),
       ),
+    waitForLoadState: (state = "load", opts) =>
+      runStep(`waitForLoadState(${state})`, () =>
+        run(optionalMethod("waitForLoadState", driver.waitForLoadState)(state, opts)),
+      ),
+    onRequest: (listener) => {
+      if (!driver.onRequest) {
+        throw new DriverError({ message: "onRequest() is only supported on the web platform" });
+      }
+      return driver.onRequest(listener);
+    },
+    waitForRequest: (matcher, opts) =>
+      runStep(
+        `waitForRequest(${typeof matcher === "function" ? "<predicate>" : describeMatcher(matcher)})`,
+        () => run(optionalMethod("waitForRequest", driver.waitForRequest)(matcher, opts)),
+      ),
     waitForResponse: (matcher, opts) =>
       runStep(
         `waitForResponse(${typeof matcher === "function" ? "<predicate>" : describeMatcher(matcher)})`,
         () => run(optionalMethod("waitForResponse", driver.waitForResponse)(matcher, opts)),
+      ),
+    waitForFunction: (<Result = unknown>(
+      fn: ((...args: any[]) => Result | Promise<Result>) | string,
+      arg?: unknown,
+      opts?: { timeout?: number; pollInterval?: number },
+    ): Promise<Awaited<Result>> =>
+      runStep(`waitForFunction`, async () => {
+        const timeout = opts?.timeout ?? config.defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? 100;
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          const val =
+            arg === undefined
+              ? await run(driver.evaluate(fn as any))
+              : await run(driver.evaluate(fn as any, arg));
+          if (val) return val;
+          await new Promise((r) => setTimeout(r, pollInterval));
+        }
+        throw new DriverError({ message: `waitForFunction() timed out after ${timeout}ms` });
+      }) as Promise<Awaited<Result>>) as PromiseApp<T, R>["waitForFunction"],
+    waitForPopup: (triggerFn, opts) =>
+      runStep("waitForPopup", () =>
+        run(optionalMethod("waitForPopup", driver.waitForPopup)(triggerFn, opts)),
+      ),
+    addInitScript: (script, ...args) =>
+      runStep("addInitScript", () =>
+        run(optionalMethod("addInitScript", driver.addInitScript)(script, ...args)),
+      ),
+    exposeFunction: (name, fn) =>
+      runStep(`exposeFunction(${name})`, () =>
+        run(optionalMethod("exposeFunction", driver.exposeFunction)(name, fn)),
       ),
     takeScreenshot: (name) =>
       runScreenshotStep(
@@ -926,10 +1364,16 @@ export function createPromiseApp<T extends string = string, R extends string = s
         () => run(driver.takeScreenshot()),
         { name },
       ),
-    evaluate: <Result = unknown>(fn: ((...args: any[]) => Result) | string, ...args: any[]) =>
+    evaluate: ((fn: ((...args: any[]) => any) | string, ...args: any[]) =>
+      runStep(formatEvaluateCommand(fn), () =>
+        run(driver.evaluate(fn as any, ...args)),
+      )) as PromiseApp<T, R>["evaluate"],
+    route: (matcher, handler) =>
       runStep(
-        formatEvaluateCommand(fn),
-        () => run(driver.evaluate(fn as any, ...args)) as Promise<Result>,
+        "route",
+        () =>
+          driver.route ? run(driver.route(matcher, handler)) : unsupportedNetworkFeature("route"),
+        { selector: { matcher: describeMatcher(matcher) } },
       ),
     mockNetwork: (matcher, response) =>
       runStep(
@@ -1082,6 +1526,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
         uncheck: (sel, opts) => appObj.uncheck(scoped(sel), opts),
         selectOption: (sel, option, opts) => appObj.selectOption(scoped(sel), option, opts),
         focus: (sel, opts) => appObj.focus(scoped(sel), opts),
+        blur: (sel, opts) => appObj.blur(scoped(sel), opts),
         dragTo: (source, target, opts) => appObj.dragTo(scoped(source), scoped(target), opts),
         uploadFile: (sel, path) => appObj.uploadFile(scoped(sel), path),
         getText: (sel, opts) => appObj.getText(scoped(sel), opts),

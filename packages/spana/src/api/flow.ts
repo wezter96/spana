@@ -27,21 +27,36 @@ export interface FlowDefaults {
   hierarchyCacheTtl?: number;
 }
 
+export interface FlowAnnotation {
+  type: string;
+  description?: string;
+}
+
 export interface FlowConfig<R extends string = string> {
   tags?: string[];
+  /** Optional structured annotations included in JSON and JUnit reports. */
+  annotations?: FlowAnnotation[];
   platforms?: Platform[];
   timeout?: number;
   autoLaunch?: boolean; // default true
   /** Per-flow launch defaults. Merged with project launchOptions and manual app.launch() calls. */
   launchOptions?: LaunchOptions<R>;
+  /** Per-flow viewport applied before the first navigation on web. */
+  viewport?: { width: number; height: number };
+  /** Per-flow locale applied before the first navigation on web (e.g. `"sv-SE"`). */
+  locale?: string;
   artifacts?: ArtifactConfig;
   when?: WhenCondition;
   skip?: FlowSkipCondition;
   fixme?: FlowSkipCondition;
+  /** Mark this flow as expected to fail (Playwright `test.fail()`). Fails the run if the flow passes unexpectedly. */
+  fail?: FlowSkipCondition;
   only?: boolean;
   retries?: number;
   /** Per-flow overrides for timing defaults. Merged with global defaults. */
   defaults?: FlowDefaults;
+  /** Internal serial suite identifier (set by `suite.serial()` / `suite(name, { mode: "serial" })`). */
+  serialGroup?: string;
 }
 
 export interface FlowContext<T extends string = string, R extends string = string> {
@@ -49,6 +64,10 @@ export interface FlowContext<T extends string = string, R extends string = strin
   expect: PromiseExpectFn<T>;
   platform: Platform;
   sessions: Sessions;
+  /** Zero-based unique worker index across all workers/processes in the run (like Playwright `testInfo.workerIndex`). */
+  workerIndex: number;
+  /** Zero-based slot index within active parallel workers (`0..workers-1`, like Playwright `testInfo.parallelIndex`). */
+  parallelIndex: number;
   /** First-class verified replay-cache AI agent fixture (`agent.act()`, `agent.verify()`, `agent.extract()`). */
   agent?: FlowAgent;
   /** Group related actions into a named nested step in reports and Trace Viewer. */
@@ -87,7 +106,7 @@ export function flow<T extends string = string, R extends string = string>(
   return { name, fn: maybeFn!, config: configOrFn };
 }
 
-function modifyFlow(modifier: "skip" | "fixme" | "only") {
+function modifyFlow(modifier: "skip" | "fixme" | "only" | "fail") {
   function modified<T extends string = string, R extends string = string>(
     name: string,
     fn: FlowFn<T, R>,
@@ -113,6 +132,7 @@ export namespace flow {
   export const skip = modifyFlow("skip");
   export const fixme = modifyFlow("fixme");
   export const only = modifyFlow("only");
+  export const fail = modifyFlow("fail");
 }
 
 /** Helper to create a typed flow function for your project. */

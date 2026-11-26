@@ -1,5 +1,5 @@
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Reporter, FlowResult, RunSummary } from "./types.js";
 
 function escapeXml(str: string): string {
@@ -42,6 +42,23 @@ function buildJUnitXML(summary: RunSummary): string {
       lines.push(
         `    <testcase name="${escapeXml(result.name)}" classname="spana.${escapeXml(platform)}" time="${time}">`,
       );
+
+      const props: Array<{ name: string; value: string }> = [];
+      for (const tag of result.tags ?? []) {
+        props.push({ name: "tag", value: tag });
+      }
+      for (const ann of result.annotations ?? []) {
+        props.push({ name: ann.type, value: ann.description ?? "" });
+      }
+      if (props.length > 0) {
+        lines.push(`      <properties>`);
+        for (const prop of props) {
+          lines.push(
+            `        <property name="${escapeXml(prop.name)}" value="${escapeXml(prop.value)}"/>`,
+          );
+        }
+        lines.push(`      </properties>`);
+      }
 
       if (result.status === "failed" && result.error) {
         lines.push(`      <failure message="${escapeXml(result.error.message)}">`);
@@ -106,12 +123,13 @@ function buildSystemOut(result: FlowResult): string | undefined {
   return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
-export function createJUnitReporter(outputDir: string = "./spana-output"): Reporter {
+export function createJUnitReporter(outputDirOrFile: string = "./spana-output"): Reporter {
   return {
     onRunComplete(summary) {
       const xml = buildJUnitXML(summary);
-      mkdirSync(outputDir, { recursive: true });
-      const outputPath = join(outputDir, "junit-report.xml");
+      const isFile = outputDirOrFile.endsWith(".xml");
+      const outputPath = isFile ? outputDirOrFile : join(outputDirOrFile, "junit-report.xml");
+      mkdirSync(dirname(outputPath), { recursive: true });
       writeFileSync(outputPath, xml, "utf-8");
       console.log(`JUnit report written to ${outputPath}`);
     },

@@ -108,6 +108,10 @@ export interface FlowResult {
   scenarioSteps?: ScenarioStepResult[];
   /** Worker/device name when running in parallel mode. */
   workerName?: string;
+  /** Tags configured on the flow (for traceability, filtering, and reporting). */
+  tags?: string[];
+  /** Custom annotations attached to the flow (reported in JSON & JUnit `<properties>`). */
+  annotations?: Array<{ type: string; description?: string }>;
 }
 
 /** Aggregate summary of a complete test run across all platforms. */

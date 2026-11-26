@@ -25,6 +25,8 @@ export async function step<A>(name: string, fn: () => Promise<A>): Promise<A> {
 }
 
 export interface SuiteConfig<R extends string = string> extends FlowConfig<R> {
+  /** Execution mode: `"serial"` runs flows in order on one worker and skips remaining flows after a failure. */
+  mode?: "default" | "serial";
   /** Hook executed once before the first flow in this suite runs. */
   beforeAll?: (ctx: FlowContext<any, R>) => Promise<void>;
   /** Hook executed before every flow in this suite. */
@@ -44,6 +46,8 @@ export interface SuiteBuilder<T extends string = string, R extends string = stri
   only(name: string, config: FlowConfig<R>, fn: FlowFn<T, R>): void;
   fixme(name: string, fn: FlowFn<T, R>): void;
   fixme(name: string, config: FlowConfig<R>, fn: FlowFn<T, R>): void;
+  fail(name: string, fn: FlowFn<T, R>): void;
+  fail(name: string, config: FlowConfig<R>, fn: FlowFn<T, R>): void;
   beforeAll(fn: (ctx: FlowContext<T, R>) => Promise<void>): void;
   beforeEach(fn: (ctx: FlowContext<T, R>) => Promise<void>): void;
   afterEach(fn: (ctx: FlowContext<T, R>) => Promise<void>): void;
@@ -85,6 +89,8 @@ function mergeFlowConfigs<R extends string>(
  * });
  * ```
  */
+let serialGroupCounter = 0;
+
 export function suite<T extends string = string, R extends string = string>(
   name: string,
   define: (s: SuiteBuilder<T, R>) => void,
@@ -103,12 +109,21 @@ export function suite<T extends string = string, R extends string = string>(
   const define = typeof configOrDefine === "function" ? configOrDefine : maybeDefine!;
 
   const {
+    mode,
     beforeAll: cfgBeforeAll,
     beforeEach: cfgBeforeEach,
     afterEach: cfgAfterEach,
     afterAll: cfgAfterAll,
-    ...baseFlowConfig
+    ...restFlowConfig
   } = suiteConfig;
+  const serialGroup =
+    mode === "serial"
+      ? (restFlowConfig.serialGroup ?? `serial:${++serialGroupCounter}:${name}`)
+      : restFlowConfig.serialGroup;
+  const baseFlowConfig: FlowConfig<R> = {
+    ...restFlowConfig,
+    ...(serialGroup ? { serialGroup } : {}),
+  };
 
   const beforeAllHooks: Array<(ctx: FlowContext<T, R>) => Promise<void>> = cfgBeforeAll
     ? [cfgBeforeAll]
@@ -129,7 +144,7 @@ export function suite<T extends string = string, R extends string = string>(
     flowName: string,
     configOrFn: FlowConfig<R> | FlowFn<T, R>,
     maybeFn?: FlowFn<T, R>,
-    modifier?: "skip" | "only" | "fixme",
+    modifier?: "skip" | "only" | "fixme" | "fail",
   ) => {
     const childCfg: FlowConfig<R> = typeof configOrFn === "function" ? {} : configOrFn;
     const fn = typeof configOrFn === "function" ? configOrFn : maybeFn!;
@@ -156,6 +171,9 @@ export function suite<T extends string = string, R extends string = string>(
     },
     fixme(flowName: string, a: FlowConfig<R> | FlowFn<T, R>, b?: FlowFn<T, R>) {
       registerFlow(flowName, a, b, "fixme");
+    },
+    fail(flowName: string, a: FlowConfig<R> | FlowFn<T, R>, b?: FlowFn<T, R>) {
+      registerFlow(flowName, a, b, "fail");
     },
     beforeAll(fn) {
       beforeAllHooks.push(fn);
@@ -230,4 +248,26 @@ export function suite<T extends string = string, R extends string = string>(
       fn: wrappedFn,
     };
   });
+}
+
+export namespace suite {
+  export function serial<T extends string = string, R extends string = string>(
+    name: string,
+    define: (s: SuiteBuilder<T, R>) => void,
+  ): FlowDefinition<T, R>[];
+  export function serial<T extends string = string, R extends string = string>(
+    name: string,
+    config: Omit<SuiteConfig<R>, "mode">,
+    define: (s: SuiteBuilder<T, R>) => void,
+  ): FlowDefinition<T, R>[];
+  export function serial<T extends string = string, R extends string = string>(
+    name: string,
+    configOrDefine: Omit<SuiteConfig<R>, "mode"> | ((s: SuiteBuilder<T, R>) => void),
+    maybeDefine?: (s: SuiteBuilder<T, R>) => void,
+  ): FlowDefinition<T, R>[] {
+    if (typeof configOrDefine === "function") {
+      return suite<T, R>(name, { mode: "serial" }, configOrDefine);
+    }
+    return suite<T, R>(name, { ...configOrDefine, mode: "serial" }, maybeDefine!);
+  }
 }

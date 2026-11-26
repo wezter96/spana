@@ -181,6 +181,16 @@ export interface WebExecutionConfig {
   reducedMotion?: "reduce" | "no-preference";
   /** Emulate IANA timezone ID on Chromium launch (e.g. `"America/New_York"`). */
   timezoneId?: string;
+  /** Emulate browser locale / Accept-Language (e.g. `"sv-SE"`, `"en-US"`). */
+  locale?: string;
+  /** Default viewport dimensions applied before first navigation (default: 1280×720). */
+  viewport?: { width: number; height: number };
+  /** Extra Chromium CLI arguments passed when launching the browser (e.g. `--use-fake-device-for-media-stream`). */
+  args?: string[];
+  /** Timeout in ms when waiting for the browser debugging endpoint to start (default: 30000). */
+  launchTimeout?: number;
+  /** Timeout in ms for `app.evaluate()` / CDP `Runtime.evaluate` calls (default: 10000). */
+  evaluateTimeout?: number;
 }
 
 export interface CloudAppReferenceConfig {
@@ -333,6 +343,8 @@ export interface ProvConfig {
     failFastWhenIdle?: boolean;
     /** Consecutive stable animation frames required before pointer actions on web. Default: 2. Set 0 to disable. */
     actionStableFrames?: number;
+    /** Default timeout in ms for `expect(fn).toPass()` and `expect.poll()`. Defaults to remaining flow timeout. */
+    toPassTimeout?: number;
   };
   platforms?: Platform[];
   /** Run platforms concurrently when they use independent resources. Default: false (serial). */
@@ -568,6 +580,17 @@ const webExecutionConfigSchema = z
     colorScheme: z.enum(["dark", "light", "no-preference"]).optional(),
     reducedMotion: z.enum(["reduce", "no-preference"]).optional(),
     timezoneId: z.string().min(1).optional(),
+    locale: z.string().min(1).optional(),
+    viewport: z
+      .object({
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
+    args: z.array(z.string()).optional(),
+    launchTimeout: z.number().positive().optional(),
+    evaluateTimeout: z.number().positive().optional(),
   })
   .strict();
 
@@ -649,6 +672,7 @@ export const provConfigSchema = z
         locale: z.string().min(1).optional(),
         failFastWhenIdle: z.boolean().optional(),
         actionStableFrames: z.number().int().nonnegative().optional(),
+        toPassTimeout: z.number().positive().optional(),
       })
       .strict()
       .optional(),

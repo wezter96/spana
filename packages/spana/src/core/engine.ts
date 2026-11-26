@@ -85,6 +85,8 @@ export interface TestResult {
   attachments?: Attachment[];
   steps?: StepResult[];
   scenarioSteps?: ScenarioStepResult[];
+  tags?: string[];
+  annotations?: Array<{ type: string; description?: string }>;
 }
 
 export interface EngineConfig {
@@ -93,6 +95,12 @@ export interface EngineConfig {
   coordinatorConfig: CoordinatorConfig;
   autoLaunch?: boolean;
   flowTimeout?: number;
+  /** Default timeout for `expect(fn).toPass()` / `expect.poll()`. Defaults to remaining flow timeout. */
+  toPassTimeout?: number;
+  /** Zero-based unique worker index across all workers/processes. */
+  workerIndex?: number;
+  /** Zero-based slot index within active parallel workers (`0..workers-1`). */
+  parallelIndex?: number;
   artifactConfig?: ArtifactConfig;
   launchOptions?: LaunchOptions;
   hooks?: ProvConfig["hooks"];
@@ -150,11 +158,33 @@ export async function executeFlow(
       { cause: hardFailure ?? softFailures[0] },
     );
   };
+  const workerOffset = Number.parseInt(process.env.SPANA_WORKER_INDEX_OFFSET ?? "0", 10) || 0;
+  const workerIndex = config.workerIndex ?? workerOffset;
+  const parallelIndex = config.parallelIndex ?? workerIndex;
+
+  const isExpectedToFail = (() => {
+    const cond = flow.config.fail;
+    if (!cond) return false;
+    if (cond === true) return true;
+    if (typeof cond === "object") {
+      const platforms = [cond.platform ?? []].flat();
+      return (
+        (!platforms.length || platforms.includes(platform)) &&
+        (!cond.env || Boolean(process.env[cond.env]))
+      );
+    }
+    return false;
+  })();
+
+  const flowTags = flow.config.tags;
+  const flowAnnotations = flow.config.annotations;
   const flowMeta = {
     flowFilePath: flow.sourcePath ?? "",
     flowName: flow.name,
     platform,
     updateBaselines: config.updateBaselines ?? false,
+    flowDeadlineMs: start + timeout,
+    toPassTimeout: config.toPassTimeout,
     recordSoftFailure: (error: unknown) => {
       softFailures.push(error);
     },
@@ -188,6 +218,8 @@ export async function executeFlow(
     app,
     expect,
     platform,
+    workerIndex,
+    parallelIndex,
     agent,
     step: recordNamedStep,
     updateBaselines: flowMeta.updateBaselines,
@@ -385,12 +417,35 @@ export async function executeFlow(
       attachments,
       steps,
       scenarioSteps: flowCtx.__scenarioSteps,
+      ...(flowTags ? { tags: flowTags } : {}),
+      ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
     };
   };
 
   if (driver.beginFlow) {
     try {
       await Effect.runPromise(driver.beginFlow(flow.name));
+    } catch (error) {
+      return buildFailureResult(error);
+    }
+  }
+
+  // Apply per-flow viewport and locale overrides before first navigation
+  if (flow.config.viewport && driver.setViewport) {
+    try {
+      await Effect.runPromise(
+        driver.setViewport({
+          width: flow.config.viewport.width,
+          height: flow.config.viewport.height,
+        }),
+      );
+    } catch (error) {
+      return buildFailureResult(error);
+    }
+  }
+  if (flow.config.locale && driver.setEmulation) {
+    try {
+      await Effect.runPromise(driver.setEmulation({ locale: flow.config.locale }));
     } catch (error) {
       return buildFailureResult(error);
     }
@@ -441,7 +496,7 @@ export async function executeFlow(
   // beforeEach hook — if it throws, abort without running the flow
   if (config.hooks?.beforeEach) {
     try {
-      await config.hooks.beforeEach({ app, platform } as any);
+      await config.hooks.beforeEach({ app, expect, platform, workerIndex, parallelIndex } as any);
     } catch (error) {
       return buildFailureResult(error);
     }
@@ -469,6 +524,12 @@ export async function executeFlow(
       throw softFailureError;
     }
 
+    if (isExpectedToFail) {
+      throw new Error(
+        `Flow "${flow.name}" was marked as expected to fail (flow.fail), but it passed unexpectedly.`,
+      );
+    }
+
     agent.finalize(true);
     const attachments = await captureArtifacts(
       driver,
@@ -491,81 +552,111 @@ export async function executeFlow(
       attachments,
       steps,
       scenarioSteps: flowCtx.__scenarioSteps,
+      ...(flowTags ? { tags: flowTags } : {}),
+      ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
     };
   } catch (error) {
-    agent.finalize(false);
-    const attachments = await captureArtifacts(
-      driver,
-      artifactConfig,
-      flow.name,
-      platform,
-      "failed",
-    );
-    await captureCoverage(attachments, "failed");
-    const steps = stepRecorder.getSteps();
-    const durationMs = Date.now() - start;
-    await finalizeRecording("failed", attachments, steps, durationMs);
-
-    const normalized = error instanceof Error ? error : new Error(String(error));
-    const flowError =
-      softFailures.length > 0 && error !== softFailureError
-        ? aggregateFailures(normalized)
-        : normalized;
-    await writeRichTraceIfEnabled("failed", attachments, steps, durationMs, {
-      message: flowError.message,
-      stack: flowError.stack,
-    });
-    result = {
-      name: flow.name,
-      platform,
-      status: "failed",
-      durationMs,
-      error: classifyError(flowError, {
-        flowFilePath: flow.sourcePath,
-        fallbackStack: stepRecorder.getLastFailureStack?.(),
-      }),
-      attachments,
-      steps,
-      scenarioSteps: flowCtx.__scenarioSteps,
-    };
-
-    // Write structured failure bundle alongside artifacts
-    if (artifactConfig.captureOnFailure && result.error) {
-      try {
-        const artDir = join(
-          artifactConfig.outputDir,
-          `${
-            flow.name
-              .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
-              .replaceAll(/_+/g, "_")
-              .slice(0, 80) || "artifact"
-          }-${platform}`,
-        );
-        const bundle = createFailureBundle(
-          flow.name,
-          platform,
-          stepRecorder.getSteps(),
-          result.error,
-          artDir,
-          attachments,
-          flow.sourcePath,
-        );
-        writeFailureBundle(bundle, artDir);
-      } catch {
-        // Bundle writing is best-effort — don't block test execution
-      }
-    }
-
-    if (config.debugOnFailure) {
-      await runDebugReplOnce({
-        app,
-        expect,
-        driver,
-        error: flowError,
-        flowName: flow.name,
+    const isUnexpectedPass =
+      isExpectedToFail &&
+      error instanceof Error &&
+      error.message.includes("was marked as expected to fail (flow.fail)");
+    if (isExpectedToFail && !isUnexpectedPass) {
+      agent.finalize(true);
+      const steps = stepRecorder.getSteps();
+      const durationMs = Date.now() - start;
+      result = {
+        name: flow.name,
         platform,
-        parseHierarchy: coordinatorConfig.parse,
+        status: "passed",
+        durationMs,
+        steps,
+        scenarioSteps: flowCtx.__scenarioSteps,
+        ...(flowTags ? { tags: flowTags } : {}),
+        annotations: [
+          ...(flowAnnotations ?? []),
+          {
+            type: "fail",
+            description: error instanceof Error ? error.message : String(error),
+          },
+        ],
+      };
+    } else {
+      agent.finalize(false);
+      const attachments = await captureArtifacts(
+        driver,
+        artifactConfig,
+        flow.name,
+        platform,
+        "failed",
+      );
+      await captureCoverage(attachments, "failed");
+      const steps = stepRecorder.getSteps();
+      const durationMs = Date.now() - start;
+      await finalizeRecording("failed", attachments, steps, durationMs);
+
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      const flowError =
+        softFailures.length > 0 && error !== softFailureError
+          ? aggregateFailures(normalized)
+          : normalized;
+      await writeRichTraceIfEnabled("failed", attachments, steps, durationMs, {
+        message: flowError.message,
+        stack: flowError.stack,
       });
+      result = {
+        name: flow.name,
+        platform,
+        status: "failed",
+        durationMs,
+        error: classifyError(flowError, {
+          flowFilePath: flow.sourcePath,
+          fallbackStack: stepRecorder.getLastFailureStack?.(),
+        }),
+        attachments,
+        steps,
+        scenarioSteps: flowCtx.__scenarioSteps,
+        ...(flowTags ? { tags: flowTags } : {}),
+        ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
+      };
+
+      // Write structured failure bundle alongside artifacts
+      if (artifactConfig.captureOnFailure && result.error) {
+        try {
+          const artDir = join(
+            artifactConfig.outputDir,
+            `${
+              flow.name
+                .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
+                .replaceAll(/_+/g, "_")
+                .slice(0, 80) || "artifact"
+            }-${platform}`,
+          );
+          const bundle = createFailureBundle(
+            flow.name,
+            platform,
+            stepRecorder.getSteps(),
+            result.error,
+            artDir,
+            attachments,
+            flow.sourcePath,
+          );
+          writeFailureBundle(bundle, artDir);
+        } catch {
+          // Bundle writing is best-effort — don't block test execution
+        }
+      }
+
+      if (config.debugOnFailure) {
+        await runDebugReplOnce({
+          app,
+          expect,
+          driver,
+          error: flowError,
+          flowName: flow.name,
+          platform,
+          parseHierarchy: coordinatorConfig.parse,
+        });
+      }
     }
   }
 
@@ -586,7 +677,14 @@ export async function executeFlow(
   // afterEach hook — always runs, errors are warnings only
   if (config.hooks?.afterEach) {
     try {
-      await config.hooks.afterEach({ app, platform, result } as any);
+      await config.hooks.afterEach({
+        app,
+        expect,
+        platform,
+        workerIndex,
+        parallelIndex,
+        result,
+      } as any);
     } catch (hookError) {
       console.warn(
         `afterEach hook failed: ${hookError instanceof Error ? hookError.message : hookError}`,

@@ -61,54 +61,65 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
     durationHintsMs,
     claimNextFlow,
   } = config;
-  const flows = orderFlowsLongestFirst(focusFlows(rawFlows), durationHintsMs);
+  const orderedFlows = orderFlowsLongestFirst(focusFlows(rawFlows), durationHintsMs);
+  // Group serial suites into indivisible work units so serial flows run in order on one worker
+  // and skip the remaining flows in that serial suite after the first failure.
+  type WorkUnit = FlowDefinition[];
+  const workUnits: WorkUnit[] = [];
+  if (!claimNextFlow) {
+    const serialIndexByGroup = new Map<string, number>();
+    for (const f of orderedFlows) {
+      const sg = f.config.serialGroup;
+      if (sg) {
+        const existingIdx = serialIndexByGroup.get(sg);
+        if (existingIdx !== undefined) {
+          workUnits[existingIdx]!.push(f);
+        } else {
+          serialIndexByGroup.set(sg, workUnits.length);
+          workUnits.push([f]);
+        }
+      } else {
+        workUnits.push([f]);
+      }
+    }
+  }
   const start = Date.now();
   const results: TestResult[] = [];
-  let nextFlowIndex = 0;
+  let nextUnitIndex = 0;
   let failureCount = 0;
   let bailedOut = false;
+  const workerOffset = Number.parseInt(process.env.SPANA_WORKER_INDEX_OFFSET ?? "0", 10) || 0;
 
   // Each worker pulls from the shared queue (local or cross-process HTTP work-stealing)
-  const workerPromises = workers.map(async (worker) => {
+  const workerPromises = workers.map(async (worker, localIdx) => {
     const stats = { flowCount: 0, totalMs: 0 };
+    const workerEngineConfig: EngineConfig = {
+      ...worker.engineConfig,
+      workerIndex: worker.engineConfig.workerIndex ?? workerOffset + localIdx,
+      parallelIndex: worker.engineConfig.parallelIndex ?? localIdx,
+    };
 
-    while (true) {
-      // Check bail before picking up a new flow
-      if (bail !== undefined && failureCount >= bail) break;
-
-      let flow: FlowDefinition | undefined;
-      if (claimNextFlow) {
-        const claimed = await claimNextFlow();
-        if (!claimed) break;
-        flow = claimed;
-      } else {
-        // Atomic: grab next flow index
-        const flowIdx = nextFlowIndex++;
-        if (flowIdx >= flows.length) break;
-        flow = flows[flowIdx]!;
-      }
-      const skip = getFlowSkip(flow, worker.engineConfig.platform);
+    const runOne = async (flow: FlowDefinition): Promise<TestResult> => {
+      const skip = getFlowSkip(flow, workerEngineConfig.platform);
       if (skip) {
         results.push(skip);
         onFlowComplete?.(skip, worker.name);
-        continue;
+        return skip;
       }
       const flowRetries = flow.config.retries ?? retries;
-
       onFlowStart?.(flow.name, worker.name);
 
-      let result = await executeFlow(flow, worker.driver, worker.engineConfig);
+      let result = await executeFlow(flow, worker.driver, workerEngineConfig);
       let attempts = 1;
       while (result.status === "failed" && attempts <= flowRetries) {
         if (retryDelay > 0) {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
 
-        result = await executeFlow(flow, worker.driver, worker.engineConfig);
+        result = await executeFlow(flow, worker.driver, workerEngineConfig);
         attempts++;
       }
 
-      // Mark flaky if it eventually passed after failing
       if (result.status === "passed" && attempts > 1) {
         result.flaky = true;
       }
@@ -123,6 +134,45 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
       }
 
       onFlowComplete?.(result, worker.name);
+      return result;
+    };
+
+    while (true) {
+      // Check bail before picking up a new unit
+      if (bail !== undefined && failureCount >= bail) break;
+
+      if (claimNextFlow) {
+        const claimed = await claimNextFlow();
+        if (!claimed) break;
+        await runOne(claimed);
+        continue;
+      }
+
+      const unitIdx = nextUnitIndex++;
+      if (unitIdx >= workUnits.length) break;
+      const unit = workUnits[unitIdx]!;
+      let serialFailed = false;
+      for (const flow of unit) {
+        if (serialFailed) {
+          const skipped: TestResult = {
+            name: flow.name,
+            platform: workerEngineConfig.platform,
+            status: "skipped",
+            skipReason: "Skipped because an earlier flow in this serial suite failed",
+            durationMs: 0,
+            ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+            ...(flow.config.annotations ? { annotations: flow.config.annotations } : {}),
+          };
+          results.push(skipped);
+          onFlowComplete?.(skipped, worker.name);
+          continue;
+        }
+        if (bail !== undefined && failureCount >= bail) break;
+        const res = await runOne(flow);
+        if (res.status === "failed" && unit.length > 1) {
+          serialFailed = true;
+        }
+      }
     }
 
     return { workerId: worker.id, stats };
@@ -133,17 +183,20 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
   // Mark remaining un-processed flows as skipped if bailed out (local queue only)
   if (!claimNextFlow && bail !== undefined && failureCount >= bail) {
     bailedOut = true;
-    while (nextFlowIndex < flows.length) {
-      const flow = flows[nextFlowIndex++]!;
-      results.push(
-        getFlowSkip(flow, workers[0]!.engineConfig.platform) ?? {
-          name: flow.name,
-          platform: workers[0]!.engineConfig.platform,
-          status: "skipped",
-          durationMs: 0,
-          attempts: 0,
-        },
-      );
+    while (nextUnitIndex < workUnits.length) {
+      const unit = workUnits[nextUnitIndex++]!;
+      for (const flow of unit) {
+        results.push(
+          getFlowSkip(flow, workers[0]!.engineConfig.platform) ?? {
+            name: flow.name,
+            platform: workers[0]!.engineConfig.platform,
+            status: "skipped",
+            durationMs: 0,
+            attempts: 0,
+            ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+          },
+        );
+      }
     }
   }
 

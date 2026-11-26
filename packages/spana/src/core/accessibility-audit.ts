@@ -34,18 +34,57 @@ const WEB_TAG_ROLE_MAP: Record<string, string> = {
   h4: "heading",
   h5: "heading",
   h6: "heading",
-  input: "textfield",
-  textarea: "textfield",
+  textarea: "textbox",
   select: "combobox",
-  img: "image",
+  img: "img",
   nav: "navigation",
   main: "main",
+  header: "banner",
+  footer: "contentinfo",
+  aside: "complementary",
+  article: "article",
+  section: "region",
+  form: "form",
+  table: "table",
+  tr: "row",
+  td: "cell",
+  th: "columnheader",
+  ul: "list",
+  ol: "list",
+  li: "listitem",
+  dialog: "dialog",
+  progress: "progressbar",
+  hr: "separator",
+  option: "option",
 };
+
+function resolveHtmlInputRole(attributes: Record<string, string>): string {
+  const inputType = (attributes["type"] ?? "text").toLowerCase();
+  switch (inputType) {
+    case "checkbox":
+      return "checkbox";
+    case "radio":
+      return "radio";
+    case "button":
+    case "submit":
+    case "reset":
+    case "image":
+      return "button";
+    case "search":
+      return attributes["list"] ? "combobox" : "searchbox";
+    case "number":
+      return "spinbutton";
+    case "range":
+      return "slider";
+    default:
+      return attributes["list"] ? "combobox" : "textbox";
+  }
+}
 
 const ANDROID_CLASS_ROLE_MAP: Record<string, string> = {
   "android.widget.Button": "button",
-  "android.widget.EditText": "textfield",
-  "android.widget.ImageView": "image",
+  "android.widget.EditText": "textbox",
+  "android.widget.ImageView": "img",
   "android.widget.CheckBox": "checkbox",
   "android.widget.Switch": "switch",
 };
@@ -56,8 +95,8 @@ const IOS_TRAIT_ROLE_MAP: Record<string, string> = {
   header: "heading",
   link: "link",
   XCUIElementTypeLink: "link",
-  image: "image",
-  XCUIElementTypeImage: "image",
+  image: "img",
+  XCUIElementTypeImage: "img",
   staticText: "text",
   XCUIElementTypeStaticText: "text",
 };
@@ -71,8 +110,19 @@ export function normalizeRole(
     case "web":
     case "electron":
     case "electrobun": {
-      if (attributes["role"]) return attributes["role"];
-      return WEB_TAG_ROLE_MAP[elementType.toLowerCase()] ?? elementType;
+      if (attributes["role"]) return attributes["role"].trim().split(/\s+/)[0]!;
+      const tag = elementType.toLowerCase();
+      if (tag === "input") return resolveHtmlInputRole(attributes);
+      if (tag === "a" && !("href" in attributes) && Object.keys(attributes).length > 0) {
+        return "generic";
+      }
+      if (
+        tag === "select" &&
+        (attributes["multiple"] !== undefined || Number(attributes["size"]) > 1)
+      ) {
+        return "listbox";
+      }
+      return WEB_TAG_ROLE_MAP[tag] ?? elementType;
     }
     case "android": {
       return ANDROID_CLASS_ROLE_MAP[elementType] ?? elementType;

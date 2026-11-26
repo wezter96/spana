@@ -71,6 +71,10 @@ export type ObjectSelector<T extends string = string> =
   | ({ testID: T } & SelectorModifiers<T>)
   | ({ text: string; systemUI?: boolean; exact?: boolean } & SelectorModifiers<T>)
   | ({ accessibilityLabel: string; systemUI?: boolean } & SelectorModifiers<T>)
+  | ({ label: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
+  | ({ placeholder: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
+  | ({ altText: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
+  | ({ title: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
   | ({
       role: string;
       name?: string | RegExp;
@@ -80,6 +84,7 @@ export type ObjectSelector<T extends string = string> =
     } & SelectorModifiers<T>)
   | ({ css: string } & SelectorModifiers<T>)
   | ({ anyOf: Selector<T>[] } & SelectorModifiers<T>)
+  | ({ allOf: Selector<T>[] } & SelectorModifiers<T>)
   | { point: { x: number; y: number } };
 
 /**
@@ -167,6 +172,65 @@ export function byCss<T extends string = string>(
   opts?: SelectorModifiers<T>,
 ): ObjectSelector<T> {
   return { css, ...opts };
+}
+
+/** Find a form control by its associated `<label>`, `aria-labelledby`, or `aria-label` (Playwright `getByLabel`). */
+export function byLabel<T extends string = string>(
+  label: string | RegExp,
+  opts?: { exact?: boolean } & SelectorModifiers<T>,
+): ObjectSelector<T> {
+  return { label, ...opts };
+}
+
+/** Find an input/textarea by its `placeholder` attribute (Playwright `getByPlaceholder`). */
+export function byPlaceholder<T extends string = string>(
+  placeholder: string | RegExp,
+  opts?: { exact?: boolean } & SelectorModifiers<T>,
+): ObjectSelector<T> {
+  return { placeholder, ...opts };
+}
+
+/** Find an element by its `alt` attribute (Playwright `getByAltText`). */
+export function byAltText<T extends string = string>(
+  altText: string | RegExp,
+  opts?: { exact?: boolean } & SelectorModifiers<T>,
+): ObjectSelector<T> {
+  return { altText, ...opts };
+}
+
+/** Find an element by its `title` attribute (Playwright `getByTitle`). */
+export function byTitle<T extends string = string>(
+  title: string | RegExp,
+  opts?: { exact?: boolean } & SelectorModifiers<T>,
+): ObjectSelector<T> {
+  return { title, ...opts };
+}
+
+/** Match elements satisfying ALL of the provided selectors (Playwright `locatorA.and(locatorB)`). */
+export function and<T extends string = string>(...selectors: Selector<T>[]): ObjectSelector<T> {
+  const flat: Selector<T>[] = [];
+  for (const s of selectors) {
+    if (
+      typeof s === "object" &&
+      s !== null &&
+      "allOf" in s &&
+      Array.isArray(s.allOf) &&
+      !("within" in s && s.within) &&
+      !("frame" in s && s.frame) &&
+      !("hasText" in s && s.hasText !== undefined) &&
+      !("hasNotText" in s && s.hasNotText !== undefined) &&
+      !("has" in s && s.has !== undefined) &&
+      !("hasNot" in s && s.hasNot !== undefined) &&
+      !("first" in s && s.first) &&
+      !("last" in s && s.last) &&
+      !("nth" in s && s.nth !== undefined)
+    ) {
+      flat.push(...s.allOf);
+    } else {
+      flat.push(s);
+    }
+  }
+  return { allOf: flat };
 }
 
 /** Match elements satisfying ANY of the provided selectors (Playwright `locatorA.or(locatorB)`). */
@@ -286,7 +350,12 @@ export function isComposableDomSelector<T extends string = string>(
   return (
     "role" in sel ||
     "css" in sel ||
+    "label" in sel ||
+    "placeholder" in sel ||
+    "altText" in sel ||
+    "title" in sel ||
     "anyOf" in sel ||
+    "allOf" in sel ||
     "within" in sel ||
     "frame" in sel ||
     "hasText" in sel ||

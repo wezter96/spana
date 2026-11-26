@@ -27,17 +27,23 @@ describe("normalizeRole (web)", () => {
     }
   });
 
-  test("maps input and textarea to textfield role", () => {
-    expect(normalizeRole("web", "input")).toBe("textfield");
-    expect(normalizeRole("web", "textarea")).toBe("textfield");
+  test("maps input and textarea to ARIA textbox role (and input types per ARIA-in-HTML)", () => {
+    expect(normalizeRole("web", "input")).toBe("textbox");
+    expect(normalizeRole("web", "textarea")).toBe("textbox");
+    expect(normalizeRole("web", "input", { type: "checkbox" })).toBe("checkbox");
+    expect(normalizeRole("web", "input", { type: "radio" })).toBe("radio");
+    expect(normalizeRole("web", "input", { type: "submit" })).toBe("button");
+    expect(normalizeRole("web", "input", { type: "search" })).toBe("searchbox");
+    expect(normalizeRole("web", "input", { type: "number" })).toBe("spinbutton");
+    expect(normalizeRole("web", "input", { type: "range" })).toBe("slider");
   });
 
   test("maps select to combobox role", () => {
     expect(normalizeRole("web", "select")).toBe("combobox");
   });
 
-  test("maps img to image role", () => {
-    expect(normalizeRole("web", "img")).toBe("image");
+  test("maps img to ARIA img role", () => {
+    expect(normalizeRole("web", "img")).toBe("img");
   });
 
   test("maps nav to navigation role", () => {
@@ -68,12 +74,12 @@ describe("normalizeRole (android)", () => {
     expect(normalizeRole("android", "android.widget.Button")).toBe("button");
   });
 
-  test("maps android.widget.EditText to textfield", () => {
-    expect(normalizeRole("android", "android.widget.EditText")).toBe("textfield");
+  test("maps android.widget.EditText to textbox", () => {
+    expect(normalizeRole("android", "android.widget.EditText")).toBe("textbox");
   });
 
-  test("maps android.widget.ImageView to image", () => {
-    expect(normalizeRole("android", "android.widget.ImageView")).toBe("image");
+  test("maps android.widget.ImageView to img", () => {
+    expect(normalizeRole("android", "android.widget.ImageView")).toBe("img");
   });
 
   test("maps android.widget.CheckBox to checkbox", () => {
@@ -108,9 +114,9 @@ describe("normalizeRole (ios)", () => {
     expect(normalizeRole("ios", "XCUIElementTypeLink")).toBe("link");
   });
 
-  test("maps image traits and XCUI image types to image", () => {
-    expect(normalizeRole("ios", "image")).toBe("image");
-    expect(normalizeRole("ios", "XCUIElementTypeImage")).toBe("image");
+  test("maps image traits and XCUI image types to img", () => {
+    expect(normalizeRole("ios", "image")).toBe("img");
+    expect(normalizeRole("ios", "XCUIElementTypeImage")).toBe("img");
   });
 
   test("maps staticText traits and XCUI static text types to text", () => {

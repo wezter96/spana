@@ -1,0 +1,73 @@
+{
+  "android": {
+    "measuredAt": "2026-11-26T16:02:40.536Z",
+    "platform": "android",
+    "deviceType": "physical",
+    "model": "Pixel 8 Pro",
+    "osVersion": "17",
+    "serial": "47041FDJG000FB",
+    "screen": {
+      "width": 1008,
+      "height": 2244
+    },
+    "coldDaemonSetupMs": 2338,
+    "warmDaemonReuseMs": 44,
+    "dumpHierarchy": {
+      "samplesMs": [780, 518, 567, 424, 384],
+      "medianMs": 518,
+      "avgBytes": 55843,
+      "avgNodes": 81
+    },
+    "takeScreenshot": {
+      "samplesMs": [733, 459, 502, 413, 484],
+      "medianMs": 484,
+      "avgBytes": 187953
+    },
+    "native5FlowsSettings": {
+      "flowCount": 5,
+      "totalMs": 28520,
+      "avgFlowMs": 5704,
+      "perFlowMs": [5775, 5727, 5634, 5579, 5804],
+      "passed": 5
+    },
+    "chromeCdp5Flows": {
+      "flowCount": 5,
+      "uiLoginTotalMs": 1124,
+      "uiLoginAvgFlowMs": 225,
+      "stateInjectTotalMs": 712,
+      "stateInjectAvgFlowMs": 142,
+      "speedup": 1.58
+    }
+  },
+  "ios": {
+    "measuredAt": "2026-11-26T16:13:33.053Z",
+    "platform": "ios",
+    "deviceType": "simulator",
+    "model": "iPhone 17 Simulator",
+    "osVersion": "26.4",
+    "udid": "C2F5464A-95A6-4B80-A643-A937E0EEE923",
+    "screen": {
+      "width": 402,
+      "height": 874
+    },
+    "sessionInitMs": 2462,
+    "dumpHierarchy": {
+      "samplesMs": [999, 597, 566, 547, 550],
+      "medianMs": 566,
+      "avgBytes": 40676,
+      "avgNodes": 167
+    },
+    "takeScreenshot": {
+      "samplesMs": [88, 74, 73, 75, 70],
+      "medianMs": 74,
+      "avgBytes": 328389
+    },
+    "native5FlowsSettings": {
+      "flowCount": 5,
+      "totalMs": 29790,
+      "avgFlowMs": 5958,
+      "perFlowMs": [6200, 5941, 5824, 5891, 5933],
+      "passed": 5
+    }
+  }
+}

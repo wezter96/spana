@@ -14,20 +14,28 @@ export interface FlowContext {
   flowName: string;
   platform: string;
   updateBaselines?: boolean;
+  /** Remaining flow deadline timestamp (ms since epoch) used as default timeout for `toPass()` / `expect.poll()`. */
+  flowDeadlineMs?: number;
+  /** Explicit default timeout for `toPass()` / `expect.poll()`. */
+  toPassTimeout?: number;
   recordSoftFailure?: (error: unknown) => void;
 }
 
 export interface NegatedPromiseExpectation {
   toBeVisible(opts?: WaitOptions): Promise<void>;
   toBeHidden(opts?: WaitOptions): Promise<void>;
+  toBeAttached(opts?: WaitOptions): Promise<void>;
+  toBeInViewport(opts?: WaitOptions): Promise<void>;
   toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
   toMatchText(pattern: RegExp, opts?: WaitOptions): Promise<void>;
-  toHaveValue(expected: string | number, opts?: WaitOptions): Promise<void>;
-  toHaveAttribute(name: string, value?: string, opts?: WaitOptions): Promise<void>;
+  toHaveValue(expected: string | number | RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveAttribute(name: string, value?: string | RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveJSProperty(name: string, value: unknown, opts?: WaitOptions): Promise<void>;
   toBeEnabled(opts?: WaitOptions): Promise<void>;
   toBeDisabled(opts?: WaitOptions): Promise<void>;
-  toContainText(expected: string, opts?: WaitOptions): Promise<void>;
-  toHaveCount(expected: number, opts?: WaitOptions): Promise<void>;
+  toContainText(expected: string, opts?: WaitOptions & { ignoreCase?: boolean }): Promise<void>;
+  toHaveCount(expected: number, opts?: WaitOptions & { visible?: boolean }): Promise<void>;
+  toHaveVisibleCount(expected: number, opts?: WaitOptions): Promise<void>;
   toBeFocused(opts?: WaitOptions): Promise<void>;
   toBeChecked(opts?: WaitOptions): Promise<void>;
   toBeEditable(opts?: WaitOptions): Promise<void>;
@@ -36,20 +44,30 @@ export interface NegatedPromiseExpectation {
   toHaveCSS(property: string, expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   toHaveAccessibleDescription(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveRole(expected: string, opts?: WaitOptions): Promise<void>;
 }
 
 export interface PromiseExpectation<T extends string = string> {
   toBeVisible(opts?: WaitOptions): Promise<void>;
   toBeHidden(opts?: WaitOptions): Promise<void>;
+  /** Assert that at least one matching element is attached to the DOM (visible or hidden). */
+  toBeAttached(opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element intersects the current viewport. */
+  toBeInViewport(opts?: WaitOptions): Promise<void>;
   toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
   toMatchText(pattern: RegExp, opts?: WaitOptions): Promise<void>;
-  toHaveValue(expected: string | number, opts?: WaitOptions): Promise<void>;
-  toHaveAttribute(name: string, value?: string, opts?: WaitOptions): Promise<void>;
+  toHaveValue(expected: string | number | RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveAttribute(name: string, value?: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched DOM element's JS property equals `value`. */
+  toHaveJSProperty(name: string, value: unknown, opts?: WaitOptions): Promise<void>;
   toBeEnabled(opts?: WaitOptions): Promise<void>;
   toBeDisabled(opts?: WaitOptions): Promise<void>;
-  toContainText(expected: string, opts?: WaitOptions): Promise<void>;
+  /** Case-sensitive substring match on whitespace-normalized text (pass `{ ignoreCase: true }` for case-insensitive). */
+  toContainText(expected: string, opts?: WaitOptions & { ignoreCase?: boolean }): Promise<void>;
+  /** Assert that the total number of matching elements (visible + hidden, or visible-only with `{ visible: true }`) equals `expected`. */
+  toHaveCount(expected: number, opts?: WaitOptions & { visible?: boolean }): Promise<void>;
   /** Assert that the number of visible matching elements equals `expected`. */
-  toHaveCount(expected: number, opts?: WaitOptions): Promise<void>;
+  toHaveVisibleCount(expected: number, opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element currently has focus (`document.activeElement`). */
   toBeFocused(opts?: WaitOptions): Promise<void>;
   /** Assert that a checkbox/radio/switch element is checked. */
@@ -80,6 +98,7 @@ export interface PromiseExpectation<T extends string = string> {
       threshold?: number;
       maxDiffPixelRatio?: number;
       mask?: ExtendedSelector<T>[];
+      fullPage?: boolean;
     },
   ): Promise<void>;
 
@@ -87,12 +106,15 @@ export interface PromiseExpectation<T extends string = string> {
   toPassAccessibilityAudit(options?: {
     severity?: "critical" | "serious" | "moderate" | "minor";
     rules?: string[];
+    disableRules?: string[];
+    tags?: string[];
+    include?: ExtendedSelector<T>[];
     exclude?: ExtendedSelector<T>[];
   }): Promise<void>;
 
   toHaveAccessibilityLabel(expected?: string): Promise<void>;
   toBeFocusable(): Promise<void>;
-  toHaveRole(expected: string): Promise<void>;
+  toHaveRole(expected: string, opts?: WaitOptions): Promise<void>;
   toHaveMinTouchTarget(size?: number): Promise<void>;
 }
 
@@ -278,6 +300,14 @@ export function createPromiseExpect<T extends string = string, R extends string 
 
   const coord = createCoordinator<T, R>(driver, config);
   const defaultTimeout = config.defaults?.timeout ?? 5000;
+  const resolveRetryTimeout = (explicit?: number): number => {
+    if (explicit !== undefined) return explicit;
+    if (ctx.toPassTimeout !== undefined) return ctx.toPassTimeout;
+    if (ctx.flowDeadlineMs !== undefined) {
+      return Math.max(100, ctx.flowDeadlineMs - Date.now());
+    }
+    return defaultTimeout;
+  };
 
   const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect);
 
@@ -317,6 +347,14 @@ export function createPromiseExpect<T extends string = string, R extends string 
       runStep("expect.not.toBeHidden", selector, () =>
         run(coord.assertVisible(selector, opts)).then(() => {}),
       ),
+    toBeAttached: (opts) =>
+      runStep("expect.not.toBeAttached", selector, () =>
+        run(coord.assertAttached(selector, opts, true)),
+      ),
+    toBeInViewport: (opts) =>
+      runStep("expect.not.toBeInViewport", selector, () =>
+        run(coord.assertInViewport(selector, opts, true)),
+      ),
     toHaveText: (expected, opts) =>
       runStep(`expect.not.toHaveText(${JSON.stringify(expected)})`, selector, () =>
         run(coord.assertText(selector, expected, opts, true)),
@@ -326,12 +364,18 @@ export function createPromiseExpect<T extends string = string, R extends string 
         run(coord.assertMatchesText(selector, pattern, opts, true)),
       ),
     toHaveValue: (expected, opts) =>
-      runStep(`expect.not.toHaveValue(${JSON.stringify(expected)})`, selector, () =>
-        run(coord.assertValue(selector, expected, opts, true)),
+      runStep(
+        `expect.not.toHaveValue(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertValue(selector, expected, opts, true)),
       ),
     toHaveAttribute: (name, value, opts) =>
       runStep(`expect.not.toHaveAttribute(${JSON.stringify(name)})`, selector, () =>
         run(coord.assertAttribute(selector, name, value, opts, true)),
+      ),
+    toHaveJSProperty: (name, value, opts) =>
+      runStep(`expect.not.toHaveJSProperty(${JSON.stringify(name)})`, selector, () =>
+        run(coord.assertJSProperty(selector, name, value, opts, true)),
       ),
     toBeEnabled: (opts) =>
       runStep("expect.not.toBeEnabled", selector, () => run(coord.assertDisabled(selector, opts))),
@@ -344,6 +388,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
     toHaveCount: (expected, opts) =>
       runStep(`expect.not.toHaveCount(${expected})`, selector, () =>
         run(coord.assertCount(selector, expected, opts, true)),
+      ),
+    toHaveVisibleCount: (expected, opts) =>
+      runStep(`expect.not.toHaveVisibleCount(${expected})`, selector, () =>
+        run(coord.assertCount(selector, expected, { ...opts, visible: true }, true)),
       ),
     toBeFocused: (opts) =>
       runStep("expect.not.toBeFocused", selector, () =>
@@ -383,6 +431,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
         selector,
         () => run(coord.assertAccessibleDescription(selector, expected, opts, true)),
       ),
+    toHaveRole: (expected, opts) =>
+      runStep(`expect.not.toHaveRole(${JSON.stringify(expected)})`, selector, () =>
+        run(coord.assertRole(selector, expected, ctx.platform, opts, true)),
+      ),
   });
 
   const buildPollMatchers = <V>(
@@ -404,7 +456,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
               throw new Error(describeFail(val));
             }
           },
-          opts?.timeout ?? defaultTimeout,
+          resolveRetryTimeout(opts?.timeout),
           opts?.intervals,
         ),
       );
@@ -551,6 +603,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
       ),
     toBeHidden: (opts) =>
       runStep("expect.toBeHidden", selector, () => run(coord.assertHidden(selector, opts))),
+    toBeAttached: (opts) =>
+      runStep("expect.toBeAttached", selector, () => run(coord.assertAttached(selector, opts))),
+    toBeInViewport: (opts) =>
+      runStep("expect.toBeInViewport", selector, () => run(coord.assertInViewport(selector, opts))),
     toHaveText: (expected, opts) =>
       runStep(`expect.toHaveText(${JSON.stringify(expected)})`, selector, () =>
         run(coord.assertText(selector, expected, opts)),
@@ -560,12 +616,18 @@ export function createPromiseExpect<T extends string = string, R extends string 
         run(coord.assertMatchesText(selector, pattern, opts)),
       ),
     toHaveValue: (expected, opts) =>
-      runStep(`expect.toHaveValue(${JSON.stringify(expected)})`, selector, () =>
-        run(coord.assertValue(selector, expected, opts)),
+      runStep(
+        `expect.toHaveValue(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertValue(selector, expected, opts)),
       ),
     toHaveAttribute: (name, value, opts) =>
       runStep(`expect.toHaveAttribute(${JSON.stringify(name)})`, selector, () =>
         run(coord.assertAttribute(selector, name, value, opts)),
+      ),
+    toHaveJSProperty: (name, value, opts) =>
+      runStep(`expect.toHaveJSProperty(${JSON.stringify(name)})`, selector, () =>
+        run(coord.assertJSProperty(selector, name, value, opts)),
       ),
     toBeEnabled: (opts) =>
       runStep("expect.toBeEnabled", selector, () => run(coord.assertEnabled(selector, opts))),
@@ -578,6 +640,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
     toHaveCount: (expected, opts) =>
       runStep(`expect.toHaveCount(${expected})`, selector, () =>
         run(coord.assertCount(selector, expected, opts)),
+      ),
+    toHaveVisibleCount: (expected, opts) =>
+      runStep(`expect.toHaveVisibleCount(${expected})`, selector, () =>
+        run(coord.assertCount(selector, expected, { ...opts, visible: true })),
       ),
     toBeFocused: (opts) =>
       runStep("expect.toBeFocused", selector, () => run(coord.assertFocused(selector, opts))),
@@ -658,6 +724,8 @@ export function createPromiseExpect<T extends string = string, R extends string 
             threshold: options?.threshold ?? visualRegression?.threshold,
             maxDiffPixelRatio: options?.maxDiffPixelRatio ?? visualRegression?.maxDiffPixelRatio,
             mask: [],
+            maskSelectors: options?.mask,
+            fullPage: options?.fullPage,
             updateBaselines: ctx.updateBaselines,
             baselinesDir: visualRegression?.baselinesDir,
           }),
@@ -665,6 +733,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
       ),
 
     toPassAccessibilityAudit: (options) => {
+      const includeCss = options?.include?.map(selectorToCss).filter(Boolean) ?? [];
       const excludeCss = options?.exclude?.map(selectorToCss).filter(Boolean) ?? [];
       const targetCss = selectorToCss(selector);
       return runStep("expect.toPassAccessibilityAudit", selector, () =>
@@ -672,7 +741,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
           coord.assertAccessibilityAudit(ctx.platform, {
             severity: options?.severity,
             rules: options?.rules,
+            disableRules: options?.disableRules,
+            tags: options?.tags,
             targetSelector: targetCss || undefined,
+            includeSelectors: includeCss,
             excludeSelectors: excludeCss,
           }),
         ),
@@ -691,9 +763,9 @@ export function createPromiseExpect<T extends string = string, R extends string 
         run(coord.assertFocusable(selector, ctx.platform)),
       ),
 
-    toHaveRole: (expected) =>
+    toHaveRole: (expected, opts) =>
       runStep(`expect.toHaveRole(${JSON.stringify(expected)})`, selector, () =>
-        run(coord.assertRole(selector, expected, ctx.platform)),
+        run(coord.assertRole(selector, expected, ctx.platform, opts)),
       ),
 
     toHaveMinTouchTarget: (size = 44) =>
@@ -711,7 +783,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
     return {
       toPass: (opts?: RetryAssertionOptions) =>
         recordStep("expect.toPass", () =>
-          retryAssertion(selectorOrFn, opts?.timeout ?? defaultTimeout, opts?.intervals),
+          retryAssertion(selectorOrFn, resolveRetryTimeout(opts?.timeout), opts?.intervals),
         ),
     };
   }) as PromiseExpectFn<T>;

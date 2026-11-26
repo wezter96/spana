@@ -412,35 +412,60 @@ export class CdpDomChannel implements DomChannel {
     args: any[] = [],
   ): Promise<T> {
     const expression = buildEvaluateExpression(script, args);
-    const response = await this.sendCommand<{
-      result?: { type?: string; value?: T; description?: string };
-      exceptionDetails?: { text?: string; exception?: { description?: string } };
-      wasThrown?: boolean;
-    }>(
-      "Runtime.evaluate",
-      {
-        expression,
-        returnByValue: true,
-        awaitPromise: true,
-      },
-      sessionId,
-      timeoutMs,
-    );
+    const effectiveTimeout = timeoutMs ?? this.timeoutMs;
+    const deadline = Date.now() + effectiveTimeout;
+    let lastError: Error | undefined;
 
-    if (response?.exceptionDetails) {
-      const detail =
-        response.exceptionDetails.exception?.description ??
-        response.exceptionDetails.text ??
-        "Evaluation threw an exception";
-      throw new Error(`CDP evaluate failed: ${detail}`);
-    }
-    if (response?.wasThrown) {
-      throw new Error(
-        `CDP evaluate failed: ${response.result?.description ?? "Evaluation threw an exception"}`,
-      );
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const remaining = Math.max(250, deadline - Date.now());
+      try {
+        const response = await this.sendCommand<{
+          result?: { type?: string; value?: T; description?: string };
+          exceptionDetails?: { text?: string; exception?: { description?: string } };
+          wasThrown?: boolean;
+        }>(
+          "Runtime.evaluate",
+          {
+            expression,
+            returnByValue: true,
+            awaitPromise: true,
+          },
+          sessionId,
+          remaining,
+        );
+
+        if (response?.exceptionDetails) {
+          const detail =
+            response.exceptionDetails.exception?.description ??
+            response.exceptionDetails.text ??
+            "Evaluation threw an exception";
+          throw new Error(`CDP evaluate failed: ${detail}`);
+        }
+        if (response?.wasThrown) {
+          throw new Error(
+            `CDP evaluate failed: ${response.result?.description ?? "Evaluation threw an exception"}`,
+          );
+        }
+
+        return response?.result?.value as T;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isContextDestroyed =
+          /Execution context was destroyed|Cannot find context with specified id|Inspected target navigated or closed/i.test(
+            msg,
+          );
+        if (isContextDestroyed && attempt < 2 && Date.now() < deadline) {
+          lastError = new Error(
+            `CDP evaluate failed because navigation destroyed the execution context: ${msg}`,
+          );
+          await new Promise((r) => setTimeout(r, 80));
+          continue;
+        }
+        throw err;
+      }
     }
 
-    return response?.result?.value as T;
+    throw lastError ?? new Error("CDP evaluate failed: execution context was destroyed");
   }
 
   async evaluateOnSession<T = unknown>(
@@ -476,6 +501,92 @@ export class CdpDomChannel implements DomChannel {
     }));
   }
 
+  private stripFrameFromSelector(selector: Selector): Selector {
+    if (
+      typeof selector === "object" &&
+      selector !== null &&
+      "frame" in selector &&
+      selector.frame
+    ) {
+      const { frame: _frame, ...rest } = selector as unknown as Record<string, unknown>;
+      return rest as Selector;
+    }
+    return selector;
+  }
+
+  private async resolveMatchingChildSessions(selector: Selector): Promise<CdpChildSessionInfo[]> {
+    const all = Array.from(this.childSessions.values());
+    if (all.length === 0) return [];
+    if (
+      typeof selector !== "object" ||
+      selector === null ||
+      !("frame" in selector) ||
+      !selector.frame
+    ) {
+      return all;
+    }
+    const frameSel = selector.frame;
+    const hints: string[] = [];
+    if (typeof frameSel === "string") hints.push(frameSel);
+    else if (typeof frameSel === "object" && frameSel !== null) {
+      if ("css" in frameSel && frameSel.css) hints.push(frameSel.css);
+      if ("testID" in frameSel && frameSel.testID) hints.push(frameSel.testID);
+      if ("accessibilityLabel" in frameSel && frameSel.accessibilityLabel) {
+        hints.push(frameSel.accessibilityLabel);
+      }
+      if ("text" in frameSel && frameSel.text) hints.push(frameSel.text);
+    }
+    // Try to read the matching iframe's `src` attribute from the main document so we pick the exact OOPIF session
+    const iframeSrcs = await this.evaluateOnSession<string[]>(
+      undefined,
+      `((fSel) => {
+        try {
+          const iframes = Array.from(document.querySelectorAll("iframe"));
+          const matched = [];
+          for (const el of iframes) {
+            if (typeof fSel === "string") {
+              if (el.getAttribute("title") === fSel || el.getAttribute("aria-label") === fSel || el.getAttribute("name") === fSel || el.matches(fSel)) {
+                if (el.src) matched.push(el.src);
+              }
+            } else if (fSel && typeof fSel === "object") {
+              if (fSel.css) {
+                try { if (el.matches(fSel.css) && el.src) matched.push(el.src); } catch {}
+              } else if (fSel.testID && (el.getAttribute("data-testid") === fSel.testID || el.getAttribute("testID") === fSel.testID)) {
+                if (el.src) matched.push(el.src);
+              } else if (fSel.accessibilityLabel && (el.getAttribute("aria-label") === fSel.accessibilityLabel || el.getAttribute("title") === fSel.accessibilityLabel)) {
+                if (el.src) matched.push(el.src);
+              }
+            }
+          }
+          return matched;
+        } catch { return []; }
+      })(${JSON.stringify(frameSel)})`,
+    ).catch(() => [] as string[]);
+
+    if (iframeSrcs.length > 0) {
+      const matched = all.filter(
+        (c) =>
+          c.url &&
+          iframeSrcs.some((src) => {
+            try {
+              const a = new URL(src);
+              const b = new URL(c.url!);
+              return a.origin === b.origin && (b.pathname === a.pathname || c.url!.startsWith(src));
+            } catch {
+              return c.url!.includes(src) || src.includes(c.url!);
+            }
+          }),
+      );
+      if (matched.length > 0) return matched;
+    }
+
+    if (hints.length > 0) {
+      const byHint = all.filter((c) => c.url && hints.some((h) => c.url!.includes(h)));
+      if (byHint.length > 0) return byHint;
+    }
+    return all;
+  }
+
   async query(selector: Selector): Promise<DomElementMatch[]> {
     const fallback = () => buildDomQueryScript(selector);
     const result = await this.invokeDom<DomElementMatch[]>(
@@ -487,12 +598,15 @@ export class CdpDomChannel implements DomChannel {
     if (Array.isArray(result) && result.length > 0) return result;
     if (this.childSessions.size === 0) return [];
 
-    for (const child of this.childSessions.values()) {
+    const innerSel = this.stripFrameFromSelector(selector);
+    const childFallback = () => buildDomQueryScript(innerSel);
+    const candidates = await this.resolveMatchingChildSessions(selector);
+    for (const child of candidates) {
       const childRes = await this.invokeDom<DomElementMatch[]>(
         child.sessionId,
         "query",
-        [selector],
-        fallback,
+        [innerSel],
+        childFallback,
       ).catch(() => []);
       if (Array.isArray(childRes) && childRes.length > 0) {
         return this.applyChildOffset(childRes, child);
@@ -523,6 +637,10 @@ export class CdpDomChannel implements DomChannel {
     const filtered = immediate.filter((m) => m.visible && (!opts?.forAction || m.enabled));
     if (filtered.length > 0 && !opts?.forAction) return filtered;
 
+    const innerSel = this.stripFrameFromSelector(selector);
+    const childFallback = () => buildDomWaitForSelectorScript(innerSel, opts);
+    const candidates = await this.resolveMatchingChildSessions(selector);
+
     // Race reactive MutationObserver wait across main frame and attached OOPIF sessions
     const racers: Array<Promise<DomElementMatch[]>> = [
       this.invokeDom<DomElementMatch[]>(
@@ -532,12 +650,12 @@ export class CdpDomChannel implements DomChannel {
         fallback,
         rpcTimeout,
       ).catch(() => []),
-      ...Array.from(this.childSessions.values()).map(async (child) => {
+      ...candidates.map(async (child) => {
         const res = await this.invokeDom<DomElementMatch[]>(
           child.sessionId,
           "waitForSelector",
-          [selector, opts ?? {}],
-          fallback,
+          [innerSel, opts ?? {}],
+          childFallback,
           rpcTimeout,
         ).catch(() => []);
         return Array.isArray(res) && res.length > 0 ? this.applyChildOffset(res, child) : [];
@@ -578,13 +696,16 @@ export class CdpDomChannel implements DomChannel {
       ),
     );
     if (!mainHidden || this.childSessions.size === 0) return mainHidden;
-    for (const child of this.childSessions.values()) {
+    const innerSel = this.stripFrameFromSelector(selector);
+    const childFallback = () => buildDomWaitForHiddenScript(innerSel, opts);
+    const candidates = await this.resolveMatchingChildSessions(selector);
+    for (const child of candidates) {
       const ok = Boolean(
         await this.invokeDom<boolean>(
           child.sessionId,
           "waitForHidden",
-          [selector, opts ?? {}],
-          fallback,
+          [innerSel, opts ?? {}],
+          childFallback,
           rpcTimeout,
         ).catch(() => true),
       );
@@ -608,12 +729,15 @@ export class CdpDomChannel implements DomChannel {
     );
     if (result && typeof result === "object" && result.matched) return result;
     if (this.childSessions.size > 0) {
-      for (const child of this.childSessions.values()) {
+      const innerSel = this.stripFrameFromSelector(selector);
+      const childFallback = () => buildDomWaitForMatchScript(innerSel, opts);
+      const candidates = await this.resolveMatchingChildSessions(selector);
+      for (const child of candidates) {
         const childRes = await this.invokeDom<DomWaitForMatchResult>(
           child.sessionId,
           "waitForMatch",
-          [selector, opts],
-          fallback,
+          [innerSel, opts],
+          childFallback,
           rpcTimeout,
         ).catch(() => ({ matched: false }));
         if (childRes?.matched) return childRes;
@@ -635,13 +759,16 @@ export class CdpDomChannel implements DomChannel {
       ),
     );
     if (mainFilled || this.childSessions.size === 0) return mainFilled;
-    for (const child of this.childSessions.values()) {
+    const innerSel = this.stripFrameFromSelector(selector);
+    const childFallback = () => buildDomFillScript(innerSel, value, opts);
+    const candidates = await this.resolveMatchingChildSessions(selector);
+    for (const child of candidates) {
       const ok = Boolean(
         await this.invokeDom<boolean>(
           child.sessionId,
           "fill",
-          [selector, value, opts ?? {}],
-          fallback,
+          [innerSel, value, opts ?? {}],
+          childFallback,
           rpcTimeout,
         ).catch(() => false),
       );
@@ -656,9 +783,12 @@ export class CdpDomChannel implements DomChannel {
       await this.invokeDom<boolean>(undefined, "tap", [selector], fallback),
     );
     if (mainTapped || this.childSessions.size === 0) return mainTapped;
-    for (const child of this.childSessions.values()) {
+    const innerSel = this.stripFrameFromSelector(selector);
+    const childFallback = () => buildDomTapScript(innerSel);
+    const candidates = await this.resolveMatchingChildSessions(selector);
+    for (const child of candidates) {
       const ok = Boolean(
-        await this.invokeDom<boolean>(child.sessionId, "tap", [selector], fallback).catch(
+        await this.invokeDom<boolean>(child.sessionId, "tap", [innerSel], childFallback).catch(
           () => false,
         ),
       );
@@ -677,12 +807,15 @@ export class CdpDomChannel implements DomChannel {
     );
     if (result) return result;
     if (this.childSessions.size > 0) {
-      for (const child of this.childSessions.values()) {
+      const innerSel = this.stripFrameFromSelector(selector);
+      const childFallback = () => buildDomScrollIntoViewScript(innerSel);
+      const candidates = await this.resolveMatchingChildSessions(selector);
+      for (const child of candidates) {
         const childRes = await this.invokeDom<DomElementMatch | null>(
           child.sessionId,
           "scrollIntoView",
-          [selector],
-          fallback,
+          [innerSel],
+          childFallback,
         ).catch(() => null);
         if (childRes) {
           const adjusted = await this.applyChildOffset([childRes], child);

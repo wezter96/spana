@@ -1258,22 +1258,15 @@ try {
     ollamaReady,
   );
 
-  // 5. 5-Target Sign-In Journey & Calibrated Mobile Hybrid Comparison
+  // 5. 5-Target Sign-In Journey & Real Measured Mobile Device Results (zero hardcoded constants)
   const fiveTargetRows = await runAllTargetsSignInBenchmark();
-  const mobileComparison = {
-    iosCapacitor5Flows: {
-      webdriverioAppiumMs: 28400,
-      playwrightMs: null,
-      spanaDirectUiLoginMs: 6820,
-      spanaDirectBridgeMs: 1520,
-    },
-    androidCapacitor5Flows: {
-      webdriverioAppiumMs: 22900,
-      playwrightMs: null,
-      spanaDirectUiLoginMs: 5450,
-      spanaDirectBridgeMs: 1270,
-    },
-  };
+  const mobileDevicesPath = resolve(
+    import.meta.dirname,
+    "../../../benchmarks/framework-comparison/mobile-devices.json",
+  );
+  const mobileMeasured = existsSync(mobileDevicesPath)
+    ? JSON.parse(readFileSync(mobileDevicesPath, "utf8"))
+    : null;
 
   const results = {
     measuredAt: new Date().toISOString(),
@@ -1336,7 +1329,7 @@ try {
     rustNativePngDiff: rustPngDiff,
     agenticVsReplayCache: replayCacheBench,
     fiveTargetSignIn: fiveTargetRows,
-    mobileHybridComparison: mobileComparison,
+    mobileDevicesMeasured: mobileMeasured,
   };
 
   writeFileSync(RESULTS_OUT_PATH, JSON.stringify(results, null, 2), "utf-8");

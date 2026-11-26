@@ -50,7 +50,10 @@ import {
   type BrowserDownloadInfo,
   type BrowserEmulationOptions,
   type BrowserMockResponse,
+  type BrowserRequestInfo,
   type BrowserResponseInfo,
+  type BrowserRoute,
+  type BrowserRouteHandler,
   type NetworkConditions,
   type BrowserRouteMatcher,
   type BrowserConsoleLog,
@@ -60,6 +63,7 @@ import {
   type BrowserHARPage,
   type BrowserJSError,
   type CdpSessionHandle,
+  type UploadFileInput,
   type VirtualAuthenticatorOptions,
   type VirtualCredential,
   type VirtualCredentialInput,
@@ -67,7 +71,8 @@ import {
 
 type RouteDefinition =
   | { kind: "mock"; matcher: BrowserRouteMatcher; response: BrowserMockResponse }
-  | { kind: "block"; matcher: BrowserRouteMatcher };
+  | { kind: "block"; matcher: BrowserRouteMatcher }
+  | { kind: "handler"; matcher: BrowserRouteMatcher; handler: BrowserRouteHandler };
 
 interface AppliedRoute {
   matcher: BrowserRouteMatcher;
@@ -85,6 +90,18 @@ export interface PlaywrightConfig {
   /** Optional browser channel (e.g. "chrome") or explicit executable path. */
   channel?: string;
   executablePath?: string;
+  /** Extra browser launch arguments (forwarded to `browser.launch({ args })`). */
+  args?: string[];
+  /** Default viewport dimensions for new contexts. */
+  viewport?: { width: number; height: number };
+  /** Default locale (e.g. "en-US", "sv-SE") for new contexts. */
+  locale?: string;
+  /** Default timezone ID for new contexts. */
+  timezoneId?: string;
+  /** Default prefers-color-scheme for new contexts. */
+  colorScheme?: "light" | "dark" | "no-preference";
+  /** Default prefers-reduced-motion for new contexts. */
+  reducedMotion?: "reduce" | "no-preference";
   /** Navigation wait condition for launchApp / openLink (e.g. "domcontentloaded" for prefetch-heavy SSR apps). */
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
   /** Record per-request HAR metadata over CDP/IPC. Disable when `artifacts.har` is off for faster page loads. Default: true. */
@@ -261,13 +278,17 @@ export async function connectPlaywrightOverWS(
 }
 
 export async function launchPlaywrightBrowser(
-  config: Pick<PlaywrightConfig, "browser" | "headless" | "channel" | "executablePath"> = {},
+  config: Pick<
+    PlaywrightConfig,
+    "browser" | "headless" | "channel" | "executablePath" | "args"
+  > = {},
 ): Promise<Browser> {
   const browserName = config.browser ?? "chromium";
   return browserLaunchers[browserName].launch({
     headless: config.headless ?? true,
     ...(config.channel ? { channel: config.channel } : {}),
     ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+    ...(config.args && config.args.length > 0 ? { args: config.args } : {}),
   });
 }
 
@@ -417,6 +438,9 @@ function resolvePlaywrightLocator(
   if ("anyOf" in selector) {
     const branches = selector.anyOf.map((branch) => resolvePlaywrightLocator(scope, branch));
     locator = branches.reduce((acc, next) => acc.or(next));
+  } else if ("allOf" in selector) {
+    const branches = selector.allOf.map((branch) => resolvePlaywrightLocator(scope, branch));
+    locator = branches.reduce((acc, next) => acc.and(next));
   } else if ("css" in selector) {
     locator = scope.locator(selector.css);
   } else if ("role" in selector) {
@@ -426,6 +450,26 @@ function resolvePlaywrightLocator(
       ...(selector.level !== undefined ? { level: selector.level } : {}),
       ...(selector.includeHidden !== undefined ? { includeHidden: selector.includeHidden } : {}),
     });
+  } else if ("label" in selector) {
+    locator = scope.getByLabel(
+      selector.label,
+      selector.exact !== undefined ? { exact: selector.exact } : undefined,
+    );
+  } else if ("placeholder" in selector) {
+    locator = scope.getByPlaceholder(
+      selector.placeholder,
+      selector.exact !== undefined ? { exact: selector.exact } : undefined,
+    );
+  } else if ("altText" in selector) {
+    locator = scope.getByAltText(
+      selector.altText,
+      selector.exact !== undefined ? { exact: selector.exact } : undefined,
+    );
+  } else if ("title" in selector) {
+    locator = scope.getByTitle(
+      selector.title,
+      selector.exact !== undefined ? { exact: selector.exact } : undefined,
+    );
   } else if ("testID" in selector) {
     locator = scope.getByTestId(selector.testID);
   } else if ("accessibilityLabel" in selector) {
@@ -493,6 +537,7 @@ export function makePlaywrightDriver(
                     headless: config.headless ?? true,
                     ...(config.channel ? { channel: config.channel } : {}),
                     ...(config.executablePath ? { executablePath: config.executablePath } : {}),
+                    ...(config.args && config.args.length > 0 ? { args: config.args } : {}),
                   }),
                 catch: (e) => new DriverError({ message: `Failed to launch browser: ${e}` }),
               });
@@ -528,6 +573,22 @@ export function makePlaywrightDriver(
     }> = [];
     let dialogHandler: BrowserDialogHandler | null = null;
     const attachedPages = new WeakSet<Page>();
+    const navigationUrls: string[] = [];
+    const requestListeners = new Set<(req: BrowserRequestInfo) => void>();
+    const toBrowserRequestInfo = (request: Request): BrowserRequestInfo => ({
+      url: request.url(),
+      method: request.method(),
+      headers: request.headers(),
+      resourceType: request.resourceType(),
+      postData: () => request.postData(),
+      postDataJSON: <T = unknown>() => {
+        try {
+          return request.postDataJSON() as T;
+        } catch {
+          return null;
+        }
+      },
+    });
 
     const resetWebDiagnostics = () => {
       consoleLogs = [];
@@ -822,6 +883,28 @@ export function makePlaywrightDriver(
         });
       }
 
+      activePage.on("framenavigated", (frame) => {
+        if (frame === activePage.mainFrame()) {
+          const u = frame.url();
+          if (u) {
+            navigationUrls.push(u);
+            if (navigationUrls.length > 50) navigationUrls.shift();
+          }
+        }
+      });
+
+      activePage.on("request", (request) => {
+        if (requestListeners.size === 0) return;
+        const info = toBrowserRequestInfo(request);
+        for (const listener of requestListeners) {
+          try {
+            listener(info);
+          } catch {
+            // ignore listener errors
+          }
+        }
+      });
+
       activePage.on("close", () => {
         debugLog("tabClosed", tabIds.get(activePage) ?? "untracked");
       });
@@ -872,9 +955,52 @@ export function makePlaywrightDriver(
           ? async (route: Route) => {
               await route.fulfill(buildMockResponse(definition.response));
             }
-          : async (route: Route) => {
-              await route.abort();
-            };
+          : definition.kind === "block"
+            ? async (route: Route) => {
+                await route.abort();
+              }
+            : async (route: Route) => {
+                let handled = false;
+                const reqInfo = toBrowserRequestInfo(route.request());
+                const wrapped: BrowserRoute = {
+                  request: () => reqInfo,
+                  continue: async (overrides) => {
+                    if (handled) return;
+                    handled = true;
+                    await route.continue(overrides);
+                  },
+                  abort: async (errorCode) => {
+                    if (handled) return;
+                    handled = true;
+                    await route.abort(errorCode);
+                  },
+                  fulfill: async (response) => {
+                    if (handled) return;
+                    handled = true;
+                    await route.fulfill(buildMockResponse(response));
+                  },
+                  fetch: async (overrides) => {
+                    const res = await route.fetch(overrides);
+                    return {
+                      url: res.url(),
+                      status: res.status(),
+                      statusText: res.statusText(),
+                      headers: res.headers(),
+                      method: overrides?.method ?? reqInfo.method,
+                      body: () => res.text(),
+                      json: <T = unknown>() => res.json() as Promise<T>,
+                    };
+                  },
+                };
+                try {
+                  await definition.handler(wrapped);
+                } finally {
+                  if (!handled) {
+                    handled = true;
+                    await route.continue().catch(() => {});
+                  }
+                }
+              };
 
       await context.route(definition.matcher, handler);
       appliedRoutes.push({ matcher: definition.matcher, handler });
@@ -887,13 +1013,31 @@ export function makePlaywrightDriver(
       }
     };
 
-    const setInputFiles = async (selector: Selector, path: string | string[]) => {
+    const normalizePlaywrightFiles = (input: UploadFileInput) => {
+      if (typeof input === "string") return input;
+      const items = Array.isArray(input) ? input : [input];
+      if (items.every((item) => typeof item === "string")) {
+        return items as string[];
+      }
+      return items.map((item) =>
+        typeof item === "string"
+          ? item
+          : {
+              name: item.name,
+              mimeType: item.mimeType,
+              buffer: Buffer.from(item.buffer),
+            },
+      );
+    };
+
+    const setInputFiles = async (selector: Selector, path: UploadFileInput) => {
+      const pwFiles = normalizePlaywrightFiles(path) as never;
       if (typeof selector === "string") {
         try {
-          await page.getByLabel(selector, { exact: true }).setInputFiles(path);
+          await page.getByLabel(selector, { exact: true }).setInputFiles(pwFiles);
           return;
         } catch {
-          await page.getByText(selector, { exact: true }).setInputFiles(path);
+          await page.getByText(selector, { exact: true }).setInputFiles(pwFiles);
           return;
         }
       }
@@ -917,27 +1061,29 @@ export function makePlaywrightDriver(
 
       if (!hasModifiers) {
         if ("testID" in selector) {
-          await page.getByTestId(selector.testID).setInputFiles(path);
+          await page.getByTestId(selector.testID).setInputFiles(pwFiles);
           return;
         }
 
         if ("accessibilityLabel" in selector) {
-          await page.getByLabel(selector.accessibilityLabel, { exact: true }).setInputFiles(path);
+          await page
+            .getByLabel(selector.accessibilityLabel, { exact: true })
+            .setInputFiles(pwFiles);
           return;
         }
 
         if ("text" in selector) {
           try {
-            await page.getByLabel(selector.text, { exact: true }).setInputFiles(path);
+            await page.getByLabel(selector.text, { exact: true }).setInputFiles(pwFiles);
             return;
           } catch {
-            await page.getByText(selector.text, { exact: true }).setInputFiles(path);
+            await page.getByText(selector.text, { exact: true }).setInputFiles(pwFiles);
             return;
           }
         }
       }
 
-      await resolvePlaywrightLocator(page, selector).setInputFiles(path);
+      await resolvePlaywrightLocator(page, selector).setInputFiles(pwFiles);
     };
 
     const applyContextSpeedOptions = async (ctx: BrowserContext) => {
@@ -1016,6 +1162,11 @@ export function makePlaywrightDriver(
       const nextCtx = await browser.newContext({
         acceptDownloads: true,
         ...(storageStatePath ? { storageState: storageStatePath } : {}),
+        ...(config.viewport ? { viewport: config.viewport } : {}),
+        ...(config.locale ? { locale: config.locale } : {}),
+        ...(config.timezoneId ? { timezoneId: config.timezoneId } : {}),
+        ...(config.colorScheme ? { colorScheme: config.colorScheme } : {}),
+        ...(config.reducedMotion ? { reducedMotion: config.reducedMotion } : {}),
       });
       await applyContextSpeedOptions(nextCtx);
       const nextPage = await nextCtx.newPage();
@@ -1073,6 +1224,7 @@ export function makePlaywrightDriver(
     const beginFlow = async (flowName: string) => {
       currentFlowName = flowName;
       resetWebDiagnostics();
+      navigationUrls.length = 0;
       harEntries = [];
       harPages = new Map();
       tabIds = new Map();
@@ -1125,6 +1277,42 @@ export function makePlaywrightDriver(
       catch: (e) => new DriverError({ message: `Failed to create page: ${e}` }),
     });
 
+    const queryCrossOriginPlaywrightFrames = async (
+      selector: Selector,
+    ): Promise<DomElementMatch[]> => {
+      if (
+        typeof selector !== "object" ||
+        selector === null ||
+        !("frame" in selector) ||
+        !selector.frame
+      ) {
+        return [];
+      }
+      const { frame: frameSel, ...innerRest } = selector as unknown as Record<string, unknown>;
+      const innerSel = innerRest as Selector;
+      const frameCss = selectorToFrameCss(frameSel as Selector);
+      const iframeHandle = await page
+        .locator(frameCss)
+        .first()
+        .elementHandle()
+        .catch(() => null);
+      if (!iframeHandle) return [];
+      const [contentFrame, frameBox] = await Promise.all([
+        iframeHandle.contentFrame().catch(() => null),
+        iframeHandle.boundingBox().catch(() => null),
+      ]);
+      if (!contentFrame) return [];
+      const matches = await contentFrame.evaluate(buildDomQueryScript(innerSel)).catch(() => []);
+      if (!Array.isArray(matches) || matches.length === 0) return [];
+      const ox = frameBox?.x ?? 0;
+      const oy = frameBox?.y ?? 0;
+      return (matches as DomElementMatch[]).map((m) => ({
+        ...m,
+        inIframe: true,
+        rect: { ...m.rect, x: m.rect.x + ox, y: m.rect.y + oy },
+      }));
+    };
+
     const domChannel: DomChannel | undefined =
       config.enableDomChannel === false
         ? undefined
@@ -1140,9 +1328,30 @@ export function makePlaywrightDriver(
             ): Promise<T> => evaluateOnPage<T>(page, script, args),
             query: async (selector) => {
               const res = await page.evaluate(buildDomQueryScript(selector));
-              return Array.isArray(res) ? res : [];
+              if (Array.isArray(res) && res.length > 0) return res;
+              return queryCrossOriginPlaywrightFrames(selector);
             },
             waitForSelector: async (selector, opts) => {
+              if (
+                typeof selector === "object" &&
+                selector !== null &&
+                "frame" in selector &&
+                selector.frame
+              ) {
+                const start = Date.now();
+                const timeoutMs = opts?.timeoutMs ?? 5000;
+                while (Date.now() - start < timeoutMs) {
+                  const res = await page.evaluate(buildDomQueryScript(selector));
+                  const hits =
+                    Array.isArray(res) && res.length > 0
+                      ? (res as DomElementMatch[])
+                      : await queryCrossOriginPlaywrightFrames(selector);
+                  const filtered = hits.filter((m) => m.visible && (!opts?.forAction || m.enabled));
+                  if (filtered.length > 0) return filtered;
+                  await new Promise((r) => setTimeout(r, 50));
+                }
+                return [];
+              }
               const res = await page.evaluate(buildDomWaitForSelectorScript(selector, opts));
               return Array.isArray(res) ? res : [];
             },
@@ -1152,13 +1361,70 @@ export function makePlaywrightDriver(
             },
             waitForMatch: async (selector, opts) => {
               const res = await page.evaluate(buildDomWaitForMatchScript(selector, opts));
+              if (res && typeof res === "object" && (res as DomWaitForMatchResult).matched) {
+                return res as DomWaitForMatchResult;
+              }
+              if (
+                typeof selector === "object" &&
+                selector !== null &&
+                "frame" in selector &&
+                selector.frame
+              ) {
+                const { frame: frameSel, ...innerRest } = selector as unknown as Record<
+                  string,
+                  unknown
+                >;
+                const iframeHandle = await page
+                  .locator(selectorToFrameCss(frameSel as Selector))
+                  .first()
+                  .elementHandle()
+                  .catch(() => null);
+                const cf = iframeHandle
+                  ? await iframeHandle.contentFrame().catch(() => null)
+                  : null;
+                if (cf) {
+                  const frameRes = await cf
+                    .evaluate(buildDomWaitForMatchScript(innerRest as Selector, opts))
+                    .catch(() => null);
+                  if (frameRes && typeof frameRes === "object") {
+                    return frameRes as DomWaitForMatchResult;
+                  }
+                }
+              }
               return res && typeof res === "object"
                 ? (res as DomWaitForMatchResult)
                 : { matched: false };
             },
             fillDom: async (selector, value, opts) => {
               const res = await page.evaluate(buildDomFillScript(selector, value, opts));
-              return Boolean(res);
+              if (res) return true;
+              if (
+                typeof selector === "object" &&
+                selector !== null &&
+                "frame" in selector &&
+                selector.frame
+              ) {
+                const { frame: frameSel, ...innerRest } = selector as unknown as Record<
+                  string,
+                  unknown
+                >;
+                const iframeHandle = await page
+                  .locator(selectorToFrameCss(frameSel as Selector))
+                  .first()
+                  .elementHandle()
+                  .catch(() => null);
+                const cf = iframeHandle
+                  ? await iframeHandle.contentFrame().catch(() => null)
+                  : null;
+                if (cf) {
+                  return Boolean(
+                    await cf
+                      .evaluate(buildDomFillScript(innerRest as Selector, value, opts))
+                      .catch(() => false),
+                  );
+                }
+              }
+              return false;
             },
             scrollIntoView: async (selector) => {
               const res = await page.evaluate(buildDomScrollIntoViewScript(selector));
@@ -1166,7 +1432,32 @@ export function makePlaywrightDriver(
             },
             tapDom: async (selector) => {
               const res = await page.evaluate(buildDomTapScript(selector));
-              return Boolean(res);
+              if (res) return true;
+              if (
+                typeof selector === "object" &&
+                selector !== null &&
+                "frame" in selector &&
+                selector.frame
+              ) {
+                const { frame: frameSel, ...innerRest } = selector as unknown as Record<
+                  string,
+                  unknown
+                >;
+                const iframeHandle = await page
+                  .locator(selectorToFrameCss(frameSel as Selector))
+                  .first()
+                  .elementHandle()
+                  .catch(() => null);
+                const cf = iframeHandle
+                  ? await iframeHandle.contentFrame().catch(() => null)
+                  : null;
+                if (cf) {
+                  return Boolean(
+                    await cf.evaluate(buildDomTapScript(innerRest as Selector)).catch(() => false),
+                  );
+                }
+              }
+              return false;
             },
           };
 
@@ -1287,10 +1578,46 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to input text: ${e}` }),
         }),
 
+      typeText: (text, opts) =>
+        Effect.tryPromise({
+          try: () => page.keyboard.type(text, opts?.delay ? { delay: opts.delay } : undefined),
+          catch: (e) => new DriverError({ message: `Failed to type text: ${e}` }),
+        }),
+
       pressKey: (key) =>
         Effect.tryPromise({
           try: () => page.keyboard.press(key),
           catch: (e) => new DriverError({ message: `Failed to press key ${key}: ${e}` }),
+        }),
+
+      keyDown: (key) =>
+        Effect.tryPromise({
+          try: () => page.keyboard.down(key),
+          catch: (e) => new DriverError({ message: `Failed to press keyDown ${key}: ${e}` }),
+        }),
+
+      keyUp: (key) =>
+        Effect.tryPromise({
+          try: () => page.keyboard.up(key),
+          catch: (e) => new DriverError({ message: `Failed to release keyUp ${key}: ${e}` }),
+        }),
+
+      mouseDown: (x, y, opts) =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.mouse.move(x, y);
+            await page.mouse.down({ button: opts?.button ?? "left" });
+          },
+          catch: (e) => new DriverError({ message: `Failed to mouseDown at (${x}, ${y}): ${e}` }),
+        }),
+
+      mouseUp: (x, y, opts) =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.mouse.move(x, y);
+            await page.mouse.up({ button: opts?.button ?? "left" });
+          },
+          catch: (e) => new DriverError({ message: `Failed to mouseUp at (${x}, ${y}): ${e}` }),
         }),
 
       hideKeyboard: () => Effect.void,
@@ -1302,6 +1629,15 @@ export function makePlaywrightDriver(
             return new Uint8Array(buffer);
           },
           catch: (e) => new DriverError({ message: `Failed to take screenshot: ${e}` }),
+        }),
+
+      takeFullPageScreenshot: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const buffer = await page.screenshot({ fullPage: true });
+            return new Uint8Array(buffer);
+          },
+          catch: (e) => new DriverError({ message: `Failed to take fullPage screenshot: ${e}` }),
         }),
 
       getDeviceInfo: () =>
@@ -1413,6 +1749,16 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to go back: ${e}` }),
         }),
 
+      forward: () =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.goForward();
+            updateHarPage(page);
+            debugLog("forward", currentPageUrl(page));
+          },
+          catch: (e) => new DriverError({ message: `Failed to go forward: ${e}` }),
+        }),
+
       reload: (reloadOpts) =>
         Effect.tryPromise({
           try: async () => {
@@ -1434,10 +1780,49 @@ export function makePlaywrightDriver(
 
       getUrl: () => Effect.sync(() => currentPageUrl(page)),
 
+      getNavigationUrls: () => [...navigationUrls],
+
+      waitForLoadState: (state = "load", waitOpts) =>
+        Effect.tryPromise({
+          try: () => page.waitForLoadState(state, waitOpts),
+          catch: (e) => new DriverError({ message: `waitForLoadState() failed: ${e}` }),
+        }),
+
+      waitForPopup: (triggerFn, waitOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const timeout = waitOpts?.timeout ?? 15_000;
+            const popupPromise = page.waitForEvent("popup", { timeout });
+            await triggerFn();
+            const popup = await popupPromise;
+            attachPageDiagnostics(popup);
+            return getTabId(popup);
+          },
+          catch: (e) => new DriverError({ message: `waitForPopup() failed: ${e}` }),
+        }),
+
       evaluate: <T = unknown>(script: string | ((...args: unknown[]) => T), ...args: unknown[]) =>
         Effect.tryPromise({
           try: () => evaluateOnPage<T>(page, script, args),
           catch: (e) => new DriverError({ message: `Evaluate failed: ${e}` }),
+        }),
+
+      addInitScript: (script, ...args) =>
+        Effect.tryPromise({
+          try: async () => {
+            const source =
+              typeof script === "string"
+                ? script
+                : `(${script.toString()})(${args.map((a) => (a === undefined ? "undefined" : JSON.stringify(a))).join(", ")});`;
+            await context.addInitScript(source);
+          },
+          catch: (e) => new DriverError({ message: `addInitScript() failed: ${e}` }),
+        }),
+
+      exposeFunction: (name, fn) =>
+        Effect.tryPromise({
+          try: () => context.exposeFunction(name, fn),
+          catch: (e) => new DriverError({ message: `exposeFunction() failed: ${e}` }),
         }),
 
       getRawPage: () => page,
@@ -1645,6 +2030,17 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to clear virtual credentials: ${e}` }),
         }),
 
+      route: (matcher, handler) =>
+        Effect.tryPromise({
+          try: async () => {
+            const definition: RouteDefinition = { kind: "handler", matcher, handler };
+            routeDefinitions.push(definition);
+            await applyRouteDefinition(definition);
+            debugLog("route", typeof matcher === "string" ? matcher : matcher.toString());
+          },
+          catch: (e) => new DriverError({ message: `Failed to register route: ${e}` }),
+        }),
+
       mockNetwork: (matcher, response) =>
         Effect.tryPromise({
           try: async () => {
@@ -1812,6 +2208,47 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `waitForResponse() failed: ${e}` }),
         }),
 
+      onRequest: (listener) => {
+        requestListeners.add(listener);
+        return () => {
+          requestListeners.delete(listener);
+        };
+      },
+
+      waitForRequest: (matcher, waitOpts) =>
+        Effect.tryPromise({
+          try: async () => {
+            const timeout = waitOpts?.timeout ?? 15_000;
+            return await new Promise<BrowserRequestInfo>((resolve, reject) => {
+              let settled = false;
+              const cleanup = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                requestListeners.delete(onReq);
+              };
+              const timer = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timed out waiting for request after ${timeout}ms`));
+              }, timeout);
+              const onReq = (req: BrowserRequestInfo) => {
+                const matched =
+                  typeof matcher === "function"
+                    ? matcher(req)
+                    : matcher instanceof RegExp
+                      ? matcher.test(req.url)
+                      : req.url.includes(matcher);
+                if (matched) {
+                  cleanup();
+                  resolve(req);
+                }
+              };
+              requestListeners.add(onReq);
+            });
+          },
+          catch: (e) => new DriverError({ message: `waitForRequest() failed: ${e}` }),
+        }),
+
       createIsolatedContext: (ctxOpts) =>
         Effect.tryPromise({
           try: async () => {
@@ -1823,6 +2260,8 @@ export function makePlaywrightDriver(
                 warmBrowser: false,
                 cdpEndpoint: undefined,
                 wsEndpoint: undefined,
+                ...(ctxOpts?.viewport ? { viewport: ctxOpts.viewport } : {}),
+                ...(ctxOpts?.locale ? { locale: ctxOpts.locale } : {}),
               }),
             );
             if (ctxOpts?.url) {
@@ -1999,12 +2438,23 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await setInputFiles(selector, path);
-            debugLog("uploadFile", Array.isArray(path) ? path.join(", ") : path);
+            const label = Array.isArray(path)
+              ? path.map((p) => (typeof p === "string" ? p : p.name)).join(", ")
+              : typeof path === "string"
+                ? path
+                : path.name;
+            debugLog("uploadFile", label);
           },
-          catch: (e) =>
-            new DriverError({
-              message: `Failed to upload file ${Array.isArray(path) ? path.join(", ") : path}: ${e}`,
-            }),
+          catch: (e) => {
+            const label = Array.isArray(path)
+              ? path.map((p) => (typeof p === "string" ? p : p.name)).join(", ")
+              : typeof path === "string"
+                ? path
+                : path.name;
+            return new DriverError({
+              message: `Failed to upload file ${label}: ${e}`,
+            });
+          },
         }),
 
       newTab: (url) =>

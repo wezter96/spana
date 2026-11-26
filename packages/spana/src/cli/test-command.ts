@@ -57,6 +57,8 @@ export interface TestCommandOptions {
   platforms: Platform[];
   tags?: string[];
   grep?: string;
+  grepInvert?: string;
+  passWithNoTests?: boolean;
   reporter?: string;
   configPath?: string;
   flowPath?: string;
@@ -507,16 +509,31 @@ async function setupReporters(
     const trimmed = name.trim();
     if (!trimmed) continue;
 
-    if (BUILTIN_REPORTERS.has(trimmed)) {
-      switch (trimmed) {
+    // Support `json:<file>` (e.g. `--reporter json:reports/out.json`) and `junit:<file>`
+    const colonIdx = trimmed.indexOf(":");
+    const reporterKind = colonIdx > 0 ? trimmed.slice(0, colonIdx) : trimmed;
+    const reporterTarget = colonIdx > 0 ? trimmed.slice(colonIdx + 1) : undefined;
+
+    if (BUILTIN_REPORTERS.has(reporterKind)) {
+      switch (reporterKind) {
         case "json":
-          reporters.push(createJsonReporter());
+          reporters.push(
+            createJsonReporter(reporterTarget ? resolve(process.cwd(), reporterTarget) : undefined),
+          );
           break;
         case "junit":
-          reporters.push(createJUnitReporter(resolvedOutputDir));
+          reporters.push(
+            createJUnitReporter(
+              reporterTarget ? resolve(process.cwd(), reporterTarget) : resolvedOutputDir,
+            ),
+          );
           break;
         case "html":
-          reporters.push(createHtmlReporter(resolvedOutputDir));
+          reporters.push(
+            createHtmlReporter(
+              reporterTarget ? resolve(process.cwd(), reporterTarget) : resolvedOutputDir,
+            ),
+          );
           break;
         case "allure":
           reporters.push(createAllureReporter());
@@ -682,6 +699,8 @@ interface FlowDiscoveryInput {
   configPath?: string;
   tags?: string[];
   grep?: string;
+  grepInvert?: string;
+  passWithNoTests?: boolean;
   platforms: Platform[];
   shard?: ShardOptions;
   lastFailed?: boolean;
@@ -777,7 +796,12 @@ async function discoverAndFilterFlows(
 
   const filteredFlows = filterFlows(
     loadedFlows.map((l) => l.flow),
-    { tags: input.tags, grep: input.grep, platforms: input.platforms },
+    {
+      tags: input.tags,
+      grep: input.grep,
+      grepInvert: input.grepInvert,
+      platforms: input.platforms,
+    },
   );
   const allowedFlows = new Set(focusFlows(filteredFlows));
   let filteredLoadedFlows = loadedFlows.filter((l) => allowedFlows.has(l.flow));
@@ -869,7 +893,7 @@ async function discoverAndFilterFlows(
 
   if (filteredLoadedFlows.length === 0) {
     console.log("No flows match the given filters.");
-    return { ok: false, success: true, watchRoots };
+    return { ok: false, success: Boolean(input.passWithNoTests), watchRoots };
   }
 
   if (selectedFlows.length === 0) {
@@ -989,6 +1013,21 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     }
 
     const webServers = await startWebServers(config.webServer, { cwd: configDir });
+    const projReporterNames = opts.reporter?.trim()
+      ? opts.reporter
+      : config.reporters && config.reporters.length > 0
+        ? config.reporters.join(",")
+        : "console";
+    const { redactor: projRedactor, reporters: projReporters } = await setupReporters(
+      projReporterNames,
+      config,
+      resolveFromConfig,
+      opts.appiumUrl,
+      opts,
+    );
+    const allProjectResults: import("../core/engine.js").TestResult[] = [];
+    const allProjectPlatforms = new Set<Platform>();
+    const projectsStart = Date.now();
     let allPassed = true;
     try {
       const executeProject = async (project: import("../core/projects.js").ProjectConfig) => {
@@ -1002,11 +1041,14 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
               : config.platforms && config.platforms.length > 0
                 ? config.platforms
                 : ["web"];
+        for (const p of projPlatforms) allProjectPlatforms.add(p);
         const discovered = await discoverAndFilterFlows({
           flowDir: projFlowDir,
           configPath,
           tags: opts.tags ?? project.tags,
           grep: opts.grep ?? project.grep,
+          grepInvert: opts.grepInvert,
+          passWithNoTests: opts.passWithNoTests ?? true,
           platforms: projPlatforms,
           outputDir: config.artifacts?.outputDir ?? resolveFromConfig("./spana-output"),
         });
@@ -1042,25 +1084,63 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           },
         };
         const runtimes: RuntimeHandle[] = [];
+        const useParallelWorkers = Boolean(
+          opts.parallel ||
+          opts.devices ||
+          (opts.workers && opts.workers > 1) ||
+          (projConfig.defaults?.workers && projConfig.defaults.workers > 1),
+        );
         try {
-          const platformConfigs = await buildSerialPlatformConfigs(
-            projPlatforms,
-            opts,
-            projConfig,
-            runtimes,
-            executionMode,
-            opts.appiumUrl ??
-              process.env.SPANA_APPIUM_URL ??
-              projConfig.execution?.appium?.serverUrl,
-            projConfig.execution?.appium ?? {},
-            undefined,
-            null,
-            resolveFromConfig,
-          );
+          const platformConfigs =
+            executionMode === "local" && useParallelWorkers
+              ? await buildParallelPlatformConfigs(
+                  projPlatforms,
+                  opts,
+                  projConfig,
+                  runtimes,
+                  resolveFromConfig,
+                )
+              : await buildSerialPlatformConfigs(
+                  projPlatforms,
+                  opts,
+                  projConfig,
+                  runtimes,
+                  executionMode,
+                  opts.appiumUrl ??
+                    process.env.SPANA_APPIUM_URL ??
+                    projConfig.execution?.appium?.serverUrl,
+                  projConfig.execution?.appium ?? {},
+                  undefined,
+                  null,
+                  resolveFromConfig,
+                );
+          const redactProjResult = <T extends import("../core/engine.js").TestResult>(r: T): T => {
+            if (!r.error) return r;
+            return {
+              ...r,
+              error: {
+                ...r.error,
+                message: projRedactor.redact(r.error.message),
+                stack: r.error.stack ? projRedactor.redact(r.error.stack) : undefined,
+                suggestion: r.error.suggestion
+                  ? projRedactor.redact(r.error.suggestion)
+                  : undefined,
+              },
+            };
+          };
+          const onResult = createResultHandler(projReporters, redactProjResult, projRedactor, opts);
           const orchResult = await orchestrate(matched, platformConfigs, {
             retries: opts.retries ?? projConfig.defaults?.retries ?? 0,
             bail: opts.bail,
+            parallelPlatforms: useParallelWorkers || projConfig.parallelPlatforms,
+            onFlowStart(name, platform, workerName) {
+              for (const reporter of projReporters) {
+                reporter.onFlowStart?.(name, platform, workerName);
+              }
+            },
+            onResult,
           });
+          allProjectResults.push(...orchResult.results.map(redactProjResult));
           console.log(
             `[project:${project.name}] ${orchResult.passed} passed, ${orchResult.failed} failed, ${orchResult.skipped} skipped`,
           );
@@ -1082,6 +1162,19 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       for (const td of plan.teardowns) {
         const tdOk = await executeProject(td);
         if (!tdOk) allPassed = false;
+      }
+
+      for (const reporter of projReporters) {
+        reporter.onRunComplete({
+          total: allProjectResults.length,
+          passed: allProjectResults.filter((r) => r.status === "passed").length,
+          failed: allProjectResults.filter((r) => r.status === "failed").length,
+          skipped: allProjectResults.filter((r) => r.status === "skipped").length,
+          flaky: allProjectResults.filter((r) => r.flaky).length,
+          durationMs: Date.now() - projectsStart,
+          results: allProjectResults,
+          platforms: [...allProjectPlatforms],
+        });
       }
     } finally {
       await webServers.stopAll();
@@ -1107,6 +1200,8 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       configPath,
       tags: opts.tags,
       grep: opts.grep,
+      grepInvert: opts.grepInvert,
+      passWithNoTests: opts.passWithNoTests,
       platforms,
       shard: opts.shard,
       lastFailed: opts.lastFailed,
@@ -1192,6 +1287,8 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           configPath,
           tags: opts.tags,
           grep: opts.grep,
+          grepInvert: opts.grepInvert,
+          passWithNoTests: opts.passWithNoTests,
           platforms,
           lastFailed: opts.lastFailed,
           changed: opts.changed,
@@ -1229,6 +1326,14 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         const queueServer = await startSharedFlowQueueServer(orderedFlows.map((f) => f.name));
         const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
         const baseWarmScope = config.execution?.web?.warmBrowserScope ?? `mp-${runTag}`;
+        const shardOutDirs: string[] = [];
+        let workerIndexOffsetCursor = 0;
+
+        // Run global config.hooks.beforeAll once in parent process (3.11)
+        if (config.hooks?.beforeAll) {
+          await config.hooks.beforeAll({ app: undefined, platform: platforms[0] } as any);
+        }
+
         try {
           const poolResult = await runMultiProcessPool({
             totalWorkers: requestedWorkers,
@@ -1236,6 +1341,10 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
             processes: effectivePlan.processCount,
             buildShardCommand: (shardIndex, _shardTotal, workerCount) => {
               const shardOutDir = join(tmpdir(), `spana-mp-${runTag}-p${shardIndex}`);
+              const reportPath = join(shardOutDir, "results.json");
+              const myOffset = workerIndexOffsetCursor;
+              workerIndexOffsetCursor += workerCount;
+              shardOutDirs.push(shardOutDir);
               const args = [
                 process.argv[1]!,
                 "test",
@@ -1246,13 +1355,17 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                 String(workerCount),
                 "--reporter",
                 "json",
+                "--pass-with-no-tests",
                 ...(opts.browser ? ["--browser", opts.browser] : []),
                 ...(opts.configPath ? ["--config", opts.configPath] : []),
                 ...(opts.tags?.flatMap((t) => ["--tag", t]) ?? []),
                 ...(opts.grep ? ["--grep", opts.grep] : []),
+                ...(opts.grepInvert ? ["--grep-invert", opts.grepInvert] : []),
                 ...(opts.changedSince ? ["--changed-since", opts.changedSince] : []),
                 ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
                 ...(opts.jsCoverage ? ["--js-coverage"] : []),
+                ...(opts.trace ? ["--trace"] : []),
+                ...(opts.headed ? ["--headed"] : []),
                 ...(opts.bail !== undefined ? ["--bail", String(opts.bail)] : []),
               ];
               return {
@@ -1262,14 +1375,61 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                   SPANA_WORKER_PROCESS: "1",
                   SPANA_QUEUE_URL: queueServer.url,
                   SPANA_OUTPUT_DIR: shardOutDir,
+                  SPANA_WORKER_REPORT_PATH: reportPath,
+                  SPANA_WORKER_INDEX_OFFSET: String(myOffset),
                   SPANA_WARM_SCOPE: `${baseWarmScope}-p${shardIndex}`,
                 },
-                reportJsonPath: join(shardOutDir, "results.json"),
+                reportJsonPath: reportPath,
               };
             },
           });
 
-          const redactedResults = poolResult.results.map((r) =>
+          // Move child artifacts from temp shardOutDirs into the parent run outputDir and rewrite attachment paths
+          const {
+            cp,
+            mkdir: mkdirFs,
+            readdir: readdirFs,
+            rm: rmFs,
+          } = await import("node:fs/promises");
+          const pathRewrites: Array<[string, string]> = [];
+          await mkdirFs(outputDir, { recursive: true });
+          for (const shardDir of shardOutDirs) {
+            try {
+              const entries = await readdirFs(shardDir);
+              for (const entry of entries) {
+                if (entry === "results.json" || entry === ".spana") continue;
+                const src = join(shardDir, entry);
+                const dest = join(outputDir, entry);
+                await cp(src, dest, { recursive: true, force: true });
+                pathRewrites.push([src, dest]);
+              }
+            } catch {
+              // shard wrote no artifacts
+            } finally {
+              await rmFs(shardDir, { recursive: true, force: true }).catch(() => {});
+            }
+          }
+          const rewriteAttachmentPath = (p: string): string => {
+            for (const [src, dest] of pathRewrites) {
+              if (p === src || p.startsWith(`${src}/`) || p.startsWith(`${src}\\`)) {
+                return dest + p.slice(src.length);
+              }
+            }
+            return p;
+          };
+          const mergedResults = poolResult.results.map((r) => ({
+            ...r,
+            ...(r.attachments
+              ? {
+                  attachments: r.attachments.map((a) => ({
+                    ...a,
+                    path: rewriteAttachmentPath(a.path),
+                  })),
+                }
+              : {}),
+          }));
+
+          const redactedResults = mergedResults.map((r) =>
             r.error
               ? {
                   ...r,
@@ -1297,6 +1457,20 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
             });
           }
 
+          if (config.hooks?.afterAll) {
+            try {
+              await config.hooks.afterAll({
+                app: undefined,
+                platform: platforms[0],
+                summary: { results: redactedResults },
+              } as any);
+            } catch (hookError) {
+              console.warn(
+                `afterAll hook failed: ${hookError instanceof Error ? hookError.message : hookError}`,
+              );
+            }
+          }
+
           const sourcePathsByFlowName = new Map(
             mpFlowResult.selectedLoadedFlows.map((loaded) => [loaded.flow.name, loaded.sourcePath]),
           );
@@ -1306,7 +1480,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
               buildLastRunState({
                 flowDir,
                 platforms,
-                results: poolResult.results,
+                results: mergedResults,
                 sourcePathsByFlowName,
               }),
             );
@@ -1329,27 +1503,39 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     executionMode === "local" && platforms.includes("web")
       ? speculativelyPrelaunchWebBrowser(config)
       : undefined;
+  const closePrelaunchedWeb = async () => {
+    if (!prelaunchedWeb?.ownsBrowser) return;
+    await prelaunchedWeb.browserPromise.then((b) => b?.close?.()).catch(() => {});
+    await prelaunchedWeb.cdpBrowserPromise?.then((h) => h.close()).catch(() => {});
+  };
 
-  const [flowResult, priorRunState] = await Promise.all([
-    discoverAndFilterFlows({
-      flowDir,
-      configPath,
-      tags: opts.tags,
-      grep: opts.grep,
-      platforms,
-      shard: opts.shard,
-      lastFailed: opts.lastFailed,
-      changed: opts.changed,
-      changedSince: opts.changedSince,
-      filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
-      outputDir,
-    }),
-    readLastRunState(createLastRunStatePath(outputDir)),
-  ]);
+  let flowResult;
+  let priorRunState;
+  try {
+    [flowResult, priorRunState] = await Promise.all([
+      discoverAndFilterFlows({
+        flowDir,
+        configPath,
+        tags: opts.tags,
+        grep: opts.grep,
+        grepInvert: opts.grepInvert,
+        passWithNoTests: opts.passWithNoTests,
+        platforms,
+        shard: opts.shard,
+        lastFailed: opts.lastFailed,
+        changed: opts.changed,
+        changedSince: opts.changedSince,
+        filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
+        outputDir,
+      }),
+      readLastRunState(createLastRunStatePath(outputDir)),
+    ]);
+  } catch (err) {
+    await closePrelaunchedWeb();
+    throw err;
+  }
   if (!flowResult.ok) {
-    if (prelaunchedWeb?.ownsBrowser) {
-      await prelaunchedWeb.browserPromise.then((b) => b.close()).catch(() => {});
-    }
+    await closePrelaunchedWeb();
     return { success: flowResult.success, watchRoots: flowResult.watchRoots };
   }
   const { selectedLoadedFlows, selectedFlows, watchRoots, filterSummaries } = flowResult;

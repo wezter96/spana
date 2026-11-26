@@ -390,12 +390,31 @@ const SPANA_BROWSER_PROFILE_MARKERS = [
 ];
 
 /**
- * Sweep orphaned Chromium processes launched by Spana (identified by Spana's unique
- * temporary `--user-data-dir=.../spana-*-profile-*` argument) whose PIDs are no longer
- * tracked in the daemon registry, and remove their temporary profile directories.
+ * Sweep orphaned Chromium processes launched by Spana whose `--user-data-dir` matches
+ * the explicitly supplied `profileDirs` (or `scopeMarker`).
+ *
+ * By default, this NEVER kills unrelated Spana browsers belonging to other worktrees,
+ * runs, or CI jobs on the same host unless `sweepAllHost: true` is explicitly passed.
  */
-export function sweepOrphanedSpanaBrowsers(options: { excludePids?: Set<number> } = {}): number {
+export function sweepOrphanedSpanaBrowsers(
+  options: {
+    excludePids?: Set<number>;
+    /** Only kill processes whose `--user-data-dir` matches one of these profile directories. */
+    profileDirs?: Iterable<string>;
+    /** Only kill processes whose `--user-data-dir` contains this scope marker. */
+    scopeMarker?: string;
+    /** Opt-in host-wide sweep of all Spana profile markers (default: false). */
+    sweepAllHost?: boolean;
+  } = {},
+): number {
   if (process.platform === "win32") return 0;
+  const allowedDirs = new Set(options.profileDirs ?? []);
+  const scopeMarker = options.scopeMarker;
+  const sweepAllHost = options.sweepAllHost === true;
+  if (!sweepAllHost && allowedDirs.size === 0 && !scopeMarker) {
+    return 0;
+  }
+
   let psOut = "";
   try {
     psOut = execFileSync("ps", ["-ax", "-o", "pid=,command="], {
@@ -418,12 +437,25 @@ export function sweepOrphanedSpanaBrowsers(options: { excludePids?: Set<number> 
     const pid = Number.parseInt(match[1]!, 10);
     const cmd = match[2] ?? "";
     if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid || exclude.has(pid)) continue;
-    if (!SPANA_BROWSER_PROFILE_MARKERS.some((marker) => cmd.includes(marker))) continue;
 
-    // Extract --user-data-dir=<path> for cleanup
+    // Extract --user-data-dir=<path>
     const dirMatch = /--user-data-dir=([^\s]+)/.exec(cmd);
-    if (dirMatch?.[1] && SPANA_BROWSER_PROFILE_MARKERS.some((m) => dirMatch[1]!.includes(m))) {
-      profileDirsToClean.add(dirMatch[1]!);
+    const userDataDir = dirMatch?.[1];
+
+    let matchesTarget = false;
+    if (sweepAllHost) {
+      matchesTarget = SPANA_BROWSER_PROFILE_MARKERS.some((marker) => cmd.includes(marker));
+    } else {
+      if (userDataDir && allowedDirs.has(userDataDir)) {
+        matchesTarget = true;
+      } else if (scopeMarker && userDataDir && userDataDir.includes(scopeMarker)) {
+        matchesTarget = true;
+      }
+    }
+    if (!matchesTarget) continue;
+
+    if (userDataDir && SPANA_BROWSER_PROFILE_MARKERS.some((m) => userDataDir.includes(m))) {
+      profileDirsToClean.add(userDataDir);
     }
 
     killPidTree(pid);
@@ -459,6 +491,8 @@ export function stopWarmDaemon(
   killPidTree(record.tunnelPid);
 
   if (record.userDataDir) {
+    // Also clean up any child/orphan helper processes still referencing this exact profile dir
+    sweepOrphanedSpanaBrowsers({ profileDirs: [record.userDataDir] });
     try {
       rmSync(record.userDataDir, { recursive: true, force: true });
     } catch {
@@ -470,16 +504,25 @@ export function stopWarmDaemon(
   return true;
 }
 
-export function stopAllWarmDaemons(stateFile = defaultDaemonStatePath()): number {
+export function stopAllWarmDaemons(
+  stateFile = defaultDaemonStatePath(),
+  options: { scopeMarker?: string; sweepAllHost?: boolean } = {},
+): number {
   const records = listWarmDaemons(stateFile);
+  const profileDirs = new Set<string>();
   let stopped = 0;
   for (const record of records) {
+    if (record.userDataDir) profileDirs.add(record.userDataDir);
     if (stopWarmDaemon(record.kind, record.deviceId, stateFile)) {
       stopped++;
     }
   }
-  if (isUsingDefaultStateFile(stateFile)) {
-    stopped += sweepOrphanedSpanaBrowsers();
+  if (profileDirs.size > 0 || options.scopeMarker || options.sweepAllHost) {
+    stopped += sweepOrphanedSpanaBrowsers({
+      profileDirs,
+      scopeMarker: options.scopeMarker,
+      sweepAllHost: options.sweepAllHost,
+    });
   }
   return stopped;
 }

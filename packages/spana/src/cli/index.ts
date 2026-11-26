@@ -15,6 +15,8 @@ if (command === "test") {
   const platforms: Platform[] = [];
   let tags: string[] | undefined;
   let grep: string | undefined;
+  let grepInvert: string | undefined;
+  let passWithNoTests = false;
   let reporter: string | undefined;
   let configPath: string | undefined;
   let flowPath: string | undefined;
@@ -56,8 +58,13 @@ if (command === "test") {
       tags = args[++i]!.split(",");
     } else if (arg === "--grep" && args[i + 1]) {
       grep = args[++i];
+    } else if (arg === "--grep-invert" && args[i + 1]) {
+      grepInvert = args[++i];
+    } else if (arg === "--pass-with-no-tests") {
+      passWithNoTests = true;
     } else if (arg === "--reporter" && args[i + 1]) {
-      reporter = args[++i]!;
+      const nextReporter = args[++i]!;
+      reporter = reporter ? `${reporter},${nextReporter}` : nextReporter;
     } else if (arg === "--config" && args[i + 1]) {
       configPath = args[++i];
     } else if (arg === "--retries" && args[i + 1]) {
@@ -147,6 +154,8 @@ if (command === "test") {
     platforms,
     tags,
     grep,
+    grepInvert,
+    passWithNoTests,
     reporter,
     configPath,
     flowPath,
@@ -668,13 +677,40 @@ if (command === "test") {
     }
   }
 } else if (command === "daemon") {
-  const sub = args[1] ?? "status";
+  const sub = args[1] && !args[1].startsWith("--") ? args[1] : "status";
+  let stateFile: string | undefined;
+  let configPath: string | undefined;
+  let sweepAllHost = false;
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--state-file" && args[i + 1]) {
+      stateFile = args[++i];
+    } else if (arg === "--config" && args[i + 1]) {
+      configPath = args[++i];
+    } else if (arg === "--all") {
+      sweepAllHost = true;
+    }
+  }
+  if (!stateFile) {
+    try {
+      const { loadConfig } = await import("./config-loader.js");
+      const { resolve, dirname } = await import("node:path");
+      const loaded = await loadConfig({ configPath, allowMissing: true });
+      const cfgStateFile = loaded.config.execution?.warmDaemons?.stateFile;
+      if (cfgStateFile) {
+        const cfgDir = dirname(loaded.configPath ?? resolve("spana.config.ts"));
+        stateFile = resolve(cfgDir, cfgStateFile);
+      }
+    } catch {
+      // ignore missing/invalid config when inspecting daemons
+    }
+  }
   const { listWarmDaemons, stopAllWarmDaemons } = await import("../runtime/daemon-manager.js");
   if (sub === "stop") {
-    const count = stopAllWarmDaemons();
+    const count = stopAllWarmDaemons(stateFile, { sweepAllHost });
     console.log(`Stopped ${count} warm daemon(s).`);
   } else {
-    const daemons = listWarmDaemons();
+    const daemons = listWarmDaemons(stateFile);
     if (daemons.length === 0) {
       console.log("No warm daemons registered.");
     } else {
@@ -690,7 +726,23 @@ if (command === "test") {
   const server = new SpanaMcpServer();
   await server.runStdio();
 } else if (command === "version" || args.includes("--version") || args.includes("-v")) {
-  console.log("spana v0.11.0");
+  const { readFileSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, resolve } = await import("node:path");
+  let version = "0.0.0";
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const rel of ["../../package.json", "../package.json"]) {
+    try {
+      const pkg = JSON.parse(readFileSync(resolve(here, rel), "utf-8")) as { version?: string };
+      if (pkg.version) {
+        version = pkg.version;
+        break;
+      }
+    } catch {
+      // try next relative path (src/cli vs dist)
+    }
+  }
+  console.log(`spana v${version}`);
 } else {
   console.log(
     "spana — One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron & Electrobun",

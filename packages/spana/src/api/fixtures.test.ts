@@ -26,6 +26,8 @@ function makeFakeContext(log: string[]): FlowContext {
     app,
     expect: (() => ({})) as any,
     platform: "ios",
+    workerIndex: 0,
+    parallelIndex: 0,
     sessions: {} as any,
   };
 }

@@ -37,6 +37,7 @@ import { setupUiAutomator2 } from "../drivers/uiautomator2/installer.js";
 import { setupWDA } from "../drivers/wda/installer.js";
 import { allocatePort } from "../core/port-allocator.js";
 import { createSpanaBridgeChannel, type SpanaBridgeChannel } from "../channels/bridge-server.js";
+import { resolveDriverAdapter } from "../drivers/adapter-registry.js";
 
 async function safeCleanup(...fns: Array<() => Promise<unknown>>): Promise<void> {
   for (const fn of fns) {
@@ -98,6 +99,7 @@ function buildEngineConfig(
     },
     autoLaunch: true,
     flowTimeout: config.defaults?.waitTimeout ? config.defaults.waitTimeout * 10 : 60_000,
+    toPassTimeout: config.defaults?.toPassTimeout,
     artifactConfig: config.artifacts,
     launchOptions: config.launchOptions,
     hooks: config.hooks,
@@ -158,15 +160,18 @@ export function speculativelyPrelaunchWebBrowser(
       executablePath: webExecution?.executablePath,
       headless: webExecution?.headless ?? true,
       extensions: webExecution?.extensions,
+      args: webExecution?.args,
+      launchTimeout: webExecution?.launchTimeout,
       warmBrowser: useWarm,
       warmBrowserScope: webExecution?.warmBrowserScope
         ? `${webExecution.warmBrowserScope}-w0`
         : undefined,
+      daemonStateFile: config.execution?.warmDaemons?.stateFile,
     });
     cdpBrowserPromise.catch(() => {});
     return {
       browserPromise: Promise.resolve(undefined as unknown as Browser),
-      ownsBrowser: false,
+      ownsBrowser: !useWarm,
       cdpBrowserPromise,
     };
   }
@@ -190,6 +195,7 @@ export function speculativelyPrelaunchWebBrowser(
             headless: webExecution?.headless ?? true,
             executablePath: webExecution?.executablePath,
             channel: webExecution?.channel,
+            args: webExecution?.args,
           });
 
   // Prevent unhandled rejection if CLI exits early before awaiting
@@ -204,6 +210,51 @@ export async function buildWebRuntime(
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
   const webExecution = config.execution?.web;
   const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
+
+  // Check if a custom DriverAdapter was registered for ("web", engine) (modular adapter pattern)
+  const requestedEngine = webExecution?.engine;
+  const customAdapter = resolveDriverAdapter("web", requestedEngine);
+  if (customAdapter) {
+    const handle = await customAdapter.create({
+      platform: "web",
+      engine: requestedEngine,
+      appId: webUrl,
+      config,
+      domChannel: bridge,
+      resolvePath: (p) => p,
+    });
+    const driver =
+      bridge && !handle.driver.domChannel
+        ? { ...handle.driver, domChannel: bridge }
+        : handle.driver;
+    const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+    return {
+      runtime: {
+        driver,
+        cleanup: () =>
+          safeCleanup(
+            () => handle.cleanup(),
+            () => bridge?.disconnect() ?? Promise.resolve(),
+          ),
+        metadata: {
+          platform: "web",
+          mode: "local",
+          adapter: customAdapter.name,
+          ...handle.metadata,
+        },
+      },
+      engineConfig: buildEngineConfig(
+        webUrl,
+        "web",
+        handle.parseHierarchy ?? parseWebHierarchy,
+        config,
+        {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        },
+      ),
+    };
+  }
 
   const prelaunchedBrowser =
     prelaunched && !prelaunched.cdpBrowserPromise ? await prelaunched.browserPromise : undefined;
@@ -221,20 +272,28 @@ export async function buildWebRuntime(
             executablePath: webExecution?.executablePath,
             headless: webExecution?.headless ?? true,
             extensions: webExecution?.extensions,
+            args: webExecution?.args,
+            launchTimeout: webExecution?.launchTimeout,
             warmBrowser:
               webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
             warmBrowserScope: webExecution?.warmBrowserScope
               ? `${webExecution.warmBrowserScope}-w0`
               : undefined,
+            daemonStateFile: config.execution?.warmDaemons?.stateFile,
           });
       targetCdpUrl = launchedDirectCdp.browserWsUrl;
     }
+    const effectiveLocale = webExecution?.locale ?? config.defaults?.locale;
     const cdpEmulation =
-      webExecution?.colorScheme || webExecution?.reducedMotion || webExecution?.timezoneId
+      webExecution?.colorScheme ||
+      webExecution?.reducedMotion ||
+      webExecution?.timezoneId ||
+      effectiveLocale
         ? {
-            colorScheme: webExecution.colorScheme,
-            reducedMotion: webExecution.reducedMotion,
-            timezoneId: webExecution.timezoneId,
+            colorScheme: webExecution?.colorScheme,
+            reducedMotion: webExecution?.reducedMotion,
+            timezoneId: webExecution?.timezoneId,
+            locale: effectiveLocale,
           }
         : undefined;
     rawDriver = await Effect.runPromise(
@@ -242,6 +301,8 @@ export async function buildWebRuntime(
         cdpUrl: targetCdpUrl ?? "http://127.0.0.1:9222",
         baseUrl: webUrl,
         engineLabel: engine,
+        viewport: webExecution?.viewport,
+        evaluateTimeout: webExecution?.evaluateTimeout,
         useBrowserContexts: useContexts,
         freshContextPerFlow: webExecution?.freshContextPerFlow,
         contextIsolation: webExecution?.contextIsolation,
@@ -260,6 +321,12 @@ export async function buildWebRuntime(
         headless: webExecution?.headless ?? true,
         executablePath: webExecution?.executablePath,
         channel: webExecution?.channel,
+        args: webExecution?.args,
+        viewport: webExecution?.viewport,
+        locale: webExecution?.locale ?? config.defaults?.locale,
+        timezoneId: webExecution?.timezoneId,
+        colorScheme: webExecution?.colorScheme,
+        reducedMotion: webExecution?.reducedMotion,
         baseUrl: webUrl,
         storageState: webExecution?.storageState,
         verboseLogging: webExecution?.verboseLogging,
@@ -353,8 +420,12 @@ export async function buildWebRuntimePool(
             : launchDirectCdpBrowser({
                 executablePath: webExecution?.executablePath,
                 headless: webExecution?.headless ?? true,
+                extensions: webExecution?.extensions,
+                args: webExecution?.args,
+                launchTimeout: webExecution?.launchTimeout,
                 warmBrowser: useWarm,
                 warmBrowserScope: `${baseScope}-w${bIdx}`,
+                daemonStateFile: config.execution?.warmDaemons?.stateFile,
               }),
         ),
       );
@@ -366,6 +437,20 @@ export async function buildWebRuntimePool(
       }
     }
 
+    const effectivePoolLocale = webExecution?.locale ?? config.defaults?.locale;
+    const poolEmulation =
+      webExecution?.colorScheme ||
+      webExecution?.reducedMotion ||
+      webExecution?.timezoneId ||
+      effectivePoolLocale
+        ? {
+            colorScheme: webExecution?.colorScheme,
+            reducedMotion: webExecution?.reducedMotion,
+            timezoneId: webExecution?.timezoneId,
+            locale: effectivePoolLocale,
+          }
+        : undefined;
+
     const results: RuntimeResult[] = [];
     for (let i = 0; i < workerCount; i++) {
       const bucket = handles[i % handles.length]!;
@@ -374,6 +459,8 @@ export async function buildWebRuntimePool(
           cdpUrl: bucket.cdpUrl,
           baseUrl: webUrl,
           engineLabel: "cdp",
+          viewport: webExecution?.viewport,
+          evaluateTimeout: webExecution?.evaluateTimeout,
           useBrowserContexts: true,
           freshContextPerFlow: webExecution?.freshContextPerFlow,
           contextIsolation: webExecution?.contextIsolation,
@@ -382,6 +469,7 @@ export async function buildWebRuntimePool(
           blockResources: webExecution?.blockResources,
           virtualAuthenticator: webExecution?.virtualAuthenticator,
           storageState: webExecution?.storageState,
+          emulation: poolEmulation,
         }),
       );
       const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
@@ -458,6 +546,7 @@ export async function buildWebRuntimePool(
         headless: webExecution?.headless ?? true,
         executablePath: webExecution?.executablePath,
         channel: webExecution?.channel,
+        args: webExecution?.args,
       }),
       owns: true,
       remaining: 0,
@@ -480,6 +569,12 @@ export async function buildWebRuntimePool(
         headless: webExecution?.headless ?? true,
         executablePath: webExecution?.executablePath,
         channel: webExecution?.channel,
+        args: webExecution?.args,
+        viewport: webExecution?.viewport,
+        locale: webExecution?.locale ?? config.defaults?.locale,
+        timezoneId: webExecution?.timezoneId,
+        colorScheme: webExecution?.colorScheme,
+        reducedMotion: webExecution?.reducedMotion,
         baseUrl: webUrl,
         storageState: webExecution?.storageState,
         verboseLogging: webExecution?.verboseLogging,
@@ -531,6 +626,49 @@ export async function buildElectronRuntime(
 ): Promise<RuntimeResult> {
   const electronCfg = config.apps?.electron ?? {};
   const bridge = await maybeStartBridge(electronCfg.bridge, config.execution?.bridge);
+
+  const customAdapter = resolveDriverAdapter("electron");
+  if (customAdapter) {
+    const appId = electronCfg.url ?? electronCfg.entry ?? "electron";
+    const handle = await customAdapter.create({
+      platform: "electron",
+      appId,
+      config,
+      domChannel: bridge,
+      resolvePath: resolveFromConfig,
+    });
+    const driver =
+      bridge && !handle.driver.domChannel
+        ? { ...handle.driver, domChannel: bridge }
+        : handle.driver;
+    const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+    return {
+      runtime: {
+        driver,
+        cleanup: () =>
+          safeCleanup(
+            () => handle.cleanup(),
+            () => bridge?.disconnect() ?? Promise.resolve(),
+          ),
+        metadata: {
+          platform: "electron",
+          mode: "local",
+          adapter: customAdapter.name,
+          ...handle.metadata,
+        },
+      },
+      engineConfig: buildEngineConfig(
+        appId,
+        "electron",
+        handle.parseHierarchy ?? parseWebHierarchy,
+        config,
+        {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        },
+      ),
+    };
+  }
 
   const driver = await Effect.runPromise(
     makeElectronDriver({
@@ -586,6 +724,49 @@ export async function buildElectrobunRuntime(
   const electrobunCfg = config.apps?.electrobun ?? {};
   const bridge = await maybeStartBridge(electrobunCfg.bridge, config.execution?.bridge);
 
+  const customAdapter = resolveDriverAdapter("electrobun");
+  if (customAdapter) {
+    const appId = electrobunCfg.url ?? electrobunCfg.executablePath ?? "electrobun";
+    const handle = await customAdapter.create({
+      platform: "electrobun",
+      appId,
+      config,
+      domChannel: bridge,
+      resolvePath: resolveFromConfig,
+    });
+    const driver =
+      bridge && !handle.driver.domChannel
+        ? { ...handle.driver, domChannel: bridge }
+        : handle.driver;
+    const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+    return {
+      runtime: {
+        driver,
+        cleanup: () =>
+          safeCleanup(
+            () => handle.cleanup(),
+            () => bridge?.disconnect() ?? Promise.resolve(),
+          ),
+        metadata: {
+          platform: "electrobun",
+          mode: "local",
+          adapter: customAdapter.name,
+          ...handle.metadata,
+        },
+      },
+      engineConfig: buildEngineConfig(
+        appId,
+        "electrobun",
+        handle.parseHierarchy ?? parseWebHierarchy,
+        config,
+        {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        },
+      ),
+    };
+  }
+
   const driver = await Effect.runPromise(
     makeElectrobunDriver({
       executablePath: electrobunCfg.executablePath
@@ -640,6 +821,50 @@ export async function buildLocalAndroidRuntime(
   targetDevice: DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
 ): Promise<RuntimeResult | null> {
+  const customAdapter = resolveDriverAdapter("android");
+  if (customAdapter) {
+    const packageName = config.apps?.android?.packageName ?? "";
+    const bridge = await maybeStartBridge(config.apps?.android?.bridge, config.execution?.bridge);
+    const handle = await customAdapter.create({
+      platform: "android",
+      appId: packageName,
+      config,
+      domChannel: bridge,
+      resolvePath: resolveFromConfig,
+    });
+    const driver =
+      bridge && !handle.driver.domChannel
+        ? { ...handle.driver, domChannel: bridge }
+        : handle.driver;
+    const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+    return {
+      runtime: {
+        driver,
+        cleanup: () =>
+          safeCleanup(
+            () => handle.cleanup(),
+            () => bridge?.disconnect() ?? Promise.resolve(),
+          ),
+        metadata: {
+          platform: "android",
+          mode: "local",
+          adapter: customAdapter.name,
+          ...handle.metadata,
+        },
+      },
+      engineConfig: buildEngineConfig(
+        packageName,
+        "android",
+        handle.parseHierarchy ?? parseAndroidHierarchy,
+        config,
+        {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        },
+      ),
+    };
+  }
+
   const device =
     targetDevice?.platform === "android"
       ? {
@@ -734,6 +959,50 @@ export async function buildLocalIOSRuntime(
   targetDevice: DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
 ): Promise<RuntimeResult | null> {
+  const customAdapter = resolveDriverAdapter("ios");
+  if (customAdapter) {
+    const bundleId = config.apps?.ios?.bundleId ?? "";
+    const bridge = await maybeStartBridge(config.apps?.ios?.bridge, config.execution?.bridge);
+    const handle = await customAdapter.create({
+      platform: "ios",
+      appId: bundleId,
+      config,
+      domChannel: bridge,
+      resolvePath: resolveFromConfig,
+    });
+    const driver =
+      bridge && !handle.driver.domChannel
+        ? { ...handle.driver, domChannel: bridge }
+        : handle.driver;
+    const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+    return {
+      runtime: {
+        driver,
+        cleanup: () =>
+          safeCleanup(
+            () => handle.cleanup(),
+            () => bridge?.disconnect() ?? Promise.resolve(),
+          ),
+        metadata: {
+          platform: "ios",
+          mode: "local",
+          adapter: customAdapter.name,
+          ...handle.metadata,
+        },
+      },
+      engineConfig: buildEngineConfig(
+        bundleId,
+        "ios",
+        handle.parseHierarchy ?? parseIOSHierarchy,
+        config,
+        {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        },
+      ),
+    };
+  }
+
   const bundleId = config.apps?.ios?.bundleId ?? "";
   const iosAppPath = config.apps?.ios?.appPath;
   const signing = config.apps?.ios?.signing;

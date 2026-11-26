@@ -97,19 +97,30 @@ export interface DomWaitForMatchOptions {
     | "editable"
     | "empty"
     | "count"
+    | "attached"
+    | "inViewport"
+    | "jsProperty"
     | "url"
     | "title";
   /** Expected value/substring (optional when `kind === "attribute"` or `"accessibilityLabel"` checks presence). */
   expected?: string;
+  /** Expected JS property value (JSON-comparable) when `kind === "jsProperty"`. */
+  expectedValue?: unknown;
+  /** JS property name when `kind === "jsProperty"`. */
+  propertyName?: string;
   /** Expected element count when `kind === "count"`. */
   expectedCount?: number;
+  /** When true on `kind === "count"`, count only visible matches (default: false — count all matches). */
+  visibleOnly?: boolean;
+  /** When true on `kind === "containsText"`, perform case-insensitive substring match (default: false — case-sensitive). */
+  ignoreCase?: boolean;
   /** Attribute name when `kind === "attribute"`. */
   attributeName?: string;
   /** CSS property name when `kind === "css"`. */
   cssProperty?: string;
-  /** RegExp source when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "class" | "css" | "url" | "title"`. */
+  /** RegExp source when matching by RegExp. */
   patternSource?: string;
-  /** RegExp flags when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "class" | "css" | "url" | "title"`. */
+  /** RegExp flags when matching by RegExp. */
   patternFlags?: string;
   /** Invert the match condition (`expect(...).not.*`). */
   negate?: boolean;
@@ -237,13 +248,14 @@ export function buildEvaluateExpression(
   script: string | ((...args: unknown[]) => unknown),
   args: unknown[] = [],
 ): string {
+  const serializeArg = (arg: unknown) => (arg === undefined ? "undefined" : JSON.stringify(arg));
   if (typeof script === "function") {
-    const serializedArgs = args.map((arg) => JSON.stringify(arg)).join(", ");
+    const serializedArgs = args.map(serializeArg).join(", ");
     return `(${script.toString()})(${serializedArgs})`;
   }
   const trimmed = script.trim();
   if (/\breturn\b/.test(trimmed) && !trimmed.startsWith("(") && !trimmed.startsWith("async")) {
-    const serializedArgs = args.map((arg) => JSON.stringify(arg)).join(", ");
+    const serializedArgs = args.map(serializeArg).join(", ");
     return `(function(){ ${trimmed} })(${serializedArgs})`;
   }
   return script;
@@ -662,6 +674,62 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       }
       return applyModifiersAndSlice(hits, sel);
     }
+    // Logical AND composition (allOf): intersection of matched elements across branches
+    if (typeof sel === "object" && sel !== null && Array.isArray(sel.allOf) && sel.allOf.length > 0) {
+      var firstBranch = findInScope(sel.allOf[0], scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+      var currentHits = firstBranch;
+      for (var ai = 1; ai < sel.allOf.length && currentHits.length > 0; ai++) {
+        var nextBranch = findInScope(sel.allOf[ai], scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+        var nextEls = typeof Set !== "undefined" ? new Set(nextBranch.map(function(h) { return h.el; })) : null;
+        currentHits = currentHits.filter(function(h) {
+          if (nextEls) return nextEls.has(h.el);
+          return nextBranch.some(function(nh) { return nh.el === h.el; });
+        });
+      }
+      for (var ahi = 0; ahi < currentHits.length; ahi++) pushHit(currentHits[ahi].el, currentHits[ahi]);
+      return applyModifiersAndSlice(hits, sel);
+    }
+
+    function queryCssSafe(root, cssStr) {
+      try {
+        return root.querySelectorAll(cssStr);
+      } catch (e) {
+        var hint = "";
+        if (/:has-text\\(/.test(cssStr)) hint = " (Playwright :has-text() is not valid CSS; use { ..., hasText: ... } instead)";
+        else if (cssStr.indexOf(">>") !== -1) hint = " (Playwright >> chaining is not valid CSS; use within(parent, child) instead)";
+        else if (/\\bnth=/.test(cssStr)) hint = " (Playwright nth= is not valid CSS; use { ..., nth: index } instead)";
+        throw new Error('Invalid CSS selector "' + cssStr + '": ' + (e && e.message ? e.message : String(e)) + hint);
+      }
+    }
+    function findByLabelInRoot(root, spec, exact, ctx, push) {
+      if (!root || !root.querySelectorAll) return;
+      var controls = root.querySelectorAll("input, textarea, select, button, [role]");
+      for (var li = 0; li < controls.length; li++) {
+        var ctrl = controls[li];
+        if (ctrl.tagName === "INPUT" && (ctrl.getAttribute("type") || "").toLowerCase() === "hidden") continue;
+        var labelText = getAccessibleName(ctrl);
+        if (!labelText && ctrl.labels && ctrl.labels.length > 0) {
+          var parts = [];
+          for (var lj = 0; lj < ctrl.labels.length; lj++) {
+            parts.push((ctrl.labels[lj].textContent || "").trim());
+          }
+          labelText = parts.join(" ").trim();
+        }
+        if (labelText && matchSpec(labelText, spec, exact)) {
+          push(ctrl, ctx);
+        }
+      }
+    }
+    function findByAttrSpecInRoot(root, attrName, spec, exact, ctx, push) {
+      if (!root || !root.querySelectorAll) return;
+      var nodes = root.querySelectorAll("[" + attrName + "]");
+      for (var ni = 0; ni < nodes.length; ni++) {
+        var val = nodes[ni].getAttribute(attrName);
+        if (val !== null && matchSpec(val, spec, exact)) {
+          push(nodes[ni], ctx);
+        }
+      }
+    }
 
     var esc = function(v) {
       return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
@@ -680,13 +748,11 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
           return hits;
         }
       } else if (typeof sel === "object" && sel !== null && "css" in sel) {
-        try {
-          var fastCss = scopeRoot.querySelectorAll(sel.css);
-          if (fastCss.length > 0) {
-            for (var fc = 0; fc < fastCss.length; fc++) pushHit(fastCss[fc], mainCtx);
-            return hits;
-          }
-        } catch (e) {}
+        var fastCss = queryCssSafe(scopeRoot, sel.css);
+        if (fastCss.length > 0) {
+          for (var fc = 0; fc < fastCss.length; fc++) pushHit(fastCss[fc], mainCtx);
+          return hits;
+        }
       } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
         var fastLbl = esc(sel.accessibilityLabel);
         var fastFoundLbl = scopeRoot.querySelectorAll('[aria-label="' + fastLbl + '"]');
@@ -694,6 +760,18 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
           for (var fj = 0; fj < fastFoundLbl.length; fj++) pushHit(fastFoundLbl[fj], mainCtx);
           return hits;
         }
+      } else if (typeof sel === "object" && sel !== null && "label" in sel) {
+        findByLabelInRoot(scopeRoot, sel.label, Boolean(sel.exact), mainCtx, pushHit);
+        if (hits.length > 0) return hits;
+      } else if (typeof sel === "object" && sel !== null && "placeholder" in sel) {
+        findByAttrSpecInRoot(scopeRoot, "placeholder", sel.placeholder, Boolean(sel.exact), mainCtx, pushHit);
+        if (hits.length > 0) return hits;
+      } else if (typeof sel === "object" && sel !== null && "altText" in sel) {
+        findByAttrSpecInRoot(scopeRoot, "alt", sel.altText, Boolean(sel.exact), mainCtx, pushHit);
+        if (hits.length > 0) return hits;
+      } else if (typeof sel === "object" && sel !== null && "title" in sel) {
+        findByAttrSpecInRoot(scopeRoot, "title", sel.title, Boolean(sel.exact), mainCtx, pushHit);
+        if (hits.length > 0) return hits;
       } else if (typeof sel === "object" && sel !== null && "role" in sel) {
         findRoleInRoot(scopeRoot, String(sel.role).toLowerCase(), sel.name, sel.exact, mainCtx, pushHit, sel.includeHidden, sel.level);
         if (hits.length > 0) return hits;
@@ -716,14 +794,20 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         var found = root.querySelectorAll('[data-testid="' + tid + '"], [testID="' + tid + '"]');
         for (var i = 0; i < found.length; i++) pushHit(found[i], ctx);
       } else if (typeof sel === "object" && sel !== null && "css" in sel) {
-        try {
-          var foundCss = root.querySelectorAll(sel.css);
-          for (var ci2 = 0; ci2 < foundCss.length; ci2++) pushHit(foundCss[ci2], ctx);
-        } catch (e) {}
+        var foundCss = queryCssSafe(root, sel.css);
+        for (var ci2 = 0; ci2 < foundCss.length; ci2++) pushHit(foundCss[ci2], ctx);
       } else if (typeof sel === "object" && sel !== null && "accessibilityLabel" in sel) {
         var lbl = esc(sel.accessibilityLabel);
         var foundLbl = root.querySelectorAll('[aria-label="' + lbl + '"]');
         for (var j = 0; j < foundLbl.length; j++) pushHit(foundLbl[j], ctx);
+      } else if (typeof sel === "object" && sel !== null && "label" in sel) {
+        findByLabelInRoot(root, sel.label, Boolean(sel.exact), ctx, pushHit);
+      } else if (typeof sel === "object" && sel !== null && "placeholder" in sel) {
+        findByAttrSpecInRoot(root, "placeholder", sel.placeholder, Boolean(sel.exact), ctx, pushHit);
+      } else if (typeof sel === "object" && sel !== null && "altText" in sel) {
+        findByAttrSpecInRoot(root, "alt", sel.altText, Boolean(sel.exact), ctx, pushHit);
+      } else if (typeof sel === "object" && sel !== null && "title" in sel) {
+        findByAttrSpecInRoot(root, "title", sel.title, Boolean(sel.exact), ctx, pushHit);
       } else if (typeof sel === "object" && sel !== null && "role" in sel) {
         findRoleInRoot(root, String(sel.role).toLowerCase(), sel.name, sel.exact, ctx, pushHit, sel.includeHidden, sel.level);
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
@@ -1344,11 +1428,16 @@ export function buildDomWaitForMatchScript(
   const patternSource = JSON.stringify(opts.patternSource ?? null);
   const patternFlags = JSON.stringify(opts.patternFlags ?? "");
   const negate = Boolean(opts.negate);
+  const visibleOnly = Boolean(opts.visibleOnly);
+  const ignoreCase = Boolean(opts.ignoreCase);
+  const propertyName = JSON.stringify(opts.propertyName ?? null);
+  const expectedValue = JSON.stringify(opts.expectedValue ?? null);
 
-  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, cssProperty, patternSource, patternFlags, negate) {
+  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, cssProperty, patternSource, patternFlags, negate, visibleOnly, ignoreCase, propertyName, expectedValue) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var lastActual = undefined;
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
+    var allowHidden = kind === "text" || kind === "containsText" || kind === "matchesText" || kind === "value" || kind === "attribute" || kind === "attached" || kind === "jsProperty";
 
     function evaluateMatch() {
       if (kind === "url") {
@@ -1369,20 +1458,30 @@ export function buildDomWaitForMatchScript(
       }
       var hits = findAcrossRoots(sel);
       if (kind === "count") {
-        var visibleCount = 0;
-        for (var ci = 0; ci < hits.length; ci++) {
-          if (toMatch(hits[ci]).visible) visibleCount += 1;
+        var matchedCount = 0;
+        if (visibleOnly) {
+          for (var ci = 0; ci < hits.length; ci++) {
+            if (toMatch(hits[ci]).visible) matchedCount += 1;
+          }
+        } else {
+          matchedCount = hits.length;
         }
-        lastActual = String(visibleCount);
-        var countOk = visibleCount === expectedCount;
-        if (negate ? !countOk : countOk) return { matched: true, actual: String(visibleCount) };
+        lastActual = String(matchedCount);
+        var countOk = matchedCount === expectedCount;
+        if (negate ? !countOk : countOk) return { matched: true, actual: String(matchedCount) };
+        return null;
+      }
+      if (kind === "attached") {
+        var isAttached = hits.length > 0;
+        lastActual = isAttached ? "attached" : "detached";
+        if (negate ? !isAttached : isAttached) return { matched: true, actual: lastActual };
         return null;
       }
       var anyVisible = false;
       for (var i = hits.length - 1; i >= 0; i--) {
         var m = toMatch(hits[i]);
-        if (!m.visible) continue;
-        anyVisible = true;
+        if (!allowHidden && !m.visible) continue;
+        if (m.visible) anyVisible = true;
         var matched = false;
         var actualVal = undefined;
         if (kind === "focused") {
@@ -1401,6 +1500,18 @@ export function buildDomWaitForMatchScript(
           var isEmp = Boolean(m.empty);
           actualVal = isEmp ? "empty" : (m.value || m.textContent || "non-empty");
           matched = isEmp;
+        } else if (kind === "inViewport") {
+          var vpW = window.innerWidth || document.documentElement.clientWidth || 0;
+          var vpH = window.innerHeight || document.documentElement.clientHeight || 0;
+          var r = m.rect;
+          var inVp = r.width > 0 && r.height > 0 && r.x + r.width > 0 && r.y + r.height > 0 && r.x < vpW && r.y < vpH;
+          actualVal = inVp ? "in viewport" : "outside viewport";
+          matched = inVp;
+        } else if (kind === "jsProperty" && propertyName !== null) {
+          var propNode = hits[i].el;
+          var rawProp = propNode ? propNode[propertyName] : undefined;
+          actualVal = typeof rawProp === "string" ? rawProp : JSON.stringify(rawProp);
+          matched = JSON.stringify(rawProp) === JSON.stringify(expectedValue);
         } else if (kind === "class") {
           var cls = m.className || "";
           actualVal = cls;
@@ -1432,7 +1543,10 @@ export function buildDomWaitForMatchScript(
         } else if (kind === "containsText") {
           var actual = m.textContent !== undefined ? m.textContent : (m.text || "");
           actualVal = actual;
-          matched = expected !== null && actual.toLowerCase().indexOf(String(expected).replace(/\\s+/g, " ").trim().toLowerCase()) !== -1;
+          var needle = expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : "";
+          matched = expected !== null && (ignoreCase
+            ? actual.toLowerCase().indexOf(needle.toLowerCase()) !== -1
+            : actual.indexOf(needle) !== -1);
         } else if (kind === "matchesText") {
           var actualRe = m.textContent !== undefined ? m.textContent : (m.text || "");
           actualVal = actualRe;
@@ -1440,11 +1554,13 @@ export function buildDomWaitForMatchScript(
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
           actualVal = val;
-          matched = val === expected;
+          matched = regex ? regex.test(val) : (val === expected);
         } else if (kind === "attribute" && attributeName !== null) {
           var attrVal = m.attributes ? m.attributes[attributeName] : undefined;
           actualVal = attrVal;
-          matched = expected === null ? attrVal !== undefined : attrVal === expected;
+          matched = regex
+            ? (attrVal !== undefined && regex.test(attrVal))
+            : (expected === null ? attrVal !== undefined : attrVal === expected);
         } else if (kind === "accessibilityLabel") {
           var lbl = m.accessibilityLabel;
           actualVal = lbl;
@@ -1525,7 +1641,7 @@ export function buildDomWaitForMatchScript(
         }
       }
     });
-  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${cssProperty}, ${patternSource}, ${patternFlags}, ${negate})`;
+  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${cssProperty}, ${patternSource}, ${patternFlags}, ${negate}, ${visibleOnly}, ${ignoreCase}, ${propertyName}, ${expectedValue})`;
 }
 
 /**
@@ -1940,8 +2056,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var patternSource = opts.patternSource !== undefined ? opts.patternSource : null;
     var patternFlags = opts.patternFlags || "";
     var negate = Boolean(opts.negate);
+    var visibleOnly = Boolean(opts.visibleOnly);
+    var ignoreCase = Boolean(opts.ignoreCase);
+    var propertyName = opts.propertyName !== undefined ? opts.propertyName : null;
+    var expectedValue = opts.expectedValue !== undefined ? opts.expectedValue : null;
     var lastActual = undefined;
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
+    var allowHidden = kind === "text" || kind === "containsText" || kind === "matchesText" || kind === "value" || kind === "attribute" || kind === "attached" || kind === "jsProperty";
 
     function evaluateMatch() {
       if (kind === "url") {
@@ -1964,21 +2085,31 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       var hits = findAcrossRoots(sel);
 
       if (kind === "count") {
-        var visibleCount = 0;
-        for (var ci = 0; ci < hits.length; ci++) {
-          if (toMatch(hits[ci]).visible) visibleCount++;
+        var matchedCount = 0;
+        if (visibleOnly) {
+          for (var ci = 0; ci < hits.length; ci++) {
+            if (toMatch(hits[ci]).visible) matchedCount++;
+          }
+        } else {
+          matchedCount = hits.length;
         }
-        lastActual = String(visibleCount);
-        var countOk = expectedCount !== null && visibleCount === expectedCount;
+        lastActual = String(matchedCount);
+        var countOk = expectedCount !== null && matchedCount === expectedCount;
         if (negate ? !countOk : countOk) {
-          return { matched: true, actual: String(visibleCount) };
+          return { matched: true, actual: String(matchedCount) };
         }
+        return null;
+      }
+      if (kind === "attached") {
+        var isAttached = hits.length > 0;
+        lastActual = isAttached ? "attached" : "detached";
+        if (negate ? !isAttached : isAttached) return { matched: true, actual: lastActual };
         return null;
       }
 
       for (var i = hits.length - 1; i >= 0; i--) {
         var m = toMatch(hits[i]);
-        if (!m.visible) continue;
+        if (!allowHidden && !m.visible) continue;
         var matched = false;
         var actualVal = undefined;
         if (kind === "text") {
@@ -1988,7 +2119,10 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         } else if (kind === "containsText") {
           var actual = m.textContent !== undefined ? m.textContent : (m.text || "");
           actualVal = actual;
-          matched = expected !== null && actual.toLowerCase().indexOf(String(expected).replace(/\\s+/g, " ").trim().toLowerCase()) !== -1;
+          var needle = expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : "";
+          matched = expected !== null && (ignoreCase
+            ? actual.toLowerCase().indexOf(needle.toLowerCase()) !== -1
+            : actual.indexOf(needle) !== -1);
         } else if (kind === "matchesText") {
           var actualRe = m.textContent !== undefined ? m.textContent : (m.text || "");
           actualVal = actualRe;
@@ -1996,11 +2130,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
           actualVal = val;
-          matched = val === expected;
+          matched = regex ? regex.test(val) : (val === expected);
         } else if (kind === "attribute" && attributeName !== null) {
           var attrVal = m.attributes ? m.attributes[attributeName] : undefined;
           actualVal = attrVal;
-          matched = expected === null ? attrVal !== undefined : attrVal === expected;
+          matched = regex
+            ? (attrVal !== undefined && regex.test(attrVal))
+            : (expected === null ? attrVal !== undefined : attrVal === expected);
         } else if (kind === "accessibilityLabel") {
           var lbl = m.accessibilityLabel;
           actualVal = lbl;
@@ -2025,6 +2161,18 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         } else if (kind === "empty") {
           actualVal = m.empty ? "empty" : (m.value || m.textContent || "non-empty");
           matched = Boolean(m.empty);
+        } else if (kind === "inViewport") {
+          var vpW = window.innerWidth || document.documentElement.clientWidth || 0;
+          var vpH = window.innerHeight || document.documentElement.clientHeight || 0;
+          var r = m.rect;
+          var inVp = r.width > 0 && r.height > 0 && r.x + r.width > 0 && r.y + r.height > 0 && r.x < vpW && r.y < vpH;
+          actualVal = inVp ? "in viewport" : "outside viewport";
+          matched = inVp;
+        } else if (kind === "jsProperty" && propertyName !== null) {
+          var propNode = hits[i].el;
+          var rawProp = propNode ? propNode[propertyName] : undefined;
+          actualVal = typeof rawProp === "string" ? rawProp : JSON.stringify(rawProp);
+          matched = JSON.stringify(rawProp) === JSON.stringify(expectedValue);
         } else if (kind === "class") {
           var cls = m.className || "";
           actualVal = cls;

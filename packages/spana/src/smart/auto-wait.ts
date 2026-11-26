@@ -1,5 +1,5 @@
 import { Duration, Effect } from "effect";
-import { type DriverError, ElementNotFoundError, WaitTimeoutError } from "../errors.js";
+import { DriverError, ElementNotFoundError, WaitTimeoutError } from "../errors.js";
 import type { Element } from "../schemas/element.js";
 import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/selector.js";
 import {
@@ -11,7 +11,11 @@ import type { RawDriverService } from "../drivers/raw-driver.js";
 import { formatSelector } from "./element-matcher.js";
 import type { HierarchyCache } from "./hierarchy-cache.js";
 import { diagnoseElementNotFound, formatDiagnostic } from "./diagnostics.js";
-import { resolveElementAcrossChannels, type ResolvedElementResult } from "./channel-resolver.js";
+import {
+  isInvalidSelectorError,
+  resolveElementAcrossChannels,
+  type ResolvedElementResult,
+} from "./channel-resolver.js";
 import { buildDomActionabilityDiagScript, domMatchToElement } from "../channels/dom-channel.js";
 
 export interface WaitOptions {
@@ -30,6 +34,8 @@ export interface WaitOptions {
   idleQuietMs?: number;
   /** Consecutive stable animation frames required before pointer actions on web. Default: 2. */
   actionStableFrames?: number;
+  /** Skip actionability checks (enabled, hit-test, stability) when performing an action (Playwright `{ force: true }`). */
+  force?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 5000;
@@ -125,15 +131,25 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
         try: () =>
           initialDomChannel.waitForSelector!(selector as Selector, {
             timeoutMs: timeout,
-            forAction,
+            forAction: opts?.force ? false : forAction,
+            checkHitTest: opts?.force ? false : undefined,
             failFastWhenIdle: opts?.failFastWhenIdle,
             idleQuietMs: opts?.idleQuietMs,
-            ...(opts?.actionStableFrames !== undefined
-              ? { stableFrames: opts.actionStableFrames }
-              : {}),
+            ...(opts?.force
+              ? { stableFrames: 0 }
+              : opts?.actionStableFrames !== undefined
+                ? { stableFrames: opts.actionStableFrames }
+                : {}),
           }),
-        catch: () => null,
-      }).pipe(Effect.catch(() => Effect.succeed(null)));
+        catch: (err) =>
+          isInvalidSelectorError(err)
+            ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+            : null,
+      }).pipe(
+        Effect.catch((err) =>
+          err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+        ),
+      );
 
       if (Array.isArray(reactiveMatches) && reactiveMatches.length > 0) {
         const match = reactiveMatches[reactiveMatches.length - 1]!;
@@ -345,8 +361,15 @@ export function waitForNotVisible<T extends string = string, R extends string = 
     if (canReactiveHidden && domChannel?.isConnected() && domChannel.waitForHidden) {
       const hidden = yield* Effect.tryPromise({
         try: () => domChannel.waitForHidden!(selector as Selector, { timeoutMs: timeout }),
-        catch: () => null,
-      }).pipe(Effect.catch(() => Effect.succeed(null)));
+        catch: (err) =>
+          isInvalidSelectorError(err)
+            ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+            : null,
+      }).pipe(
+        Effect.catch((err) =>
+          err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+        ),
+      );
 
       if (hidden === true) return;
       if (hidden === false) {

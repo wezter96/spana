@@ -11,7 +11,13 @@ import {
   type TapMode,
 } from "../schemas/selector.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
-import type { DriverError } from "../errors.js";
+import { DriverError } from "../errors.js";
+
+/** Returns true if `err` is an explicit invalid CSS / unsupported selector error that must never be swallowed. */
+export function isInvalidSelectorError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return msg.includes("Invalid CSS selector") || msg.includes("Unsupported selector");
+}
 import {
   domMatchToElement,
   type DomChannel,
@@ -242,8 +248,19 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
           }
           return await domChannel.query(selector as Selector);
         },
-        catch: () => undefined,
-      }).pipe(Effect.catch(() => Effect.succeed([] as DomElementMatch[])));
+        catch: (err) => {
+          if (isInvalidSelectorError(err)) {
+            return new DriverError({
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return null;
+        },
+      }).pipe(
+        Effect.catch((err) =>
+          err instanceof DriverError ? Effect.fail(err) : Effect.succeed([] as DomElementMatch[]),
+        ),
+      );
 
       const best = pickBestDomMatch(domMatches);
       if (best) {

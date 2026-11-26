@@ -59,7 +59,9 @@ All benchmarks are reproducible directly from this repository on Apple M4 Pro (B
 | Spana + Local `qwen2.5:1.5b` Filter + Pool (4w) |     2 |       2,931 |      3,340 | 1.9× vs PW 4w ($0) |
 
 - **Verified Replay Cache (`--strict-cache`) vs Live LLM:** `1,433 ms` → **`6 ms`** (**238.8× faster**, 0 LLM calls)
-- **Capacitor Mobile Hybrid (5 flows, zero Appium):** iOS `28.4 s` (WDIO/Appium) → **`1.52 s`** (**18.7× faster**) · Android `22.9 s` → **`1.27 s`** (**18.0× faster**)
+- **Live Mobile Devices (zero Appium, measured):**
+  - **Google Pixel 8 Pro (Android 17, USB):** Cold UiA2 daemon `2.34 s` → Warm reuse **`44 ms`** (`53×`), `dumpHierarchy` median `518 ms`, 5 native Settings flows `28.52 s` (`5.70 s/flow`), 5 Chrome CDP hybrid flows **`1.12 s`** UI login → **`0.71 s`** state inject (`142 ms/flow`, `40×` faster than native UI dumps)
+  - **iPhone 17 Simulator (iOS 26.4, WDA):** WDA launch `4.02 s`, `dumpHierarchy` median `566 ms`, `takeScreenshot` median **`74 ms`**, 5 native Settings flows `29.79 s` (`5.96 s/flow`)
 
 ```bash
 bun run benchmarks/framework-comparison/benchmark.ts

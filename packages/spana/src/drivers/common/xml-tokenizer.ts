@@ -13,17 +13,48 @@ export interface RawNode {
   children: RawNode[];
 }
 
+function decodeXmlEntities(value: string): string {
+  if (!value.includes("&")) return value;
+  return value.replaceAll(
+    /&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);/g,
+    (match, entity: string) => {
+      switch (entity) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        case "quot":
+          return '"';
+        case "apos":
+          return "'";
+        default:
+          if (entity.startsWith("#x") || entity.startsWith("#X")) {
+            const cp = Number.parseInt(entity.slice(2), 16);
+            return Number.isFinite(cp) ? String.fromCodePoint(cp) : match;
+          }
+          if (entity.startsWith("#")) {
+            const cp = Number.parseInt(entity.slice(1), 10);
+            return Number.isFinite(cp) ? String.fromCodePoint(cp) : match;
+          }
+          return match;
+      }
+    },
+  );
+}
+
 /**
  * Extracts all XML attributes from a tag string as a key→value map.
  * Works on the raw text of an opening tag (after stripping the tag name).
  */
 export function parseAttributes(tagContent: string): ParsedAttr {
   const attrs: ParsedAttr = {};
-  // Match: key="value" — value may contain escaped quotes
+  // Match: key="value" — value may contain XML entities
   const re = /([\w-]+)="([^"]*)"/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(tagContent)) !== null) {
-    attrs[m[1]!] = m[2]!;
+    attrs[m[1]!] = decodeXmlEntities(m[2]!);
   }
   return attrs;
 }

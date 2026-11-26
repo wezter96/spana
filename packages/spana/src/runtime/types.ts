@@ -8,6 +8,7 @@ export interface RuntimeHandle {
   metadata: {
     platform: Platform;
     mode: "local" | "appium";
+    adapter?: string;
     deviceId?: string;
     sessionId?: string;
     provider?: string;

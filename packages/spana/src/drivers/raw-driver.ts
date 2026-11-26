@@ -44,6 +44,43 @@ export interface BrowserMockResponse {
   contentType?: string;
 }
 
+export interface BrowserRequestInfo {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  resourceType?: string;
+  postData(): string | null;
+  postDataJSON<T = unknown>(): T | null;
+}
+
+export interface BrowserRoute {
+  request(): BrowserRequestInfo;
+  continue(overrides?: {
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    postData?: string;
+  }): Promise<void>;
+  abort(errorCode?: string): Promise<void>;
+  fulfill(response: BrowserMockResponse): Promise<void>;
+  fetch(overrides?: {
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    postData?: string;
+  }): Promise<BrowserResponseInfo>;
+}
+
+export type BrowserRouteHandler = (route: BrowserRoute) => void | Promise<void>;
+
+export interface UploadFilePayload {
+  name: string;
+  mimeType: string;
+  buffer: Buffer | Uint8Array;
+}
+
+export type UploadFileInput = string | string[] | UploadFilePayload | UploadFilePayload[];
+
 export type NetworkProfile = "wifi" | "4g" | "3g" | "2g" | "edge" | "offline";
 
 export interface NetworkConditions {
@@ -297,13 +334,27 @@ export interface RawDriverService<_T extends string = string, R extends string =
   ) => Effect.Effect<void, DriverError>;
   readonly multiTouch?: (sequences: TouchSequence[]) => Effect.Effect<void, DriverError>;
 
-  // Text input
+  // Text input & keyboard / pointer primitives
   readonly inputText: (text: string) => Effect.Effect<void, DriverError>;
+  readonly typeText?: (text: string, opts?: { delay?: number }) => Effect.Effect<void, DriverError>;
   readonly pressKey: (key: string) => Effect.Effect<void, DriverError>;
+  readonly keyDown?: (key: string) => Effect.Effect<void, DriverError>;
+  readonly keyUp?: (key: string) => Effect.Effect<void, DriverError>;
+  readonly mouseDown?: (
+    x: number,
+    y: number,
+    opts?: { button?: "left" | "right" | "middle" },
+  ) => Effect.Effect<void, DriverError>;
+  readonly mouseUp?: (
+    x: number,
+    y: number,
+    opts?: { button?: "left" | "right" | "middle" },
+  ) => Effect.Effect<void, DriverError>;
   readonly hideKeyboard: () => Effect.Effect<void, DriverError>;
 
   // Queries
   readonly takeScreenshot: () => Effect.Effect<Uint8Array, DriverError>;
+  readonly takeFullPageScreenshot?: () => Effect.Effect<Uint8Array, DriverError>;
   readonly getDeviceInfo: () => Effect.Effect<DeviceInfo, DriverError>;
   readonly setGeolocation?: (point: Geolocation) => Effect.Effect<void, DriverError>;
   readonly setSystemTime?: (time: Date | number | string) => Effect.Effect<void, DriverError>;
@@ -356,17 +407,35 @@ export interface RawDriverService<_T extends string = string, R extends string =
   // Navigation
   readonly openLink: (url: string) => Effect.Effect<void, DriverError>;
   readonly back: () => Effect.Effect<void, DriverError>;
+  readonly forward?: () => Effect.Effect<void, DriverError>;
   readonly reload?: (opts?: {
     waitUntil?: "load" | "domcontentloaded" | "networkidle";
   }) => Effect.Effect<void, DriverError>;
   readonly hoverAtCoordinate?: (x: number, y: number) => Effect.Effect<void, DriverError>;
   readonly getUrl?: () => Effect.Effect<string, DriverError>;
+  readonly getNavigationUrls?: () => string[];
+  readonly waitForLoadState?: (
+    state?: "load" | "domcontentloaded" | "networkidle",
+    opts?: { timeout?: number },
+  ) => Effect.Effect<void, DriverError>;
+  readonly waitForPopup?: (
+    trigger: () => Promise<unknown>,
+    opts?: { timeout?: number },
+  ) => Effect.Effect<string, DriverError>;
 
   // Scripting
   readonly evaluate: <T = unknown>(
     script: string | ((...args: any[]) => T),
     ...args: unknown[]
   ) => Effect.Effect<T, DriverError>;
+  readonly addInitScript?: (
+    script: string | ((...args: any[]) => unknown),
+    ...args: unknown[]
+  ) => Effect.Effect<void, DriverError>;
+  readonly exposeFunction?: (
+    name: string,
+    fn: (...args: any[]) => any,
+  ) => Effect.Effect<void, DriverError>;
 
   // WebView / hybrid context switching (low-level escape hatch)
   readonly getContexts?: () => Effect.Effect<string[], DriverError>;
@@ -379,6 +448,10 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly resetFast?: () => Effect.Effect<void, DriverError>;
 
   // Network & browser state helpers
+  readonly route?: (
+    matcher: BrowserRouteMatcher,
+    handler: BrowserRouteHandler,
+  ) => Effect.Effect<void, DriverError>;
   readonly mockNetwork?: (
     matcher: BrowserRouteMatcher,
     response: BrowserMockResponse,
@@ -398,14 +471,21 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly downloadFile?: (path: string) => Effect.Effect<void, DriverError>;
   readonly uploadFile?: (
     selector: Selector,
-    path: string | string[],
+    path: UploadFileInput,
   ) => Effect.Effect<void, DriverError>;
+  readonly onRequest?: (listener: (req: BrowserRequestInfo) => void) => () => void;
+  readonly waitForRequest?: (
+    matcher: BrowserRouteMatcher | ((req: BrowserRequestInfo) => boolean),
+    opts?: { timeout?: number },
+  ) => Effect.Effect<BrowserRequestInfo, DriverError>;
   readonly waitForResponse?: (
     matcher: BrowserRouteMatcher | ((res: BrowserResponseInfo) => boolean),
     opts?: { timeout?: number },
   ) => Effect.Effect<BrowserResponseInfo, DriverError>;
   readonly createIsolatedContext?: (opts?: {
     url?: string;
+    locale?: string;
+    viewport?: { width: number; height: number };
   }) => Effect.Effect<{ driver: RawDriverService; close: () => Promise<void> }, DriverError>;
   readonly newTab?: (url?: string) => Effect.Effect<string, DriverError>;
   readonly switchToTab?: (index: number) => Effect.Effect<void, DriverError>;
@@ -531,9 +611,19 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     zoom: wrapOptionalMethod(logs, "zoom", driver.zoom),
     multiTouch: wrapOptionalMethod(logs, "multiTouch", driver.multiTouch),
     inputText: wrapLoggedMethod(logs, "inputText", driver.inputText),
+    typeText: wrapOptionalMethod(logs, "typeText", driver.typeText),
     pressKey: wrapLoggedMethod(logs, "pressKey", driver.pressKey),
+    keyDown: wrapOptionalMethod(logs, "keyDown", driver.keyDown),
+    keyUp: wrapOptionalMethod(logs, "keyUp", driver.keyUp),
+    mouseDown: wrapOptionalMethod(logs, "mouseDown", driver.mouseDown),
+    mouseUp: wrapOptionalMethod(logs, "mouseUp", driver.mouseUp),
     hideKeyboard: wrapLoggedMethod(logs, "hideKeyboard", driver.hideKeyboard),
     takeScreenshot: wrapLoggedMethod(logs, "takeScreenshot", driver.takeScreenshot),
+    takeFullPageScreenshot: wrapOptionalMethod(
+      logs,
+      "takeFullPageScreenshot",
+      driver.takeFullPageScreenshot,
+    ),
     getDeviceInfo: wrapLoggedMethod(logs, "getDeviceInfo", driver.getDeviceInfo),
     setGeolocation: wrapOptionalMethod(logs, "setGeolocation", driver.setGeolocation),
     setSystemTime: wrapOptionalMethod(logs, "setSystemTime", driver.setSystemTime),
@@ -563,15 +653,22 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     clearAppState: wrapLoggedMethod(logs, "clearAppState", driver.clearAppState),
     openLink: wrapLoggedMethod(logs, "openLink", driver.openLink),
     back: wrapLoggedMethod(logs, "back", driver.back),
+    forward: wrapOptionalMethod(logs, "forward", driver.forward),
     reload: wrapOptionalMethod(logs, "reload", driver.reload),
     hoverAtCoordinate: wrapOptionalMethod(logs, "hoverAtCoordinate", driver.hoverAtCoordinate),
     getUrl: wrapOptionalMethod(logs, "getUrl", driver.getUrl),
+    getNavigationUrls: driver.getNavigationUrls,
+    waitForLoadState: wrapOptionalMethod(logs, "waitForLoadState", driver.waitForLoadState),
+    waitForPopup: wrapOptionalMethod(logs, "waitForPopup", driver.waitForPopup),
     evaluate: wrapLoggedMethod(logs, "evaluate", driver.evaluate),
+    addInitScript: wrapOptionalMethod(logs, "addInitScript", driver.addInitScript),
+    exposeFunction: wrapOptionalMethod(logs, "exposeFunction", driver.exposeFunction),
     getContexts: wrapOptionalMethod(logs, "getContexts", driver.getContexts),
     getCurrentContext: wrapOptionalMethod(logs, "getCurrentContext", driver.getCurrentContext),
     setContext: wrapOptionalMethod(logs, "setContext", driver.setContext),
     domChannel: driver.domChannel,
     resetFast: wrapOptionalMethod(logs, "resetFast", driver.resetFast),
+    route: wrapOptionalMethod(logs, "route", driver.route),
     mockNetwork: wrapOptionalMethod(logs, "mockNetwork", driver.mockNetwork),
     blockNetwork: wrapOptionalMethod(logs, "blockNetwork", driver.blockNetwork),
     clearNetworkMocks: wrapOptionalMethod(logs, "clearNetworkMocks", driver.clearNetworkMocks),
@@ -589,6 +686,8 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     loadAuthState: wrapOptionalMethod(logs, "loadAuthState", driver.loadAuthState),
     downloadFile: wrapOptionalMethod(logs, "downloadFile", driver.downloadFile),
     uploadFile: wrapOptionalMethod(logs, "uploadFile", driver.uploadFile),
+    onRequest: driver.onRequest,
+    waitForRequest: wrapOptionalMethod(logs, "waitForRequest", driver.waitForRequest),
     waitForResponse: wrapOptionalMethod(logs, "waitForResponse", driver.waitForResponse),
     createIsolatedContext: wrapOptionalMethod(
       logs,

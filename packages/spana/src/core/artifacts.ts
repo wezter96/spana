@@ -137,6 +137,24 @@ export async function captureArtifacts(
     } catch {
       // Hierarchy capture failed — don't block test execution
     }
+    if (status === "failed" && (platform === "web" || driver.domChannel?.isConnected())) {
+      try {
+        const html = await Effect.runPromise(
+          Effect.orDie(
+            driver.evaluate<string>(
+              "typeof document !== 'undefined' && document.documentElement ? document.documentElement.outerHTML : ''",
+            ),
+          ),
+        );
+        if (typeof html === "string" && html.length > 0) {
+          const domPath = join(dir, "dom-snapshot.html");
+          writeFileSync(domPath, html, "utf-8");
+          attachments.push(createAttachment(`${status}-dom-snapshot`, "text/html", domPath));
+        }
+      } catch {
+        // Best-effort DOM snapshot on failure
+      }
+    }
   }
 
   if (config.consoleLogs && driver.getConsoleLogs) {

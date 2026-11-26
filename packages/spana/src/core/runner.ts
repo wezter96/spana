@@ -6,10 +6,28 @@ import type { FlowResult } from "../report/types.js";
 
 export interface DiscoverOptions {
   tags?: string[];
-  grep?: string;
+  grep?: string | RegExp;
+  grepInvert?: string | RegExp;
   platforms?: Platform[];
   /** Glob patterns for step definition files (relative to flowDir). */
   stepFiles?: string[];
+}
+
+export function compileGrepPattern(pattern: string | RegExp): RegExp {
+  if (pattern instanceof RegExp) return pattern;
+  // Support /pattern/flags literal syntax
+  const slashMatch = /^\/(.+)\/([dgimsuvy]*)$/.exec(pattern);
+  if (slashMatch) {
+    return new RegExp(slashMatch[1]!, slashMatch[2]);
+  }
+  return new RegExp(pattern, "i");
+}
+
+function flowGrepHaystack(flow: FlowDefinition): string {
+  const tags = flow.config.tags ?? [];
+  if (tags.length === 0) return flow.name;
+  const formattedTags = tags.map((t) => (t.startsWith("@") ? t : `@${t}`)).join(" ");
+  return `${flow.name} ${formattedTags}`;
 }
 
 export interface ShardOptions {
@@ -165,13 +183,17 @@ export async function discoverStepFiles(pathOrDir: string): Promise<string[]> {
 }
 
 export function filterFlows(flows: FlowDefinition[], opts: DiscoverOptions): FlowDefinition[] {
+  const grepRe = opts.grep ? compileGrepPattern(opts.grep) : undefined;
+  const grepInvertRe = opts.grepInvert ? compileGrepPattern(opts.grepInvert) : undefined;
   return flows.filter((flow) => {
     if (opts.tags && opts.tags.length > 0) {
       const flowTags = flow.config.tags ?? [];
       if (!opts.tags.some((t) => flowTags.includes(t))) return false;
     }
-    if (opts.grep) {
-      if (!flow.name.toLowerCase().includes(opts.grep.toLowerCase())) return false;
+    if (grepRe || grepInvertRe) {
+      const haystack = flowGrepHaystack(flow);
+      if (grepRe && !grepRe.test(haystack)) return false;
+      if (grepInvertRe && grepInvertRe.test(haystack)) return false;
     }
     if (opts.platforms && opts.platforms.length > 0) {
       const flowPlatforms = flow.config.platforms;
@@ -218,6 +240,8 @@ export function getFlowSkip(flow: FlowDefinition, platform: Platform): FlowResul
         status: "skipped",
         durationMs: 0,
         modifier,
+        ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+        ...(flow.config.annotations ? { annotations: flow.config.annotations } : {}),
         ...(typeof condition === "object" && condition.reason
           ? { skipReason: condition.reason }
           : {}),

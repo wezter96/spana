@@ -16,7 +16,7 @@ const cliState = {
   loadCalls: [] as string[],
   filterCalls: [] as Array<{
     flows: FlowDefinition[];
-    opts: { tags?: string[]; grep?: string; platforms: string[] };
+    opts: { tags?: string[]; grep?: string; grepInvert?: string; platforms: string[] };
   }>,
   orchestrateCalls: [] as Array<{
     flows: FlowDefinition[];
@@ -677,7 +677,7 @@ describe("runTestCommand", () => {
     expect(result).toBe(false);
   });
 
-  test("returns early when the filters remove every discovered flow", async () => {
+  test("returns early with failure when filters remove every discovered flow (unless passWithNoTests is set)", async () => {
     const tempDir = createTempDir();
     const configPath = writeConfigFile(tempDir, {
       flowDir: "./my-flows",
@@ -695,15 +695,24 @@ describe("runTestCommand", () => {
       configPath,
     });
 
-    expect(success).toBe(true);
+    expect(success).toBe(false);
     expect(cliState.discoverCalls).toEqual([join(tempDir, "my-flows")]);
     expect(cliState.loadCalls).toEqual([flowPath]);
     expect(cliState.filterCalls[0]?.opts).toEqual({
       tags: undefined,
       grep: "missing",
+      grepInvert: undefined,
       platforms: ["web"],
     });
     expect(cliState.logs).toContain("No flows match the given filters.");
+
+    const optInSuccess = await runTestCommand({
+      platforms: ["web"],
+      grep: "missing",
+      passWithNoTests: true,
+      configPath,
+    });
+    expect(optInSuccess).toBe(true);
   });
 });
 

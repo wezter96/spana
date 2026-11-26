@@ -520,16 +520,19 @@
         <section class="panel">
           <div class="panel-header">
             <div>
-              <h2 class="panel-title">3. Mobile Capacitor (5 Flows)</h2>
-              <p class="panel-subtitle">WKWebView / Android WebView + Native OAuth</p>
+              <h2 class="panel-title">3. Live Mobile Devices (5 Flows)</h2>
+              <p class="panel-subtitle">
+                Physical Pixel 8 Pro (Android 17) &amp; iPhone 17 Simulator (iOS 26.4)
+              </p>
             </div>
-            <span class="badge calibrated">CALIBRATED</span>
+            <span class="badge live">LIVE MEASURED</span>
           </div>
 
           <div class="sub-box">
             <div class="mini-bar-row">
               <div class="mini-bar-top">
-                <span>iOS: WebdriverIO + Appium</span><span class="val">28.40 s</span>
+                <span>iOS 26.4 (iPhone 17 Sim): Spana Direct WDA (5 native flows)</span
+                ><span class="val">29.79 s</span>
               </div>
               <div class="mini-track">
                 <div class="bar-fill rounded wdio" style="width: 100%"></div>
@@ -537,29 +540,29 @@
             </div>
             <div class="mini-bar-row">
               <div class="mini-bar-top">
-                <span>iOS / Android: Playwright</span
-                ><span class="val" style="color: var(--destructive)">N/A</span>
+                <span>Android 17 (Pixel 8 Pro): Spana Direct UiA2 (5 native flows)</span
+                ><span class="val">28.52 s</span>
               </div>
               <div class="mini-track">
-                <div class="bar-fill na">No native WebView / OS sheets</div>
+                <div class="bar-fill rounded wdio" style="width: 95.7%"></div>
               </div>
             </div>
             <div class="mini-bar-row">
               <div class="mini-bar-top">
-                <strong>iOS: Spana Warm WDA + Bridge</strong
-                ><span class="val" style="color: var(--success)">1.52 s (18.7×)</span>
+                <strong>Android 17 (Pixel 8 Pro): Spana Chrome CDP (5 flows, UI login)</strong
+                ><span class="val" style="color: var(--success)">1.12 s (25.4× vs native)</span>
               </div>
               <div class="mini-track">
-                <div class="bar-fill rounded spana" style="width: 5.4%"></div>
+                <div class="bar-fill rounded spana" style="width: 3.8%"></div>
               </div>
             </div>
             <div class="mini-bar-row">
               <div class="mini-bar-top">
-                <strong>Android: Spana Warm UiA2 + Bridge</strong
-                ><span class="val" style="color: var(--success)">1.27 s (18.0×)</span>
+                <strong>Android 17 (Pixel 8 Pro): Spana Chrome CDP (5 flows, state inject)</strong
+                ><span class="val" style="color: var(--success)">0.71 s (40.1× vs native)</span>
               </div>
               <div class="mini-track">
-                <div class="bar-fill rounded spana-pool" style="width: 4.5%"></div>
+                <div class="bar-fill rounded spana-pool" style="width: 2.4%"></div>
               </div>
             </div>
           </div>

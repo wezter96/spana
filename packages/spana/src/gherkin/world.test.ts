@@ -6,6 +6,8 @@ const mockFlowCtx: FlowContext = {
   app: {} as any,
   expect: {} as any,
   platform: "web",
+  workerIndex: 0,
+  parallelIndex: 0,
   sessions: {} as any,
 };
 
