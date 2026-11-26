@@ -90,7 +90,8 @@ jobs:
             bun ./dist/cli.js test
             --driver local
             --platform android
-            --config ./conformance.config.ts
+            --config ./conformance.config.ts ||
+            { status=$?; adb logcat -d -s ActivityTaskManager AndroidRuntime ReactNativeJS; exit "$status"; }
 
       - name: Run conformance — Appium (local server, auto-start)
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
@@ -123,7 +124,7 @@ jobs:
   ios:
     name: iOS — direct (WDA) + Appium
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -164,6 +165,7 @@ jobs:
             -sdk iphonesimulator \
             -destination "platform=iOS Simulator,id=${SPANA_IOS_UDID}" \
             -derivedDataPath build \
+            ARCHS=arm64 \
             CODE_SIGNING_ALLOWED=NO \
             build
 
