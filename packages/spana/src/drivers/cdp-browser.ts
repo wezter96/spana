@@ -250,6 +250,62 @@ async function waitForDevToolsActivePort(
   );
 }
 
+export interface DirectChromiumLaunchArgsOptions {
+  /** Fresh throwaway profile directory path. */
+  userDataDir: string;
+  /** Remote debugging port (`0` lets Chromium pick a free ephemeral port). */
+  remoteDebuggingPort?: number;
+  /** Run headless (default: true). */
+  headless?: boolean;
+  /** GPU rendering mode (`"auto" | "swiftshader" | "hardware" | "disabled"`). */
+  gpu?: WebGpuMode;
+  /** Enable WebGPU flags (`--enable-unsafe-webgpu`, deterministic SwiftShader when headless). */
+  webgpu?: boolean;
+  /** Extra Chrome launch flags. */
+  args?: string[];
+}
+
+/**
+ * Build deterministic Chromium launch arguments for throwaway automation profiles.
+ *
+ * Always includes `--use-mock-keychain` and `--password-store=basic` so Chromium never
+ * queries the macOS login keychain ("Chromium Safe Storage") or Linux Secret Service /
+ * KWallet when initializing cookie/credential storage for an ephemeral test profile.
+ */
+export function buildDirectChromiumLaunchArgs(options: DirectChromiumLaunchArgsOptions): string[] {
+  return [
+    ...(options.headless !== false ? ["--headless=new"] : []),
+    `--remote-debugging-port=${options.remoteDebuggingPort ?? 0}`,
+    "--remote-debugging-address=127.0.0.1",
+    `--user-data-dir=${options.userDataDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--no-service-autorun",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-breakpad",
+    "--disable-component-update",
+    "--disable-renderer-backgrounding",
+    "--disable-ipc-flooding-protection",
+    "--disable-hang-monitor",
+    "--disable-default-apps",
+    "--disable-extensions",
+    "--disable-sync",
+    ...resolveChromiumGpuArgs({
+      headless: options.headless,
+      gpu: options.gpu,
+      webgpu: options.webgpu,
+    }),
+    "--metrics-recording-only",
+    "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
+    ...(options.args ?? []),
+    "about:blank",
+  ];
+}
+
 /**
  * Launch (or attach to a warm) Chromium process directly over raw CDP WebSocket —
  * completely bypassing Playwright's Node client↔server IPC pipe!
@@ -301,32 +357,14 @@ export async function launchDirectCdpBrowser(
   // Fresh throwaway profile: never expose the user's real Chrome profile (cookies, logins) over CDP.
   // Use `--remote-debugging-port=0` so Chromium atomically claims an OS-assigned port (zero TOCTOU race!).
   const userDataDir = mkdtempSync(join(tmpdir(), "spana-cdp-profile-"));
-  const baseChromeArgs = [
-    ...(options.headless !== false ? ["--headless=new"] : []),
-    "--remote-debugging-port=0",
-    "--remote-debugging-address=127.0.0.1",
-    `--user-data-dir=${userDataDir}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    "--disable-background-timer-throttling",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-renderer-backgrounding",
-    "--disable-ipc-flooding-protection",
-    "--disable-hang-monitor",
-    "--disable-default-apps",
-    "--disable-extensions",
-    "--disable-sync",
-    ...resolveChromiumGpuArgs({
-      headless: options.headless,
-      gpu: options.gpu,
-      webgpu: options.webgpu,
-    }),
-    "--metrics-recording-only",
-    "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
-    ...(options.args ?? []),
-    "about:blank",
-  ];
+  const baseChromeArgs = buildDirectChromiumLaunchArgs({
+    userDataDir,
+    remoteDebuggingPort: 0,
+    headless: options.headless,
+    gpu: options.gpu,
+    webgpu: options.webgpu,
+    args: options.args,
+  });
   const resolvedExts =
     options.extensions && options.extensions.length > 0
       ? resolveBrowserExtensions(options.extensions)
@@ -717,6 +755,7 @@ export function makeLightweightCdpDriver(
     let height = initialHeight;
     let emulationMutated = false;
     let viewportMutated = false;
+    let isAtBlank = true;
     const label = options.engineLabel ?? "cdp";
 
     let activeSlot: CdpContextSlot | undefined;
@@ -1664,7 +1703,16 @@ export function makeLightweightCdpDriver(
 
       const waitUntil = options.waitUntil ?? "domcontentloaded";
       const targetSid = activeSlot?.sessionId;
-      if (waitUntil === "commit" || target === "about:blank") {
+      if (target === "about:blank") {
+        if (isAtBlank) return;
+        await cdpChannel
+          .sendCommand("Page.navigate", { url: target }, undefined, 4_000)
+          .catch(() => {});
+        isAtBlank = true;
+        return;
+      }
+      isAtBlank = false;
+      if (waitUntil === "commit") {
         await cdpChannel.sendCommand("Page.navigate", { url: target });
         return;
       }
@@ -1741,6 +1789,17 @@ export function makeLightweightCdpDriver(
       beginFlow: (_flowName) =>
         Effect.tryPromise({
           try: async () => {
+            const visitedOrigins = new Set<string>();
+            for (const u of navigationUrls) {
+              try {
+                const parsed = new URL(u);
+                if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+                  visitedOrigins.add(parsed.origin);
+                }
+              } catch {
+                // ignore non-URL entries
+              }
+            }
             consoleLogs.length = 0;
             jsErrors.length = 0;
             wasmTraps.length = 0;
@@ -1753,41 +1812,8 @@ export function makeLightweightCdpDriver(
             cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
               if (options.contextIsolation === "hot-cache" && activeSlot) {
-                // Hot-cache isolation: keep HTTP asset cache & V8/Wasm bytecode caches hot while
-                // wiping cookies, storage, OPFS, routes, emulation, viewport, and extra tabs cleanly.
-                // Clear in-page storage & OPFS BEFORE navigating to about:blank so navigation cannot abort OPFS cleanup.
-                const clearPageThenBlank = cdpChannel
-                  .evaluateFast(
-                    `(async () => {
-                      try { localStorage.clear(); sessionStorage.clear(); } catch {}
-                      try {
-                        if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
-                          const root = await navigator.storage.getDirectory();
-                          if (root && typeof root.entries === "function") {
-                            for await (const [name] of root.entries()) {
-                              await root.removeEntry(name, { recursive: true }).catch(() => {});
-                            }
-                          }
-                        }
-                      } catch {}
-                    })()`,
-                  )
-                  .catch(() => {})
-                  .then(() =>
-                    cdpChannel.sendCommand("Page.navigate", { url: "about:blank" }).catch(() => {}),
-                  );
-                const resetOps: Array<Promise<unknown>> = [
-                  cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
-                  cdpChannel
-                    .sendCommand("Storage.clearDataForOrigin", {
-                      origin: "*",
-                      storageTypes:
-                        "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems",
-                    })
-                    .catch(() => {}),
-                  clearPageThenBlank,
-                ];
-                // Close any extra tabs opened by the prior flow and return to tab 0.
+                // 1. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
+                const preResetOps: Array<Promise<unknown>> = [];
                 if (activeSlot.tabs.length > 1) {
                   const primaryTab = activeSlot.tabs[0]!;
                   const extraTabs = activeSlot.tabs.slice(1);
@@ -1796,12 +1822,62 @@ export function makeLightweightCdpDriver(
                   activeSlot.sessionId = primaryTab.sessionId;
                   cdpChannel.setSessionId(primaryTab.sessionId);
                   for (const extra of extraTabs) {
-                    resetOps.push(
+                    preResetOps.push(
                       cdpChannel
                         .sendCommand("Target.closeTarget", { targetId: extra.targetId }, null)
                         .catch(() => {}),
                     );
                   }
+                }
+                if (!isAtBlank) {
+                  // Clear in-page localStorage/sessionStorage/OPFS first, then navigate to about:blank
+                  // BEFORE calling Storage.clearDataForOrigin so no JS handle contends with CDP storage deletion.
+                  preResetOps.push(
+                    cdpChannel
+                      .evaluateFast(
+                        `(async () => {
+                          try { localStorage.clear(); sessionStorage.clear(); } catch {}
+                          try {
+                            if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+                              const root = await navigator.storage.getDirectory();
+                              if (root && typeof root.entries === "function") {
+                                for await (const [name] of root.entries()) {
+                                  await root.removeEntry(name, { recursive: true }).catch(() => {});
+                                }
+                              }
+                            }
+                          } catch {}
+                        })()`,
+                      )
+                      .catch(() => {})
+                      .then(() =>
+                        cdpChannel
+                          .sendCommand("Page.navigate", { url: "about:blank" }, undefined, 4_000)
+                          .catch(() => {}),
+                      )
+                      .then(() => {
+                        isAtBlank = true;
+                      }),
+                  );
+                }
+                if (preResetOps.length > 0) {
+                  await Promise.all(preResetOps);
+                }
+                // 2. Now that the page is safely on about:blank (no active document holding storage locks),
+                // wipe cookies, per-origin storage, routes, viewport, emulation, and network conditions in parallel.
+                const resetOps: Array<Promise<unknown>> = [
+                  cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
+                ];
+                for (const origin of visitedOrigins) {
+                  resetOps.push(
+                    cdpChannel
+                      .sendCommand("Storage.clearDataForOrigin", {
+                        origin,
+                        storageTypes:
+                          "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems",
+                      })
+                      .catch(() => {}),
+                  );
                 }
                 if (fetchInterceptEnabled) {
                   fetchInterceptEnabled = false;
@@ -1900,6 +1976,7 @@ export function makeLightweightCdpDriver(
                 fetchInterceptEnabled = false;
                 emulationMutated = false;
                 viewportMutated = false;
+                isAtBlank = true;
                 const previousSlot = activeSlot;
                 const pending = prefetchedSlotPromise;
                 prefetchedSlotPromise = undefined;
