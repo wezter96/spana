@@ -176,6 +176,9 @@ jobs:
           echo "SPANA_IOS_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP_PATH/Info.plist")" >> "$GITHUB_ENV"
 
       - name: Run conformance — direct WDA
+        env:
+          SPANA_WDA_LAUNCH_TIMEOUT_SECONDS: "240"
+          SPANA_OUTPUT_DIR: spana-conformance-output/direct-wda
         run: |
           cd packages/spana
           bun ./dist/cli.js test \
@@ -183,6 +186,10 @@ jobs:
             --platform ios \
             --device "$SPANA_IOS_UDID" \
             --config ./conformance.config.ts
+          if ! grep -Eq '^<testsuites name="spana" tests="[1-9][0-9]*"' "$SPANA_OUTPUT_DIR/junit-report.xml"; then
+            echo "::error::Direct WDA conformance did not produce any test results"
+            exit 1
+          fi
 
       - name: Run conformance — Appium (local server, auto-start)
         run: |

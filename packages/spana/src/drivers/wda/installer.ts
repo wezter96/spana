@@ -404,7 +404,8 @@ export async function setupWDA(
 
   const wdaProcess = startWDA(simulatorUDID, actualPort, derivedDataPath);
 
-  const maxRetries = 60;
+  const launchTimeout = Number(process.env["SPANA_WDA_LAUNCH_TIMEOUT_SECONDS"]);
+  const maxRetries = Number.isSafeInteger(launchTimeout) && launchTimeout > 0 ? launchTimeout : 60;
   for (let i = 0; i < maxRetries; i++) {
     try {
       const res = await fetch(`http://localhost:${actualPort}/status`);

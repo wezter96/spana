@@ -978,6 +978,27 @@ describe("wda installer", () => {
     expect(wdaInstallerState.killCount).toBe(1);
   });
 
+  test("allows a simulator WDA startup budget beyond the default", async () => {
+    const original = process.env.SPANA_WDA_LAUNCH_TIMEOUT_SECONDS;
+    process.env.SPANA_WDA_LAUNCH_TIMEOUT_SECONDS = "120";
+    try {
+      wdaInstallerState.existingPaths.add(projectXcodeproj);
+      wdaInstallerState.fetchQueue = [...Array<boolean>(60).fill(false), true];
+      const installer = await importFreshWDAInstaller();
+
+      const result = await installer.setupWDA("SIM-SLOW", 8116);
+
+      expect(wdaInstallerState.fetchCalls).toHaveLength(61);
+      result.cleanup();
+    } finally {
+      if (original === undefined) {
+        delete process.env.SPANA_WDA_LAUNCH_TIMEOUT_SECONDS;
+      } else {
+        process.env.SPANA_WDA_LAUNCH_TIMEOUT_SECONDS = original;
+      }
+    }
+  });
+
   test("reuses an existing build when products are already present", async () => {
     wdaInstallerState.existingPaths.add(projectXcodeproj);
     wdaInstallerState.existingPaths.add(buildProductsDir("SIM-CACHED"));
