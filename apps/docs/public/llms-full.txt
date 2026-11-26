@@ -2500,6 +2500,56 @@ export default flow("deep link navigation", async ({ app, expect, platform }) =>
 });
 ```
 
+## WebAssembly (WASM), WebGL2 / WebGPU & Canvas Apps
+
+Spana has first-class support for DOM-based WASM frameworks (Leptos, Yew, Dioxus, Blazor, Kotlin/Wasm), WebGL2/WebGPU `<canvas>` apps (Flutter Web CanvasKit/Skwasm, Bevy, Godot, Unity, egui, Slint, Rive), multi-threaded `SharedArrayBuffer` / Web Worker apps (SQLite-WASM, DuckDB-WASM, FFmpeg.wasm), and headless WASI/in-process `.wasm` modules.
+
+### Deterministic Headless WebGL2 / WebGPU
+
+Enable ANGLE SwiftShader (and optional WebGPU) in `spana.config.ts` so headless CI renders pixel-deterministically without a physical GPU:
+
+```ts
+export default defineConfig({
+  execution: {
+    web: {
+      engine: "cdp",
+      gpu: "swiftshader", // "auto" | "swiftshader" | "hardware" | "disabled"
+      webgpu: true,
+      contextIsolation: "hot-cache", // keeps V8/Wasm compile cache warm, wipes OPFS + IDB + storage
+    },
+  },
+});
+```
+
+### Canvas Semantic Tree, Low-Level Input & WASM Assertions
+
+Canvas-rendered WASM apps can register logical UI nodes via `registerWasmSemanticTree` from `spana-bridge/wasm` (or `window.__SPANA_WASM_TREE__`), making `{ testID }` and `{ role, name }` work identically on `<canvas>` as on HTML DOM. Flutter Web apps can activate ARIA semantics with `await app.enableFlutterSemantics()`.
+
+```ts
+export default flow("WASM canvas editor", async ({ app, expect }) => {
+  await app.openLink("/");
+  await app.waitForWasmReady();
+
+  const iso = await app.checkCrossOriginIsolation();
+  // Verifies COOP/COEP headers for SharedArrayBuffer / pthreads
+
+  await app.tap({ testID: "canvas-save" });
+  await app.mouse.wheel(0, 120, { x: 400, y: 300 });
+  await app.dragXY(100, 150, 320, 150, { steps: 10 });
+  await app.tapOffset({ css: "#viewport-canvas" }, 24, 24);
+  await app.clock.nextFrame(2);
+  await app.waitForCanvasStable({ css: "#viewport-canvas" });
+
+  await expect.noWasmTraps(); // main thread + attached Web Workers
+  await expect.wasmMemoryBelow("128MiB");
+  await expect.minFps(30, { durationMs: 500 });
+});
+```
+
+### Headless WASI / In-Process `.wasm` Testing
+
+Use `createWasmDriver` or `registerDriverAdapter(createWasmDriverAdapter({ modulePath: "./app.wasm", runtime: "in-process" | "wasi" | "wasmtime" }))` to run Spana flows directly against compiled `.wasm` modules with zero browser overhead.
+
 ---
 
 ## Gherkin / BDD

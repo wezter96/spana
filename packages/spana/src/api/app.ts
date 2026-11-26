@@ -24,7 +24,14 @@ import type {
   VirtualCredentialInput,
 } from "../drivers/raw-driver.js";
 import type { AccessibilityViolation } from "../core/accessibility-audit.js";
+import { compareScreenshots, cropToElement } from "../core/screenshot-compare.js";
 import { mergeLaunchOptions } from "../drivers/launch-options.js";
+import {
+  isWasmTrapError,
+  type CrossOriginIsolationReport,
+  type WasmMetrics,
+  type WasmTrap,
+} from "../drivers/wasm-utils.js";
 import type {
   BiometricOptions,
   Geolocation,
@@ -117,6 +124,8 @@ export interface BrowserMouse {
   down(x: number, y: number, opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
   up(x: number, y: number, opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
   click(x: number, y: number): Promise<void>;
+  /** Dispatch a wheel/scroll event (ideal for zooming/panning WebGL/WASM canvases). */
+  wheel(deltaX: number, deltaY: number, opts?: { x?: number; y?: number }): Promise<void>;
 }
 
 export interface BrowserClock {
@@ -124,6 +133,8 @@ export interface BrowserClock {
   setFixedTime(time: Date | number | string): Promise<void>;
   fastForward(ticks: number): Promise<void>;
   runFor(ticks: number): Promise<void>;
+  /** Advance `count` animation frames (16ms fake-clock ticks when installed, or real `requestAnimationFrame` ticks). */
+  nextFrame(count?: number): Promise<void>;
   resume(): Promise<void>;
 }
 
@@ -443,6 +454,47 @@ export interface PromiseApp<T extends string = string, R extends string = string
   clearStorage(opts?: DomClearStorageOptions): Promise<void>;
   /** Fast reset: clear storage via bridge and reload in milliseconds (avoids uninstall/reinstall). */
   resetFast(): Promise<void>;
+
+  // Canvas & WebAssembly (WASM) helpers
+  /** Smooth pointer drag between viewport coordinates (ideal for canvas editors, WebGL cameras, and games). */
+  dragXY(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    opts?: { steps?: number },
+  ): Promise<void>;
+  /** Tap at an `(dx, dy)` offset relative to the top-left of a matched element (e.g. a `<canvas>`). */
+  tapOffset(
+    selector: ExtendedSelector<T>,
+    dx: number,
+    dy: number,
+    opts?: WaitOptions,
+  ): Promise<void>;
+  /**
+   * Wait until consecutive screenshots (full viewport or cropped to `selector`) stabilize
+   * within `maxDiffPixelRatio` for `quietMs`, using Spana's Rust FFI visual diff engine.
+   */
+  waitForCanvasStable(
+    selector?: ExtendedSelector<T>,
+    opts?: {
+      quietMs?: number;
+      timeout?: number;
+      intervalMs?: number;
+      maxDiffPixelRatio?: number;
+      threshold?: number;
+    },
+  ): Promise<void>;
+  /** Wait until WebAssembly module(s) finish instantiating (or `window.__SPANA_WASM_READY__` becomes true). */
+  waitForWasmReady(opts?: { minModules?: number; timeout?: number }): Promise<void>;
+  /** Read live WASM metrics (modules, linear memory bytes/pages, peak bytes, optional FPS sample, traps, COOP/COEP). */
+  getWasmMetrics(opts?: { sampleFpsMs?: number }): Promise<WasmMetrics>;
+  /** Return all captured WebAssembly traps from main thread and attached Web Workers. */
+  getWasmTraps(): Promise<WasmTrap[]>;
+  /** Inspect cross-origin isolation (`crossOriginIsolated` & `SharedArrayBuffer`) needed for multi-threaded WASM. */
+  checkCrossOriginIsolation(): Promise<CrossOriginIsolationReport>;
+  /** Activate Flutter Web's hidden `<flt-semantics-placeholder>` so CanvasKit/Skwasm apps expose ARIA nodes. */
+  enableFlutterSemantics(): Promise<boolean>;
 
   // WebView / hybrid context switching (low-level escape hatches — normal flows hide channels)
   /** @internal Low-level escape hatch: list available contexts (e.g. ["NATIVE_APP", "WEBVIEW_..."]). */
@@ -978,6 +1030,27 @@ export function createPromiseApp<T extends string = string, R extends string = s
           ),
         );
       }),
+    nextFrame: (count = 1) =>
+      runStep(`clock.nextFrame(${count})`, async () => {
+        const frames = Math.max(1, Math.round(count));
+        await run(
+          driver.evaluate(
+            `(async () => {
+              if (window.__spanaClock) {
+                for (let i = 0; i < ${frames}; i++) {
+                  window.__spanaClock.runFor(16);
+                }
+                return;
+              }
+              if (typeof requestAnimationFrame === "function") {
+                for (let i = 0; i < ${frames}; i++) {
+                  await new Promise((r) => requestAnimationFrame(() => r()));
+                }
+              }
+            })()`,
+          ),
+        );
+      }),
     resume: () =>
       runStep("clock.resume", async () => {
         await run(
@@ -1024,6 +1097,25 @@ export function createPromiseApp<T extends string = string, R extends string = s
         run(optionalMethod("mouse.up", driver.mouseUp)(x, y, opts)),
       ),
     click: (x, y) => runStep(`mouse.click(${x},${y})`, () => run(coord.tapXY(x, y))),
+    wheel: (deltaX, deltaY, opts) =>
+      runStep(`mouse.wheel(${deltaX},${deltaY})`, async () => {
+        const x = opts?.x ?? 0;
+        const y = opts?.y ?? 0;
+        if (driver.mouseWheel) {
+          await run(driver.mouseWheel(x, y, deltaX, deltaY));
+          return;
+        }
+        await run(
+          driver.evaluate(
+            `(() => {
+              const target = (typeof document !== "undefined" && document.elementFromPoint(${x}, ${y})) || document.body || window;
+              if (target && typeof target.dispatchEvent === "function") {
+                target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: ${x}, clientY: ${y}, deltaX: ${deltaX}, deltaY: ${deltaY} }));
+              }
+            })()`,
+          ),
+        );
+      }),
   };
 
   const appExpect = createPromiseExpect<T, R>(
@@ -1737,6 +1829,204 @@ export function createPromiseApp<T extends string = string, R extends string = s
           return;
         }
         await run(driver.clearAppState(appId));
+      }),
+
+    dragXY: (fromX, fromY, toX, toY, opts) =>
+      runStep(`dragXY(${fromX},${fromY}->${toX},${toY})`, async () => {
+        const steps = opts?.steps ?? 10;
+        if (driver.dragAndDrop) {
+          await run(driver.dragAndDrop(fromX, fromY, toX, toY, steps));
+          return;
+        }
+        await run(driver.swipe(fromX, fromY, toX, toY, Math.max(100, steps * 16)));
+      }),
+
+    tapOffset: (selector, dx, dy, opts) =>
+      runStep(
+        `tapOffset(${dx},${dy})`,
+        async () => {
+          const el = await run(coord.assertVisible(selector, opts));
+          const x = Math.round(el.bounds.x + dx);
+          const y = Math.round(el.bounds.y + dy);
+          await run(driver.tapAtCoordinate(x, y));
+        },
+        { selector, captureScreenshot: true },
+      ),
+
+    waitForCanvasStable: (selector, opts) =>
+      runStep("waitForCanvasStable", async () => {
+        const quietMs = opts?.quietMs ?? 200;
+        const timeout = opts?.timeout ?? 5000;
+        const intervalMs = opts?.intervalMs ?? 50;
+        const maxDiffPixelRatio = opts?.maxDiffPixelRatio ?? 0.001;
+        const threshold = opts?.threshold ?? 0.05;
+        const deadline = Date.now() + timeout;
+        let bounds: { x: number; y: number; width: number; height: number } | undefined;
+        if (selector) {
+          const el = await run(coord.assertVisible(selector, { timeout }));
+          bounds = el.bounds;
+        }
+        const capture = async (): Promise<Uint8Array> => {
+          const full = await run(driver.takeScreenshot());
+          if (bounds && bounds.width > 0 && bounds.height > 0 && full.byteLength > 0) {
+            return await cropToElement(full, bounds);
+          }
+          return full;
+        };
+        let prev = await capture();
+        let stableSince = Date.now();
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, intervalMs));
+          const next = await capture();
+          if (prev.byteLength === 0 || next.byteLength === 0) {
+            return;
+          }
+          const diff = compareScreenshots(prev, next, { threshold, maxDiffPixelRatio });
+          if (diff.match) {
+            if (Date.now() - stableSince >= quietMs) {
+              return;
+            }
+          } else {
+            stableSince = Date.now();
+          }
+          prev = next;
+        }
+        throw new Error(
+          `Canvas did not stabilize within ${timeout}ms (quietMs=${quietMs}, maxDiffPixelRatio=${maxDiffPixelRatio})`,
+        );
+      }),
+
+    waitForWasmReady: (opts) =>
+      runStep("waitForWasmReady", async () => {
+        const minModules = opts?.minModules ?? 1;
+        const timeout = opts?.timeout ?? 15_000;
+        const deadline = Date.now() + timeout;
+        while (Date.now() < deadline) {
+          if (driver.getWasmMetrics) {
+            const m = await run(driver.getWasmMetrics());
+            if (m.pendingCount === 0 && m.moduleCount >= minModules) {
+              return;
+            }
+          }
+          const ready = await run(
+            driver.evaluate<boolean>(
+              `(() => {
+                if (globalThis.__spanaWasm) return globalThis.__spanaWasm.isReady(${minModules});
+                if (typeof globalThis.__SPANA_WASM_READY__ === "function") return Boolean(globalThis.__SPANA_WASM_READY__());
+                return globalThis.__SPANA_WASM_READY__ === true;
+              })()`,
+            ),
+          ).catch(() => false);
+          if (ready) return;
+          await new Promise((r) => setTimeout(r, 40));
+        }
+        throw new Error(
+          `Timed out waiting for WebAssembly readiness after ${timeout}ms (expected at least ${minModules} instantiated module(s))`,
+        );
+      }),
+
+    getWasmMetrics: (opts) =>
+      runStep("getWasmMetrics", async () => {
+        let metrics: WasmMetrics;
+        if (driver.getWasmMetrics) {
+          metrics = await run(driver.getWasmMetrics());
+        } else {
+          metrics = await run(
+            driver.evaluate<WasmMetrics>(
+              `(() => globalThis.__spanaWasm ? globalThis.__spanaWasm.getMetrics() : {
+                moduleCount: 0,
+                pendingCount: 0,
+                wasmMemoryBytes: 0,
+                wasmMemoryPages: 0,
+                peakWasmMemoryBytes: 0,
+                crossOriginIsolated: Boolean(globalThis.crossOriginIsolated),
+                sharedArrayBufferAvailable: typeof SharedArrayBuffer !== "undefined",
+                traps: [],
+                modules: []
+              })()`,
+            ),
+          );
+        }
+        if (opts?.sampleFpsMs && opts.sampleFpsMs > 0 && driver.evaluate) {
+          const sampleMs = Math.max(50, Math.round(opts.sampleFpsMs));
+          const fps = await run(
+            driver.evaluate<number>(
+              `(() => new Promise((resolve) => {
+                if (typeof requestAnimationFrame !== "function") { resolve(0); return; }
+                let frames = 0;
+                const start = performance.now();
+                function tick(now) {
+                  frames++;
+                  const elapsed = now - start;
+                  if (elapsed >= ${sampleMs}) {
+                    resolve(Math.round((frames * 1000) / Math.max(1, elapsed)));
+                    return;
+                  }
+                  requestAnimationFrame(tick);
+                }
+                requestAnimationFrame(tick);
+              }))()`,
+            ),
+          ).catch(() => undefined);
+          if (typeof fps === "number") {
+            metrics = { ...metrics, fps };
+          }
+        }
+        return metrics;
+      }),
+
+    getWasmTraps: () =>
+      runStep("getWasmTraps", async () => {
+        if (driver.getWasmTraps) {
+          return await run(driver.getWasmTraps());
+        }
+        const jsErrors = driver.getJSErrors ? await run(driver.getJSErrors()) : [];
+        return jsErrors
+          .filter((e) => isWasmTrapError(e))
+          .map((e) => ({
+            name: e.name ?? "WebAssembly.RuntimeError",
+            message: e.message,
+            source: "main" as const,
+            stack: e.stack,
+            timestamp: Date.now(),
+          }));
+      }),
+
+    checkCrossOriginIsolation: () =>
+      runStep("checkCrossOriginIsolation", async () => {
+        const res = await run(
+          driver.evaluate<CrossOriginIsolationReport>(
+            `(() => {
+              const isolated = Boolean(globalThis.crossOriginIsolated);
+              const sab = typeof SharedArrayBuffer !== "undefined";
+              return {
+                crossOriginIsolated: isolated,
+                sharedArrayBufferAvailable: sab,
+                hint: isolated
+                  ? undefined
+                  : "Serve responses with 'Cross-Origin-Opener-Policy: same-origin' and 'Cross-Origin-Embedder-Policy: require-corp' to enable SharedArrayBuffer / multi-threaded WASM."
+              };
+            })()`,
+          ),
+        );
+        return res;
+      }),
+
+    enableFlutterSemantics: () =>
+      runStep("enableFlutterSemantics", async () => {
+        return await run(
+          driver.evaluate<boolean>(
+            `(() => {
+              if (typeof document === "undefined") return false;
+              const el = document.querySelector("flt-semantics-placeholder")
+                || (document.querySelector("flt-glass-pane") && document.querySelector("flt-glass-pane").shadowRoot && document.querySelector("flt-glass-pane").shadowRoot.querySelector("flt-semantics-placeholder"));
+              if (!el) return false;
+              if (typeof el.click === "function") { el.click(); return true; }
+              el.dispatchEvent(new Event("click", { bubbles: true }));
+              return true;
+            })()`,
+          ),
+        );
       }),
 
     // WebView / hybrid context switching (low-level escape hatches)

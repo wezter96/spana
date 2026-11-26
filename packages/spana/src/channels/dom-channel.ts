@@ -6,6 +6,7 @@ import type {
   BrowserMockResponse,
   BrowserRouteMatcher,
 } from "../drivers/raw-driver.js";
+import { SPANA_WASM_HOOK_SCRIPT } from "../drivers/wasm-utils.js";
 
 export type DomChannelKind = "bridge" | "cdp" | "webkit-inspector" | "playwright" | "bidi";
 
@@ -818,8 +819,91 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return applyModifiersAndSlice(hits, sel);
   }
+  function findWasmSemanticHits(sel) {
+    if (typeof window === "undefined" || !window.__SPANA_WASM_TREE__) return [];
+    var provider = window.__SPANA_WASM_TREE__;
+    var nodes;
+    try { nodes = typeof provider === "function" ? provider() : provider; } catch (e) { return []; }
+    if (!Array.isArray(nodes) || nodes.length === 0) return [];
+    var matched = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (!n || typeof n !== "object" || !n.bounds) continue;
+      var nid = n.testID || n.id || "";
+      var ntext = String(n.text != null ? n.text : (n.label != null ? n.label : ""));
+      var nlabel = String(n.label != null ? n.label : "");
+      var nrole = String(n.role || "");
+      var ok = false;
+      if (typeof sel === "string") {
+        ok = nid === sel || ntext === sel;
+      } else if (sel && typeof sel === "object") {
+        if (sel.testID !== undefined) {
+          ok = nid === sel.testID;
+        } else if (sel.text !== undefined) {
+          ok = sel.exact ? ntext.trim() === String(sel.text).trim() : ntext.indexOf(String(sel.text)) !== -1;
+        } else if (sel.accessibilityLabel !== undefined) {
+          ok = nlabel === sel.accessibilityLabel || ntext === sel.accessibilityLabel;
+        } else if (sel.role !== undefined) {
+          var rOk = nrole.toLowerCase() === String(sel.role).toLowerCase();
+          var nameOk = true;
+          if (sel.name !== undefined) {
+            if (typeof sel.name === "object" && sel.name && sel.name.__regex) {
+              var re = new RegExp(sel.name.source, sel.name.flags || "");
+              nameOk = re.test(ntext) || re.test(nlabel);
+            } else {
+              var exp = String(sel.name);
+              nameOk = sel.exact
+                ? (ntext.trim() === exp.trim() || nlabel.trim() === exp.trim())
+                : (ntext.toLowerCase().indexOf(exp.toLowerCase()) !== -1 || nlabel.toLowerCase().indexOf(exp.toLowerCase()) !== -1);
+            }
+          }
+          ok = rOk && nameOk;
+        }
+      }
+      if (!ok) continue;
+      var ox = 0;
+      var oy = 0;
+      var hostEl = null;
+      if (n.canvasSelector && typeof document !== "undefined" && document.querySelector) {
+        try {
+          hostEl = document.querySelector(n.canvasSelector);
+          if (hostEl && typeof hostEl.getBoundingClientRect === "function") {
+            var cr = hostEl.getBoundingClientRect();
+            ox = cr.left || 0;
+            oy = cr.top || 0;
+          }
+        } catch (e) {}
+      }
+      var bx = (n.bounds.x || 0) + ox;
+      var by = (n.bounds.y || 0) + oy;
+      var bw = n.bounds.width || 0;
+      var bh = n.bounds.height || 0;
+      var vRect = { left: bx, top: by, x: bx, y: by, width: bw, height: bh, right: bx + bw, bottom: by + bh };
+      var virtualEl = {
+        isConnected: true,
+        tagName: "WASM-NODE",
+        innerText: ntext,
+        textContent: ntext,
+        value: n.value,
+        __spanaHostCanvas: hostEl,
+        getBoundingClientRect: function() { return vRect; },
+        getAttribute: function(k) {
+          if (k === "data-testid" || k === "testID") return nid || null;
+          if (k === "role") return nrole || null;
+          if (k === "aria-label") return nlabel || null;
+          return (n.attributes && n.attributes[k]) || null;
+        },
+        hasAttribute: function(k) { return this.getAttribute(k) !== null; }
+      };
+      matched.push({ el: virtualEl, offsetX: 0, offsetY: 0, inShadow: false, inIframe: false, wasmNode: n, wasmRect: vRect });
+    }
+    return matched;
+  }
   function findAcrossRoots(sel) {
-    return findInScope(sel, document, 0, 0, false, false);
+    var domHits = findInScope(sel, document, 0, 0, false, false);
+    var wasmHits = findWasmSemanticHits(sel);
+    if (wasmHits.length === 0) return domHits;
+    return domHits.length === 0 ? wasmHits : domHits.concat(wasmHits);
   }
   function isClickable(el) {
     var tag = el.tagName;
@@ -904,6 +988,19 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     return "<" + tag + idPart + clsPart + (txt ? ">" + txt + "</" + tag + ">" : ">");
   }
   function getHitTestBlocker(hit) {
+    if (hit.wasmNode) {
+      var wr = hit.wasmRect;
+      var wvw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || 0;
+      var wvh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 0;
+      var wcx = wr.left + wr.width / 2;
+      var wcy = wr.top + wr.height / 2;
+      if (wvw > 0 && wvh > 0 && (wcx < 0 || wcy < 0 || wcx > wvw || wcy > wvh)) return "outside viewport";
+      if (hit.el && hit.el.__spanaHostCanvas) {
+        var topW = deepElementFromPoint(document, wcx, wcy);
+        if (topW && !isSameOrDescendant(hit.el.__spanaHostCanvas, topW)) return describeEl(topW);
+      }
+      return null;
+    }
     var el = hit.el;
     var rect = el.getBoundingClientRect();
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
@@ -919,6 +1016,9 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     return describeEl(topEl);
   }
   function isHitTestClear(hit) {
+    if (hit.wasmNode) {
+      return getHitTestBlocker(hit) === null;
+    }
     var el = hit.el;
     var rect = el.getBoundingClientRect();
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
@@ -986,6 +1086,37 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     return true;
   }
   function toMatch(hit) {
+    if (hit.wasmNode) {
+      var wn = hit.wasmNode;
+      var wr = hit.wasmRect;
+      var wtext = (wn.text != null ? String(wn.text) : (wn.label != null ? String(wn.label) : "")).trim() || undefined;
+      return {
+        id: wn.testID || wn.id || undefined,
+        tag: "wasm-node",
+        role: wn.role || undefined,
+        text: wtext,
+        textContent: wtext,
+        value: wn.value != null ? String(wn.value) : undefined,
+        accessibilityLabel: wn.label || undefined,
+        accessibleName: wn.label || wtext,
+        rect: { x: wr.left, y: wr.top, width: wr.width, height: wr.height },
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        viewportWidth: window.innerWidth || 0,
+        viewportHeight: window.innerHeight || 0,
+        visible: wn.visible !== false && wr.width > 0 && wr.height > 0,
+        enabled: wn.enabled !== false,
+        clickable: wn.clickable !== undefined ? Boolean(wn.clickable) : (wn.role === "button" || wn.role === "link"),
+        focused: wn.focused,
+        checked: wn.checked,
+        editable: wn.editable,
+        empty: wn.value !== undefined ? String(wn.value).length === 0 : !wtext,
+        attributes: wn.attributes || {},
+        inShadowDom: false,
+        inIframe: false
+      };
+    }
     var el = hit.el;
     var rect = el.getBoundingClientRect();
     var attrs = {};
@@ -1808,7 +1939,9 @@ export const SPANA_RUNTIME_MISSING_SENTINEL = "__SPANA_RT_MISSING__";
  * and lets V8 TurboFan JIT-compile the selector & actionability helpers once.
  */
 export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
-  if (typeof window === "undefined" || window.__spanaRt) return true;
+  if (typeof window === "undefined") return true;
+  ${SPANA_WASM_HOOK_SCRIPT}
+  if (window.__spanaRt) return true;
   ${SHARED_DOM_TRAVERSAL_HELPERS}
 
   function query(sel) {

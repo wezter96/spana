@@ -26,10 +26,14 @@
     "./protocol": {
       "types": "./dist/protocol.d.ts",
       "import": "./dist/protocol.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm.d.ts",
+      "import": "./dist/wasm.js"
     }
   },
   "scripts": {
-    "build": "bun build src/index.ts src/capacitor.ts src/electron.ts src/protocol.ts --outdir dist --format esm --target browser --sourcemap && tsc --declaration --emitDeclarationOnly --outDir dist --noEmit false --rootDir src",
+    "build": "bun build src/index.ts src/capacitor.ts src/electron.ts src/protocol.ts src/wasm.ts --outdir dist --format esm --target browser --sourcemap && tsc --declaration --emitDeclarationOnly --outDir dist --noEmit false --rootDir src",
     "test": "bun test",
     "check-types": "tsc --noEmit"
   },

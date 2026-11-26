@@ -119,8 +119,24 @@ export interface ElectrobunAppConfig {
 export type BrowserName = "chromium" | "firefox" | "webkit";
 export type WebBrowserEngine = "auto" | "playwright" | "cdp" | "lightpanda";
 export type WebContextIsolation = "fresh" | "hot-cache";
+export type WebGpuMode = "auto" | "swiftshader" | "hardware" | "disabled";
 export type WebResourceBlockType = "image" | "font" | "media" | "stylesheet";
 export type VideoRecordingMode = "off" | "on" | "retain-on-failure";
+
+export interface WasmAppConfig {
+  /** Path to a compiled `.wasm` binary for headless in-process / WASI / wasmtime testing. */
+  modulePath?: string;
+  /** Execution backend: `"in-process"` (default), `"wasi"` (`node:wasi`), or `"wasmtime"` CLI. */
+  runtime?: "in-process" | "wasi" | "wasmtime";
+  /** CLI arguments passed to WASI / wasmtime modules. */
+  args?: string[];
+  /** Environment variables passed to WASI / wasmtime modules. */
+  env?: Record<string, string>;
+  /** Preopened host directories mapped into WASI (`{ "/sandbox": "./tmp" }`). */
+  preopens?: Record<string, string>;
+  /** Optional export function name invoked on launch (default: `_start` for WASI). */
+  entryExport?: string;
+}
 
 export type StorybookValue = string | number | boolean | null;
 
@@ -187,6 +203,16 @@ export interface WebExecutionConfig {
   viewport?: { width: number; height: number };
   /** Extra Chromium CLI arguments passed when launching the browser (e.g. `--use-fake-device-for-media-stream`). */
   args?: string[];
+  /**
+   * GPU rendering mode for headless/headed Chromium:
+   * - `"auto"` (default): `"swiftshader"` when `webgpu: true` in headless, `"hardware"` when headed, `"disabled"` otherwise.
+   * - `"swiftshader"`: deterministic software WebGL2/WebGPU via ANGLE SwiftShader (ideal for canvas/WASM CI).
+   * - `"hardware"`: use host GPU (omits `--disable-gpu`).
+   * - `"disabled"`: pass `--disable-gpu` in headless mode.
+   */
+  gpu?: WebGpuMode;
+  /** Enable WebGPU flags (`--enable-unsafe-webgpu`, plus deterministic SwiftShader in headless mode). */
+  webgpu?: boolean;
   /** Timeout in ms when waiting for the browser debugging endpoint to start (default: 30000). */
   launchTimeout?: number;
   /** Timeout in ms for `app.evaluate()` / CDP `Runtime.evaluate` calls (default: 10000). */
@@ -578,6 +604,8 @@ const webExecutionConfigSchema = z
     storybook: storybookConfigSchema.optional(),
     extensions: z.array(z.string().min(1)).optional(),
     colorScheme: z.enum(["dark", "light", "no-preference"]).optional(),
+    gpu: z.enum(["auto", "swiftshader", "hardware", "disabled"]).optional(),
+    webgpu: z.boolean().optional(),
     reducedMotion: z.enum(["reduce", "no-preference"]).optional(),
     timezoneId: z.string().min(1).optional(),
     locale: z.string().min(1).optional(),

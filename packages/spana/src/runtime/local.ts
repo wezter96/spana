@@ -18,6 +18,7 @@ import {
   makeLightweightCdpDriver,
   type DirectCdpBrowserHandle,
 } from "../drivers/cdp-browser.js";
+import { resolveChromiumGpuArgs } from "../drivers/wasm-utils.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
 import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
@@ -159,6 +160,8 @@ export function speculativelyPrelaunchWebBrowser(
     const cdpBrowserPromise = launchDirectCdpBrowser({
       executablePath: webExecution?.executablePath,
       headless: webExecution?.headless ?? true,
+      gpu: webExecution?.gpu,
+      webgpu: webExecution?.webgpu,
       extensions: webExecution?.extensions,
       args: webExecution?.args,
       launchTimeout: webExecution?.launchTimeout,
@@ -195,7 +198,16 @@ export function speculativelyPrelaunchWebBrowser(
             headless: webExecution?.headless ?? true,
             executablePath: webExecution?.executablePath,
             channel: webExecution?.channel,
-            args: webExecution?.args,
+            args: [
+              ...(webExecution?.gpu || webExecution?.webgpu
+                ? resolveChromiumGpuArgs({
+                    headless: webExecution?.headless ?? true,
+                    gpu: webExecution?.gpu,
+                    webgpu: webExecution?.webgpu,
+                  })
+                : []),
+              ...(webExecution?.args ?? []),
+            ],
           });
 
   // Prevent unhandled rejection if CLI exits early before awaiting
@@ -271,6 +283,8 @@ export async function buildWebRuntime(
         : await launchDirectCdpBrowser({
             executablePath: webExecution?.executablePath,
             headless: webExecution?.headless ?? true,
+            gpu: webExecution?.gpu,
+            webgpu: webExecution?.webgpu,
             extensions: webExecution?.extensions,
             args: webExecution?.args,
             launchTimeout: webExecution?.launchTimeout,
@@ -420,6 +434,8 @@ export async function buildWebRuntimePool(
             : launchDirectCdpBrowser({
                 executablePath: webExecution?.executablePath,
                 headless: webExecution?.headless ?? true,
+                gpu: webExecution?.gpu,
+                webgpu: webExecution?.webgpu,
                 extensions: webExecution?.extensions,
                 args: webExecution?.args,
                 launchTimeout: webExecution?.launchTimeout,

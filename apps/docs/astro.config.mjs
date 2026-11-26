@@ -17,7 +17,7 @@ export default defineConfig({
       title: "spana",
       components: { PageTitle: "./src/components/PageTitle.astro" },
       description:
-        "One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron and Electrobun — no Appium to set up, and an MCP server your coding agent can drive.",
+        "The fastest AI-native E2E framework. Write one TypeScript test and run it across Web, iOS, Android, Electron, Electrobun, and WASM.",
       customCss: ["./src/styles/custom.css"],
       head: [
         {
@@ -59,7 +59,7 @@ export default defineConfig({
           attrs: {
             property: "og:image:alt",
             content:
-              "spana — One test. Every screen. E2E testing for Web, iOS, Android, Electron and Electrobun.",
+              "spana — The fastest AI-native E2E framework for Web, iOS, Android, Electron, Electrobun, and WASM.",
           },
         },
         {
@@ -89,7 +89,7 @@ export default defineConfig({
             codeRepository: "https://github.com/wezter96/spana",
             license: "https://www.apache.org/licenses/LICENSE-2.0",
             description:
-              "One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron and Electrobun — no Appium to set up, and an MCP server your coding agent can drive.",
+              "The fastest AI-native E2E framework. Write one TypeScript test and run it across Web, iOS, Android, Electron, Electrobun, and WASM.",
             offers: {
               "@type": "Offer",
               price: "0",

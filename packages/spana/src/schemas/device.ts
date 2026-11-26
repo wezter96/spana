@@ -14,6 +14,7 @@ export const DeviceInfo = Schema.Struct({
     "appium",
     "electron",
     "electrobun",
+    "wasm",
   ]),
 });
 export type DeviceInfo = typeof DeviceInfo.Type;

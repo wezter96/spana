@@ -1620,6 +1620,18 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to mouseUp at (${x}, ${y}): ${e}` }),
         }),
 
+      mouseWheel: (x, y, deltaX, deltaY) =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.mouse.move(x, y);
+            await page.mouse.wheel(deltaX, deltaY);
+          },
+          catch: (e) =>
+            new DriverError({
+              message: `Failed to mouseWheel (${deltaX}, ${deltaY}) at (${x}, ${y}): ${e}`,
+            }),
+        }),
+
       hideKeyboard: () => Effect.void,
 
       takeScreenshot: () =>

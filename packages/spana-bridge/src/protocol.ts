@@ -3,6 +3,7 @@ export type BridgeSelector =
   | { testID: string }
   | { text: string; systemUI?: boolean }
   | { accessibilityLabel: string; systemUI?: boolean }
+  | { role: string; name?: string }
   | { point: { x: number; y: number } };
 
 export interface BridgeRect {
@@ -15,6 +16,7 @@ export interface BridgeRect {
 export interface BridgeElementMatch {
   id?: string;
   tag?: string;
+  role?: string;
   text?: string;
   value?: string;
   accessibilityLabel?: string;

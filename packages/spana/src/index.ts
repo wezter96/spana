@@ -538,3 +538,26 @@ export type {
   BrowserDownloadInfo,
 } from "./drivers/raw-driver.js";
 export type { SelectOptionInput } from "./channels/dom-channel.js";
+
+// WebAssembly (WASM) & Canvas / WebGPU / WASI support
+export {
+  resolveChromiumGpuArgs,
+  parseByteSize,
+  formatByteSize,
+  isWasmTrapError,
+  SPANA_WASM_HOOK_SCRIPT,
+  type WebGpuMode,
+  type WasmSemanticNode,
+  type WasmModuleMetric,
+  type WasmTrap,
+  type CrossOriginIsolationReport,
+  type WasmMetrics,
+} from "./drivers/wasm-utils.js";
+export {
+  createWasmDriver,
+  createWasmDriverAdapter,
+  type WasmRuntimeMode,
+  type WasmDriverOptions,
+  type WasmEvalContext,
+} from "./drivers/wasm.js";
+export type { WasmAppConfig } from "./schemas/config.js";

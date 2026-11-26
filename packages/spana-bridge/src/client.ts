@@ -208,6 +208,25 @@ function findDomHits(doc: any, selector: BridgeSelector): DomHit[] {
       for (const el of Array.from(root.querySelectorAll(`[aria-label="${escaped}"]`))) {
         pushHit(el, ctx);
       }
+    } else if (typeof selector === "object" && selector !== null && "role" in selector) {
+      const targetRole = selector.role.toLowerCase();
+      const targetName = selector.name?.toLowerCase();
+      const all = Array.from(root.querySelectorAll("*")) as any[];
+      for (const node of all) {
+        const attrRole = String(node.getAttribute?.("role") ?? "").toLowerCase();
+        const tag = String(node.tagName ?? "").toLowerCase();
+        const implicitRole =
+          attrRole ||
+          (tag === "button" ? "button" : tag === "a" ? "link" : tag === "input" ? "textbox" : "");
+        if (implicitRole !== targetRole) continue;
+        if (targetName) {
+          const label = String(
+            node.getAttribute?.("aria-label") ?? node.innerText ?? node.textContent ?? "",
+          ).toLowerCase();
+          if (!label.includes(targetName)) continue;
+        }
+        pushHit(node, ctx);
+      }
     } else {
       const needle = (typeof selector === "string" ? selector : selector.text).toLowerCase();
       const all = Array.from(root.querySelectorAll("*")) as any[];
@@ -474,8 +493,87 @@ export function initSpanaBridge(options: SpanaBridgeClientOptions = {}): SpanaBr
   }
 
   // ── Core bridge operations ────────────────────────────────────────────
+  const queryWasmTree = (selector: BridgeSelector): BridgeElementMatch[] => {
+    const provider = win?.__SPANA_WASM_TREE__;
+    if (!provider) return [];
+    let nodes: any[] = [];
+    try {
+      nodes = typeof provider === "function" ? provider() : provider;
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(nodes) || nodes.length === 0) return [];
+    const results: BridgeElementMatch[] = [];
+    for (const node of nodes) {
+      if (!node || typeof node !== "object" || !node.bounds) continue;
+      const id = node.testID ?? node.id;
+      const text = node.text ?? node.label ?? "";
+      const role = node.role;
+      let matched = false;
+      if (typeof selector === "string") {
+        matched = id === selector || text === selector;
+      } else if ("testID" in selector) {
+        matched = id === selector.testID;
+      } else if ("text" in selector) {
+        matched = text.includes(selector.text);
+      } else if ("accessibilityLabel" in selector) {
+        matched =
+          node.label === selector.accessibilityLabel || text === selector.accessibilityLabel;
+      } else if ("role" in selector) {
+        const roleOk = role?.toLowerCase() === selector.role.toLowerCase();
+        const nameOk =
+          !selector.name ||
+          (typeof selector.name === "string"
+            ? text.toLowerCase().includes(selector.name.toLowerCase()) ||
+              String(node.label ?? "")
+                .toLowerCase()
+                .includes(selector.name.toLowerCase())
+            : true);
+        matched = Boolean(roleOk && nameOk);
+      }
+      if (!matched) continue;
+      let ox = 0;
+      let oy = 0;
+      if (node.canvasSelector && doc && typeof doc.querySelector === "function") {
+        const canvas = doc.querySelector(node.canvasSelector);
+        if (canvas && typeof canvas.getBoundingClientRect === "function") {
+          const cr = canvas.getBoundingClientRect();
+          ox = cr.left ?? cr.x ?? 0;
+          oy = cr.top ?? cr.y ?? 0;
+        }
+      }
+      results.push({
+        id,
+        tag: "wasm-node",
+        role,
+        text: text || undefined,
+        value: node.value,
+        accessibilityLabel: node.label,
+        rect: {
+          x: (node.bounds.x ?? 0) + ox,
+          y: (node.bounds.y ?? 0) + oy,
+          width: node.bounds.width ?? 0,
+          height: node.bounds.height ?? 0,
+        },
+        scrollX: win?.scrollX ?? 0,
+        scrollY: win?.scrollY ?? 0,
+        devicePixelRatio: win?.devicePixelRatio ?? 1,
+        viewportWidth: win?.innerWidth ?? 0,
+        viewportHeight: win?.innerHeight ?? 0,
+        visible:
+          node.visible !== false && (node.bounds.width ?? 0) > 0 && (node.bounds.height ?? 0) > 0,
+        enabled: node.enabled !== false,
+        clickable: node.clickable ?? role === "button",
+        attributes: node.attributes,
+      });
+    }
+    return results;
+  };
+
   const query = (selector: BridgeSelector): BridgeElementMatch[] => {
-    return findDomHits(doc, selector).map((hit) => hitToMatch(win, doc, hit));
+    const domMatches = findDomHits(doc, selector).map((hit) => hitToMatch(win, doc, hit));
+    const wasmMatches = queryWasmTree(selector);
+    return wasmMatches.length > 0 ? [...domMatches, ...wasmMatches] : domMatches;
   };
 
   const scrollIntoView = (selector: BridgeSelector): BridgeElementMatch | null => {

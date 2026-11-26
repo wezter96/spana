@@ -8,6 +8,13 @@ import { isRelativeSelector, type ExtendedSelector } from "../schemas/selector.j
 import { createCoordinator, type CoordinatorConfig } from "../smart/coordinator.js";
 import type { WaitOptions } from "../smart/auto-wait.js";
 import type { StepRecorder } from "../core/step-recorder.js";
+import {
+  formatByteSize,
+  isWasmTrapError,
+  parseByteSize,
+  type WasmMetrics,
+  type WasmTrap,
+} from "../drivers/wasm-utils.js";
 
 export interface FlowContext {
   flowFilePath: string;
@@ -157,11 +164,20 @@ export interface PromiseExpectFn<T extends string = string> {
   soft: ((selector: ExtendedSelector<T>) => PromiseExpectation<T>) & {
     toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
     toHaveTitle(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+    noWasmTraps(): Promise<void>;
+    wasmMemoryBelow(limit: number | string): Promise<void>;
+    minFps(minFps: number, opts?: { durationMs?: number }): Promise<void>;
   };
   /** Assert that the current page URL matches a substring/exact string or RegExp. */
   toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   /** Assert that the current document title matches exact string or RegExp. */
   toHaveTitle(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Assert that zero WebAssembly traps occurred on main thread or any attached Web Worker. */
+  noWasmTraps(): Promise<void>;
+  /** Assert that live WebAssembly linear memory usage is below `limit` (bytes or e.g. `"64MB"`, `"128MiB"`). */
+  wasmMemoryBelow(limit: number | string): Promise<void>;
+  /** Sample `requestAnimationFrame` cadence over `durationMs` (default 500ms) and assert FPS >= `minFps`. */
+  minFps(minFps: number, opts?: { durationMs?: number }): Promise<void>;
   /** Negated page-level matchers (`expect.not.toHaveURL(...)`, `expect.not.toHaveTitle(...)`). */
   readonly not: {
     toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
@@ -796,8 +812,97 @@ export function createPromiseExpect<T extends string = string, R extends string 
     const label = `expect.toHaveTitle(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
     return recordStep(label, () => run(coord.waitForTitle(expected, opts)));
   };
+  const noWasmTraps = () =>
+    recordStep("expect.noWasmTraps()", async () => {
+      let traps: WasmTrap[] = [];
+      if (driver.getWasmTraps) {
+        traps = await run(driver.getWasmTraps());
+      } else if (driver.getJSErrors) {
+        const errs = await run(driver.getJSErrors());
+        traps = errs
+          .filter((e) => isWasmTrapError(e))
+          .map((e) => ({
+            name: e.name ?? "WebAssembly.RuntimeError",
+            message: e.message,
+            source: "main" as const,
+            stack: e.stack,
+            timestamp: Date.now(),
+          }));
+      }
+      if (traps.length > 0) {
+        const summary = traps.map((t) => `[${t.source}] ${t.name}: ${t.message}`).join("\n  - ");
+        throw new Error(
+          `Expected zero WebAssembly traps, but captured ${traps.length}:\n  - ${summary}`,
+        );
+      }
+    });
+  const wasmMemoryBelow = (limit: number | string) =>
+    recordStep(`expect.wasmMemoryBelow(${JSON.stringify(limit)})`, async () => {
+      const limitBytes = parseByteSize(limit);
+      let metrics: WasmMetrics;
+      if (driver.getWasmMetrics) {
+        metrics = await run(driver.getWasmMetrics());
+      } else if (driver.evaluate) {
+        metrics = await run(
+          driver.evaluate<WasmMetrics>(
+            `(() => globalThis.__spanaWasm ? globalThis.__spanaWasm.getMetrics() : {
+              moduleCount: 0,
+              pendingCount: 0,
+              wasmMemoryBytes: 0,
+              wasmMemoryPages: 0,
+              peakWasmMemoryBytes: 0,
+              crossOriginIsolated: false,
+              sharedArrayBufferAvailable: false,
+              traps: [],
+              modules: []
+            })()`,
+          ),
+        );
+      } else {
+        throw new Error("Driver does not support WebAssembly memory inspection");
+      }
+      if (metrics.wasmMemoryBytes > limitBytes) {
+        throw new Error(
+          `Expected WebAssembly linear memory to be below ${formatByteSize(limitBytes)}, but measured ${formatByteSize(metrics.wasmMemoryBytes)} (${metrics.wasmMemoryPages} pages, peak ${formatByteSize(metrics.peakWasmMemoryBytes)})`,
+        );
+      }
+    });
+  const minFps = (requiredFps: number, opts?: { durationMs?: number }) =>
+    recordStep(`expect.minFps(${requiredFps})`, async () => {
+      const durationMs = Math.max(100, Math.round(opts?.durationMs ?? 500));
+      if (!driver.evaluate) {
+        throw new Error("Driver does not support FPS sampling");
+      }
+      const measured = await run(
+        driver.evaluate<number>(
+          `(() => new Promise((resolve) => {
+            if (typeof requestAnimationFrame !== "function") { resolve(0); return; }
+            let frames = 0;
+            const start = performance.now();
+            function tick(now) {
+              frames++;
+              const elapsed = now - start;
+              if (elapsed >= ${durationMs}) {
+                resolve(Math.round((frames * 1000) / Math.max(1, elapsed)));
+                return;
+              }
+              requestAnimationFrame(tick);
+            }
+            requestAnimationFrame(tick);
+          }))()`,
+        ),
+      );
+      if (measured < requiredFps) {
+        throw new Error(
+          `Expected frame rate >= ${requiredFps} FPS over ${durationMs}ms, but measured ${measured} FPS`,
+        );
+      }
+    });
   expectFn.toHaveURL = toHaveURL;
   expectFn.toHaveTitle = toHaveTitle;
+  expectFn.noWasmTraps = noWasmTraps;
+  expectFn.wasmMemoryBelow = wasmMemoryBelow;
+  expectFn.minFps = minFps;
   expectFn.soft = Object.assign(
     (selector: ExtendedSelector<T>) => buildSelectorExpectation(selector, runSoftSelectorStep),
     {
@@ -805,6 +910,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
         recordSoft(() => toHaveURL(expected, opts)),
       toHaveTitle: (expected: string | RegExp, opts?: WaitOptions) =>
         recordSoft(() => toHaveTitle(expected, opts)),
+      noWasmTraps: () => recordSoft(() => noWasmTraps()),
+      wasmMemoryBelow: (limit: number | string) => recordSoft(() => wasmMemoryBelow(limit)),
+      minFps: (requiredFps: number, opts?: { durationMs?: number }) =>
+        recordSoft(() => minFps(requiredFps, opts)),
     },
   );
 

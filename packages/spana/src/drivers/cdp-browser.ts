@@ -38,6 +38,14 @@ import {
   SPANA_INJECTED_RUNTIME_SCRIPT,
 } from "../channels/dom-channel.js";
 import { applyExtensionChromeArgs, resolveBrowserExtensions } from "./browser-extensions.js";
+import {
+  isWasmTrapError,
+  resolveChromiumGpuArgs,
+  SPANA_WASM_HOOK_SCRIPT,
+  type WasmMetrics,
+  type WasmTrap,
+  type WebGpuMode,
+} from "./wasm-utils.js";
 
 export interface DirectCdpBrowserLaunchOptions {
   /** Explicit Chromium/Chrome binary path. Auto-detects system Chrome or Playwright Chromium if omitted. */
@@ -52,6 +60,10 @@ export interface DirectCdpBrowserLaunchOptions {
   daemonStateFile?: string;
   /** Unpacked browser extension directories to load into Chromium. */
   extensions?: string[];
+  /** GPU rendering mode (`"auto" | "swiftshader" | "hardware" | "disabled"`). */
+  gpu?: WebGpuMode;
+  /** Enable WebGPU flags (`--enable-unsafe-webgpu`, deterministic SwiftShader when headless). */
+  webgpu?: boolean;
   /** Extra Chrome launch flags. */
   args?: string[];
   /** Browser startup timeout in ms (default: 30_000). */
@@ -255,7 +267,11 @@ export async function launchDirectCdpBrowser(
     "--disable-default-apps",
     "--disable-extensions",
     "--disable-sync",
-    ...(options.headless !== false ? ["--disable-gpu"] : []),
+    ...resolveChromiumGpuArgs({
+      headless: options.headless,
+      gpu: options.gpu,
+      webgpu: options.webgpu,
+    }),
     "--metrics-recording-only",
     "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
     ...(options.args ?? []),
@@ -1003,11 +1019,31 @@ export function makeLightweightCdpDriver(
       });
     };
 
-    // Auto-track cross-origin iframe (OOPIF) child targets & popup/new tabs in the same browserContext
+    // Track Web Worker / Service Worker sessions so worker logs & WASM traps are captured cleanly
+    const workerSessions = new Map<string, string>();
+    const wasmTraps: WasmTrap[] = [];
+
+    // Auto-track cross-origin iframe (OOPIF) child targets, Web Workers, & popup/new tabs in the same browserContext
     cdpChannel.onEvent("Target.attachedToTarget", (params) => {
       const targetInfo = params?.targetInfo;
       const childSid = params?.sessionId;
       const waiting = Boolean(params?.waitingForDebugger);
+      if (
+        (targetInfo?.type === "worker" || targetInfo?.type === "service_worker") &&
+        typeof childSid === "string"
+      ) {
+        workerSessions.set(childSid, typeof targetInfo.url === "string" ? targetInfo.url : "");
+        void (async () => {
+          await cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
+          await cdpChannel.evaluateOnSession(childSid, SPANA_WASM_HOOK_SCRIPT).catch(() => {});
+          if (waiting) {
+            await cdpChannel
+              .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+              .catch(() => {});
+          }
+        })();
+        return;
+      }
       if (targetInfo?.type === "iframe" && typeof childSid === "string") {
         cdpChannel.addChildSession(childSid, {
           targetId: typeof targetInfo.targetId === "string" ? targetInfo.targetId : undefined,
@@ -1194,22 +1230,40 @@ export function makeLightweightCdpDriver(
       return { x: 0, y: 0 };
     });
 
-    // Capture console logs, JS errors, and Fetch interception over the single raw WS
+    // Capture console logs, JS errors, worker WASM traps, and Fetch interception over the single raw WS
     cdpChannel.onEvent("Runtime.consoleAPICalled", (params, sid) => {
-      if (activeSlot && sid && sid !== activeSlot.sessionId) return;
+      const isWorker = typeof sid === "string" && workerSessions.has(sid);
+      if (!isWorker && activeSlot && sid && sid !== activeSlot.sessionId) return;
       const args = Array.isArray(params?.args)
         ? params.args.map((a: any) => a.value ?? a.description ?? "").join(" ")
         : "";
-      consoleLogs.push({ type: String(params?.type ?? "log"), text: args });
+      consoleLogs.push({
+        type: String(params?.type ?? "log"),
+        text: isWorker ? `[worker] ${args}` : args,
+      });
     });
 
     cdpChannel.onEvent("Runtime.exceptionThrown", (params, sid) => {
-      if (activeSlot && sid && sid !== activeSlot.sessionId) return;
+      const isWorker = typeof sid === "string" && workerSessions.has(sid);
+      if (!isWorker && activeSlot && sid && sid !== activeSlot.sessionId) return;
       const detail = params?.exceptionDetails;
+      const name = String(detail?.exception?.className ?? "Error");
+      const message = String(
+        detail?.exception?.description ?? detail?.text ?? "Uncaught exception",
+      );
       jsErrors.push({
-        name: detail?.exception?.className ?? "Error",
-        message: detail?.exception?.description ?? detail?.text ?? "Uncaught exception",
+        name,
+        message: isWorker ? `[worker] ${message}` : message,
       });
+      if (isWasmTrapError({ name, message })) {
+        wasmTraps.push({
+          name,
+          message,
+          source: isWorker ? "worker" : "main",
+          ...(isWorker ? { workerUrl: workerSessions.get(sid!) } : {}),
+          timestamp: Date.now(),
+        });
+      }
     });
 
     // Track committed navigation URLs so waitForURL catches rapid redirects (2.13)
@@ -1595,13 +1649,14 @@ export function makeLightweightCdpDriver(
           try: async () => {
             consoleLogs.length = 0;
             jsErrors.length = 0;
+            wasmTraps.length = 0;
             navigationUrls.length = 0;
             dialogHandler = null;
             cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
               if (options.contextIsolation === "hot-cache" && activeSlot) {
-                // Hot-cache isolation: keep HTTP asset cache & V8 compiled JS bytecode hot while
-                // wiping cookies, localStorage, sessionStorage, IndexedDB, CacheStorage, & SWs.
+                // Hot-cache isolation: keep HTTP asset cache & V8/Wasm bytecode caches hot while
+                // wiping cookies, localStorage, sessionStorage, IndexedDB, OPFS, CacheStorage, & SWs.
                 const origin = options.baseUrl
                   ? (() => {
                       try {
@@ -1617,11 +1672,25 @@ export function makeLightweightCdpDriver(
                     .sendCommand("Storage.clearDataForOrigin", {
                       origin,
                       storageTypes:
-                        "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers",
+                        "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems",
                     })
                     .catch(() => {}),
                   cdpChannel
-                    .evaluate("try { localStorage.clear(); sessionStorage.clear(); } catch {}")
+                    .evaluate(
+                      `(async () => {
+                        try { localStorage.clear(); sessionStorage.clear(); } catch {}
+                        try {
+                          if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+                            const root = await navigator.storage.getDirectory();
+                            if (root && typeof root.entries === "function") {
+                              for await (const [name] of root.entries()) {
+                                await root.removeEntry(name, { recursive: true }).catch(() => {});
+                              }
+                            }
+                          }
+                        } catch {}
+                      })()`,
+                    )
                     .catch(() => {}),
                   cdpChannel.sendCommand("Page.navigate", { url: "about:blank" }).catch(() => {}),
                 ]);
@@ -1934,6 +2003,87 @@ export function makeLightweightCdpDriver(
             });
           },
           catch: (e) => new DriverError({ message: `CDP mouseUp failed: ${e}` }),
+        }),
+
+      mouseWheel: (x, y, deltaX, deltaY) =>
+        Effect.tryPromise({
+          try: async () => {
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseWheel",
+              x,
+              y,
+              deltaX,
+              deltaY,
+            });
+          },
+          catch: (e) =>
+            new DriverError({
+              message: `CDP mouseWheel (${deltaX}, ${deltaY}) failed at (${x}, ${y}): ${e}`,
+            }),
+        }),
+
+      getWasmTraps: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const pageTraps = await cdpChannel
+              .evaluate<WasmTrap[]>(
+                `(() => (globalThis.__spanaWasm ? globalThis.__spanaWasm.getMetrics().traps : []))()`,
+              )
+              .catch(() => [] as WasmTrap[]);
+            const merged: WasmTrap[] = [...wasmTraps];
+            const seen = new Set(merged.map((t) => `${t.source}:${t.name}:${t.message}`));
+            for (const t of Array.isArray(pageTraps) ? pageTraps : []) {
+              const key = `${t.source}:${t.name}:${t.message}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                merged.push(t);
+              }
+            }
+            return merged;
+          },
+          catch: (e) => new DriverError({ message: `CDP getWasmTraps failed: ${e}` }),
+        }),
+
+      getWasmMetrics: () =>
+        Effect.tryPromise({
+          try: async () => {
+            const raw = await cdpChannel
+              .evaluate<WasmMetrics>(
+                `(() => globalThis.__spanaWasm ? globalThis.__spanaWasm.getMetrics() : {
+                  moduleCount: 0,
+                  pendingCount: 0,
+                  wasmMemoryBytes: 0,
+                  wasmMemoryPages: 0,
+                  peakWasmMemoryBytes: 0,
+                  crossOriginIsolated: Boolean(globalThis.crossOriginIsolated),
+                  sharedArrayBufferAvailable: typeof SharedArrayBuffer !== "undefined",
+                  traps: [],
+                  modules: []
+                })()`,
+              )
+              .catch(() => ({
+                moduleCount: 0,
+                pendingCount: 0,
+                wasmMemoryBytes: 0,
+                wasmMemoryPages: 0,
+                peakWasmMemoryBytes: 0,
+                crossOriginIsolated: false,
+                sharedArrayBufferAvailable: false,
+                traps: [],
+                modules: [],
+              }));
+            const mergedTraps: WasmTrap[] = [...wasmTraps];
+            const seen = new Set(mergedTraps.map((t) => `${t.source}:${t.name}:${t.message}`));
+            for (const t of raw.traps ?? []) {
+              const key = `${t.source}:${t.name}:${t.message}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                mergedTraps.push(t);
+              }
+            }
+            return { ...raw, traps: mergedTraps };
+          },
+          catch: (e) => new DriverError({ message: `CDP getWasmMetrics failed: ${e}` }),
         }),
 
       hoverAtCoordinate: (x, y) =>

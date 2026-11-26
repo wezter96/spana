@@ -10,6 +10,7 @@ import type {
   PermissionOptions,
   PushPayload,
 } from "./device-controls.js";
+import type { WasmMetrics, WasmTrap } from "./wasm-utils.js";
 
 export type RawHierarchy = string; // Raw XML (Android/iOS) or JSON (web) — parsed by platform-specific parsers
 
@@ -350,7 +351,15 @@ export interface RawDriverService<_T extends string = string, R extends string =
     y: number,
     opts?: { button?: "left" | "right" | "middle" },
   ) => Effect.Effect<void, DriverError>;
+  readonly mouseWheel?: (
+    x: number,
+    y: number,
+    deltaX: number,
+    deltaY: number,
+  ) => Effect.Effect<void, DriverError>;
   readonly hideKeyboard: () => Effect.Effect<void, DriverError>;
+  readonly getWasmMetrics?: () => Effect.Effect<WasmMetrics, DriverError>;
+  readonly getWasmTraps?: () => Effect.Effect<WasmTrap[], DriverError>;
 
   // Queries
   readonly takeScreenshot: () => Effect.Effect<Uint8Array, DriverError>;
