@@ -25,7 +25,6 @@ import { join } from "node:path";
 import { createFailureBundle, writeFailureBundle } from "../report/failure-bundle.js";
 import { SessionManager, createSessions } from "./session-manager.js";
 import { getFlowSkip } from "./runner.js";
-import { makePlaywrightDriver } from "../drivers/playwright.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import {
   buildPlaybackTraceFromSteps,
@@ -228,6 +227,7 @@ export async function executeFlow(
   const sessions = createSessions(
     sessionManager,
     async (opts) => {
+      const { makePlaywrightDriver } = await import("../drivers/playwright.js");
       const pwDriver = await Effect.runPromise(
         makePlaywrightDriver({
           browser: opts.browser,

@@ -26,8 +26,7 @@ import {
   speculativelyPrelaunchWebBrowser,
   type PrelaunchedWebBrowser,
 } from "../runtime/local.js";
-import { buildAppiumAndroidRuntime, buildAppiumIOSRuntime } from "../runtime/appium.js";
-import { createCloudProviderHelper } from "../cloud/provider.js";
+import type { createCloudProviderHelper as CreateCloudProviderHelper } from "../cloud/provider.js";
 import type { DeviceWorkerConfig } from "../core/parallel.js";
 import { collectDiagnosticSections } from "../report/failure-diagnostics.js";
 import {
@@ -39,7 +38,7 @@ import {
   selectChangedFlowPaths,
   writeLastRunState,
 } from "./iteration.js";
-import { collectWatchRoots, runWatchLoop } from "./watch-mode.js";
+import { collectWatchRoots } from "./watch-mode.js";
 import {
   createRemoteFlowClaimer,
   planProcessPool,
@@ -169,28 +168,31 @@ async function buildParallelPlatformConfigs(
   resolveFromConfig: (p: string) => string,
   prelaunchedWeb?: PrelaunchedWebBrowser,
 ): Promise<PlatformConfig[]> {
-  const { discoverDevices, findDeviceById } = await import("../device/discover.js");
-
-  let allDevices;
-  if (opts.devices) {
-    // Use explicitly specified devices
-    allDevices = [];
-    for (const id of opts.devices) {
-      const found = findDeviceById(id);
-      if (found) {
-        allDevices.push(found);
-      } else {
-        console.log(`Warning: Device "${id}" not found, skipping.`);
+  let allDevices: import("../device/discover.js").DiscoveredDevice[] = [];
+  const needsMobileDiscovery =
+    Boolean(opts.devices && opts.devices.length > 0) ||
+    platforms.some((p) => p === "android" || p === "ios");
+  if (needsMobileDiscovery) {
+    const { discoverDevices, findDeviceById } = await import("../device/discover.js");
+    if (opts.devices) {
+      // Use explicitly specified devices
+      for (const id of opts.devices) {
+        const found = findDeviceById(id);
+        if (found) {
+          allDevices.push(found);
+        } else {
+          console.log(`Warning: Device "${id}" not found, skipping.`);
+        }
       }
+      // Infer platforms from selected devices if not explicitly set
+      if (opts.platforms.length === 0) {
+        const inferredPlatforms = [...new Set(allDevices.map((d) => d.platform))];
+        platforms.length = 0;
+        platforms.push(...inferredPlatforms);
+      }
+    } else {
+      allDevices = discoverDevices(platforms);
     }
-    // Infer platforms from selected devices if not explicitly set
-    if (opts.platforms.length === 0) {
-      const inferredPlatforms = [...new Set(allDevices.map((d) => d.platform))];
-      platforms.length = 0;
-      platforms.push(...inferredPlatforms);
-    }
-  } else {
-    allDevices = discoverDevices(platforms);
   }
 
   const maxWorkers = opts.workers ?? config.defaults?.workers;
@@ -340,7 +342,7 @@ async function buildSerialPlatformConfigs(
   executionMode: string,
   appiumUrl: string | undefined,
   appiumConfig: import("../schemas/config.js").AppiumExecutionConfig | undefined,
-  cloudHelper: Awaited<ReturnType<typeof createCloudProviderHelper>> | undefined,
+  cloudHelper: Awaited<ReturnType<typeof CreateCloudProviderHelper>> | undefined,
   targetDevice: import("../device/discover.js").DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
   prelaunchedWeb?: PrelaunchedWebBrowser,
@@ -350,6 +352,8 @@ async function buildSerialPlatformConfigs(
   for (const platform of platforms) {
     if (executionMode === "appium" && (platform === "android" || platform === "ios")) {
       // Appium cloud mode — resolve capabilities per-platform so platformCapabilities applies
+      const { buildAppiumAndroidRuntime, buildAppiumIOSRuntime } =
+        await import("../runtime/appium.js");
       const builder = platform === "android" ? buildAppiumAndroidRuntime : buildAppiumIOSRuntime;
       const resolvedCaps = appiumConfig
         ? await resolveCapabilities(appiumConfig, {
@@ -1602,7 +1606,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       !opts.noProviderReporting && appiumConfig.reportToProvider !== false;
     const cloudHelper =
       executionMode === "appium" && appiumUrl
-        ? await createCloudProviderHelper(appiumUrl, appiumConfig)
+        ? await (
+            await import("../cloud/provider.js")
+          ).createCloudProviderHelper(appiumUrl, appiumConfig)
         : undefined;
     // Capabilities are resolved per-platform inside the platform loop so that
     // platformCapabilities merging can apply. We pass appiumConfig through.
@@ -1775,21 +1781,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
 
     return { success: result.failed === 0, watchRoots };
   } finally {
-    // 7. Cleanup — always runs even if orchestration/reporting fails
-    for (const rt of runtimes) {
-      try {
-        await rt.cleanup();
-      } catch {
-        // ignore cleanup errors
-      }
-    }
-    for (const cleanup of runCleanups) {
-      try {
-        await cleanup();
-      } catch {
-        // ignore cleanup errors
-      }
-    }
+    // 7. Cleanup — always runs in parallel even if orchestration/reporting fails
+    await Promise.allSettled(runtimes.map((rt) => rt.cleanup()));
+    await Promise.allSettled(runCleanups.map((cleanup) => cleanup()));
     process.removeListener("SIGINT", handleSignal);
     process.removeListener("SIGTERM", handleSignal);
   }
@@ -1808,6 +1802,7 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
   console.log(
     `Watching ${lastResult.watchRoots.length} path(s) for changes. Press Ctrl+C to stop.`,
   );
+  const { runWatchLoop } = await import("./watch-mode.js");
   await runWatchLoop({
     roots: lastResult.watchRoots,
     onChange: async (changedPaths) => {

@@ -19,19 +19,16 @@ import {
 } from "../channels/dom-channel.js";
 import { allocateFreePort } from "../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
-import {
-  chromium,
-  firefox,
-  webkit,
-  type Browser,
-  type BrowserContext,
-  type CDPSession,
-  type Download,
-  type FrameLocator,
-  type Locator,
-  type Page,
-  type Request,
-  type Route,
+import type {
+  Browser,
+  BrowserContext,
+  CDPSession,
+  Download,
+  FrameLocator,
+  Locator,
+  Page,
+  Request,
+  Route,
 } from "playwright-core";
 import { DriverError } from "../errors.js";
 import { hasLaunchDeviceState } from "./launch-options.js";
@@ -180,9 +177,19 @@ const INSTANT_ANIMATIONS_INIT_SCRIPT = `
  * Connect to an existing warm headless Chromium daemon or start a detached one
  * registered in Spana's warm daemon registry (`spana daemon status|stop`).
  */
+async function loadPlaywrightCore() {
+  return import("playwright-core");
+}
+
+async function getBrowserLauncher(browserName: BrowserName) {
+  const pw = await loadPlaywrightCore();
+  return pw[browserName];
+}
+
 export async function ensureWarmBrowserDaemon(
   config: Pick<PlaywrightConfig, "executablePath" | "headless" | "warmBrowserScope"> = {},
 ): Promise<{ browser: Browser; cdpUrl: string; reused: boolean }> {
+  const { chromium } = await loadPlaywrightCore();
   const daemonKey = resolveWarmBrowserKey(config.warmBrowserScope);
   const existing = await getHealthyWarmDaemon("chromium", daemonKey, {
     statusPath: "/json/version",
@@ -267,6 +274,7 @@ export async function ensureWarmBrowserDaemon(
 }
 
 export async function connectPlaywrightOverCDP(cdpEndpoint: string): Promise<Browser> {
+  const { chromium } = await loadPlaywrightCore();
   return chromium.connectOverCDP(cdpEndpoint);
 }
 
@@ -274,7 +282,8 @@ export async function connectPlaywrightOverWS(
   wsEndpoint: string,
   browserName: BrowserName = "chromium",
 ): Promise<Browser> {
-  return browserLaunchers[browserName].connect(wsEndpoint);
+  const launcher = await getBrowserLauncher(browserName);
+  return launcher.connect(wsEndpoint);
 }
 
 export async function launchPlaywrightBrowser(
@@ -284,19 +293,14 @@ export async function launchPlaywrightBrowser(
   > = {},
 ): Promise<Browser> {
   const browserName = config.browser ?? "chromium";
-  return browserLaunchers[browserName].launch({
+  const launcher = await getBrowserLauncher(browserName);
+  return launcher.launch({
     headless: config.headless ?? true,
     ...(config.channel ? { channel: config.channel } : {}),
     ...(config.executablePath ? { executablePath: config.executablePath } : {}),
     ...(config.args && config.args.length > 0 ? { args: config.args } : {}),
   });
 }
-
-const browserLaunchers = {
-  chromium,
-  firefox,
-  webkit,
-} as const;
 
 const browserLabels: Record<BrowserName, string> = {
   chromium: "Chromium",
@@ -511,7 +515,7 @@ export function makePlaywrightDriver(
       ? config.sharedBrowser
       : config.wsEndpoint
         ? yield* Effect.tryPromise({
-            try: () => browserLaunchers[browserName].connect(config.wsEndpoint!),
+            try: async () => (await getBrowserLauncher(browserName)).connect(config.wsEndpoint!),
             catch: (e) =>
               new DriverError({
                 message: `Failed to connect to remote Playwright server (${config.wsEndpoint}): ${e}`,
@@ -519,7 +523,8 @@ export function makePlaywrightDriver(
           })
         : config.cdpEndpoint
           ? yield* Effect.tryPromise({
-              try: () => chromium.connectOverCDP(config.cdpEndpoint!),
+              try: async () =>
+                (await loadPlaywrightCore()).chromium.connectOverCDP(config.cdpEndpoint!),
               catch: (e) =>
                 new DriverError({
                   message: `Failed to connect to browser over CDP (${config.cdpEndpoint}): ${e}`,
@@ -532,8 +537,8 @@ export function makePlaywrightDriver(
                   new DriverError({ message: `Failed to connect to warm Chromium daemon: ${e}` }),
               })
             : yield* Effect.tryPromise({
-                try: () =>
-                  browserLaunchers[browserName].launch({
+                try: async () =>
+                  (await getBrowserLauncher(browserName)).launch({
                     headless: config.headless ?? true,
                     ...(config.channel ? { channel: config.channel } : {}),
                     ...(config.executablePath ? { executablePath: config.executablePath } : {}),

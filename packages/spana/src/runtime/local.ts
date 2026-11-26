@@ -7,37 +7,15 @@ import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { DiscoveredDevice } from "../device/discover.js";
 import type { RuntimeResult } from "./types.js";
 import {
-  connectPlaywrightOverCDP,
-  connectPlaywrightOverWS,
-  ensureWarmBrowserDaemon,
-  launchPlaywrightBrowser,
-  makePlaywrightDriver,
-} from "../drivers/playwright.js";
-import {
   launchDirectCdpBrowser,
   makeLightweightCdpDriver,
   type DirectCdpBrowserHandle,
 } from "../drivers/cdp-browser.js";
 import { resolveChromiumGpuArgs } from "../drivers/wasm-utils.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
-import { createUiAutomator2Driver } from "../drivers/uiautomator2/driver.js";
-import { parseAndroidHierarchy } from "../drivers/uiautomator2/pagesource.js";
-import { createWDADriver } from "../drivers/wda/driver.js";
-import { parseIOSHierarchy } from "../drivers/wda/pagesource.js";
-import { makeElectronDriver } from "../drivers/electron.js";
-import { makeElectrobunDriver } from "../drivers/electrobun.js";
-import { adbReverse, adbReverseRemove, ensureAndroidDevice } from "../device/android.js";
 import { updateWarmDaemonSession } from "./daemon-manager.js";
-import {
-  ensureIOSSimulator,
-  firstIOSPhysicalDevice,
-  connectPhysicalDevice,
-  ensureAppInstalled,
-} from "../device/ios.js";
-import { setupUiAutomator2 } from "../drivers/uiautomator2/installer.js";
-import { setupWDA } from "../drivers/wda/installer.js";
 import { allocatePort } from "../core/port-allocator.js";
-import { createSpanaBridgeChannel, type SpanaBridgeChannel } from "../channels/bridge-server.js";
+import type { SpanaBridgeChannel } from "../channels/bridge-server.js";
 import { resolveDriverAdapter } from "../drivers/adapter-registry.js";
 
 async function safeCleanup(...fns: Array<() => Promise<unknown>>): Promise<void> {
@@ -59,6 +37,7 @@ async function maybeStartBridge(
   const enabled = merged.enabled ?? Boolean(merged.port || merged.url);
   if (!enabled) return undefined;
 
+  const { createSpanaBridgeChannel } = await import("../channels/bridge-server.js");
   const channel = createSpanaBridgeChannel({
     host: merged.host ?? "127.0.0.1",
     port: merged.port ?? 9333,
@@ -183,32 +162,40 @@ export function speculativelyPrelaunchWebBrowser(
     (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
     (webExecution?.browser ?? "chromium") === "chromium";
   const ownsBrowser = !useWarm && !webExecution?.cdpUrl && !webExecution?.wsEndpoint;
-  const browserPromise = webExecution?.wsEndpoint
-    ? connectPlaywrightOverWS(webExecution.wsEndpoint, webExecution.browser)
-    : webExecution?.cdpUrl
-      ? connectPlaywrightOverCDP(webExecution.cdpUrl)
-      : useWarm
-        ? ensureWarmBrowserDaemon({
-            headless: webExecution?.headless ?? true,
-            executablePath: webExecution?.executablePath,
-            warmBrowserScope: webExecution?.warmBrowserScope,
-          }).then((r) => r.browser)
-        : launchPlaywrightBrowser({
-            browser: webExecution?.browser,
-            headless: webExecution?.headless ?? true,
-            executablePath: webExecution?.executablePath,
-            channel: webExecution?.channel,
-            args: [
-              ...(webExecution?.gpu || webExecution?.webgpu
-                ? resolveChromiumGpuArgs({
-                    headless: webExecution?.headless ?? true,
-                    gpu: webExecution?.gpu,
-                    webgpu: webExecution?.webgpu,
-                  })
-                : []),
-              ...(webExecution?.args ?? []),
-            ],
-          });
+  const browserPromise = import("../drivers/playwright.js").then(
+    ({
+      connectPlaywrightOverCDP,
+      connectPlaywrightOverWS,
+      ensureWarmBrowserDaemon,
+      launchPlaywrightBrowser,
+    }) =>
+      webExecution?.wsEndpoint
+        ? connectPlaywrightOverWS(webExecution.wsEndpoint, webExecution.browser)
+        : webExecution?.cdpUrl
+          ? connectPlaywrightOverCDP(webExecution.cdpUrl)
+          : useWarm
+            ? ensureWarmBrowserDaemon({
+                headless: webExecution?.headless ?? true,
+                executablePath: webExecution?.executablePath,
+                warmBrowserScope: webExecution?.warmBrowserScope,
+              }).then((r) => r.browser)
+            : launchPlaywrightBrowser({
+                browser: webExecution?.browser,
+                headless: webExecution?.headless ?? true,
+                executablePath: webExecution?.executablePath,
+                channel: webExecution?.channel,
+                args: [
+                  ...(webExecution?.gpu || webExecution?.webgpu
+                    ? resolveChromiumGpuArgs({
+                        headless: webExecution?.headless ?? true,
+                        gpu: webExecution?.gpu,
+                        webgpu: webExecution?.webgpu,
+                      })
+                    : []),
+                  ...(webExecution?.args ?? []),
+                ],
+              }),
+  );
 
   // Prevent unhandled rejection if CLI exits early before awaiting
   browserPromise.catch(() => {});
@@ -329,6 +316,7 @@ export async function buildWebRuntime(
       }),
     );
   } else {
+    const { makePlaywrightDriver } = await import("../drivers/playwright.js");
     rawDriver = await Effect.runPromise(
       makePlaywrightDriver({
         browser: webExecution?.browser,
@@ -467,56 +455,65 @@ export async function buildWebRuntimePool(
           }
         : undefined;
 
-    const results: RuntimeResult[] = [];
-    for (let i = 0; i < workerCount; i++) {
-      const bucket = handles[i % handles.length]!;
-      const driver = await Effect.runPromise(
-        makeLightweightCdpDriver({
-          cdpUrl: bucket.cdpUrl,
-          baseUrl: webUrl,
-          engineLabel: "cdp",
-          viewport: webExecution?.viewport,
-          evaluateTimeout: webExecution?.evaluateTimeout,
-          useBrowserContexts: true,
-          freshContextPerFlow: webExecution?.freshContextPerFlow,
-          contextIsolation: webExecution?.contextIsolation,
-          waitUntil: webExecution?.waitUntil,
-          instantAnimations: webExecution?.instantAnimations,
-          blockResources: webExecution?.blockResources,
-          virtualAuthenticator: webExecution?.virtualAuthenticator,
-          storageState: webExecution?.storageState,
-          emulation: poolEmulation,
-        }),
-      );
-      const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
-      let cleaned = false;
-      results.push({
-        runtime: {
-          driver,
-          cleanup: () =>
-            safeCleanup(async () => {
-              if (cleaned) return;
-              cleaned = true;
-              await Effect.runPromise(driver.killApp(""));
-              bucket.remaining -= 1;
-              if (bucket.remaining <= 0 && bucket.handle) {
-                await bucket.handle.close();
-              }
-            }),
-          metadata: {
-            platform: "web",
-            mode: "local",
-            deviceId: `cdp-context-${i + 1}`,
+    const results: RuntimeResult[] = await Promise.all(
+      Array.from({ length: workerCount }, async (_v, i) => {
+        const bucket = handles[i % handles.length]!;
+        const driver = await Effect.runPromise(
+          makeLightweightCdpDriver({
+            cdpUrl: bucket.cdpUrl,
+            baseUrl: webUrl,
+            engineLabel: "cdp",
+            viewport: webExecution?.viewport,
+            evaluateTimeout: webExecution?.evaluateTimeout,
+            useBrowserContexts: true,
+            freshContextPerFlow: webExecution?.freshContextPerFlow,
+            contextIsolation: webExecution?.contextIsolation,
+            waitUntil: webExecution?.waitUntil,
+            instantAnimations: webExecution?.instantAnimations,
+            blockResources: webExecution?.blockResources,
+            virtualAuthenticator: webExecution?.virtualAuthenticator,
+            storageState: webExecution?.storageState,
+            emulation: poolEmulation,
+          }),
+        );
+        const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+        let cleaned = false;
+        return {
+          runtime: {
+            driver,
+            cleanup: () =>
+              safeCleanup(async () => {
+                if (cleaned) return;
+                cleaned = true;
+                await Effect.runPromise(driver.killApp(""));
+                bucket.remaining -= 1;
+                if (bucket.remaining <= 0 && bucket.handle) {
+                  await bucket.handle.close();
+                }
+              }),
+            metadata: {
+              platform: "web",
+              mode: "local",
+              deviceId: `cdp-context-${i + 1}`,
+            },
           },
-        },
-        engineConfig: buildEngineConfig(webUrl, "web", parseWebHierarchy, config, {
-          width: deviceInfo.screenWidth,
-          height: deviceInfo.screenHeight,
-        }),
-      });
-    }
+          engineConfig: buildEngineConfig(webUrl, "web", parseWebHierarchy, config, {
+            width: deviceInfo.screenWidth,
+            height: deviceInfo.screenHeight,
+          }),
+        } satisfies RuntimeResult;
+      }),
+    );
     return results;
   }
+
+  const {
+    connectPlaywrightOverCDP,
+    connectPlaywrightOverWS,
+    ensureWarmBrowserDaemon,
+    launchPlaywrightBrowser,
+    makePlaywrightDriver,
+  } = await import("../drivers/playwright.js");
 
   const useWarm =
     (webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false) &&
@@ -686,6 +683,7 @@ export async function buildElectronRuntime(
     };
   }
 
+  const { makeElectronDriver } = await import("../drivers/electron.js");
   const driver = await Effect.runPromise(
     makeElectronDriver({
       entry: electronCfg.entry ? resolveFromConfig(electronCfg.entry) : undefined,
@@ -783,6 +781,7 @@ export async function buildElectrobunRuntime(
     };
   }
 
+  const { makeElectrobunDriver } = await import("../drivers/electrobun.js");
   const driver = await Effect.runPromise(
     makeElectrobunDriver({
       executablePath: electrobunCfg.executablePath
@@ -837,6 +836,17 @@ export async function buildLocalAndroidRuntime(
   targetDevice: DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
 ): Promise<RuntimeResult | null> {
+  const [
+    { createUiAutomator2Driver },
+    { parseAndroidHierarchy },
+    { setupUiAutomator2 },
+    { adbReverse, adbReverseRemove, ensureAndroidDevice },
+  ] = await Promise.all([
+    import("../drivers/uiautomator2/driver.js"),
+    import("../drivers/uiautomator2/pagesource.js"),
+    import("../drivers/uiautomator2/installer.js"),
+    import("../device/android.js"),
+  ]);
   const customAdapter = resolveDriverAdapter("android");
   if (customAdapter) {
     const packageName = config.apps?.android?.packageName ?? "";
@@ -975,6 +985,17 @@ export async function buildLocalIOSRuntime(
   targetDevice: DiscoveredDevice | null,
   resolveFromConfig: (p: string) => string,
 ): Promise<RuntimeResult | null> {
+  const [
+    { createWDADriver },
+    { parseIOSHierarchy },
+    { setupWDA },
+    { ensureIOSSimulator, firstIOSPhysicalDevice, connectPhysicalDevice, ensureAppInstalled },
+  ] = await Promise.all([
+    import("../drivers/wda/driver.js"),
+    import("../drivers/wda/pagesource.js"),
+    import("../drivers/wda/installer.js"),
+    import("../device/ios.js"),
+  ]);
   const customAdapter = resolveDriverAdapter("ios");
   if (customAdapter) {
     const bundleId = config.apps?.ios?.bundleId ?? "";

@@ -1,11 +1,11 @@
 import { Effect } from "effect";
-import {
+import type {
   _electron,
   chromium,
-  type Browser,
-  type BrowserContext,
-  type ElectronApplication,
-  type Page,
+  Browser,
+  BrowserContext,
+  ElectronApplication,
+  Page,
 } from "playwright-core";
 import { DriverError } from "../errors.js";
 import type { DomChannel } from "../channels/dom-channel.js";
@@ -123,9 +123,15 @@ export function makeElectronDriver(
         : undefined);
 
     if (resolvedCdpUrl) {
-      const connect = options.connectOverCDP ?? chromium.connectOverCDP.bind(chromium);
       cdpBrowser = yield* Effect.tryPromise({
-        try: () => connect(resolvedCdpUrl),
+        try: async () => {
+          const connect =
+            options.connectOverCDP ??
+            (await import("playwright-core")).chromium.connectOverCDP.bind(
+              (await import("playwright-core")).chromium,
+            );
+          return connect(resolvedCdpUrl);
+        },
         catch: (e) =>
           new DriverError({
             message: `Failed to connect to Electron over CDP (${resolvedCdpUrl}): ${e}`,
@@ -159,17 +165,22 @@ export function makeElectronDriver(
         });
       }
 
-      const launcher = options.launchElectron ?? _electron.launch.bind(_electron);
       electronApp = yield* Effect.tryPromise({
-        try: () =>
-          launcher({
+        try: async () => {
+          const launcher =
+            options.launchElectron ??
+            (await import("playwright-core"))._electron.launch.bind(
+              (await import("playwright-core"))._electron,
+            );
+          return launcher({
             ...(options.executablePath ? { executablePath: options.executablePath } : {}),
             ...(launchArgs.length > 0 ? { args: launchArgs } : {}),
             ...(options.cwd ? { cwd: options.cwd } : {}),
             ...(options.env
               ? { env: { ...process.env, ...options.env } as Record<string, string> }
               : {}),
-          }),
+          });
+        },
         catch: (e) => new DriverError({ message: `Failed to launch Electron app: ${e}` }),
       });
 

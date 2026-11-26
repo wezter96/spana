@@ -58,6 +58,17 @@ export interface BackUntilVisibleOptions<_T extends string = string> extends Wai
 }
 
 const DEFAULT_SCROLL_SEARCH_DIRECTION: Direction = "down";
+
+let cachedAxeSource: string | null = null;
+async function loadCachedAxeSource(): Promise<string> {
+  if (cachedAxeSource !== null) return cachedAxeSource;
+  const { readFileSync } = await import("node:fs");
+  const { createRequire } = await import("node:module");
+  const require = createRequire(import.meta.url);
+  const axePath: string = require.resolve("axe-core/axe.js");
+  cachedAxeSource = readFileSync(axePath, "utf-8");
+  return cachedAxeSource;
+}
 const DEFAULT_MAX_SCROLLS = 5;
 const DEFAULT_DISMISS_KEYBOARD_STRATEGY: KeyboardDismissStrategy = "auto";
 const DEFAULT_MAX_BACKS = 3;
@@ -1699,12 +1710,6 @@ export function createCoordinator<T extends string = string, R extends string = 
           });
         }
 
-        const { readFileSync } = yield* Effect.promise(() => import("node:fs"));
-        const { createRequire } = yield* Effect.promise(() => import("node:module"));
-        const require = createRequire(import.meta.url);
-        const axePath: string = require.resolve("axe-core/axe.js");
-        const axeSource = readFileSync(axePath, "utf-8");
-
         const axeContext: Record<string, string[][]> = {};
         const includes = [
           ...(options.targetSelector ? [options.targetSelector] : []),
@@ -1730,15 +1735,6 @@ export function createCoordinator<T extends string = string, R extends string = 
           axeOptions["runOnly"] = { type: "tag", values: options.tags };
         }
 
-        const script = `
-          (function() {
-            if (typeof axe === "undefined") {
-              ${axeSource}
-            }
-            return axe.run(${serializedContext}, ${JSON.stringify(axeOptions)});
-          })()
-        `;
-
         type AxeResult = {
           violations: Array<{
             id: string;
@@ -1754,7 +1750,15 @@ export function createCoordinator<T extends string = string, R extends string = 
           }>;
         };
 
-        const axeResult = yield* driver.evaluate<AxeResult>(script);
+        const runExpr = `axe.run(${serializedContext}, ${JSON.stringify(axeOptions)})`;
+        const fastScript = `(function() { if (typeof axe === "undefined") return { __spanaNeedAxe: true }; return ${runExpr}; })()`;
+        let rawResult = yield* driver.evaluate<AxeResult | { __spanaNeedAxe: true }>(fastScript);
+        if (rawResult && typeof rawResult === "object" && "__spanaNeedAxe" in rawResult) {
+          const axeSource = yield* Effect.promise(() => loadCachedAxeSource());
+          const injectAndRunScript = `(function() { if (typeof axe === "undefined") { ${axeSource} } return ${runExpr}; })()`;
+          rawResult = yield* driver.evaluate<AxeResult>(injectAndRunScript);
+        }
+        const axeResult = rawResult as AxeResult;
         const violations = (axeResult?.violations ?? []).map((v) => ({
           ruleId: v.id,
           severity: (v.impact ?? "minor") as "critical" | "serious" | "moderate" | "minor",
@@ -1966,16 +1970,20 @@ export function createCoordinator<T extends string = string, R extends string = 
             yield* driver.tapAtCoordinate(x, y);
 
             if (armed) {
-              const missed = yield* Effect.tryPromise({
-                try: () =>
-                  driver.domChannel!.evaluate<boolean>(
-                    `(() => {
+              const fastEval = (
+                driver.domChannel as { evaluateFast?: <T>(script: string) => Promise<T> }
+              ).evaluateFast;
+              const checkScript = `(() => {
                       const m = Boolean(window.__spanaTapMissed);
                       if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
                       delete window.__spanaTapMissed;
                       return m;
-                    })()`,
-                  ),
+                    })()`;
+              const missed = yield* Effect.tryPromise({
+                try: () =>
+                  fastEval
+                    ? fastEval.call(driver.domChannel, checkScript)
+                    : driver.domChannel!.evaluate<boolean>(checkScript),
                 catch: () => false,
               }).pipe(Effect.catch(() => Effect.succeed(false)));
 
@@ -2325,15 +2333,26 @@ export function createCoordinator<T extends string = string, R extends string = 
           });
         }
         const script = buildDomSelectOptionScript(selector as Selector, option);
-        const res = driver.domChannel?.isConnected()
-          ? yield* Effect.tryPromise({
-              try: () =>
-                driver.domChannel!.evaluate<{ ok: boolean; selected?: string[]; error?: string }>(
-                  script,
-                ),
-              catch: (e) => new DriverError({ message: `selectOption() failed: ${e}` }),
-            })
-          : yield* driver.evaluate<{ ok: boolean; selected?: string[]; error?: string }>(script);
+        const effectiveTimeout = opts?.timeout ?? defaults?.timeout ?? 10_000;
+        const deadline = Date.now() + effectiveTimeout;
+        let res: { ok: boolean; selected?: string[]; error?: string } | undefined;
+        while (true) {
+          res = driver.domChannel?.isConnected()
+            ? yield* Effect.tryPromise({
+                try: () =>
+                  driver.domChannel!.evaluate<{ ok: boolean; selected?: string[]; error?: string }>(
+                    script,
+                  ),
+                catch: (e) => new DriverError({ message: `selectOption() failed: ${e}` }),
+              })
+            : yield* driver.evaluate<{ ok: boolean; selected?: string[]; error?: string }>(script);
+          if (res?.ok) break;
+          const retryable =
+            res?.error !== undefined &&
+            (res.error.startsWith("Option not found") || res.error === "Select element not found");
+          if (!retryable || Date.now() >= deadline) break;
+          yield* Effect.sleep(50);
+        }
         if (!res?.ok) {
           return yield* new DriverError({
             message: `selectOption() failed for ${formatSelector(selector)}: ${res?.error ?? "unknown error"}`,

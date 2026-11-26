@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { DriverError } from "../errors.js";
@@ -102,6 +102,53 @@ function resolveDirectCdpScopeKey(scope?: string): string {
   if (scope && scope.trim().length > 0) return scope.trim();
   const cwdHash = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 10);
   return `cdp-${cwdHash}`;
+}
+
+function findPlaywrightCachedChromium(): string | undefined {
+  const roots: string[] = [];
+  if (process.env["PLAYWRIGHT_BROWSERS_PATH"] && process.env["PLAYWRIGHT_BROWSERS_PATH"] !== "0") {
+    roots.push(process.env["PLAYWRIGHT_BROWSERS_PATH"]);
+  }
+  const home = homedir();
+  if (process.platform === "darwin") {
+    roots.push(join(home, "Library", "Caches", "ms-playwright"));
+  } else if (process.platform === "linux") {
+    roots.push(join(process.env["XDG_CACHE_HOME"] || join(home, ".cache"), "ms-playwright"));
+  } else if (process.platform === "win32") {
+    const localAppData = process.env["LOCALAPPDATA"] || join(home, "AppData", "Local");
+    roots.push(join(localAppData, "ms-playwright"));
+  }
+
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    let entries: string[];
+    try {
+      entries = readdirSync(root);
+    } catch {
+      continue;
+    }
+    const chromiumDirs = entries
+      .filter((e) => /^chromium-\d+$/.test(e))
+      .toSorted((a, b) => Number(b.slice(9)) - Number(a.slice(9)));
+    for (const dir of chromiumDirs) {
+      const base = join(root, dir);
+      const relCandidates =
+        process.platform === "darwin"
+          ? [
+              "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+              "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+              "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            ]
+          : process.platform === "linux"
+            ? ["chrome-linux64/chrome", "chrome-linux/chrome"]
+            : ["chrome-win64/chrome.exe", "chrome-win/chrome.exe"];
+      for (const rel of relCandidates) {
+        const full = join(base, rel);
+        if (existsSync(full)) return full;
+      }
+    }
+  }
+  return undefined;
 }
 
 function resolveChromiumExecutable(explicit?: string): string {
@@ -236,6 +283,9 @@ export async function launchDirectCdpBrowser(
 
   let execPath = options.executablePath;
   if (!execPath) {
+    execPath = findPlaywrightCachedChromium();
+  }
+  if (!execPath) {
     try {
       const { chromium } = await import("playwright-core");
       const pwPath = chromium.executablePath();
@@ -293,10 +343,38 @@ export async function launchDirectCdpBrowser(
 
   let stderrBuf = "";
   const MAX_STDERR = 8192;
+  let resolveStderrWs:
+    | ((bound: {
+        port: number;
+        wsPath: string;
+        browserWsUrl: string;
+        httpEndpoint: string;
+      }) => void)
+    | undefined;
+  const stderrWsPromise = new Promise<{
+    port: number;
+    wsPath: string;
+    browserWsUrl: string;
+    httpEndpoint: string;
+  }>((resolve) => {
+    resolveStderrWs = resolve;
+  });
+
   child.stderr?.on("data", (chunk: Buffer | string) => {
     stderrBuf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
     if (stderrBuf.length > MAX_STDERR) {
       stderrBuf = stderrBuf.slice(-MAX_STDERR);
+    }
+    if (resolveStderrWs) {
+      const m = /DevTools listening on (ws:\/\/127\.0\.0\.1:(\d+)(\/[^\s]+))/.exec(stderrBuf);
+      if (m) {
+        const browserWsUrl = m[1]!;
+        const port = Number.parseInt(m[2]!, 10);
+        const wsPath = m[3]!;
+        const done = resolveStderrWs;
+        resolveStderrWs = undefined;
+        done({ port, wsPath, browserWsUrl, httpEndpoint: `http://127.0.0.1:${port}` });
+      }
     }
   });
 
@@ -305,23 +383,32 @@ export async function launchDirectCdpBrowser(
     code: null,
     signal: null,
   };
+  let resolveExit: (() => void) | undefined;
+  const exitPromise = new Promise<void>((resolve) => {
+    resolveExit = resolve;
+  });
   child.once("exit", (code, signal) => {
     exitState = { exited: true, code, signal };
+    resolveExit?.();
   });
   child.once("error", (err) => {
     stderrBuf += `\nspawn error: ${err.message}`;
     exitState = { exited: true, code: -1, signal: null };
+    resolveExit?.();
   });
 
   let bound: { port: number; wsPath: string; browserWsUrl: string; httpEndpoint: string };
   try {
-    bound = await waitForDevToolsActivePort(
-      userDataDir,
-      child,
-      () => exitState,
-      () => stderrBuf,
-      launchTimeoutMs,
-    );
+    bound = await Promise.race([
+      stderrWsPromise,
+      waitForDevToolsActivePort(
+        userDataDir,
+        child,
+        () => exitState,
+        () => stderrBuf,
+        launchTimeoutMs,
+      ),
+    ]);
   } catch (err) {
     try {
       child.kill("SIGKILL");
@@ -357,12 +444,22 @@ export async function launchDirectCdpBrowser(
     pid: child.pid,
     close: async () => {
       if (options.warmBrowser) return;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // already exited
+      if (!exitState.exited) {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // already exited
+        }
+        await Promise.race([exitPromise, new Promise((r) => setTimeout(r, 150))]);
+        if (!exitState.exited) {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // already exited
+          }
+          await Promise.race([exitPromise, new Promise((r) => setTimeout(r, 50))]);
+        }
       }
-      await new Promise((r) => setTimeout(r, 200));
       rmSync(userDataDir, { recursive: true, force: true });
     },
   };
@@ -614,8 +711,12 @@ export function makeLightweightCdpDriver(
         }),
     });
 
-    let width = options.viewport?.width ?? 1280;
-    let height = options.viewport?.height ?? 720;
+    const initialWidth = options.viewport?.width ?? 1280;
+    const initialHeight = options.viewport?.height ?? 720;
+    let width = initialWidth;
+    let height = initialHeight;
+    let emulationMutated = false;
+    let viewportMutated = false;
     const label = options.engineLabel ?? "cdp";
 
     let activeSlot: CdpContextSlot | undefined;
@@ -799,15 +900,11 @@ export function makeLightweightCdpDriver(
 
     const configureSession = async (sessionId: string | null, storageStatePath?: string) => {
       const state = await loadStorageStateFile(storageStatePath);
-      const needsNetworkDomain = Boolean(
-        (options.blockResources && options.blockResources.length > 0) ||
-        (state?.cookies && state.cookies.length > 0) ||
-        requestListeners.size > 0 ||
-        currentNetworkConditions,
-      );
       await Promise.all([
         cdpChannel.sendCommand("Page.enable", {}, sessionId).catch(() => {}),
         cdpChannel.sendCommand("Runtime.enable", {}, sessionId).catch(() => {}),
+        // Enable Network in the initial parallel batch (0 extra RTTs) so waitForResponse / app.cdp() never race fast localhost loads.
+        cdpChannel.sendCommand("Network.enable", {}, sessionId).catch(() => {}),
         ...(useInjectedRuntime
           ? [
               cdpChannel
@@ -826,9 +923,6 @@ export function makeLightweightCdpDriver(
             sessionId,
           )
           .catch(() => {}),
-        ...(needsNetworkDomain
-          ? [cdpChannel.sendCommand("Network.enable", {}, sessionId).catch(() => {})]
-          : []),
         cdpChannel
           .sendCommand(
             "Emulation.setDeviceMetricsOverride",
@@ -1652,48 +1746,138 @@ export function makeLightweightCdpDriver(
             wasmTraps.length = 0;
             navigationUrls.length = 0;
             dialogHandler = null;
+            routeRules.length = 0;
+            currentNetworkConditions = undefined;
+            width = initialWidth;
+            height = initialHeight;
             cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
               if (options.contextIsolation === "hot-cache" && activeSlot) {
                 // Hot-cache isolation: keep HTTP asset cache & V8/Wasm bytecode caches hot while
-                // wiping cookies, localStorage, sessionStorage, IndexedDB, OPFS, CacheStorage, & SWs.
-                const origin = options.baseUrl
-                  ? (() => {
+                // wiping cookies, storage, OPFS, routes, emulation, viewport, and extra tabs cleanly.
+                // Clear in-page storage & OPFS BEFORE navigating to about:blank so navigation cannot abort OPFS cleanup.
+                const clearPageThenBlank = cdpChannel
+                  .evaluateFast(
+                    `(async () => {
+                      try { localStorage.clear(); sessionStorage.clear(); } catch {}
                       try {
-                        return new URL(options.baseUrl).origin;
-                      } catch {
-                        return "*";
-                      }
-                    })()
-                  : "*";
-                await Promise.all([
+                        if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+                          const root = await navigator.storage.getDirectory();
+                          if (root && typeof root.entries === "function") {
+                            for await (const [name] of root.entries()) {
+                              await root.removeEntry(name, { recursive: true }).catch(() => {});
+                            }
+                          }
+                        }
+                      } catch {}
+                    })()`,
+                  )
+                  .catch(() => {})
+                  .then(() =>
+                    cdpChannel.sendCommand("Page.navigate", { url: "about:blank" }).catch(() => {}),
+                  );
+                const resetOps: Array<Promise<unknown>> = [
                   cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
                   cdpChannel
                     .sendCommand("Storage.clearDataForOrigin", {
-                      origin,
+                      origin: "*",
                       storageTypes:
                         "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems",
                     })
                     .catch(() => {}),
+                  clearPageThenBlank,
+                ];
+                // Close any extra tabs opened by the prior flow and return to tab 0.
+                if (activeSlot.tabs.length > 1) {
+                  const primaryTab = activeSlot.tabs[0]!;
+                  const extraTabs = activeSlot.tabs.slice(1);
+                  activeSlot.tabs = [primaryTab];
+                  activeSlot.targetId = primaryTab.targetId;
+                  activeSlot.sessionId = primaryTab.sessionId;
+                  cdpChannel.setSessionId(primaryTab.sessionId);
+                  for (const extra of extraTabs) {
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Target.closeTarget", { targetId: extra.targetId }, null)
+                        .catch(() => {}),
+                    );
+                  }
+                }
+                if (fetchInterceptEnabled) {
+                  fetchInterceptEnabled = false;
+                  resetOps.push(cdpChannel.sendCommand("Fetch.disable").catch(() => {}));
+                }
+                if (viewportMutated) {
+                  viewportMutated = false;
+                  resetOps.push(
+                    cdpChannel
+                      .sendCommand("Emulation.setDeviceMetricsOverride", {
+                        width: initialWidth,
+                        height: initialHeight,
+                        deviceScaleFactor: 1,
+                        mobile: false,
+                      })
+                      .catch(() => {}),
+                  );
+                }
+                if (emulationMutated) {
+                  emulationMutated = false;
+                  const defaultLocale = options.emulation?.locale ?? "";
+                  resetOps.push(
+                    cdpChannel
+                      .sendCommand("Emulation.setLocaleOverride", { locale: defaultLocale })
+                      .catch(() => {}),
+                    cdpChannel
+                      .sendCommand("Emulation.setUserAgentOverride", {
+                        userAgent: cachedUserAgent || "Mozilla/5.0",
+                        acceptLanguage: defaultLocale
+                          ? defaultLocale.includes("-")
+                            ? `${defaultLocale},${defaultLocale.split("-")[0]};q=0.9`
+                            : defaultLocale
+                          : "",
+                      })
+                      .catch(() => {}),
+                    cdpChannel
+                      .sendCommand("Emulation.setEmulatedMedia", {
+                        media: "",
+                        features: [
+                          {
+                            name: "prefers-color-scheme",
+                            value:
+                              options.emulation?.colorScheme &&
+                              options.emulation.colorScheme !== "no-preference"
+                                ? options.emulation.colorScheme
+                                : "",
+                          },
+                          {
+                            name: "prefers-reduced-motion",
+                            value:
+                              options.emulation?.reducedMotion &&
+                              options.emulation.reducedMotion !== "no-preference"
+                                ? options.emulation.reducedMotion
+                                : "",
+                          },
+                        ],
+                      })
+                      .catch(() => {}),
+                    cdpChannel
+                      .sendCommand("Emulation.setTimezoneOverride", {
+                        timezoneId: options.emulation?.timezoneId ?? "",
+                      })
+                      .catch(() => {}),
+                  );
+                }
+                resetOps.push(
                   cdpChannel
-                    .evaluate(
-                      `(async () => {
-                        try { localStorage.clear(); sessionStorage.clear(); } catch {}
-                        try {
-                          if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
-                            const root = await navigator.storage.getDirectory();
-                            if (root && typeof root.entries === "function") {
-                              for await (const [name] of root.entries()) {
-                                await root.removeEntry(name, { recursive: true }).catch(() => {});
-                              }
-                            }
-                          }
-                        } catch {}
-                      })()`,
-                    )
+                    .sendCommand("Network.emulateNetworkConditions", {
+                      offline: false,
+                      latency: 0,
+                      downloadThroughput: -1,
+                      uploadThroughput: -1,
+                    })
                     .catch(() => {}),
-                  cdpChannel.sendCommand("Page.navigate", { url: "about:blank" }).catch(() => {}),
-                ]);
+                );
+                await Promise.all(resetOps);
                 const state = await loadStorageStateFile(options.storageState);
                 if (state?.cookies && state.cookies.length > 0) {
                   await cdpChannel
@@ -1713,6 +1897,9 @@ export function makeLightweightCdpDriver(
                 }
                 activeAuthenticatorId = activeSlot.authenticatorId;
               } else {
+                fetchInterceptEnabled = false;
+                emulationMutated = false;
+                viewportMutated = false;
                 const previousSlot = activeSlot;
                 const pending = prefetchedSlotPromise;
                 prefetchedSlotPromise = undefined;
@@ -2344,25 +2531,17 @@ export function makeLightweightCdpDriver(
       killApp: () =>
         Effect.tryPromise({
           try: async () => {
-            const pendingPrefetch = prefetchedSlotPromise;
             prefetchedSlotPromise = undefined;
-            if (useContexts) {
-              const slotsToDispose: CdpContextSlot[] = [];
-              if (activeSlot) slotsToDispose.push(activeSlot);
-              if (pendingPrefetch) {
-                const prefetched = await pendingPrefetch.catch(() => undefined);
-                if (prefetched) slotsToDispose.push(prefetched);
-              }
-              await Promise.allSettled([
-                ...slotsToDispose.map((s) =>
-                  cdpChannel.sendCommand(
-                    "Target.disposeBrowserContext",
-                    { browserContextId: s.browserContextId },
-                    null,
-                  ),
-                ),
-                ...backgroundDisposals,
-              ]);
+            // All contexts are created with disposeOnDetach: true, so disconnecting cleans up immediately
+            // without stalling teardown on pending prefetches or background disposal timers.
+            if (useContexts && activeSlot) {
+              void cdpChannel
+                .sendCommand(
+                  "Target.disposeBrowserContext",
+                  { browserContextId: activeSlot.browserContextId },
+                  null,
+                )
+                .catch(() => {});
             }
             if (downloadDir) {
               try {
@@ -2718,20 +2897,12 @@ export function makeLightweightCdpDriver(
                 cleanup();
                 reject(new Error(`Timed out waiting for response after ${timeoutMs}ms`));
               }, timeoutMs);
-              const offReq = cdpChannel.onEvent("Network.requestWillBeSent", (params, sid) => {
-                if (!matchesActiveSlot(sid)) return;
-                if (params?.requestId && params?.request?.method) {
-                  requestMethods.set(
-                    `${sid ?? ""}:${String(params.requestId)}`,
-                    String(params.request.method),
-                  );
-                }
-              });
-              const offRes = cdpChannel.onEvent("Network.responseReceived", (params, sid) => {
-                if (!matchesActiveSlot(sid)) return;
-                const resp = params?.response;
-                if (!resp) return;
-                const requestId = String(params?.requestId ?? "");
+              const emitResponse = (
+                resp: Record<string, unknown>,
+                requestId: string,
+                sid?: string,
+                explicitMethod?: string,
+              ) => {
                 const rawHeaders = (resp.headers ?? {}) as Record<string, unknown>;
                 const headers: Record<string, string> = {};
                 for (const [k, v] of Object.entries(rawHeaders)) {
@@ -2743,7 +2914,7 @@ export function makeLightweightCdpDriver(
                   status: Number(resp.status ?? 0),
                   statusText: String(resp.statusText ?? ""),
                   headers,
-                  method: requestMethods.get(`${sid ?? ""}:${requestId}`),
+                  method: explicitMethod ?? requestMethods.get(`${sid ?? ""}:${requestId}`),
                   body: async () => {
                     const bodyRes = (await cdpChannel.sendCommand(
                       "Network.getResponseBody",
@@ -2766,6 +2937,26 @@ export function makeLightweightCdpDriver(
                   cleanup();
                   resolve(info);
                 }
+              };
+              const offReq = cdpChannel.onEvent("Network.requestWillBeSent", (params, sid) => {
+                if (!matchesActiveSlot(sid)) return;
+                const reqId = String(params?.requestId ?? "");
+                const key = `${sid ?? ""}:${reqId}`;
+                // CDP emits 3xx redirect responses via `redirectResponse` on the follow-up requestWillBeSent
+                // rather than `Network.responseReceived`. Match them against the original request's method.
+                if (params?.redirectResponse) {
+                  const origMethod = requestMethods.get(key);
+                  emitResponse(params.redirectResponse, reqId, sid, origMethod);
+                }
+                if (params?.requestId && params?.request?.method) {
+                  requestMethods.set(key, String(params.request.method));
+                }
+              });
+              const offRes = cdpChannel.onEvent("Network.responseReceived", (params, sid) => {
+                if (!matchesActiveSlot(sid)) return;
+                const resp = params?.response;
+                if (!resp) return;
+                emitResponse(resp, String(params?.requestId ?? ""), sid);
               });
             });
           },
@@ -3116,6 +3307,28 @@ export function makeLightweightCdpDriver(
       dragAndDrop: (fromX: number, fromY: number, toX: number, toY: number, steps = 10) =>
         Effect.tryPromise({
           try: async () => {
+            // If the source (or an ancestor) uses HTML5 Drag and Drop (`draggable="true"`),
+            // raw CDP mouse events do not trigger HTML5 DataTransfer drag events; drive DragEvent
+            // with a 2-rAF yield after `dragstart` so React/Vue drop handlers mount before `drop`.
+            const didHtml5Drag = await cdpChannel
+              .evaluate<boolean>(
+                `(async (fx, fy, tx, ty) => {
+                  const hit = document.elementFromPoint(fx, fy);
+                  const src = hit && hit.closest ? hit.closest('[draggable="true"]') : null;
+                  if (!src) return false;
+                  const dst = document.elementFromPoint(tx, ty) || document.body;
+                  const dt = new DataTransfer();
+                  src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, clientX: fx, clientY: fy, dataTransfer: dt }));
+                  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                  dst.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
+                  dst.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
+                  dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
+                  src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
+                  return true;
+                })(${fromX}, ${fromY}, ${toX}, ${toY})`,
+              )
+              .catch(() => false);
+            if (didHtml5Drag) return;
             const totalSteps = Math.max(1, Math.round(steps));
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mouseMoved",
@@ -3157,6 +3370,7 @@ export function makeLightweightCdpDriver(
           try: async () => {
             width = viewport.width;
             height = viewport.height;
+            viewportMutated = true;
             await cdpChannel.sendCommand("Emulation.setDeviceMetricsOverride", {
               width: viewport.width,
               height: viewport.height,
@@ -3170,6 +3384,7 @@ export function makeLightweightCdpDriver(
       setEmulation: (emulationOpts: BrowserEmulationOptions) =>
         Effect.tryPromise({
           try: async () => {
+            emulationMutated = true;
             const features: Array<{ name: string; value: string }> = [];
             if (emulationOpts.colorScheme !== undefined) {
               features.push({
@@ -3332,8 +3547,6 @@ export function makeLightweightCdpDriver(
               {
                 url: url ? resolveUrl(url) : "about:blank",
                 browserContextId: activeSlot.browserContextId,
-                width,
-                height,
               },
               null,
             )) as { targetId: string };

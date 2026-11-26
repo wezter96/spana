@@ -15,7 +15,11 @@ export default defineConfig({
     astroMermaid({ mermaidConfig: { layout: "dagre", look: "classic" } }),
     starlight({
       title: "spana",
-      components: { PageTitle: "./src/components/PageTitle.astro" },
+      pagefind: false,
+      components: {
+        PageTitle: "./src/components/PageTitle.astro",
+        Search: "./src/components/Search.astro",
+      },
       description:
         "The fastest AI-native E2E framework. Write one TypeScript test and run it across Web, iOS, Android, Electron, Electrobun, and WASM.",
       customCss: ["./src/styles/custom.css"],

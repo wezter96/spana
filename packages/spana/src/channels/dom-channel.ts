@@ -462,6 +462,20 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var alt = el.getAttribute && el.getAttribute("alt");
       if (alt && alt.trim()) return alt.trim();
     }
+    var role = getImplicitRole(el);
+    var nameFromAuthorOnly = {
+      list: 1, navigation: 1, main: 1, region: 1, form: 1, dialog: 1, alertdialog: 1,
+      table: 1, grid: 1, tablist: 1, tabpanel: 1, menu: 1, menubar: 1, toolbar: 1,
+      tree: 1, group: 1, radiogroup: 1, feed: 1, article: 1, banner: 1, complementary: 1,
+      contentinfo: 1, search: 1, combobox: 1, listbox: 1, log: 1, marquee: 1, status: 1,
+      timer: 1, alert: 1, application: 1, document: 1, directory: 1, figure: 1, img: 1,
+      math: 1, meter: 1, progressbar: 1, scrollbar: 1, separator: 1, slider: 1,
+      spinbutton: 1, textbox: 1, searchbox: 1,
+    };
+    if (role && nameFromAuthorOnly[role]) {
+      var authorTitle = el.getAttribute && el.getAttribute("title");
+      return authorTitle ? authorTitle.trim() : "";
+    }
     var txt = visibleTextOf(el, false, null);
     if (txt) return txt;
     var title = el.getAttribute && el.getAttribute("title");
@@ -704,10 +718,51 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     function findByLabelInRoot(root, spec, exact, ctx, push) {
       if (!root || !root.querySelectorAll) return;
-      var controls = root.querySelectorAll("input, textarea, select, button, [role]");
+      var seen = new Set();
+      var addCtrl = function(c) {
+        if (!c || seen.has(c)) return;
+        if (c.tagName === "INPUT" && (c.getAttribute("type") || "").toLowerCase() === "hidden") return;
+        seen.add(c);
+        push(c, ctx);
+      };
+      // 1. Explicit <label> elements (associated via .control, [for], or nested labelable control)
+      var labels = root.querySelectorAll("label");
+      for (var lb = 0; lb < labels.length; lb++) {
+        var lblEl = labels[lb];
+        var ctrlFromLbl = lblEl.control || null;
+        if (!ctrlFromLbl && lblEl.getAttribute) {
+          var forAttr = lblEl.getAttribute("for");
+          if (forAttr) {
+            var lblDoc = lblEl.ownerDocument || document;
+            ctrlFromLbl = lblDoc.getElementById ? lblDoc.getElementById(forAttr) : null;
+          }
+        }
+        if (!ctrlFromLbl && lblEl.querySelector) {
+          ctrlFromLbl = lblEl.querySelector("input:not([type=hidden]), textarea, select, meter, output, progress");
+        }
+        if (!ctrlFromLbl) continue;
+        var rawLblText = visibleTextOf(lblEl, false, ctrlFromLbl) || (lblEl.textContent || "").trim();
+        if (rawLblText && matchSpec(rawLblText, spec, exact)) {
+          addCtrl(ctrlFromLbl);
+        }
+      }
+      // 2. Labelable form controls & ARIA form widgets (never match <button> by its inner text)
+      var labelableRoles = {
+        textbox: 1, searchbox: 1, combobox: 1, listbox: 1, spinbutton: 1,
+        slider: 1, checkbox: 1, radio: 1, switch: 1,
+      };
+      var controls = root.querySelectorAll("input, textarea, select, meter, output, progress, [contenteditable], [aria-label], [aria-labelledby]");
       for (var li = 0; li < controls.length; li++) {
         var ctrl = controls[li];
+        if (seen.has(ctrl)) continue;
         if (ctrl.tagName === "INPUT" && (ctrl.getAttribute("type") || "").toLowerCase() === "hidden") continue;
+        var tag = ctrl.tagName ? ctrl.tagName.toUpperCase() : "";
+        var isFormControl =
+          tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+          tag === "METER" || tag === "OUTPUT" || tag === "PROGRESS" ||
+          (ctrl.hasAttribute && ctrl.hasAttribute("contenteditable"));
+        var role = getImplicitRole(ctrl);
+        if (!isFormControl && !labelableRoles[role]) continue;
         var labelText = getAccessibleName(ctrl);
         if (!labelText && ctrl.labels && ctrl.labels.length > 0) {
           var parts = [];
@@ -717,7 +772,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
           labelText = parts.join(" ").trim();
         }
         if (labelText && matchSpec(labelText, spec, exact)) {
-          push(ctrl, ctx);
+          addCtrl(ctrl);
         }
       }
     }
@@ -1847,7 +1902,7 @@ export function buildDomFillScript(
       if (el.isContentEditable) return Promise.resolve(false);
       if (!writeValue(el)) return Promise.resolve(false);
       return new Promise(function(resolve) {
-        // Let React/Vue microtask + single paint flush settle, then verify value survived remount/re-render
+        // Yield a macrotask (0ms first pass, 12ms on retries) so React/Vue flush controlled state & verify survival
         setTimeout(function() {
           var latest = findEditableNow() || el;
           if (latest && latest.isConnected && String(latest.value == null ? "" : latest.value) === val) {
@@ -1859,7 +1914,7 @@ export function buildDomFillScript(
           } else {
             resolve(false);
           }
-        }, 12);
+        }, attemptsLeft === 3 ? 0 : 12);
       });
     }
 
@@ -2452,7 +2507,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           } else {
             resolve(false);
           }
-        }, 12);
+        }, attemptsLeft === 3 ? 0 : 12);
       });
     }
     var immEl = findEditableNow();
@@ -2544,7 +2599,11 @@ export function buildDomSelectOptionScript(selector: Selector, option: SelectOpt
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var hits = findAcrossRoots(sel);
     if (hits.length === 0) return { ok: false, error: "Select element not found" };
-    var el = hits[hits.length - 1].el;
+    var el = null;
+    for (var hi = 0; hi < hits.length; hi++) {
+      if (hits[hi] && hits[hi].el && hits[hi].el.tagName === "SELECT") { el = hits[hi].el; break; }
+    }
+    if (!el) el = hits[0].el;
     if (!el || el.tagName !== "SELECT") return { ok: false, error: "Matched element is not a <select>" };
     var opts = Array.prototype.slice.call(el.options || []);
     var matchedIndices = [];
