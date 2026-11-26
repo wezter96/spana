@@ -64,30 +64,28 @@ export default defineConfig({
   platforms: ["android", "ios"],
   flowDir: "./flows/conformance",
   reporters: ["console", "junit"],
-  // Only set execution when SPANA_APPIUM_URL is present; otherwise leave it
-  // undefined so the default local-direct-driver path is used. Passing
-  // --driver local on the CLI also overrides this.
-  ...(appiumServerUrl
-    ? {
-        execution: {
-          mode: "appium" as const,
-          appium: {
-            serverUrl: appiumServerUrl,
-            reportToProvider: false,
-            platformCapabilities: {
-              android: {
-                "appium:deviceName": process.env.SPANA_ANDROID_DEVICE ?? "emulator-5554",
-                "appium:platformVersion": process.env.SPANA_ANDROID_VERSION ?? "13.0",
-                ...(androidAppPath ? { "appium:app": androidAppPath } : {}),
-              },
+  execution: {
+    ...(appiumServerUrl ? { mode: "appium" } : {}),
+    appium: {
+      ...(appiumServerUrl ? { serverUrl: appiumServerUrl } : {}),
+      reportToProvider: false,
+      platformCapabilities: {
+        android: {
+          "appium:automationName": "UiAutomator2",
+          "appium:deviceName": process.env.SPANA_ANDROID_DEVICE ?? "emulator-5554",
+          "appium:platformVersion": process.env.SPANA_ANDROID_VERSION ?? "13.0",
+          ...(androidAppPath ? { "appium:app": androidAppPath } : {}),
+        },
+        ...(appiumServerUrl
+          ? {
               ios: {
                 "appium:deviceName": process.env.SPANA_IOS_DEVICE ?? "iPhone 15",
                 "appium:platformVersion": process.env.SPANA_IOS_VERSION ?? "17.0",
                 ...(iosAppPath ? { "appium:app": iosAppPath } : {}),
               },
-            },
-          },
-        },
-      }
-    : {}),
+            }
+          : {}),
+      },
+    },
+  },
 });
