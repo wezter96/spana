@@ -1902,7 +1902,7 @@ export function buildDomFillScript(
       if (el.isContentEditable) return Promise.resolve(false);
       if (!writeValue(el)) return Promise.resolve(false);
       return new Promise(function(resolve) {
-        // Yield a macrotask (0ms first pass, 12ms on retries) so React/Vue flush controlled state & verify survival
+        // Let React/Vue microtask + single paint flush settle, then verify value survived remount/re-render
         setTimeout(function() {
           var latest = findEditableNow() || el;
           if (latest && latest.isConnected && String(latest.value == null ? "" : latest.value) === val) {
@@ -1914,7 +1914,7 @@ export function buildDomFillScript(
           } else {
             resolve(false);
           }
-        }, attemptsLeft === 3 ? 0 : 12);
+        }, 12);
       });
     }
 
@@ -2507,7 +2507,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           } else {
             resolve(false);
           }
-        }, attemptsLeft === 3 ? 0 : 12);
+        }, 12);
       });
     }
     var immEl = findEditableNow();
