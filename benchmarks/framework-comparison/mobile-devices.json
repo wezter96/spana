@@ -40,6 +40,37 @@
     }
   },
   "ios": {
+    "measuredAt": "2026-11-26T16:38:41.174Z",
+    "platform": "ios",
+    "deviceType": "physical",
+    "model": "iPhone 17 Pro",
+    "osVersion": "27.2.1",
+    "udid": "00008150-001A70613AB8401C",
+    "screen": {
+      "width": 402,
+      "height": 874
+    },
+    "sessionInitMs": 1340,
+    "dumpHierarchy": {
+      "samplesMs": [1886, 629, 523, 525, 524],
+      "medianMs": 525,
+      "avgBytes": 18861,
+      "avgNodes": 83
+    },
+    "takeScreenshot": {
+      "samplesMs": [228, 150, 155, 129, 128],
+      "medianMs": 150,
+      "avgBytes": 333406
+    },
+    "native5FlowsSettings": {
+      "flowCount": 5,
+      "totalMs": 39461,
+      "avgFlowMs": 7892,
+      "perFlowMs": [6236, 7298, 5680, 9911, 10337],
+      "passed": 5
+    }
+  },
+  "iosSimulator": {
     "measuredAt": "2026-11-26T16:13:33.053Z",
     "platform": "ios",
     "deviceType": "simulator",

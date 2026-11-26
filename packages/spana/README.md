@@ -60,8 +60,9 @@ All benchmarks are reproducible directly from this repository on Apple M4 Pro (B
 
 - **Verified Replay Cache (`--strict-cache`) vs Live LLM:** `1,433 ms` → **`6 ms`** (**238.8× faster**, 0 LLM calls)
 - **Live Mobile Devices (zero Appium, measured):**
-  - **Google Pixel 8 Pro (Android 17, USB):** Cold UiA2 daemon `2.34 s` → Warm reuse **`44 ms`** (`53×`), `dumpHierarchy` median `518 ms`, 5 native Settings flows `28.52 s` (`5.70 s/flow`), 5 Chrome CDP hybrid flows **`1.12 s`** UI login → **`0.71 s`** state inject (`142 ms/flow`, `40×` faster than native UI dumps)
-  - **iPhone 17 Simulator (iOS 26.4, WDA):** WDA launch `4.02 s`, `dumpHierarchy` median `566 ms`, `takeScreenshot` median **`74 ms`**, 5 native Settings flows `29.79 s` (`5.96 s/flow`)
+  - **Physical Google Pixel 8 Pro (Android 17, USB):** Cold UiA2 daemon `2.34 s` → Warm reuse **`44 ms`** (`53×`), `dumpHierarchy` median `518 ms`, 5 native Settings flows `28.52 s` (`5.70 s/flow`, 5/5), 5 Chrome CDP hybrid flows **`1.12 s`** UI login → **`0.71 s`** state inject (`142 ms/flow`, `40×` faster than native UI dumps)
+  - **Physical iPhone 17 Pro (iOS 27.2.1, signed WDA):** Session init `1.34 s`, `dumpHierarchy` median **`525 ms`**, `takeScreenshot` median **`150 ms`**, 5 native Settings flows `39.46 s` (`7.89 s/flow`, 5/5 — 3 zero-scroll flows avg `6.41 s`, 2 scrolled `General` flows avg `10.12 s`)
+  - **iPhone 17 Simulator (iOS 26.4, WDA):** WDA launch `4.02 s` / session `2.46 s`, `dumpHierarchy` median `566 ms`, `takeScreenshot` median **`74 ms`**, 5 native Settings flows `29.79 s` (`5.96 s/flow`, 5/5)
 
 ```bash
 bun run benchmarks/framework-comparison/benchmark.ts

@@ -629,7 +629,7 @@ Every single flow gets full actionability checks and zero skipped flows:
 - **1920×1080 PNG visual regression diff:** Pure-JS `pixelmatch` `215.0 ms` → **Spana Rust FFI `11.2 ms`** (**19.2× faster**).
 - **Verified Replay Cache (`--strict-cache`) vs live local LLM (`qwen2.5:1.5b`):** `7,924 ms` → **`27 ms`** (**293.5× faster**, 0 LLM calls).
 
-### Mobile (Live Measured — Android Pixel 8 Pro & iOS 26.4 Simulator)
+### Mobile (Live Measured — Physical iPhone 17 Pro, Physical Pixel 8 Pro & iOS Simulator)
 
 Measured live via [`packages/spana/scripts/benchmark-mobile-devices.ts`](https://github.com/wezter96/spana/blob/main/packages/spana/scripts/benchmark-mobile-devices.ts) with zero Appium server (raw data in [`benchmarks/framework-comparison/mobile-devices.json`](https://github.com/wezter96/spana/blob/main/benchmarks/framework-comparison/mobile-devices.json)):
 
@@ -638,9 +638,10 @@ Measured live via [`packages/spana/scripts/benchmark-mobile-devices.ts`](https:/
 | **Android 17** — Physical Google Pixel 8 Pro (USB) | Spana Direct UiAutomator2 (native Settings)   | 2.34 s cold / **44 ms warm** |                 518 ms |                  484 ms |    28.52 s (5/5) |   5,704 ms |
 | **Android 17** — Physical Google Pixel 8 Pro (USB) | Spana Chrome CDP (hybrid web, UI login)       |                            — |                      — |                       — | **1.12 s** (5/5) | **225 ms** |
 | **Android 17** — Physical Google Pixel 8 Pro (USB) | Spana Chrome CDP (hybrid web, state inject)   |                            — |                      — |                       — | **0.71 s** (5/5) | **142 ms** |
+| **iOS 27.2.1** — Physical iPhone 17 Pro (WDA)      | Spana Direct WebDriverAgent (native Settings) |               1.34 s session |                 525 ms |              **150 ms** |    39.46 s (5/5) |   7,892 ms |
 | **iOS 26.4** — iPhone 17 Simulator                 | Spana Direct WebDriverAgent (native Settings) |  4.02 s WDA / 2.46 s session |                 566 ms |               **74 ms** |    29.79 s (5/5) |   5,958 ms |
 
-_(Notice the honest takeaway: pure native OS accessibility tree dumps take ~500–600 ms per screen on both Android and iOS regardless of runner, while routing hybrid/WebView flows over Spana's direct CDP channel on the exact same physical Pixel 8 Pro runs **25–40× faster** than native UI dumps.)_
+_(Notice the honest takeaway: pure native OS accessibility tree dumps take ~518–566 ms per screen across physical Pixel 8 Pro, physical iPhone 17 Pro, and iOS Simulator regardless of runner — on the physical iPhone 17 Pro, the 3 zero-scroll Settings flows averaged `6,405 ms` and the 2 scrolled `General` flows averaged `10,124 ms`. Meanwhile, routing hybrid/WebView flows over Spana's direct CDP channel on the exact same physical Pixel 8 Pro runs **25–40× faster** than native UI dumps.)_
 
 ### Pull requests (subset filtering)
 

@@ -485,14 +485,25 @@ async function runIOSBenchmark(opts: {
       `  takeScreenshot (5 runs): median=${median(shotSamples)}ms samples=[${shotSamples.join(",")}]`,
     );
 
-    // 5-flow native iOS Settings E2E suite (launch -> tap section -> verify sub-screen -> stop)
-    const sections = [
-      { menu: "General", verify: "About" },
-      { menu: "General", verify: "Software Update" },
-      { menu: "General", verify: "Language & Region" },
-      { menu: "General", verify: "Keyboard" },
-      { menu: "General", verify: "Fonts" },
-    ];
+    // 5-flow native iOS Settings E2E suite (launch -> verify menu -> tap -> verify sub-screen)
+    // On physical iOS devices, avoid carrier-entitlement panes (Personal Hotspot / Mobile Service)
+    // that trigger live cellular network calls and can stall XCUITest/WDA.
+    const sections: Array<{ menu: string; verify: string; scrollFirst?: boolean }> =
+      opts.deviceType === "physical"
+        ? [
+            { menu: "Wi-Fi", verify: "Wi-Fi" },
+            { menu: "Bluetooth", verify: "Bluetooth" },
+            { menu: "Battery", verify: "Battery" },
+            { menu: "General", verify: "About", scrollFirst: true },
+            { menu: "General", verify: "Software Update", scrollFirst: true },
+          ]
+        : [
+            { menu: "General", verify: "About" },
+            { menu: "General", verify: "Software Update" },
+            { menu: "General", verify: "Language & Region" },
+            { menu: "General", verify: "Keyboard" },
+            { menu: "General", verify: "Fonts" },
+          ];
 
     const perFlowMs: number[] = [];
     let passed = 0;
@@ -504,6 +515,9 @@ async function runIOSBenchmark(opts: {
         async ({ app, expect }) => {
           await app.stop();
           await app.launch();
+          if (sec.scrollFirst) {
+            await app.swipe("up");
+          }
           await expect({ text: sec.menu }).toBeVisible({ timeout: 8000 });
           await app.tap({ text: sec.menu }, { timeout: 8000 });
           await expect({ text: sec.verify }).toBeVisible({ timeout: 8000 });
@@ -588,7 +602,8 @@ async function main() {
     existing.android = await runAndroidBenchmark(androidSerial);
   }
   if (iosHost) {
-    existing.ios = await runIOSBenchmark({
+    const key = iosType === "simulator" ? "iosSimulator" : "ios";
+    existing[key] = await runIOSBenchmark({
       wdaHost: iosHost,
       wdaPort: iosPort,
       model: iosModel,
