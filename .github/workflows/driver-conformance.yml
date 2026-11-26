@@ -188,7 +188,13 @@ jobs:
         run: |
           cd packages/spana
           CAPS=$(jq -nc --arg udid "$SPANA_IOS_UDID" --arg bundleId "$SPANA_IOS_BUNDLE_ID" \
-            '{"appium:udid": $udid, "appium:bundleId": $bundleId}')
+            '{
+              "appium:udid": $udid,
+              "appium:bundleId": $bundleId,
+              "appium:isHeadless": true,
+              "appium:wdaLaunchTimeout": 240000,
+              "appium:showXcodeLog": true
+            }')
           bun ./dist/cli.js test \
             --driver appium \
             --appium-auto-start \
