@@ -238,7 +238,7 @@ export function createWDADriver(
       const alive = yield* Effect.tryPromise({
         try: () => client.isSessionAlive(),
         catch: () => false,
-      }).pipe(Effect.catchAll(() => Effect.succeed(false)));
+      }).pipe(Effect.catch(() => Effect.succeed(false)));
       reusedWarmSession = alive;
     }
 

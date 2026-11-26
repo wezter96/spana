@@ -57,7 +57,7 @@ const _PointSelectorSchema = Schema.Struct({
   point: Schema.Struct({ x: Schema.Number, y: Schema.Number }),
 });
 
-export const SelectorSchema = Schema.Union(
+export const SelectorSchema = Schema.Union([
   Schema.String,
   _TestIDSelectorSchema,
   _TextSelectorSchema,
@@ -65,7 +65,7 @@ export const SelectorSchema = Schema.Union(
   _RoleSelectorSchema,
   _CssSelectorSchema,
   _PointSelectorSchema,
-);
+]);
 
 export type ObjectSelector<T extends string = string> =
   | ({ testID: T } & SelectorModifiers<T>)

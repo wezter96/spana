@@ -177,7 +177,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           yield* Effect.tryPromise({
             try: () => driver.domChannel!.waitForIdle!({ timeout: 150, quietPeriodMs: 30 }),
             catch: () => undefined,
-          }).pipe(Effect.catchAll(() => Effect.void));
+          }).pipe(Effect.catch(() => Effect.void));
         } else {
           yield* Effect.promise(() => new Promise((r) => setTimeout(r, 100)));
         }
@@ -192,7 +192,7 @@ export function createCoordinator<T extends string = string, R extends string = 
     Effect.gen(function* () {
       cache.invalidate();
       const probeTimeout = opts?.probeTimeout ?? 1;
-      const result = yield* Effect.either(
+      const result = yield* Effect.result(
         waitForElement(
           driver,
           selector,
@@ -202,15 +202,18 @@ export function createCoordinator<T extends string = string, R extends string = 
         ),
       );
 
-      if (result._tag === "Right") {
+      if (result._tag === "Success") {
         return true;
       }
 
-      if (result.left._tag === "ElementNotFoundError" || result.left._tag === "WaitTimeoutError") {
+      if (
+        result.failure._tag === "ElementNotFoundError" ||
+        result.failure._tag === "WaitTimeoutError"
+      ) {
         return false;
       }
 
-      return yield* result.left;
+      return yield* result.failure;
     });
 
   const gestureDirectionForSearch = (direction: Direction): Direction => {
@@ -284,7 +287,7 @@ export function createCoordinator<T extends string = string, R extends string = 
               timeoutMs: timeout,
             }),
           catch: () => null,
-        }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+        }).pipe(Effect.catch(() => Effect.succeed(null)));
 
         if (reactive) {
           if (reactive.matched) return;
@@ -507,7 +510,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           const matches = yield* Effect.tryPromise({
             try: () => domChannel.query(selector as Selector),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
           if (matches) {
             return matches.filter((m) => m.visible).length;
           }
@@ -659,7 +662,7 @@ export function createCoordinator<T extends string = string, R extends string = 
             const matches = yield* Effect.tryPromise({
               try: () => domChannel.query(selector as Selector),
               catch: () => null,
-            }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
             if (matches && matches.length > 0) {
               const target = matches[matches.length - 1]!;
               return target.attributes?.[name];
@@ -1086,7 +1089,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 timeoutMs: timeout,
               }),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (reactive) {
             if (reactive.matched) return;
@@ -1104,7 +1107,7 @@ export function createCoordinator<T extends string = string, R extends string = 
         while (Date.now() - start < timeout) {
           const title = yield* driver
             .evaluate<string>("typeof document !== 'undefined' ? String(document.title || '') : ''")
-            .pipe(Effect.catchAll(() => Effect.succeed("")));
+            .pipe(Effect.catch(() => Effect.succeed("")));
           lastTitle = title;
           if (negate ? !matchesTitle(title) : matchesTitle(title)) return;
           yield* Effect.sleep(Duration.millis(pollInterval));
@@ -1149,7 +1152,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 timeoutMs: timeout,
               }),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (reactive) {
             if (reactive.matched) return;
@@ -1174,7 +1177,7 @@ export function createCoordinator<T extends string = string, R extends string = 
             const matches = yield* Effect.tryPromise({
               try: () => domChannel.query(selector as Selector),
               catch: () => null,
-            }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
             if (matches) {
               const count = matches.filter((m) => m.visible).length;
               lastCount = count;
@@ -1237,7 +1240,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 timeoutMs: timeout,
               }),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (reactive) {
             if (reactive.matched) return;
@@ -1259,7 +1262,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 .evaluate<string>(
                   "typeof window !== 'undefined' && window.location ? window.location.href : ''",
                 )
-                .pipe(Effect.catchAll(() => Effect.succeed("")));
+                .pipe(Effect.catch(() => Effect.succeed("")));
           lastUrl = url;
           if (negate ? !matchesUrl(url) : matchesUrl(url)) return;
           yield* Effect.sleep(Duration.millis(pollInterval));
@@ -1618,13 +1621,13 @@ export function createCoordinator<T extends string = string, R extends string = 
           domChannel?.isConnected() &&
           domChannel.fillDom
         ) {
-          const fillAttempt = yield* Effect.either(
+          const fillAttempt = yield* Effect.result(
             Effect.tryPromise({
               try: () => domChannel.fillDom!(selector as Selector, text, { timeoutMs: timeout }),
               catch: (e) => new DriverError({ message: `DOM fill failed: ${e}` }),
             }),
           );
-          if (fillAttempt._tag === "Right" && fillAttempt.right) {
+          if (fillAttempt._tag === "Success" && fillAttempt.success) {
             yield* afterMutation();
             return;
           }
@@ -1633,7 +1636,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           // stubborn React controlled inputs that rejected/reset synthetic DOM writes:
           // check if an actionable element is actually present, then tap + SelectAll + Backspace + inputText.
           const remaining = Math.max(50, timeout - (Date.now() - fillStart));
-          const fallbackEl = yield* Effect.either(
+          const fallbackEl = yield* Effect.result(
             waitForActionElement(
               driver,
               selector,
@@ -1647,12 +1650,12 @@ export function createCoordinator<T extends string = string, R extends string = 
               cache,
             ),
           );
-          if (fallbackEl._tag === "Right") {
-            const { x, y } = centerOf(fallbackEl.right);
+          if (fallbackEl._tag === "Success") {
+            const { x, y } = centerOf(fallbackEl.success);
             yield* driver.tapAtCoordinate(x, y);
             const selectAllKey = process.platform === "darwin" ? "Meta+a" : "Control+a";
-            yield* Effect.either(driver.pressKey(selectAllKey));
-            yield* Effect.either(driver.pressKey("Backspace"));
+            yield* Effect.result(driver.pressKey(selectAllKey));
+            yield* Effect.result(driver.pressKey("Backspace"));
             if (text.length > 0) {
               yield* driver.inputText(text);
             }
@@ -1669,7 +1672,7 @@ export function createCoordinator<T extends string = string, R extends string = 
                 obstructedBy?: string;
               }>(buildDomActionabilityDiagScript(selector as Selector)),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (actionDiag?.found && actionDiag.obstructedBy) {
             return yield* new ElementNotFoundError({
@@ -1814,10 +1817,10 @@ export function createCoordinator<T extends string = string, R extends string = 
             ? yield* Effect.tryPromise({
                 try: () => driver.domChannel!.evaluate<boolean>(script),
                 catch: () => false,
-              }).pipe(Effect.catchAll(() => Effect.succeed(false)))
+              }).pipe(Effect.catch(() => Effect.succeed(false)))
             : yield* driver
                 .evaluate<boolean>(script)
-                .pipe(Effect.catchAll(() => Effect.succeed(false)));
+                .pipe(Effect.catch(() => Effect.succeed(false)));
           if (ok) {
             yield* afterMutation();
             return;
@@ -1864,26 +1867,26 @@ export function createCoordinator<T extends string = string, R extends string = 
         }
 
         const platform = (yield* driver.getDeviceInfo()).platform;
-        const hideKeyboardResult = yield* Effect.either(driver.hideKeyboard());
-        if (hideKeyboardResult._tag === "Right") {
+        const hideKeyboardResult = yield* Effect.result(driver.hideKeyboard());
+        if (hideKeyboardResult._tag === "Success") {
           yield* afterMutation();
           return;
         }
 
         if (platform === "android") {
-          const backResult = yield* Effect.either(driver.back());
-          if (backResult._tag === "Right") {
+          const backResult = yield* Effect.result(driver.back());
+          if (backResult._tag === "Success") {
             yield* afterMutation();
             return;
           }
 
           return yield* new DriverError({
-            message: `dismissKeyboard() failed with strategy "auto" on android. hideKeyboard(): ${hideKeyboardResult.left.message}. back(): ${backResult.left.message}`,
+            message: `dismissKeyboard() failed with strategy "auto" on android. hideKeyboard(): ${hideKeyboardResult.failure.message}. back(): ${backResult.failure.message}`,
           });
         }
 
         return yield* new DriverError({
-          message: `dismissKeyboard() failed with strategy "auto" on ${platform}. hideKeyboard(): ${hideKeyboardResult.left.message}`,
+          message: `dismissKeyboard() failed with strategy "auto" on ${platform}. hideKeyboard(): ${hideKeyboardResult.failure.message}`,
         });
       }),
 
@@ -1945,10 +1948,10 @@ export function createCoordinator<T extends string = string, R extends string = 
             break;
           }
 
-          const backResult = yield* Effect.either(driver.back());
-          if (backResult._tag === "Left") {
+          const backResult = yield* Effect.result(driver.back());
+          if (backResult._tag === "Failure") {
             return yield* new DriverError({
-              message: `backUntilVisible() failed on back attempt ${backCount + 1}: ${backResult.left.message}`,
+              message: `backUntilVisible() failed on back attempt ${backCount + 1}: ${backResult.failure.message}`,
             });
           }
 

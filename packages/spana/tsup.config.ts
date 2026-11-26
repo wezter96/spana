@@ -3,9 +3,6 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const shared = [
   "effect",
-  "@effect/cli",
-  "@effect/platform",
-  "@effect/platform-node",
   "playwright-core",
   "@cucumber/gherkin",
   "@cucumber/messages",

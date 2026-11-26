@@ -265,12 +265,12 @@ describe("WDA driver adapter", () => {
 
     const { createWDADriver } = await importFreshDriver();
     const driver = await Effect.runPromise(createWDADriver("127.0.0.1", 8100, "com.example.app"));
-    const result = await Effect.runPromise(Effect.either(driver.tapAtCoordinate(10, 20)));
+    const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("Tap failed: Error: tap exploded");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("Tap failed: Error: tap exploded");
     }
   });
 
@@ -303,13 +303,13 @@ describe("WDA driver adapter", () => {
     );
 
     const result = await Effect.runPromise(
-      Effect.either(driver.setNetworkConditions!({ profile: "3g" })),
+      Effect.result(driver.setNetworkConditions!({ profile: "3g" })),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("not supported on physical iOS devices");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("not supported on physical iOS devices");
     }
   });
 
@@ -329,13 +329,13 @@ describe("WDA driver adapter", () => {
 
     const { createWDADriver } = await importFreshDriver();
     const result = await Effect.runPromise(
-      Effect.either(createWDADriver("127.0.0.1", 8100, "com.example.app")),
+      Effect.result(createWDADriver("127.0.0.1", 8100, "com.example.app")),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain(
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain(
         "Failed to create WDA session: Error: session exploded",
       );
     }

@@ -405,12 +405,12 @@ describe("Appium iOS driver", () => {
     const { client } = await makeClient();
 
     const driver = await Effect.runPromise(createAppiumIOSDriver(client));
-    const result = await Effect.runPromise(Effect.either(driver.back()));
+    const result = await Effect.runPromise(Effect.result(driver.back()));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("not supported on iOS");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("not supported on iOS");
     }
   });
 
@@ -488,12 +488,12 @@ describe("Appium iOS driver", () => {
     ]);
 
     const driver = await Effect.runPromise(createAppiumIOSDriver(client));
-    const result = await Effect.runPromise(Effect.either(driver.tapAtCoordinate(10, 20)));
+    const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("Tap failed");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("Tap failed");
     }
   });
 

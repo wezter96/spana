@@ -1061,7 +1061,7 @@ export function makeLightweightCdpDriver(
             )
             .catch(() => {}),
         catch: () => new DriverError({ message: "Failed to enable Target.setAutoAttach" }),
-      }).pipe(Effect.catchAll(() => Effect.void));
+      }).pipe(Effect.catch(() => Effect.void));
       activeSlot = yield* Effect.tryPromise({
         try: () => createContextSlot(options.storageState),
         catch: (e) =>

@@ -172,13 +172,13 @@ describe("coordinator", () => {
     });
 
     const result = await Effect.runPromise(
-      Effect.either(coordinator.scrollUntilVisible({ testID: "missing-card" }, { maxScrolls: 2 })),
+      Effect.result(coordinator.scrollUntilVisible({ testID: "missing-card" }, { maxScrolls: 2 })),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(ElementNotFoundError);
-      expect(result.left.message).toContain("after 2 scroll(s) toward down");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(ElementNotFoundError);
+      expect(result.failure.message).toContain("after 2 scroll(s) toward down");
     }
     expect(swipes).toHaveLength(2);
   });
@@ -230,13 +230,13 @@ describe("coordinator", () => {
     const coordinator = createCoordinator(driver, { parse });
 
     const result = await Effect.runPromise(
-      Effect.either(coordinator.backUntilVisible({ testID: "home-title" })),
+      Effect.result(coordinator.backUntilVisible({ testID: "home-title" })),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left.message).toContain("backUntilVisible() failed on back attempt 1");
-      expect(result.left.message).toContain("back() is not supported on iOS");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.message).toContain("backUntilVisible() failed on back attempt 1");
+      expect(result.failure.message).toContain("back() is not supported on iOS");
     }
   });
 
@@ -258,15 +258,15 @@ describe("coordinator", () => {
     const coordinator = createCoordinator(driver, { parse });
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         coordinator.assertText({ text: "Actual" }, "Expected", { timeout: 50, pollInterval: 10 }),
       ),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(TextMismatchError);
-      expect(result.left).toMatchObject({
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(TextMismatchError);
+      expect(result.failure).toMatchObject({
         expected: "Expected",
         actual: "Actual",
         selector: { text: "Actual" },

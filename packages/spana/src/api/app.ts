@@ -539,7 +539,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
         .evaluate<string>(
           "typeof window !== 'undefined' && window.location ? String(window.location.href || '') : ''",
         )
-        .pipe(Effect.catchAll(() => Effect.succeed(""))),
+        .pipe(Effect.catch(() => Effect.succeed(""))),
     );
   };
 
@@ -1193,7 +1193,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
       const timeout = opts?.timeout ?? 1000;
       return run(
         Effect.gen(function* () {
-          const result = yield* Effect.either(
+          const result = yield* Effect.result(
             waitForElement(
               driver,
               selector,
@@ -1202,7 +1202,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
               undefined,
             ),
           );
-          return result._tag === "Right";
+          return result._tag === "Success";
         }),
       );
     },

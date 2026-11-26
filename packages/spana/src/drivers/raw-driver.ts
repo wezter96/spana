@@ -440,9 +440,9 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly clearVirtualCredentials?: (authenticatorId?: string) => Effect.Effect<void, DriverError>;
 }
 
-// Non-generic Context.Tag — the Effect runtime always resolves to the default
+// Non-generic Context.Service — the Effect runtime always resolves to the default
 // string-string instantiation; type parameters only matter at the call-site.
-export class RawDriver extends Context.Tag("RawDriver")<RawDriver, RawDriverService>() {}
+export class RawDriver extends Context.Service<RawDriver, RawDriverService>()("RawDriver") {}
 
 type DriverEffect<A> = Effect.Effect<A, DriverError>;
 

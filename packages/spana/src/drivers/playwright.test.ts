@@ -960,13 +960,13 @@ describe("Playwright driver adapter", () => {
 
     const firefoxDriver = await Effect.runPromise(makePlaywrightDriver({ browser: "firefox" }));
     const result = await Effect.runPromise(
-      Effect.either(firefoxDriver.setNetworkConditions!({ latencyMs: 10 })),
+      Effect.result(firefoxDriver.setNetworkConditions!({ latencyMs: 10 })),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("only supported with the chromium browser");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("only supported with the chromium browser");
     }
   });
 
@@ -974,12 +974,12 @@ describe("Playwright driver adapter", () => {
     playwrightState.launchError = new Error("browser exploded");
 
     const { makePlaywrightDriver } = await importFreshDriver();
-    const result = await Effect.runPromise(Effect.either(makePlaywrightDriver({})));
+    const result = await Effect.runPromise(Effect.result(makePlaywrightDriver({})));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("Failed to launch browser: Error: browser exploded");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("Failed to launch browser: Error: browser exploded");
     }
   });
 
@@ -987,12 +987,12 @@ describe("Playwright driver adapter", () => {
     playwrightState.newPageError = new Error("page exploded");
 
     const { makePlaywrightDriver } = await importFreshDriver();
-    const result = await Effect.runPromise(Effect.either(makePlaywrightDriver({})));
+    const result = await Effect.runPromise(Effect.result(makePlaywrightDriver({})));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("Failed to create page: Error: page exploded");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("Failed to create page: Error: page exploded");
     }
   });
 
@@ -1001,12 +1001,12 @@ describe("Playwright driver adapter", () => {
     const driver = await Effect.runPromise(makePlaywrightDriver({}));
     playwrightState.pressError = new Error("press exploded");
 
-    const result = await Effect.runPromise(Effect.either(driver.pressKey("Enter")));
+    const result = await Effect.runPromise(Effect.result(driver.pressKey("Enter")));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("Failed to press key Enter: Error: press exploded");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("Failed to press key Enter: Error: press exploded");
     }
   });
 

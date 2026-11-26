@@ -243,7 +243,7 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
           return await domChannel.query(selector as Selector);
         },
         catch: () => undefined,
-      }).pipe(Effect.catchAll(() => Effect.succeed([] as DomElementMatch[])));
+      }).pipe(Effect.catch(() => Effect.succeed([] as DomElementMatch[])));
 
       const best = pickBestDomMatch(domMatches);
       if (best) {
@@ -262,7 +262,7 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
           const scrolled = yield* Effect.tryPromise({
             try: () => domChannel.scrollIntoView!(selector as Selector),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
           if (scrolled) {
             targetMatch = scrolled;
           }

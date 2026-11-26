@@ -220,12 +220,12 @@ describe("UiAutomator2 driver adapter", () => {
     const driver = await Effect.runPromise(
       createUiAutomator2Driver("127.0.0.1", 4723, "SERIAL", "com.example.app"),
     );
-    const result = await Effect.runPromise(Effect.either(driver.tapAtCoordinate(10, 20)));
+    const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("Tap failed: Error: tap exploded");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("Tap failed: Error: tap exploded");
     }
   });
 
@@ -234,13 +234,13 @@ describe("UiAutomator2 driver adapter", () => {
 
     const { createUiAutomator2Driver } = await importFreshDriver();
     const result = await Effect.runPromise(
-      Effect.either(createUiAutomator2Driver("127.0.0.1", 4723, "SERIAL", "com.example.app")),
+      Effect.result(createUiAutomator2Driver("127.0.0.1", 4723, "SERIAL", "com.example.app")),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain(
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain(
         "Failed to create UiAutomator2 session: Error: session exploded",
       );
     }
@@ -275,13 +275,13 @@ describe("UiAutomator2 driver adapter", () => {
     );
 
     const result = await Effect.runPromise(
-      Effect.either(driver.setNetworkConditions!({ profile: "3g" })),
+      Effect.result(driver.setNetworkConditions!({ profile: "3g" })),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(DriverError);
-      expect(result.left.message).toContain("not supported on physical");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(DriverError);
+      expect(result.failure.message).toContain("not supported on physical");
     }
   });
 

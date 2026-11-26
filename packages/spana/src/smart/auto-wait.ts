@@ -73,7 +73,7 @@ function maybeWaitForBridgeIdle<T extends string = string, R extends string = st
   return Effect.tryPromise({
     try: () => domChannel.waitForIdle!({ timeout: Math.min(timeout, 2500) }),
     catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.void));
+  }).pipe(Effect.catch(() => Effect.void));
 }
 
 function isRelativeSelectorLike(selector: ExtendedSelector<any>): boolean {
@@ -133,7 +133,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
               : {}),
           }),
         catch: () => null,
-      }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+      }).pipe(Effect.catch(() => Effect.succeed(null)));
 
       if (Array.isArray(reactiveMatches) && reactiveMatches.length > 0) {
         const match = reactiveMatches[reactiveMatches.length - 1]!;
@@ -160,7 +160,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
                 obstructedBy?: string;
               }>(buildDomActionabilityDiagScript(selector as Selector)),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (actionDiag?.found && actionDiag.obstructedBy) {
             return yield* new ElementNotFoundError({
@@ -232,7 +232,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
                   : {}),
               }),
             catch: () => null,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (Array.isArray(reactiveResult) && reactiveResult.length > 0) {
             // Element mounted! Loop immediately to resolve coordinates & return without sleeping.
@@ -346,7 +346,7 @@ export function waitForNotVisible<T extends string = string, R extends string = 
       const hidden = yield* Effect.tryPromise({
         try: () => domChannel.waitForHidden!(selector as Selector, { timeoutMs: timeout }),
         catch: () => null,
-      }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+      }).pipe(Effect.catch(() => Effect.succeed(null)));
 
       if (hidden === true) return;
       if (hidden === false) {

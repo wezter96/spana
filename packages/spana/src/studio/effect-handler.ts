@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, type ManagedRuntime, type Scope } from "effect";
+import { Cause, Effect, Exit, Result, type ManagedRuntime, type Scope } from "effect";
 import { ORPCError } from "@orpc/server";
 
 export const runEffect = <A, E, R>(
@@ -10,18 +10,14 @@ export const runEffect = <A, E, R>(
       return exit.value;
     }
 
-    if (Cause.isFailType(exit.cause)) {
-      const error = exit.cause.error;
-      if (error instanceof ORPCError) {
-        throw error;
-      }
+    const error = Cause.findError(exit.cause);
+    if (Result.isSuccess(error) && error.success instanceof ORPCError) {
+      throw error.success;
     }
 
-    if (Cause.isDieType(exit.cause)) {
-      const defect = exit.cause.defect;
-      if (defect instanceof ORPCError) {
-        throw defect;
-      }
+    const defect = Cause.findDefect(exit.cause);
+    if (Result.isSuccess(defect) && defect.success instanceof ORPCError) {
+      throw defect.success;
     }
 
     throw new ORPCError("INTERNAL_SERVER_ERROR");

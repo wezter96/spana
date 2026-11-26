@@ -83,7 +83,7 @@ describe("auto wait", () => {
     const { driver } = createDriver([createElement()]);
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         waitForElement(driver, { text: "Missing" }, parse, {
           timeout: 5,
           pollInterval: 0,
@@ -91,10 +91,10 @@ describe("auto wait", () => {
       ),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(ElementNotFoundError);
-      expect(result.left).toMatchObject({
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(ElementNotFoundError);
+      expect(result.failure).toMatchObject({
         selector: { text: "Missing" },
         timeoutMs: 5,
       });
@@ -146,7 +146,7 @@ describe("auto wait", () => {
     const { driver } = createDriver([createElement({ children: [target] })]);
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         waitForNotVisible(driver, { text: "Ready" }, parse, {
           timeout: 5,
           pollInterval: 0,
@@ -154,10 +154,10 @@ describe("auto wait", () => {
       ),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toBeInstanceOf(WaitTimeoutError);
-      expect(result.left).toMatchObject({
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure).toBeInstanceOf(WaitTimeoutError);
+      expect(result.failure).toMatchObject({
         selector: { text: "Ready" },
         timeoutMs: 5,
       });
@@ -192,7 +192,7 @@ describe("error messages", () => {
     const { driver } = createDriver([createElement()]);
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         waitForElement(driver, { testID: "login-btn" }, parse, {
           timeout: 5,
           pollInterval: 0,
@@ -200,10 +200,10 @@ describe("error messages", () => {
       ),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left.message).toContain("testID");
-      expect(result.left.message).toContain("login-btn");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.message).toContain("testID");
+      expect(result.failure.message).toContain("login-btn");
     }
   });
 
@@ -212,7 +212,7 @@ describe("error messages", () => {
     const { driver } = createDriver([createElement({ children: [target] })]);
 
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         waitForNotVisible(driver, { text: "Loading" }, parse, {
           timeout: 5,
           pollInterval: 0,
@@ -220,10 +220,10 @@ describe("error messages", () => {
       ),
     );
 
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left.message).toContain("text");
-      expect(result.left.message).toContain("Loading");
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.message).toContain("text");
+      expect(result.failure.message).toContain("Loading");
     }
   });
 });
@@ -457,7 +457,7 @@ describe("hierarchy cache integration", () => {
 
     const t0 = Date.now();
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         waitForElement(driverWithDom, { testID: "missing-btn" }, parse, {
           timeout: 3000,
           pollInterval: 200,
@@ -467,7 +467,7 @@ describe("hierarchy cache integration", () => {
       ),
     );
     const elapsed = Date.now() - t0;
-    expect(result._tag).toBe("Left");
+    expect(result._tag).toBe("Failure");
     expect(elapsed).toBeLessThan(500);
   });
 });
