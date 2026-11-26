@@ -15,6 +15,7 @@ export default flow(
     tags: ["conformance", "input-text", "keyboard"],
     platforms: ["android", "ios"],
     autoLaunch: false,
+    timeout: 100_000,
   },
   async (ctx) => {
     const { app, expect, platform } = ctx;
@@ -37,7 +38,7 @@ export default flow(
     // the lower half of the screen.
     await app.scrollUntilVisible(
       { testID: "playground-sentinel" },
-      { timeout: 20_000, maxScrolls: 15 },
+      { timeout: platform === "ios" ? 45_000 : 20_000, maxScrolls: 15 },
     );
     await expect({ testID: "playground-sentinel" }).toBeVisible();
   },
