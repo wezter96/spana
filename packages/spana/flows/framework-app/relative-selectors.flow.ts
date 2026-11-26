@@ -29,16 +29,13 @@ export default flow(
     });
     await expect({ testID: "playground-nested-status" }).toHaveText("Activated 1x");
 
-    await app.scrollUntilVisible(
-      { testID: "playground-relative-label" },
-      { timeout: 20_000, maxScrolls: 10 },
-    );
-    await expect({ testID: "playground-relative-label" }).toBeVisible();
-
-    await app.tap({
+    const rowAction = {
       selector: { testID: "playground-relative-button" },
       rightOf: { testID: "playground-relative-label" },
-    });
+    };
+    await app.scrollUntilVisible(rowAction, { timeout: 20_000, maxScrolls: 10 });
+    await expect({ testID: "playground-relative-label" }).toBeVisible();
+    await app.tap(rowAction);
     await expect({ testID: "playground-relative-status" }).toHaveText("Triggered 1x");
 
     await app.takeScreenshot("relative-selectors");
