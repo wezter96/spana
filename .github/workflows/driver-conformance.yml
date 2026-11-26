@@ -136,7 +136,7 @@ jobs:
         run: bun run --cwd packages/spana build
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
 
       - name: Install Appium + XCUITest driver
         run: |
@@ -145,7 +145,7 @@ jobs:
 
       - name: Boot iOS simulator
         run: |
-          UDID=$(xcrun simctl create "spana-conformance" com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5)
+          UDID=$(xcrun simctl create "spana-conformance" com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-26-2)
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           echo "SPANA_IOS_UDID=$UDID" >> "$GITHUB_ENV"
