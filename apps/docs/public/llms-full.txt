@@ -535,7 +535,8 @@ For `spana test`, CLI flags win over config values.
 | `--device` / `--devices`                       | CLI-only device selection                            |
 | `--parallel`                                   | Enables concurrent execution                         |
 | `--watch` / `--changed` / `--last-failed`      | CLI-only iteration controls                          |
-| `--update-baselines`                           | CLI-only visual regression control                   |
+| `--update-baselines`                           | CLI-only screenshot and ARIA baseline control        |
+| `--js-coverage`                                | `artifacts.jsCoverage`                               |
 | `--shard` / `--bail`                           | CLI-only execution controls                          |
 | `--debug-on-failure` / `--verbose` / `--quiet` | CLI-only output and debugging controls               |
 
@@ -594,24 +595,28 @@ artifacts?: {
   consoleLogs?:      boolean;
   jsErrors?:         boolean;
   har?:              boolean;
+  jsCoverage?:       boolean;
   video?:            "off" | "on" | "retain-on-failure";
   playback?:         boolean;
 }
 ```
 
-| Option             | Default            | Description                                                                                    |
-| ------------------ | ------------------ | ---------------------------------------------------------------------------------------------- |
-| `outputDir`        | `"./spana-output"` | Directory to write captured artifacts                                                          |
-| `captureOnFailure` | `true`             | Capture artifacts for failed flows                                                             |
-| `captureOnSuccess` | `false`            | Capture final artifacts for passed flows                                                       |
-| `captureSteps`     | `false`            | Capture screenshots after each recorded step                                                   |
-| `screenshot`       | `true`             | Include screenshots in captures                                                                |
-| `uiHierarchy`      | `true`             | Include UI hierarchy dumps                                                                     |
-| `consoleLogs`      | `true`             | Include captured browser console logs on web                                                   |
-| `jsErrors`         | `true`             | Include uncaught browser JavaScript errors on web                                              |
-| `har`              | `true`             | Include HAR network traces on web                                                              |
-| `video`            | `"off"`            | Record a video of each flow: `"on"`, or `"retain-on-failure"` to keep it only for failed flows |
-| `playback`         | `false`            | Keep a step-by-step visual playback timeline for the HTML report                               |
+| Option             | Default            | Description                                                                                     |
+| ------------------ | ------------------ | ----------------------------------------------------------------------------------------------- |
+| `outputDir`        | `"./spana-output"` | Directory to write captured artifacts                                                           |
+| `captureOnFailure` | `true`             | Capture artifacts for failed flows                                                              |
+| `captureOnSuccess` | `false`            | Capture final artifacts for passed flows                                                        |
+| `captureSteps`     | `false`            | Capture screenshots after each recorded step                                                    |
+| `screenshot`       | `true`             | Include screenshots in captures                                                                 |
+| `uiHierarchy`      | `true`             | Include UI hierarchy dumps                                                                      |
+| `consoleLogs`      | `true`             | Include captured browser console logs on web                                                    |
+| `jsErrors`         | `true`             | Include uncaught browser JavaScript errors on web                                               |
+| `har`              | `true`             | Include HAR network traces on web                                                               |
+| `jsCoverage`       | `false`            | Write `js-coverage.json` as a flow attachment for Chromium web tests (Playwright or direct CDP) |
+| `video`            | `"off"`            | Record a video of each flow: `"on"`, or `"retain-on-failure"` to keep it only for failed flows  |
+| `playback`         | `false`            | Keep a step-by-step visual playback timeline for the HTML report                                |
+
+JavaScript coverage is collected for the primary page from before app launch through the end of the flow, whether the flow passes or fails. Secondary tabs and contexts are not included. Each flow gets a raw V8 coverage file; Spana does not merge coverage or generate a source-mapped report. Use `spana test --js-coverage` for a single run, or set `artifacts: { jsCoverage: true }` in the project or flow configuration.
 
 ## `hooks`
 
@@ -847,11 +852,12 @@ CI test filters that run only when you pass `spana test --changed-since <ref>`. 
 
 ---
 
-## Spana vs Playwright, WebdriverIO, Maestro & Appium
+## Spana vs Playwright, Cypress, WebdriverIO, Maestro, Detox, Appium, Argent & e2e
 
-Spana is a TypeScript E2E framework. One test runs on Web, iOS, Android, Electron and Electrobun.
-This page shows where it fits next to the tools you may already use, and where those tools are the
-better choice.
+Spana is a TypeScript E2E framework where one test runs on Web, iOS, Android, Electron, and
+Electrobun. No single framework wins every row — this page grades **9 E2E frameworks** honestly on
+platforms, authoring, CI scale, debugging, AI workflows, ecosystem maturity, and speed so you can
+pick the right tool for your stack (even when that tool isn't Spana).
 
 :::note[Direct CDP + Playwright compatibility]
 On Chromium, Spana's `engine: "auto"` / `"cdp"` talks directly to Chromium over a raw CDP
@@ -861,27 +867,547 @@ Firefox, WebKit, or Playwright-specific options like HAR recording, Spana seamle
 bundled Playwright driver with the exact same flow API.
 :::
 
-## At a glance
+## Feature & Speed Matrix
 
-<div class="spana-compare-table">
-
-| Feature               | Spana                                  | Playwright                       | WebdriverIO           | Maestro                   | Detox                         | Appium                               |
-| --------------------- | -------------------------------------- | -------------------------------- | --------------------- | ------------------------- | ----------------------------- | ------------------------------------ |
-| Test format           | TypeScript, Gherkin                    | JS/TS, Python, .NET, Java        | JS/TS                 | YAML                      | JavaScript (Jest)             | JS, Java, Python, Ruby, .NET clients |
-| Web                   | Yes (Playwright inside)                | Yes                              | Yes                   | Yes, still in development | No                            | Yes, through browser drivers         |
-| iOS app               | Yes, direct WebDriverAgent             | No                               | Yes, through Appium   | Yes, simulators only      | Yes, React Native, simulators | Yes, XCUITest driver                 |
-| Android app           | Yes, direct UiAutomator2               | Experimental, Chrome and WebView | Yes, through Appium   | Yes                       | Yes, React Native             | Yes, UiAutomator2 / Espresso         |
-| Electron              | Yes                                    | Experimental                     | Yes, official service | No                        | No                            | No official driver                   |
-| Electrobun            | Yes                                    | No                               | No                    | No                        | No                            | No                                   |
-| Appium server locally | Not needed                             | —                                | Needed for mobile     | Not needed                | Not needed                    | Is Appium                            |
-| Agent (MCP) server    | `spana mcp`, exports a `.flow.ts` test | `@playwright/mcp`                | `@wdio/mcp`           | Maestro MCP               | None official                 | `appium-mcp`                         |
-| License               | Apache-2.0                             | Apache-2.0                       | MIT                   | Apache-2.0                | MIT                           | Apache-2.0                           |
-
+<div class="cmp-legend not-content">
+  <div class="cmp-legend-items">
+    <span class="cmp-legend-item">
+      <span class="cmp-pill cmp-pill-g">Full</span> Built-in &amp; production-ready
+    </span>
+    <span class="cmp-legend-item">
+      <span class="cmp-pill cmp-pill-y">Partial</span> Limited scope, experimental, plugin, or
+      cloud-gated
+    </span>
+    <span class="cmp-legend-item">
+      <span class="cmp-pill cmp-pill-r">No</span> Not supported or out of scope
+    </span>
+  </div>
+  <span class="cmp-legend-hint">Scroll sideways to compare all 9 frameworks →</span>
 </div>
 
-Facts about other tools come from their official docs and repositories, checked on 25 November 2026.
-"No" means their docs do not list it. If something here is out of date, please
-[open an issue](https://github.com/wezter96/spana/issues).
+<div class="spana-compare-table not-content">
+  <table class="cmp-matrix">
+    <thead>
+      <tr>
+        <th scope="col" class="cmp-feat-col">Feature</th>
+        <th scope="col">Spana<small>Web · Mobile · Desktop</small></th>
+        <th scope="col">Playwright<small>Web standard</small></th>
+        <th scope="col">Cypress<small>Web &amp; Component</small></th>
+        <th scope="col">WebdriverIO<small>Web · Mobile · Electron</small></th>
+        <th scope="col">Maestro<small>YAML Mobile-first</small></th>
+        <th scope="col">Detox<small>Gray-box RN Mobile</small></th>
+        <th scope="col">Appium<small>Universal WebDriver</small></th>
+        <th scope="col">Argent<small>MCP Mobile · TV · Mac</small></th>
+        <th scope="col">e2e<small>Agentic Web &amp; Mobile</small></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="cmp-speed-row">
+        <th scope="row">Speed Score (out of 10)</th>
+        <td data-s="g">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-g">9.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 95%"></span></div>
+          <span class="cmp-note">Measured 1.5–1.7× PW strict (up to 3.8× hot-cache); direct CDP/WDA/UA2; Rust visual diff. PW speed on FF/WebKit.</span>
+        </td>
+        <td data-s="g">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-g">8.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 85%"></span></div>
+          <span class="cmp-note">Measured baseline; fast WebSocket driver, lightweight BrowserContexts, strong multi-worker scaling across 3 engines.</span>
+        </td>
+        <td data-s="y">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-y">6.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 65%"></span></div>
+          <span class="cmp-note">Fast in-browser command loop locally; heavier spec reloads and CI parallel balancing needs Cypress Cloud or 3rd-party orchestration.</span>
+        </td>
+        <td data-s="y">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-y">6.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 65%"></span></div>
+          <span class="cmp-note">BiDi mode &amp; parallel workers are fast on web; classic W3C HTTP &amp; Appium mobile hops add round-trip overhead.</span>
+        </td>
+        <td data-s="y">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-y">7.0 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 70%"></span></div>
+          <span class="cmp-note">Lighter &amp; faster to boot than Appium, but hierarchy polling and animation settling add per-step latency on large suites.</span>
+        </td>
+        <td data-s="g">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-g">8.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 85%"></span></div>
+          <span class="cmp-note">Gray-box in-app synchronization eliminates polling &amp; Appium hops; fastest runner specifically for React Native once built.</span>
+        </td>
+        <td data-s="r">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-r">4.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 45%"></span></div>
+          <span class="cmp-note">Client → Appium HTTP server → WDA/UA2 proxy hops create the highest per-step latency and heaviest cold starts.</span>
+        </td>
+        <td data-s="y">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-y">7.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 75%"></span></div>
+          <span class="cmp-note">Fast native companion binaries &amp; zero-AI deterministic replays without Appium; live agent exploration waits on LLM turns.</span>
+        </td>
+        <td data-s="y">
+          <div class="cmp-speed-val"><span class="cmp-pill cmp-pill-y">7.5 / 10</span></div>
+          <div class="cmp-speed-bar"><span class="cmp-speed-fill" style="width: 75%"></span></div>
+          <span class="cmp-note">Playwright-speed deterministic runs &amp; <code>--strict-cache</code> replay (0 LLM calls); live <code>agent.act</code> / <code>assert</code> wait on model latency.</span>
+        </td>
+      </tr>
+
+      <tr class="cmp-cat"><th colspan="10">1. Platforms &amp; Targets</th></tr>
+
+      <tr>
+        <th scope="row">Web — Chromium</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Direct CDP engine + bundled Playwright</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class Chromium, Chrome &amp; Edge</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class Chrome, Edge &amp; Electron browser</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class via WebDriver BiDi &amp; CDP</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Chromium web support; still maturing</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Mobile native only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via Chromedriver / Selenium drivers</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Chromium/Electron apps via CDP; mobile-first</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in via <code>@e2e-dev/web</code> (Playwright)</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Web — Firefox &amp; WebKit / Safari</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Via bundled Playwright (no Direct CDP boost)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class Chromium, Firefox &amp; WebKit</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Firefox stable; WebKit experimental</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Chrome, Firefox, real Safari &amp; Edge</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Chromium only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Mobile native only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via Safari / Gecko WebDriver (mobile focus)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Chromium / Electron only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Firefox &amp; WebKit via Playwright</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">iOS Apps (Simulators &amp; USB Devices)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Direct WebDriverAgent (simulators + signed USB)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">WebKit viewport emulation only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Viewport emulation only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Full iOS support, requires Appium server</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Simulators locally; real iOS needs cloud</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">React Native only; simulators primarily</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class XCUITest (simulators &amp; devices)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Simulators &amp; physical iOS devices (USB)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">iOS simulators via <code>agent-device</code></span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Android Apps (Emulators &amp; USB Devices)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Direct UiAutomator2 (emulators &amp; USB)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Experimental Chrome &amp; WebView via ADB</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No native Android driver</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Full Android support, requires Appium server</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Emulators &amp; physical USB devices locally</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">React Native only (emulators &amp; devices)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class UiAutomator2 &amp; Espresso</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Emulators &amp; physical USB devices (ADB)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Android emulators via <code>agent-device</code></span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Hybrid &amp; Mobile WebViews (Capacitor / Ionic / RN)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Dual-channel DOM (CDP/WebKit/bridge) + native</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Experimental Android WebView only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No native WebView context switching</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Native ↔ WebView contexts via Appium</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Accessibility tree only; no DOM/JS bridge</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Basic Android WebView; limited iOS WKWebView</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Full native ↔ WebView context switching</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Native + React/JS tree &amp; WebView inspection</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Visual/accessibility tree via <code>agent-device</code></span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Desktop — Electron &amp; Electrobun</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in Electron &amp; Electrobun drivers</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Experimental <code>_electron</code> (no Electrobun)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Cannot automate external Electron apps</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>wdio-electron-service</code></span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Not supported</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Not supported</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Community Electron driver only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Electron &amp; Chromium desktop apps</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Prototype <code>@e2e-dev/desktop</code></span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Native Desktop &amp; TV (macOS, Windows, tvOS, Android TV)</th>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Electron &amp; Electrobun only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Web only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Web only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via Appium Mac2 / WinAppDriver / TV drivers</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Mobile &amp; web only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">iOS &amp; Android RN only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">macOS, Windows, tvOS, Android TV, Roku, Tizen</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Native macOS, Apple TV, Android TV &amp; Fire TV</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Prototype macOS (<code>agent-desktop</code>)</span></td>
+      </tr>
+
+      <tr class="cmp-cat"><th colspan="10">2. Authoring, Languages &amp; Selectors</th></tr>
+
+      <tr>
+        <th scope="row">Multi-Language SDKs (Python, Java, .NET, Ruby)</th>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">TypeScript/JS (+ Gherkin/Varar) only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official TS/JS, Python, Java &amp; .NET</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">JS/TS only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">JS/TS only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Language-agnostic YAML (+ embedded JS)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">JS/TS (Jest) only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Java, Python, JS/TS, C#, Ruby &amp; PHP</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">CLI / MCP / YAML replays (no multi-lang SDK)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">TypeScript/JS only</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Role / Accessibility Selectors &amp; Auto-Wait</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>byRole</code>, <code>testID</code>, <code>within</code> + actionability checks</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Gold-standard <code>getByRole</code> &amp; strict auto-wait</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Built-in retry; role queries need Testing Library</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Auto-wait + ARIA &amp; accessibility selectors</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Auto-waits for UI settle + accessibility labels</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Gray-box auto-sync with app idle state</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Accessibility IDs yes; explicit waits often needed</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Native + React tree inspection &amp; a11y targeting</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>getByRole</code> locators + natural-language fallback</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Shadow DOM &amp; Cross-Origin Iframes</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Shadow pierce + OOPIF iframes (CDP &amp; PW)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Automatic Shadow DOM + <code>frameLocator</code></span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Opt-in shadow DOM; cross-origin iframes limited</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Deep Shadow DOM (<code>&gt;&gt;&gt;</code>) + frame switching</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Limited web iframe / Shadow DOM depth</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">N/A (native mobile only)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Frame switching yes; Shadow DOM needs workarounds</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">CDP on Chromium/Electron; mobile-first</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Inherits Playwright web engine</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Multi-Tab, Popups &amp; Multi-User Sessions</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>newTab</code> + <code>sessions.open()</code> multi-persona (web)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Native multi-tab, popups &amp; multiple contexts</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Single-tab core; needs <code>@cypress/puppeteer</code></span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Multi-window &amp; <code>multiremote</code> multi-user</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Single app / tab flow</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Single app process</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Possible via separate driver sessions</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Multiple devices via CLI/MCP; not multi-context</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Web via Playwright; single-app on mobile</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Component Testing (Direct React / Vue / Svelte Mount)</th>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Storybook <code>openStory()</code>; no direct JSX mount</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Experimental Playwright CT</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Mature built-in CT (React, Vue, Angular, Svelte)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class Vite-based browser component runner</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Full app only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Full app only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Full app only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Full app / simulator focus</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Full-app E2E focus</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Built-In API / HTTP Request Client (Shared Auth)</th>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note"><code>createApiFixture()</code> helper; separate from browser jar</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class <code>APIRequestContext</code> shares cookies</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>cy.request()</code> shares browser session</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Uses Node <code>fetch</code> / external HTTP clients</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Basic <code>http</code> inside embedded JS scripts</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Separate Node/Jest HTTP client required</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Separate host-language HTTP client required</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Captures app traffic; not an API test client</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Playwright request context + TS <code>fetch</code></span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">BDD / Gherkin or Non-Developer Syntax</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>.feature</code> Gherkin &amp; Varar Markdown</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Third-party plugins (<code>playwright-bdd</code>)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Third-party Cucumber preprocessor</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>@wdio/cucumber-framework</code></span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Simple declarative YAML for non-devs</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via third-party Cucumber setup</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via external runner (Cucumber / SpecFlow)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Agent-recorded deterministic YAML replays</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Plain-English <code>agent.act</code> / <code>assert</code> steps</span></td>
+      </tr>
+
+      <tr class="cmp-cat"><th colspan="10">3. Execution, Isolation &amp; CI Scale</th></tr>
+
+      <tr>
+        <th scope="row">Per-Test State / Context Isolation</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Strict <code>fresh</code> context or <code>hot-cache</code> state wipe</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Fresh <code>BrowserContext</code> per test by default</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Clears storage/cookies &amp; resets page per test</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Session-scoped by default; <code>reloadSession</code> slower</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note"><code>clearState</code> relaunches mobile app</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">App relaunch / <code>delete: true</code> reset</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Full session / app reset is slow</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Device / app reset per replay</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Fresh context on web; app reset on mobile</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Parallel Workers &amp; CI Sharding (Free / OSS)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>--workers</code>, <code>--processes</code> &amp; duration-balanced <code>--shard</code></span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Native workers, <code>--shard=i/n</code> &amp; blob merge</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Balanced CI sharding pushes paid Cypress Cloud</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>maxInstances</code> workers + <code>--shard</code></span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Basic local sharding; managed parallel in Cloud</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Multi-simulator <code>--workers</code>; manual CI shards</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Needs external runner + Selenium/Appium Grid</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Built for single-agent dev &amp; smoke replays</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Web parallelism built-in; newer CI tooling</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Zero External Server Setup (No Appium / Grid)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Direct CDP, WDA &amp; UA2 (Appium optional)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Single install with bundled browsers</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Single <code>npm install</code>, no server daemon</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Zero-config on web; Appium server needed on mobile</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Single CLI binary, no Appium</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">No Appium, but requires native app build/sync hooks</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Requires managing Appium server &amp; drivers</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Single CLI / MCP install, no Appium</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>npx e2e init</code>, no Appium</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">PR Impact / Changed-Files Test Filtering</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>--changed-since</code>, <code>pathRuleFilter</code> &amp; <code>decisionFilter</code></span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note"><code>--only-changed</code> (JS import graph only)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Requires plugins or Cypress Cloud</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No built-in git diff test selection</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No built-in git diff filtering</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No built-in PR diff filtering</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Depends on external runner</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No built-in PR diff filtering</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>@e2e-dev/decision</code> (<code>decisionFilter</code>)</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Cloud Device Farms &amp; W3C Grid Integration</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class BrowserStack, Sauce Labs &amp; W3C Appium</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Web clouds (Azure/BrowserStack); no mobile farms</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Cypress Cloud &amp; web grids; no mobile farms</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official BrowserStack, Sauce, LambdaTest &amp; Grid</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Maestro Cloud + BrowserStack / TestingBot</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Limited cloud support (custom native builds)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Universal standard on every real-device cloud</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Local simulators, emulators &amp; USB devices only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">MicroVM / CI runners; limited mobile device clouds</span></td>
+      </tr>
+
+      <tr class="cmp-cat"><th colspan="10">4. Debugging, Observability &amp; Quality</th></tr>
+
+      <tr>
+        <th scope="row">Interactive Time-Travel Trace Viewer &amp; UI Runner</th>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">HTML timeline playback + Studio + REPL (no DOM-snapshot <code>trace.zip</code>)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Industry-best <code>trace.zip</code> Trace Viewer &amp; UI Mode</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Industry-best live in-browser Time-Travel Runner</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Allure / HTML / DevTools logs; no DOM time-travel</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Maestro Studio locally; trace timelines in Cloud</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Device logs, screenshots &amp; video only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Separate Appium Inspector; no time-travel UI</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Deep DevTools/profiling dumps; no trace viewer UI</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Playwright traces on web; simpler artifacts on mobile</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">IDE Extension (VS Code / JetBrains Runner &amp; Breakpoints)</th>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No IDE extension yet (CLI + Studio web UI + MCP)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official VS Code extension (run, debug, pick locator)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official IDE integrations + interactive desktop app</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official VS Code extension &amp; IDE runner</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official VS Code &amp; JetBrains plugins + Studio</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via standard Jest IDE extensions</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via host-language IDE runners + Appium Inspector</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">MCP tools inside Cursor/VS Code; no test gutter</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">MCP inside editors; no dedicated test-gutter plugin</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Built-In Visual Regression Diffing</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>toMatchScreenshot</code> + Rust FFI (19× faster) + layout-tolerant</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>toHaveScreenshot()</code> with masks</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Requires plugins or paid visual services</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>@wdio/visual-service</code> (web &amp; mobile)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Captures screenshots; diffing via scripts/cloud</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Screenshot capture only; needs Jest diff plugin</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Image plugin or external visual platforms</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in OCR- &amp; font-aware baseline diffing</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Semantic/screenshot assertions; early baseline tooling</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Network Interception, Mocking &amp; HAR Recording</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note"><code>mockNetwork</code>/<code>blockNetwork</code> (HAR needs PW; mobile WebView JS only)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Full <code>page.route()</code>, WebSockets &amp; HAR replay</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">First-class <code>cy.intercept()</code> stubbing &amp; waits</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>browser.mock()</code> via BiDi / CDP</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No built-in HTTP request stubbing</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">App-level mocking only (MSW / DI inside app)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Requires external proxy (Charles / mitmproxy)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Captures XHR/fetch/native traffic; not a stubber</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Full web interception via Playwright</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Built-In Accessibility Audits (WCAG / <code>axe-core</code>)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>toPassAccessibilityAudit()</code> (web) + a11y checks</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>@axe-core/playwright</code> + ARIA snapshots</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via community <code>cypress-axe</code> plugin</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official Deque <code>@axe-core/webdriverio</code> + ARIA</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No WCAG / axe audit engine</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No accessibility audit suite</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via third-party plugins / cloud scanners</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Inspects a11y trees; no WCAG rule runner</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Via Playwright / custom assertions</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Native Profiling &amp; Gray-Box Sync (Hermes, Perfetto, Instruments)</th>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No Hermes, Perfetto, or Instruments profiler</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Web CDP tracing &amp; Chromium JS coverage only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No native CPU/mobile profiling</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Web Lighthouse service; no RN/Hermes profiler</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Black-box only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Gray-box sync with RN JS thread, timers &amp; network</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Basic OS perf data commands; no RN profiler</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Best-in-class Hermes, React DevTools, Instruments &amp; Perfetto</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No native profiling</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Interactive Flow Recorder / Codegen</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Spana Studio Recorder + <code>spana mcp</code> flow export</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>playwright codegen</code></span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in Cypress Studio recorder</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Chrome DevTools Recorder export extension</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Maestro Studio point-and-click YAML recorder</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No official recorder</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Appium Inspector multi-language recorder</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Agent records paths into deterministic replays</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">MCP &amp; <code>agent.act</code> record deterministic code/cache</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Video Recording &amp; CI Reporters (HTML, JUnit, Allure)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Video + HTML playback, JUnit, Allure, JSON, GitHub PR</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Video + HTML, JUnit, JSON, blob &amp; Allure</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in video + JUnit, Mocha &amp; Allure reporters</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Video service + Spec, JUnit, Allure &amp; HTML</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Video &amp; JUnit/HTML; richer reports in Cloud</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in device video + Jest JUnit/HTML</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Screen recording API; reporters depend on runner</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Agent captures &amp; profiles; lighter CI reporting</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">GitHub PR reporter &amp; artifacts; fewer legacy formats</span></td>
+      </tr>
+
+      <tr class="cmp-cat"><th colspan="10">5. AI Agents &amp; Device / Auth Emulation</th></tr>
+
+      <tr>
+        <th scope="row">Official MCP Server for Coding Agents</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>spana mcp</code> (model-free, all 5 targets)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>@playwright/mcp</code> (web)</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Cypress Cloud MCP (run insights, not local live drive)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>@wdio/mcp</code></span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>maestro mcp</code></span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">None official</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Official <code>appium-mcp</code></span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">MCP-first architecture (<code>@swmansion/argent</code>)</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Built-in <code>npx e2e mcp</code> (web &amp; mobile)</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Natural-Language Agent Steps + CLI Replay Cache</th>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note"><code>ReplaySession</code> API works in code; <code>--strict-cache</code> not wired in CLI runner yet</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">MCP/codegen only; no built-in NL replay cache</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">AI helpers / <code>cy.prompt</code> tied to Cypress Cloud</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No built-in NL step + replay cache</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">MaestroGPT / AI commands (cloud/API dependent)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Code-only</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">External AI plugins only</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Agent records interactions into zero-AI replays</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Core design: <code>agent.act</code> + <code>.e2e/cache/</code> <code>--strict-cache</code></span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Browser &amp; Auth Emulation (Clock, Geo, Permissions, WebAuthn)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Clock, geo, permissions &amp; WebAuthn passkeys</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Clock, geo, timezone, permissions &amp; CDP WebAuthn</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Great <code>cy.clock()</code> &amp; stubs; no native WebAuthn</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">BiDi / CDP geo, permissions, timezone &amp; clock</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Mobile-focused; limited browser emulation</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Mobile only</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Depends on underlying browser driver</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">CDP on Chromium via agent; mobile-first</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Inherits Playwright web emulation</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">Mobile OS &amp; Hardware Simulation (Biometrics, Push, Deep Links, System UI)</th>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Biometrics, deep links, <code>systemUI()</code> &amp; iOS sim push (no Android push)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No native mobile OS simulation</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">No native mobile OS simulation</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Full biometrics, push, GPS, deep links &amp; OS dialogs via Appium</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Deep links, permissions &amp; location; limited biometrics/push</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Biometrics, push notifications, deep links &amp; URLs</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Full biometrics, push, GPS, sensors &amp; OS sheets</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Hardware keys, D-pad &amp; deep links; no biometric/push API</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Basic mobile device actions via <code>agent-device</code></span></td>
+      </tr>
+
+      <tr class="cmp-cat"><th colspan="10">6. Ecosystem, Maturity &amp; Licensing</th></tr>
+
+      <tr>
+        <th scope="row">Community Size, Plugins &amp; Battle-Tested Maturity</th>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Young project (v0.x); small community &amp; plugin ecosystem</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Massive community, Microsoft-backed web standard</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Huge frontend community &amp; mature plugin ecosystem</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">10+ years mature; huge OpenJS service ecosystem</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Widely adopted mobile standard, active community</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Battle-tested in RN, narrower outside RN</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Largest mobile automation community &amp; enterprise use</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Newer toolkit (Software Mansion-backed, growing fast)</span></td>
+        <td data-s="r"><span class="cmp-pill cmp-pill-r">No</span><span class="cmp-note">Very new framework; small community &amp; fast-changing API</span></td>
+      </tr>
+
+      <tr>
+        <th scope="row">100% Permissive OSS (No Paid CI Gates / Proprietary Binaries)</th>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Apache-2.0; all features &amp; CI sharding free</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Apache-2.0; completely free &amp; open-source</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">MIT core; key CI features &amp; MCP push Cypress Cloud</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">MIT; completely free &amp; open-source</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Apache-2.0 CLI; real iOS &amp; parallel push Cloud</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">MIT; completely free &amp; open-source</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Apache-2.0; completely free &amp; open-source</span></td>
+        <td data-s="y"><span class="cmp-pill cmp-pill-y">Partial</span><span class="cmp-note">Apache-2.0 source, but proprietary companion binaries</span></td>
+        <td data-s="g"><span class="cmp-pill cmp-pill-g">Full</span><span class="cmp-note">Apache-2.0; BYOM &amp; open-source</span></td>
+      </tr>
+    </tbody>
+
+  </table>
+</div>
+
+:::tip[How Speed Scores are calculated (be skeptical!)]
+Only **Spana** and **Playwright** web numbers are directly measured in our local benchmark below.
+Speed scores for the other 7 frameworks reflect real-world protocol overhead, context/app isolation
+cost, and local parallelism on each framework's **primary** platforms (so Detox scores **8.5 / 10**
+for gray-box React Native speed even though it doesn't run on web, and Playwright scores **8.5 / 10**
+as the gold-standard multi-browser web runner). **8.0–10** = Green, **5.5–7.9** = Yellow, **&lt; 5.5** = Red.
+:::
+
+Facts about other tools come from their official docs and repositories, checked on 26 November 2026.
+If anything here is unfair, missing, or out of date, please
+[open an issue or PR](https://github.com/wezter96/spana/issues) — honesty matters more than winning
+rows.
 
 ## Benchmarks
 
@@ -978,22 +1504,33 @@ Raw numbers: [`benchmarks/framework-comparison/results.json`](https://github.com
 
 ## When to pick something else
 
-- **Playwright** — your app is web only and you want the largest community, the trace viewer, and
-  many languages.
-- **WebdriverIO** — you already have a WebDriver or Appium grid, or you need its large plugin
-  ecosystem.
-- **Maestro** — you want YAML tests that non-developers can read and write.
-- **Detox** — you test only a React Native app and want gray-box sync with the app's JavaScript
-  thread.
-- **Appium** — you need a driver Spana does not have (for example Windows, macOS or TV apps), or
-  you write tests in Java, Python or Ruby.
+- **Playwright** — your app is web-only and you want the largest community, the best time-travel
+  Trace Viewer (`trace.zip`), first-class VS Code debugging, or Python / Java / .NET SDKs.
+- **Cypress** — you want mature built-in Component Testing (React, Vue, Angular, Svelte) and an
+  interactive in-browser time-travel runner for frontend teams.
+- **WebdriverIO** — you want a battle-tested OpenJS ecosystem with real Safari, official Electron &
+  component runners, or an existing WebDriver / Appium grid.
+- **Maestro** — you want ultra-simple YAML mobile tests that non-developers and QA teams can read
+  and write with minimal boilerplate.
+- **Detox** — you test only a React Native app and want gray-box synchronization directly with the
+  app's JavaScript thread and timers.
+- **Appium** — you need native desktop/TV drivers Spana does not have (macOS, Windows, tvOS, Roku),
+  every real-device cloud out of the box, or Java / Python / C# / Ruby tests.
+- **Argent** — you're a React Native / TV / macOS team that wants deep Hermes, React DevTools,
+  Xcode Instruments, and Perfetto profiling driven directly by AI coding agents.
+- **`e2e`** — you want natural-language `agent.act()` / `agent.assert()` steps mixed directly into
+  TypeScript tests with built-in CLI replay caching.
 
 ## When Spana fits best
 
-- One app on web **and** mobile **and** desktop, with one test suite.
-- A Capacitor, React Native or Electron app with `testID` attributes.
-- You want your coding agent to write and run E2E tests.
-- You want fast local runs without installing Appium.
+- One app across **Web, iOS, Android, Electron, and/or Electrobun** maintained in a single typed
+  TypeScript (or Gherkin) suite.
+- A **Capacitor, Ionic, React Native, or Electron** app with `testID` attributes where dual-channel
+  DOM + native access avoids Appium setup.
+- You want **Chromium Direct CDP speed** (1.5–1.7× strict, up to 3.8× `hot-cache`), Rust visual
+  diffing, and PR diff filtering with zero paid CI gates.
+- You want a **model-free MCP server** (`spana mcp`) so coding agents can inspect screens, drive
+  live sessions across all 5 targets, and export deterministic `.flow.ts` tests.
 
 [Start with the Quick Start →](/getting-started/quick-start/)
 
@@ -1080,6 +1617,10 @@ interface FlowConfig {
   artifacts?: ArtifactConfig;
   defaults?: FlowDefaults;
   when?: WhenCondition;
+  skip?: boolean | (WhenCondition & { reason?: string });
+  fixme?: boolean | (WhenCondition & { reason?: string });
+  only?: boolean;
+  retries?: number;
 }
 
 interface WhenCondition {
@@ -1088,16 +1629,33 @@ interface WhenCondition {
 }
 ```
 
-| Option          | Type             | Default                                 | Description                                                      |
-| --------------- | ---------------- | --------------------------------------- | ---------------------------------------------------------------- |
-| `tags`          | `string[]`       | —                                       | Tag strings for `--tag` filtering at the CLI                     |
-| `platforms`     | `Platform[]`     | all configured                          | Restrict this flow to specific platforms only                    |
-| `timeout`       | `number`         | `defaults.waitTimeout × 10`, or `60000` | Flow-level timeout in milliseconds                               |
-| `autoLaunch`    | `boolean`        | `true`                                  | Automatically launch the app before the flow starts              |
-| `launchOptions` | `LaunchOptions`  | config default                          | Override launch defaults for this flow and for manual app.launch |
-| `artifacts`     | `ArtifactConfig` | config default                          | Override capture behavior for this single flow                   |
-| `defaults`      | `FlowDefaults`   | config default                          | Override wait / typing / stability defaults per flow             |
-| `when`          | `WhenCondition`  | —                                       | Runtime conditions that control whether the flow runs            |
+| Option           | Type                 | Default                                 | Description                                                          |
+| ---------------- | -------------------- | --------------------------------------- | -------------------------------------------------------------------- |
+| `tags`           | `string[]`           | —                                       | Tag strings for `--tag` filtering at the CLI                         |
+| `platforms`      | `Platform[]`         | all configured                          | Restrict this flow to specific platforms only                        |
+| `timeout`        | `number`             | `defaults.waitTimeout × 10`, or `60000` | Flow-level timeout in milliseconds                                   |
+| `autoLaunch`     | `boolean`            | `true`                                  | Automatically launch the app before the flow starts                  |
+| `launchOptions`  | `LaunchOptions`      | config default                          | Override launch defaults for this flow and for manual app.launch     |
+| `artifacts`      | `ArtifactConfig`     | config default                          | Override capture behavior for this single flow                       |
+| `defaults`       | `FlowDefaults`       | config default                          | Override wait / typing / stability defaults per flow                 |
+| `when`           | `WhenCondition`      | —                                       | Runtime conditions that control whether the flow runs                |
+| `skip` / `fixme` | Boolean or condition | `false`                                 | Do not execute the flow; `fixme` identifies a known issue in reports |
+| `only`           | `boolean`            | `false`                                 | If any selected flow is focused, only focused flows run              |
+| `retries`        | `number`             | Project or CLI retry count              | Number of additional attempts after a failure; `0` disables retries  |
+
+### Skip, focus, or retry individual flows
+
+```ts
+export default flow(
+  "Updates device settings",
+  { fixme: { platform: "ios", reason: "Waiting for a simulator fix" }, retries: 1 },
+  async ({ app }) => {
+    await app.tap({ testID: "settings" });
+  },
+);
+```
+
+`skip` and `fixme` conditions are evaluated per target platform. If both `platform` and `env` are given, both must match (the environment variable must be nonempty). Reports count both as skipped and retain the modifier and optional reason. Use `flow.skip(name, fn)`, `flow.fixme(name, fn)`, or `flow.only(name, fn)` as shorthand; each also accepts a config argument. Remove `only` before committing so the rest of the suite runs in CI.
 
 ### Per-flow launch overrides
 
@@ -1258,7 +1816,7 @@ These gestures are only available on mobile runtimes. Use them for map canvases,
 | `getVirtualCredentials`      | `(id?) => Promise<VirtualCredential[]>`            | List credentials stored in the virtual authenticator                            |
 | `clearVirtualCredentials`    | `(id?) => Promise<void>`                           | Delete credentials stored in the virtual authenticator                          |
 
-These helpers are available on local web runs with the Playwright or direct CDP engine. `getHAR()` needs the Playwright engine. `mockNetwork`, `blockNetwork`, `getConsoleLogs`, and `getJSErrors` are also implemented for Electron, Electrobun, and mobile WebViews; on Android and iOS, network mocks need `spana-bridge`. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
+These helpers are available on local web runs with the Playwright or direct CDP engine. `getHAR()` needs the Playwright engine. `mockNetwork`, `blockNetwork`, `getConsoleLogs`, and `getJSErrors` are also implemented for Electron, Electrobun, and mobile WebViews. On Android, use a debuggable WebView or `spana-bridge`; on iOS, use `spana-bridge`. Bridge mocks intercept JavaScript fetch/XHR only. Neither option intercepts native HTTP clients. When artifact capture is enabled, failures can also write console logs, JavaScript errors, and HAR files into `spana-output/`.
 
 #### `setNetworkConditions()`
 
@@ -1689,6 +2247,44 @@ await expect({ testID: "login-button" }).toHaveMinTouchTarget(48);
 
 `toPassAccessibilityAudit()` is web-only. The other accessibility assertions are element-level checks that work across supported platforms.
 
+## Soft assertions and retrying custom checks
+
+```ts
+await expect.soft({ testID: "name" }).toHaveText("Ada");
+await expect.soft({ testID: "email" }).toContainText("@example.test");
+
+await expect
+  .poll(() => app.evaluate<number>("window.pendingRequests"), {
+    timeout: 3000,
+    intervals: [100, 250],
+  })
+  .toBe(0);
+
+await expect(async () => {
+  await expect({ testID: "ready" }).toBeVisible({ timeout: 200 });
+  await expect({ testID: "queue" }).toHaveText("Empty", { timeout: 200 });
+}).toPass({ timeout: 3000, intervals: [100, 250] });
+```
+
+Soft assertions still wait for their matchers, including negated selector assertions such as `expect.soft(selector).not.toBeVisible()`. If they fail, the flow continues and reports the collected failures at the end of the attempt.
+
+`poll` compares a callback's return value and supports negation (for example, `expect.poll(fn).not.toBe(0)`). `toPass` retries a callback until it stops throwing or rejecting. Both stop waiting at the configured timeout, even if a callback is still running. Use idempotent callbacks, since they can run more than once. The default retry intervals are 50, 100, 250, and 500 ms; after the interval list is exhausted, its last interval repeats.
+
+## ARIA snapshots
+
+On the Playwright web engine, compare a locator's accessible roles, names, and hierarchy against Playwright's YAML snapshot output:
+
+```ts
+await expect({ css: "nav" }).toMatchAriaSnapshot(`
+  - navigation "Menu":
+    - link "Home"
+    - link "Settings"
+`);
+await expect({ css: "nav" }).toMatchAriaSnapshot({ path: "snapshots/menu.aria.yml" });
+```
+
+The assertion compares exact normalized YAML, ignoring leading indentation and surrounding blank lines. File paths are relative to the flow file. Run `spana test --update-baselines` to write or refresh file-based baselines; inline snapshots are edited by hand.
+
 ## Auto-wait behavior
 
 All assertions auto-wait. spana does not require manual `sleep()` calls.
@@ -1823,6 +2419,26 @@ spana test --platform android,ios
 ```
 
 CLI filtering takes effect before per-flow filtering. A flow with `platforms: ["android"]` will not run if you pass `--platform web`, even if both are in your config.
+
+## Device emulation and OS events
+
+| API                                             | Playwright web                                                 | Android                                                      | iOS                                                                |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `setGeolocation({ latitude, longitude })`       | Yes; also grant location access                                | Local emulator or supported Appium driver                    | Simulator or supported Appium driver                               |
+| `setSystemTime(date)`                           | Yes; changes browser wall time without pausing timers          | —                                                            | —                                                                  |
+| `grantPermission(name)`, `denyPermission(name)` | Grant via Playwright, deny via Chromium; optional `{ origin }` | Runtime permission names such as `android.permission.CAMERA` | Simulator privacy services such as `location`                      |
+| `setOrientation("portrait" \| "landscape")`     | Swaps the viewport dimensions                                  | UiAutomator2 or Appium                                       | WDA or Appium                                                      |
+| `setBiometricEnrollment(enabled)`               | —                                                              | Enroll a test fingerprint in Android settings first          | Simulator                                                          |
+| `simulateBiometric(options)`                    | —                                                              | Emulator; `{ type: "fingerprint", fingerId: 1 }`             | Simulator; `{ type: "faceId", match: false }` or `type: "touchId"` |
+| `sendPushNotification(payload)`                 | —                                                              | —                                                            | Simulator; pass an APNs payload with an `aps` object               |
+
+```ts
+await app.setBiometricEnrollment(true);
+await app.simulateBiometric({ type: "faceId", match: true });
+await app.sendPushNotification({ aps: { alert: "Order shipped" }, orderId: "123" });
+```
+
+Guard calls by platform and target type. Appium support depends on the provider and driver version. Device changes can persist in reused devices or browser contexts; restore state explicitly where needed. Android system notifications posted by the shell do not deliver FCM messages to an app, so Android push simulation is not exposed.
 
 ## Common patterns
 
@@ -2266,7 +2882,7 @@ spana test [path] [options]
 | `--changed`             | Run only changed flow files from git                                                                                       |
 | `--changed-since <ref>` | Run the `filters` from `spana.config.ts` against the git diff from `<ref>`. Without `filters`, it warns and runs all flows |
 | `--last-failed`         | Re-run only flows that failed in the last run                                                                              |
-| `--update-baselines`    | Rewrite screenshot baselines for visual regression                                                                         |
+| `--update-baselines`    | Rewrite screenshot and file-based ARIA snapshot baselines                                                                  |
 | `--strict-cache`        | Accepted for replay cache strict mode, but `spana test` does not use it yet (see [Replay Cache](/cli/agent-commands/))     |
 
 ### Output and configuration
@@ -2274,6 +2890,7 @@ spana test [path] [options]
 | Flag                 | Description                                                                                                                    |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `--reporter <names>` | Comma-separated reporters: `console`, `json`, `junit`, `html`, `allure`, `github`, or a custom module path (default `console`) |
+| `--js-coverage`      | Save JavaScript coverage for Chromium web flows                                                                                |
 | `--config <path>`    | Use a non-default config file                                                                                                  |
 | `--validate-config`  | Validate config and exit before discovery                                                                                      |
 | `--quiet`, `-q`      | Suppress pass output and show failures plus summary                                                                            |
@@ -3681,9 +4298,7 @@ interface FlowConfig {
   autoLaunch?: boolean; // default true
   launchOptions?: LaunchOptions;
   artifacts?: ArtifactConfig; // same shape as config `artifacts`
-  defaults?: {
-    /* per-flow timing overrides */
-  };
+  defaults?: {/* per-flow timing overrides */};
   when?: WhenCondition;
 }
 
