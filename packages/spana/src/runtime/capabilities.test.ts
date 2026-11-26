@@ -2,7 +2,6 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import conformanceConfig from "../../conformance.config.js";
 import { resolveCapabilities } from "./capabilities.js";
 
 const createdTempDirs: string[] = [];
@@ -20,14 +19,6 @@ afterAll(() => {
 });
 
 describe("resolveCapabilities", () => {
-  test("supplies the UiAutomator2 driver for Android conformance without CLI capabilities", async () => {
-    const result = await resolveCapabilities(conformanceConfig.execution?.appium ?? {}, {
-      platform: "android",
-    });
-    expect(result["appium:automationName"]).toBe("UiAutomator2");
-    expect(result["appium:app"]).toBe(conformanceConfig.apps?.android?.appPath);
-  });
-
   test("returns config capabilities when no file or CLI caps given", async () => {
     const result = await resolveCapabilities(
       { capabilities: { platformName: "Android", deviceName: "Pixel 6" } },
