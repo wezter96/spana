@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Effect } from "effect";
-import { makeLightweightCdpDriver } from "./cdp-browser.js";
+import { buildDirectChromiumLaunchArgs, makeLightweightCdpDriver } from "./cdp-browser.js";
 import type { MinimalWebSocket } from "../channels/cdp-client.js";
 
 function createFakeCdpSocket() {
@@ -132,5 +132,38 @@ describe("makeLightweightCdpDriver", () => {
     );
 
     await Effect.runPromise(driver.killApp(""));
+  });
+});
+
+describe("buildDirectChromiumLaunchArgs", () => {
+  test("disables OS keychain and background services for throwaway profiles", () => {
+    const headlessArgs = buildDirectChromiumLaunchArgs({
+      userDataDir: "/tmp/spana-test-profile",
+      headless: true,
+    });
+    expect(headlessArgs).toContain("--headless=new");
+    expect(headlessArgs).toContain("--remote-debugging-port=0");
+    expect(headlessArgs).toContain("--user-data-dir=/tmp/spana-test-profile");
+    expect(headlessArgs).toContain("--use-mock-keychain");
+    expect(headlessArgs).toContain("--password-store=basic");
+    expect(headlessArgs).toContain("--no-service-autorun");
+    expect(headlessArgs).toContain("--disable-component-update");
+    expect(headlessArgs).toContain("--disable-breakpad");
+    expect(headlessArgs).toContain("--disable-gpu");
+    expect(headlessArgs.at(-1)).toBe("about:blank");
+
+    const headedArgs = buildDirectChromiumLaunchArgs({
+      userDataDir: "/tmp/spana-test-headed",
+      remoteDebuggingPort: 9322,
+      headless: false,
+      args: ["--window-size=1280,720"],
+    });
+    expect(headedArgs).not.toContain("--headless=new");
+    expect(headedArgs).not.toContain("--disable-gpu");
+    expect(headedArgs).toContain("--remote-debugging-port=9322");
+    expect(headedArgs).toContain("--use-mock-keychain");
+    expect(headedArgs).toContain("--password-store=basic");
+    expect(headedArgs).toContain("--window-size=1280,720");
+    expect(headedArgs.at(-1)).toBe("about:blank");
   });
 });

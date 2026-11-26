@@ -143,7 +143,7 @@ graph TD
 
 Workers share a single atomic index into the flow array. Because Bun is single-threaded, the increment is naturally safe with no mutex. A faster device finishes sooner and picks up the next flow immediately, draining the queue at the speed of the fastest workers. When a previous run recorded flow durations (`spana-output/.spana/last-run.json`), the queue is ordered longest-first.
 
-For web, `--workers <n>` creates `n` isolated browser contexts spread across `ceil(n / execution.web.maxContextsPerBrowser)` browser processes (default: 1 context per browser for the `cdp` engine, 2 for `playwright`). Android and iOS get one worker per discovered device.
+For web, `--workers <n>` creates `n` isolated browser contexts spread across `ceil(n / execution.web.maxContextsPerBrowser)` browser processes (default: 4 multiplexed contexts per browser for the `cdp` engine, 2 for `playwright`). Android and iOS get one worker per discovered device.
 
 - `parallel.ts` — `runParallel()` launches all workers with `Promise.all`, each looping over the queue until exhausted.
 - `orchestrator.ts` — `orchestrate()` runs each platform (single worker or `runParallel()` pool). Platforms run serially unless `parallelPlatforms` is enabled.

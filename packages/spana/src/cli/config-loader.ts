@@ -8,6 +8,7 @@ const DEFAULT_CONFIG_CANDIDATES = ["spana.config.ts", "packages/spana/spana.conf
 
 export interface LoadConfigOptions {
   configPath?: string;
+  cwd?: string;
   allowMissing?: boolean;
 }
 
@@ -107,9 +108,10 @@ function resolveConfigPaths(config: ProvConfig, configPath: string): ProvConfig 
 }
 
 export async function loadConfig(options: LoadConfigOptions = {}): Promise<LoadedConfig> {
+  const baseDir = options.cwd ? resolve(options.cwd) : process.cwd();
   const candidates = options.configPath
-    ? [resolve(options.configPath)]
-    : DEFAULT_CONFIG_CANDIDATES.map((candidate) => resolve(candidate));
+    ? [isAbsolute(options.configPath) ? options.configPath : resolve(baseDir, options.configPath)]
+    : DEFAULT_CONFIG_CANDIDATES.map((candidate) => resolve(baseDir, candidate));
   const foundPath = candidates.find((candidate) => existsSync(candidate));
 
   if (!foundPath) {
@@ -118,7 +120,7 @@ export async function loadConfig(options: LoadConfigOptions = {}): Promise<Loade
     }
 
     if (options.configPath) {
-      throw new Error(`Config file not found: ${resolve(options.configPath)}`);
+      throw new Error(`Config file not found: ${candidates[0]}`);
     }
 
     throw new Error(`No config file found. Looked in: ${candidates.join(", ")}`);

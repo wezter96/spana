@@ -71,6 +71,11 @@ export interface DomWaitForSelectorOptions {
   checkHitTest?: boolean;
   /** Respect app-owned `window.__SPANA_APP_READY__` signal when defined. Default: true. */
   waitForAppReady?: boolean;
+  /**
+   * Arm the capture-phase moving-target tap guard directly on the resolved element
+   * before resolving (0 extra round-trips on Direct CDP when paired with `Runtime.addBinding`).
+   */
+  armTapGuard?: boolean;
 }
 
 export interface DomWaitForHiddenOptions {
@@ -205,6 +210,10 @@ export interface DomChannel {
   getJSErrors?(): Promise<BrowserJSError[]>;
   listTargets?(): Promise<DomTargetInfo[]>;
   selectTarget?(targetId: string): Promise<void>;
+  /** True when `waitForSelector({ armTapGuard: true })` arms the moving-target tap guard inline (eliminating the pre-tap evaluate RTT). */
+  supportsInlineTapGuard?(): boolean;
+  /** Fast single-attempt check & cleanup of the inline moving-target tap guard (fails open immediately on navigation). */
+  checkTapGuard?(): Promise<boolean>;
 }
 
 /** Convert a DomElementMatch + resolved screen bounds into Spana's unified Element shape. */
@@ -1344,11 +1353,53 @@ export function buildDomWaitForSelectorScript(
         : 0;
   const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
   const waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
+  const armTapGuard = Boolean(opts.armTapGuard && forAction);
 
-  return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs, reqStableFrames, checkHitTest, waitForAppReady) {
+  return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs, reqStableFrames, checkHitTest, waitForAppReady, armTapGuard) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
     var explicitStableFrames = instantAnim ? 0 : reqStableFrames;
+
+    function armTapGuardOnEl(el) {
+      if (!armTapGuard || !el || el.nodeType !== 1) return;
+      try {
+        var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+        var doc = el.ownerDocument || document;
+        if (win.__spanaTapGuardCleanup) win.__spanaTapGuardCleanup();
+        win.__spanaTapMissed = false;
+        var matchTarget = function(t) {
+          return isSameOrDescendant(el, t) || (t && typeof t.contains === "function" && t.contains(el));
+        };
+        var cleanup = function() {
+          win.removeEventListener("pointerdown", onEvt, true);
+          win.removeEventListener("mousedown", onEvt, true);
+          win.removeEventListener("mouseup", onMouseUp, true);
+          win.removeEventListener("click", onEvt, true);
+          if (win.__spanaTapGuardCleanup === cleanup) delete win.__spanaTapGuardCleanup;
+        };
+        var onMouseUp = function(e) {
+          if (!e.isTrusted) return;
+          Promise.resolve().then(cleanup);
+        };
+        var onEvt = function(e) {
+          if (!e.isTrusted) return;
+          var hit = deepElementFromPoint(doc, e.clientX, e.clientY) || e.target;
+          if (!matchTarget(hit) && !matchTarget(e.target)) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            win.__spanaTapMissed = true;
+            if (e.type === "click") cleanup();
+          } else if (e.type === "click") {
+            cleanup();
+          }
+        };
+        win.addEventListener("pointerdown", onEvt, true);
+        win.addEventListener("mousedown", onEvt, true);
+        win.addEventListener("mouseup", onMouseUp, true);
+        win.addEventListener("click", onEvt, true);
+        win.__spanaTapGuardCleanup = cleanup;
+      } catch (e) {}
+    }
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
@@ -1395,7 +1446,10 @@ export function buildDomWaitForSelectorScript(
     var imm = checkActionableNow();
     if (imm) {
       if (!forAction) return imm;
-      if (neededStableFrames(imm) <= 0) return [imm.match];
+      if (neededStableFrames(imm) <= 0) {
+        armTapGuardOnEl(imm.target.hit.el);
+        return [imm.match];
+      }
     }
 
     return new Promise(function(resolve) {
@@ -1427,6 +1481,7 @@ export function buildDomWaitForSelectorScript(
           if (document.readyState === "complete" && (!waitForAppReady || isAppReady())) {
             var hit = checkActionableNow();
             if (hit) {
+              if (forAction) armTapGuardOnEl(hit.target.hit.el);
               finish(forAction ? [hit.match] : hit);
             } else {
               finish([]);
@@ -1441,6 +1496,7 @@ export function buildDomWaitForSelectorScript(
         if (done || checkingStability) return;
         var framesToWait = neededStableFrames(candidate);
         if (!forAction || framesToWait <= 0 || typeof requestAnimationFrame !== "function") {
+          if (forAction) armTapGuardOnEl(candidate.target.hit.el);
           finish(forAction ? [candidate.match] : candidate);
           return;
         }
@@ -1471,6 +1527,7 @@ export function buildDomWaitForSelectorScript(
           if (dx <= 1 && dy <= 1 && dw <= 1 && dh <= 1) {
             remainingFrames -= 1;
             if (remainingFrames <= 0) {
+              armTapGuardOnEl(el);
               finish([cur]);
               return;
             }
@@ -1509,6 +1566,7 @@ export function buildDomWaitForSelectorScript(
 
       timeoutTimer = setTimeout(function() {
         var finalHit = checkActionableNow();
+        if (finalHit && forAction) armTapGuardOnEl(finalHit.target.hit.el);
         finish(finalHit ? (forAction ? [finalHit.match] : finalHit) : []);
       }, timeoutMs);
 
@@ -1529,7 +1587,7 @@ export function buildDomWaitForSelectorScript(
 
       attempt();
     });
-  })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs}, ${stableFrames}, ${checkHitTest}, ${waitForAppReady})`;
+  })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs}, ${stableFrames}, ${checkHitTest}, ${waitForAppReady}, ${armTapGuard})`;
 }
 
 /**
@@ -2045,8 +2103,50 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var reqStableFrames = opts.stableFrames !== undefined ? Math.max(0, Math.round(opts.stableFrames)) : (forAction ? 2 : 0);
     var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
     var waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
+    var armTapGuard = Boolean(opts.armTapGuard && forAction);
     var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
     var explicitStableFrames = instantAnim ? 0 : reqStableFrames;
+
+    function armTapGuardOnEl(el) {
+      if (!armTapGuard || !el || el.nodeType !== 1) return;
+      try {
+        var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+        var doc = el.ownerDocument || document;
+        if (win.__spanaTapGuardCleanup) win.__spanaTapGuardCleanup();
+        win.__spanaTapMissed = false;
+        var matchTarget = function(t) {
+          return isSameOrDescendant(el, t) || (t && typeof t.contains === "function" && t.contains(el));
+        };
+        var cleanup = function() {
+          win.removeEventListener("pointerdown", onEvt, true);
+          win.removeEventListener("mousedown", onEvt, true);
+          win.removeEventListener("mouseup", onMouseUp, true);
+          win.removeEventListener("click", onEvt, true);
+          if (win.__spanaTapGuardCleanup === cleanup) delete win.__spanaTapGuardCleanup;
+        };
+        var onMouseUp = function(e) {
+          if (!e.isTrusted) return;
+          Promise.resolve().then(cleanup);
+        };
+        var onEvt = function(e) {
+          if (!e.isTrusted) return;
+          var hit = deepElementFromPoint(doc, e.clientX, e.clientY) || e.target;
+          if (!matchTarget(hit) && !matchTarget(e.target)) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            win.__spanaTapMissed = true;
+            if (e.type === "click") cleanup();
+          } else if (e.type === "click") {
+            cleanup();
+          }
+        };
+        win.addEventListener("pointerdown", onEvt, true);
+        win.addEventListener("mousedown", onEvt, true);
+        win.addEventListener("mouseup", onMouseUp, true);
+        win.addEventListener("click", onEvt, true);
+        win.__spanaTapGuardCleanup = cleanup;
+      } catch (e) {}
+    }
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
@@ -2090,7 +2190,10 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var imm = checkActionableNow();
     if (imm) {
       if (!forAction) return imm;
-      if (neededStableFrames(imm) <= 0) return [imm.match];
+      if (neededStableFrames(imm) <= 0) {
+        armTapGuardOnEl(imm.target.hit.el);
+        return [imm.match];
+      }
     }
 
     return new Promise(function(resolve) {
@@ -2121,6 +2224,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         idleTimer = setTimeout(function() {
           if (document.readyState === "complete" && (!waitForAppReady || isAppReady())) {
             var hit = checkActionableNow();
+            if (hit && forAction) armTapGuardOnEl(hit.target.hit.el);
             finish(hit ? (forAction ? [hit.match] : hit) : []);
           } else {
             armIdleTimer();
@@ -2132,6 +2236,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         if (done || checkingStability) return;
         var framesToWait = neededStableFrames(candidate);
         if (!forAction || framesToWait <= 0 || typeof requestAnimationFrame !== "function") {
+          if (forAction) armTapGuardOnEl(candidate.target.hit.el);
           finish(forAction ? [candidate.match] : candidate);
           return;
         }
@@ -2152,7 +2257,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           var dh = Math.abs(cur.rect.height - lastRect.height);
           if (dx <= 1 && dy <= 1 && dw <= 1 && dh <= 1) {
             remainingFrames -= 1;
-            if (remainingFrames <= 0) { finish([cur]); return; }
+            if (remainingFrames <= 0) { armTapGuardOnEl(el); finish([cur]); return; }
           } else {
             remainingFrames = framesToWait;
             lastRect = cur.rect;
@@ -2182,6 +2287,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
 
       timeoutTimer = setTimeout(function() {
         var finalHit = checkActionableNow();
+        if (finalHit && forAction) armTapGuardOnEl(finalHit.target.hit.el);
         finish(finalHit ? (forAction ? [finalHit.match] : finalHit) : []);
       }, timeoutMs);
       fallbackInterval = setInterval(attempt, forAction ? 40 : 120);
@@ -2561,6 +2667,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     });
   }
 
+  function checkTapGuard() {
+    var m = Boolean(window.__spanaTapMissed);
+    if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+    delete window.__spanaTapMissed;
+    return m;
+  }
+
   window.__spanaRt = {
     query: query,
     scrollIntoView: scrollIntoView,
@@ -2568,7 +2681,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     waitForSelector: waitForSelector,
     waitForHidden: waitForHidden,
     waitForMatch: waitForMatch,
-    fill: fill
+    fill: fill,
+    checkTapGuard: checkTapGuard
   };
   return true;
 })();`;

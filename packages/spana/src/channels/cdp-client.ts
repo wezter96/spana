@@ -25,6 +25,8 @@ import {
 export interface MinimalWebSocket {
   readonly readyState: number;
   send(data: string): void;
+  /** Optional zero-copy fast path used by `CdpWebSocketMultiplexer` to avoid double JSON parse/stringify. */
+  sendParsed?(payload: Record<string, unknown>): void;
   close(): void;
   addEventListener(type: string, listener: (event: any) => void): void;
   removeEventListener?(type: string, listener: (event: any) => void): void;
@@ -62,9 +64,318 @@ interface PendingRequest {
 }
 
 const WS_OPEN = 1;
+const WS_CLOSED = 3;
 
 function defaultWebSocketFactory(url: string): MinimalWebSocket {
   return new WebSocket(url) as unknown as MinimalWebSocket;
+}
+
+interface MultiplexerInFlight {
+  client: VirtualCdpWebSocket;
+  localId: number;
+  method: string;
+  sessionId?: string;
+  browserContextId?: string;
+}
+
+class VirtualCdpWebSocket implements MinimalWebSocket {
+  readyState: number;
+  private readonly listeners = new Map<string, Set<(event: any) => void>>();
+
+  constructor(
+    private readonly mux: CdpWebSocketMultiplexer,
+    initialReadyState: number,
+  ) {
+    this.readyState = initialReadyState;
+  }
+
+  send(data: string): void {
+    this.mux.handleClientSend(this, data);
+  }
+
+  sendParsed(payload: Record<string, unknown>): void {
+    this.mux.handleClientSendParsed(this, payload);
+  }
+
+  close(): void {
+    if (this.readyState === WS_CLOSED) return;
+    this.readyState = WS_CLOSED;
+    this.mux.handleClientClose(this);
+    this.emit("close", {});
+  }
+
+  addEventListener(type: string, listener: (event: any) => void): void {
+    let set = this.listeners.get(type);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(type, set);
+    }
+    set.add(listener);
+  }
+
+  removeEventListener(type: string, listener: (event: any) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  emit(type: string, event: any): void {
+    const set = this.listeners.get(type);
+    if (!set) return;
+    for (const fn of set) {
+      try {
+        fn(event);
+      } catch {
+        // virtual listener error must not kill multiplexer loop
+      }
+    }
+  }
+}
+
+/**
+ * Multiplexes N independent `CdpDomChannel` workers over ONE real browser-level
+ * CDP WebSocket connection.
+ *
+ * - Remaps JSON-RPC `id`s per virtual client and routes command responses directly
+ *   back to the requesting client.
+ * - Tracks `sessionId` ownership (from `Target.attachToTarget` responses,
+ *   `Target.attachedToTarget` events, and client commands) and `browserContextId`
+ *   ownership (from `Target.createBrowserContext` responses) for O(1) event routing
+ *   with zero N× fan-out parsing overhead.
+ * - Closes the underlying WebSocket automatically once the last virtual socket disconnects.
+ */
+export class CdpWebSocketMultiplexer {
+  private readonly wsUrl: string;
+  private readonly createWebSocket: WebSocketFactory;
+  private realWs: MinimalWebSocket | null = null;
+  private state = 0; // 0=connecting, 1=open, 3=closed
+  private nextGlobalId = 1;
+  private readonly clients = new Set<VirtualCdpWebSocket>();
+  private readonly inFlight = new Map<number, MultiplexerInFlight>();
+  private readonly sessionOwner = new Map<string, VirtualCdpWebSocket>();
+  private readonly contextOwner = new Map<string, VirtualCdpWebSocket>();
+  private readonly pendingFrames: string[] = [];
+
+  constructor(wsUrl: string, createWebSocket: WebSocketFactory = defaultWebSocketFactory) {
+    this.wsUrl = wsUrl;
+    this.createWebSocket = createWebSocket;
+  }
+
+  get activeVirtualSockets(): number {
+    return this.clients.size;
+  }
+
+  get underlyingSocketOpen(): boolean {
+    return this.realWs !== null && this.state === WS_OPEN;
+  }
+
+  createVirtualSocket(): MinimalWebSocket {
+    this.ensureConnected();
+    const virtual = new VirtualCdpWebSocket(this, this.state);
+    this.clients.add(virtual);
+    return virtual;
+  }
+
+  private ensureConnected(): void {
+    if (this.realWs && this.state !== WS_CLOSED) return;
+    this.state = 0;
+    const ws = this.createWebSocket(this.wsUrl);
+    this.realWs = ws;
+
+    const onOpen = () => {
+      if (this.realWs !== ws) return;
+      this.state = WS_OPEN;
+      if (this.pendingFrames.length > 0) {
+        const frames = this.pendingFrames.splice(0, this.pendingFrames.length);
+        for (const frame of frames) {
+          ws.send(frame);
+        }
+      }
+      for (const client of this.clients) {
+        if (client.readyState !== WS_CLOSED) {
+          client.readyState = WS_OPEN;
+          client.emit("open", {});
+        }
+      }
+    };
+
+    const onError = (err: unknown) => {
+      if (this.realWs !== ws) return;
+      for (const client of this.clients) {
+        if (client.readyState !== WS_CLOSED) {
+          client.emit("error", err);
+        }
+      }
+    };
+
+    const onClose = () => {
+      if (this.realWs !== ws) return;
+      this.state = WS_CLOSED;
+      this.realWs = null;
+      this.inFlight.clear();
+      this.sessionOwner.clear();
+      this.contextOwner.clear();
+      this.pendingFrames.length = 0;
+      for (const client of Array.from(this.clients)) {
+        if (client.readyState !== WS_CLOSED) {
+          client.readyState = WS_CLOSED;
+          client.emit("close", {});
+        }
+      }
+      this.clients.clear();
+    };
+
+    const onMessage = (event: { data?: unknown }) => {
+      const raw = typeof event.data === "string" ? event.data : String(event.data ?? "");
+      let parsed: Record<string, any>;
+      try {
+        parsed = JSON.parse(raw) as Record<string, any>;
+      } catch {
+        return;
+      }
+
+      const globalId = parsed["id"];
+      if (typeof globalId === "number") {
+        const entry = this.inFlight.get(globalId);
+        if (!entry) return;
+        this.inFlight.delete(globalId);
+        if (!parsed["error"]) {
+          const res = parsed["result"];
+          if (
+            entry.method === "Target.createBrowserContext" &&
+            typeof res?.browserContextId === "string"
+          ) {
+            this.contextOwner.set(res.browserContextId, entry.client);
+          } else if (
+            entry.method === "Target.attachToTarget" &&
+            typeof res?.sessionId === "string"
+          ) {
+            this.sessionOwner.set(res.sessionId, entry.client);
+          } else if (
+            entry.method === "Target.disposeBrowserContext" &&
+            typeof entry.browserContextId === "string"
+          ) {
+            this.contextOwner.delete(entry.browserContextId);
+          }
+        }
+        if (entry.client.readyState === WS_CLOSED) return;
+        parsed["id"] = entry.localId;
+        entry.client.emit("message", { parsed });
+        return;
+      }
+
+      const method = parsed["method"];
+      if (typeof method !== "string") return;
+
+      const sid = typeof parsed["sessionId"] === "string" ? parsed["sessionId"] : undefined;
+      const params = parsed["params"];
+      const bcid =
+        typeof params?.targetInfo?.browserContextId === "string"
+          ? params.targetInfo.browserContextId
+          : typeof params?.browserContextId === "string"
+            ? params.browserContextId
+            : undefined;
+
+      let owner: VirtualCdpWebSocket | undefined =
+        (sid ? this.sessionOwner.get(sid) : undefined) ??
+        (bcid ? this.contextOwner.get(bcid) : undefined);
+
+      if (method === "Target.attachedToTarget" && typeof params?.sessionId === "string") {
+        if (owner) {
+          this.sessionOwner.set(params.sessionId, owner);
+        }
+      } else if (method === "Target.detachedFromTarget" && typeof params?.sessionId === "string") {
+        const detachedSid = params.sessionId as string;
+        if (!owner) owner = this.sessionOwner.get(detachedSid);
+        this.sessionOwner.delete(detachedSid);
+      }
+
+      if (owner) {
+        if (owner.readyState !== WS_CLOSED) {
+          owner.emit("message", { parsed, data: raw });
+        }
+        return;
+      }
+
+      // Unscoped browser-level event without a known context/session owner: broadcast
+      for (const client of this.clients) {
+        if (client.readyState !== WS_CLOSED) {
+          client.emit("message", { parsed, data: raw });
+        }
+      }
+    };
+
+    ws.addEventListener("open", onOpen);
+    ws.addEventListener("error", onError);
+    ws.addEventListener("close", onClose);
+    ws.addEventListener("message", onMessage);
+
+    if (ws.readyState === WS_OPEN) {
+      onOpen();
+    }
+  }
+
+  /** @internal */
+  handleClientSend(client: VirtualCdpWebSocket, data: string): void {
+    let parsed: Record<string, any>;
+    try {
+      parsed = JSON.parse(data) as Record<string, any>;
+    } catch {
+      return;
+    }
+    this.handleClientSendParsed(client, parsed);
+  }
+
+  /** @internal */
+  handleClientSendParsed(client: VirtualCdpWebSocket, parsed: Record<string, any>): void {
+    const localId = parsed["id"];
+    if (typeof localId !== "number") return;
+
+    const method = typeof parsed["method"] === "string" ? parsed["method"] : "";
+    const sessionId = typeof parsed["sessionId"] === "string" ? parsed["sessionId"] : undefined;
+    const browserContextId =
+      typeof parsed["params"]?.browserContextId === "string"
+        ? (parsed["params"].browserContextId as string)
+        : undefined;
+
+    if (sessionId && !this.sessionOwner.has(sessionId)) {
+      this.sessionOwner.set(sessionId, client);
+    }
+
+    const globalId = this.nextGlobalId++;
+    this.inFlight.set(globalId, { client, localId, method, sessionId, browserContextId });
+    parsed["id"] = globalId;
+    const serialized = JSON.stringify(parsed);
+
+    if (this.realWs && this.state === WS_OPEN) {
+      this.realWs.send(serialized);
+    } else {
+      this.pendingFrames.push(serialized);
+    }
+  }
+
+  /** @internal */
+  handleClientClose(client: VirtualCdpWebSocket): void {
+    this.clients.delete(client);
+    for (const [id, entry] of this.inFlight) {
+      if (entry.client === client) this.inFlight.delete(id);
+    }
+    for (const [sid, owner] of this.sessionOwner) {
+      if (owner === client) this.sessionOwner.delete(sid);
+    }
+    for (const [bcid, owner] of this.contextOwner) {
+      if (owner === client) this.contextOwner.delete(bcid);
+    }
+    if (this.clients.size === 0 && this.realWs) {
+      const ws = this.realWs;
+      this.realWs = null;
+      this.state = WS_CLOSED;
+      this.pendingFrames.length = 0;
+      try {
+        ws.close();
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
 }
 
 export function selectCdpTarget(
@@ -226,13 +537,17 @@ export class CdpDomChannel implements DomChannel {
         this.rejectAllPending(new Error("CDP WebSocket closed"));
       };
 
-      const onMessage = (event: { data?: unknown }) => {
-        const raw = typeof event.data === "string" ? event.data : String(event.data ?? "");
+      const onMessage = (event: { data?: unknown; parsed?: Record<string, any> }) => {
         let parsed: Record<string, any>;
-        try {
-          parsed = JSON.parse(raw) as Record<string, any>;
-        } catch {
-          return;
+        if (event.parsed && typeof event.parsed === "object") {
+          parsed = event.parsed;
+        } else {
+          const raw = typeof event.data === "string" ? event.data : String(event.data ?? "");
+          try {
+            parsed = JSON.parse(raw) as Record<string, any>;
+          } catch {
+            return;
+          }
         }
         const id = parsed["id"];
         if (typeof id === "number") {
@@ -315,6 +630,17 @@ export class CdpDomChannel implements DomChannel {
 
   enableInjectedRuntime(enabled = true): void {
     this.useInjectedRuntime = enabled;
+  }
+
+  supportsInlineTapGuard(): boolean {
+    return true;
+  }
+
+  async checkTapGuard(): Promise<boolean> {
+    const res = await this.evaluateFast<boolean>(
+      "(window.__spanaRt&&window.__spanaRt.checkTapGuard?window.__spanaRt.checkTapGuard():(()=>{const m=!!window.__spanaTapMissed;if(window.__spanaTapGuardCleanup)window.__spanaTapGuardCleanup();delete window.__spanaTapMissed;return m;})())",
+    );
+    return Boolean(res);
   }
 
   private async invokeDom<T>(
@@ -401,7 +727,11 @@ export class CdpDomChannel implements DomChannel {
       if (resolvedSessionId) {
         payload["sessionId"] = resolvedSessionId;
       }
-      ws.send(JSON.stringify(payload));
+      if (ws.sendParsed) {
+        ws.sendParsed(payload);
+      } else {
+        ws.send(JSON.stringify(payload));
+      }
     });
   }
 

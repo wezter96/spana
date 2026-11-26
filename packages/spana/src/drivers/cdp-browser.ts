@@ -527,9 +527,10 @@ export interface LightweightCdpDriverOptions {
   freshContextPerFlow?: boolean;
   /**
    * Context isolation mode when `freshContextPerFlow` is enabled:
-   * - `"fresh"` (default): creates a brand-new `Target.createBrowserContext` per flow.
-   * - `"hot-cache"`: keeps Chromium's HTTP & V8 bytecode caches warm while wiping cookies,
-   *   localStorage, sessionStorage, IndexedDB, CacheStorage, and service workers (~4 ms reset).
+   * - `"hot-cache"` (default in v0.14+): keeps Chromium's HTTP & V8 bytecode caches warm while
+   *   wiping cookies, localStorage, sessionStorage, OPFS, IndexedDB, CacheStorage, and service
+   *   workers (~4 ms reset).
+   * - `"fresh"`: creates a brand-new `Target.createBrowserContext` per flow (strictest isolation).
    */
   contextIsolation?: "fresh" | "hot-cache";
   /** Install persistent `window.__spanaRt` once per document to cut CDP wire payload ~100× (default: true on live sockets). */
@@ -757,6 +758,7 @@ export function makeLightweightCdpDriver(
     let viewportMutated = false;
     let isAtBlank = true;
     const label = options.engineLabel ?? "cdp";
+    const contextIsolation = options.contextIsolation ?? "hot-cache";
 
     let activeSlot: CdpContextSlot | undefined;
     let prefetchedSlotPromise: Promise<CdpContextSlot> | undefined;
@@ -1141,7 +1143,7 @@ export function makeLightweightCdpDriver(
       if (
         !useContexts ||
         !options.freshContextPerFlow ||
-        options.contextIsolation === "hot-cache" ||
+        contextIsolation === "hot-cache" ||
         prefetchedSlotPromise
       ) {
         return;
@@ -1811,7 +1813,7 @@ export function makeLightweightCdpDriver(
             height = initialHeight;
             cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
-              if (options.contextIsolation === "hot-cache" && activeSlot) {
+              if (contextIsolation === "hot-cache" && activeSlot) {
                 // 1. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
                 const preResetOps: Array<Promise<unknown>> = [];
                 if (activeSlot.tabs.length > 1) {

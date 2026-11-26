@@ -260,6 +260,7 @@ describe("direct CDP driver isolated browser contexts, prefetch & WebAuthn", () 
         cdpUrl: "ws://127.0.0.1:9350/devtools/browser/abc",
         useBrowserContexts: true,
         freshContextPerFlow: true,
+        contextIsolation: "fresh",
         virtualAuthenticator: true,
         createWebSocket: () => mockWs,
       }),

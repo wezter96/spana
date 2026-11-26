@@ -36,6 +36,8 @@ export interface WaitOptions {
   actionStableFrames?: number;
   /** Skip actionability checks (enabled, hit-test, stability) when performing an action (Playwright `{ force: true }`). */
   force?: boolean;
+  /** Arm the moving-target tap guard inside `waitForSelector` so Direct CDP taps need 0 extra eval RTTs. */
+  armTapGuard?: boolean;
 }
 
 const DEFAULT_TIMEOUT = 5000;
@@ -140,6 +142,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
               : opts?.actionStableFrames !== undefined
                 ? { stableFrames: opts.actionStableFrames }
                 : {}),
+            ...(opts?.armTapGuard && !opts?.force ? { armTapGuard: true } : {}),
           }),
         catch: (err) =>
           isInvalidSelectorError(err)
@@ -246,6 +249,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
                 ...(opts?.actionStableFrames !== undefined
                   ? { stableFrames: opts.actionStableFrames }
                   : {}),
+                ...(opts?.armTapGuard && !opts?.force ? { armTapGuard: true } : {}),
               }),
             catch: () => null,
           }).pipe(Effect.catch(() => Effect.succeed(null)));

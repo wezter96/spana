@@ -1,6 +1,6 @@
 {
   "name": "spana-test",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "The fastest AI-native E2E framework — one TypeScript test across Web, iOS, Android, Electron, Electrobun, and WASM",
   "keywords": [
     "android",

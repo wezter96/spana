@@ -11,6 +11,7 @@ import {
   makeLightweightCdpDriver,
   type DirectCdpBrowserHandle,
 } from "../drivers/cdp-browser.js";
+import { CdpWebSocketMultiplexer } from "../channels/cdp-client.js";
 import { resolveChromiumGpuArgs } from "../drivers/wasm-utils.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { updateWarmDaemonSession } from "./daemon-manager.js";
@@ -379,8 +380,8 @@ export async function buildWebRuntime(
 /**
  * Create `workerCount` isolated web runtimes sharded across
  * `Math.ceil(workerCount / maxContextsPerBrowser)` browser processes
- * (default: 2 contexts per browser, so 4 workers run on 2 Chromium processes × 2 contexts
- * — avoiding single-browser CDP/IO contention while keeping startup fast!).
+ * (default: 4 multiplexed contexts per browser on Direct CDP, 2 on Playwright —
+ * minimizing browser launch overhead while multiplexing N workers over 1 WebSocket per browser).
  * Supports both direct CDP (`engine: "cdp"`, zero Playwright pipe) and Playwright.
  */
 export async function buildWebRuntimePool(
@@ -397,16 +398,18 @@ export async function buildWebRuntimePool(
   const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
   const maxPerBrowser = Math.max(
     1,
-    webExecution?.maxContextsPerBrowser ?? (engine === "cdp" ? 1 : 2),
+    webExecution?.maxContextsPerBrowser ?? (engine === "cdp" ? 4 : 2),
   );
 
-  // Direct CDP multi-browser worker pool (zero Playwright Node client↔server pipe!)
+  // Direct CDP multi-browser worker pool (zero Playwright Node client↔server pipe,
+  // multiplexing all workers in a browser bucket over ONE shared WebSocket!)
   if (engine === "cdp") {
     const useExternalCdp = Boolean(webExecution?.cdpUrl);
     const browserCount = useExternalCdp ? 1 : Math.ceil(workerCount / maxPerBrowser);
     const handles: Array<{
       cdpUrl: string;
       handle?: DirectCdpBrowserHandle;
+      mux?: CdpWebSocketMultiplexer;
       remaining: number;
     }> = [];
 
@@ -441,6 +444,15 @@ export async function buildWebRuntimePool(
       }
     }
 
+    for (const bucket of handles) {
+      if (
+        bucket.remaining > 1 &&
+        (bucket.cdpUrl.startsWith("ws://") || bucket.cdpUrl.startsWith("wss://"))
+      ) {
+        bucket.mux = new CdpWebSocketMultiplexer(bucket.cdpUrl);
+      }
+    }
+
     const effectivePoolLocale = webExecution?.locale ?? config.defaults?.locale;
     const poolEmulation =
       webExecution?.colorScheme ||
@@ -466,6 +478,8 @@ export async function buildWebRuntimePool(
             viewport: webExecution?.viewport,
             evaluateTimeout: webExecution?.evaluateTimeout,
             useBrowserContexts: true,
+            useInjectedRuntime: true,
+            ...(bucket.mux ? { createWebSocket: () => bucket.mux!.createVirtualSocket() } : {}),
             freshContextPerFlow: webExecution?.freshContextPerFlow,
             contextIsolation: webExecution?.contextIsolation,
             waitUntil: webExecution?.waitUntil,

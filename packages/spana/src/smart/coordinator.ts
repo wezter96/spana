@@ -1893,6 +1893,22 @@ export function createCoordinator<T extends string = string, R extends string = 
           platform: opts?.platform ?? config.platform,
         };
         let attempts = 0;
+        const canInlineTapGuard =
+          !opts?.force &&
+          effectiveTapMode !== "dom" &&
+          (mergedOpts.platform === "web" || !mergedOpts.platform) &&
+          (mergedOpts.settleTimeout ?? 0) === 0 &&
+          !isRelativeSelectorLike(selector) &&
+          !isSystemUISelector(selector) &&
+          !(
+            typeof selector === "object" &&
+            selector !== null &&
+            "frame" in selector &&
+            selector.frame
+          ) &&
+          Boolean(driver.domChannel?.isConnected()) &&
+          Boolean(driver.domChannel?.supportsInlineTapGuard?.());
+
         while (true) {
           attempts += 1;
           const remaining = Math.max(50, deadline - Date.now());
@@ -1901,7 +1917,11 @@ export function createCoordinator<T extends string = string, R extends string = 
             selector,
             parse,
             true,
-            { ...mergedOpts, timeout: remaining },
+            {
+              ...mergedOpts,
+              timeout: remaining,
+              ...(canInlineTapGuard ? { armTapGuard: true } : {}),
+            },
             cache,
           );
           if (resolved.channel === "dom" && effectiveTapMode === "dom" && driver.domChannel) {
@@ -1928,7 +1948,25 @@ export function createCoordinator<T extends string = string, R extends string = 
             ) &&
             driver.domChannel?.isConnected();
 
-          if (guardActive) {
+          if (guardActive && canInlineTapGuard) {
+            // Inline moving-target guard (v0.14): already armed inside waitForSelector()
+            // with 0 pre-tap eval RTTs, self-cleans on mouseup/click, and verifies
+            // deterministically on the Renderer main thread via pre-JIT'd checkTapGuard().
+            yield* driver.tapAtCoordinate(x, y);
+            const missed = yield* Effect.tryPromise({
+              try: () => driver.domChannel!.checkTapGuard!(),
+              catch: () => false,
+            }).pipe(Effect.catch(() => Effect.succeed(false)));
+            if (missed) {
+              if (Date.now() < deadline && attempts < 20) {
+                yield* Effect.sleep(Duration.millis(25));
+                continue;
+              }
+              return yield* new DriverError({
+                message: `Element moved before tap could land (suppressed misdirected click after ${attempts} attempt(s) within ${totalTimeout}ms) — selector: ${formatSelector(selector)}`,
+              });
+            }
+          } else if (guardActive) {
             // Moving-target protection (1.11): arm a capture-phase click/pointerdown guard
             // targeting the resolved element at (x, y). If the element shifts before the native
             // mouse event lands, suppress the misdirected click and retry!

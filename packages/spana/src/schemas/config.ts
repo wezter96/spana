@@ -174,12 +174,13 @@ export interface WebExecutionConfig {
   freshContextPerFlow?: boolean;
   /**
    * Context isolation strategy when `freshContextPerFlow` is enabled (Direct CDP):
-   * - `"fresh"` (default): new `Target.createBrowserContext` per flow (strictest isolation).
-   * - `"hot-cache"`: keeps Chromium's HTTP & V8 bytecode cache hot while wiping cookies, localStorage,
-   *   sessionStorage, IndexedDB, CacheStorage, and service workers between flows (~4 ms reset!).
+   * - `"hot-cache"` (default in v0.14+): keeps Chromium's HTTP & V8 bytecode cache hot while wiping
+   *   cookies, localStorage, sessionStorage, OPFS, IndexedDB, CacheStorage, and service workers
+   *   between flows (~4 ms reset!).
+   * - `"fresh"`: new `Target.createBrowserContext` per flow (strictest isolation).
    */
   contextIsolation?: WebContextIsolation;
-  /** Max worker contexts sharing one Chromium browser process under `--parallel` (default: 2 to avoid CDP/IO contention). */
+  /** Max worker contexts sharing one Chromium browser process under `--parallel` (default: 4 for `cdp`, 2 otherwise). */
   maxContextsPerBrowser?: number;
   /** Automatically attach a CDP WebAuthn virtual authenticator (passkey) to every fresh context. */
   virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;

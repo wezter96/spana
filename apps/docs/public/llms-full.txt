@@ -161,7 +161,7 @@ to the next one only when the "Does not apply when" column matches you.
 | 1   | `spana test` with `.flow.ts` or Gherkin `.feature` files | `npx spana test`                                                                                                     | Your team needs [Varar](/writing-tests/varar/) Markdown specs. They run in Vitest, so options 2–6 do not apply.                              |
 | 2   | Only the flows a change can affect                       | Local: `spana test --changed` or `--last-failed`. CI: `--changed-since origin/main` **and** a `filters` list         | No `filters` in `spana.config.ts`: then `--changed-since` runs every flow. A config or lockfile change runs every flow.                      |
 | 3   | Web: shared browser pool                                 | `spana test --platform web --workers 4` (or `defaults.workers: 4`). Flows reuse warm browser contexts.               | Flows must not share any browser state: use #3b. `engine: "lightpanda"` (one worker only). `--parallel` without `--workers` uses one worker. |
-| 3b  | Web, fully isolated flows                                | `execution.web.engine: "auto"` (direct CDP for Chromium) plus `execution.web.freshContextPerFlow: true`              | You need `wsEndpoint`, a browser `channel`, HAR artifacts or a non-Chromium browser: `"auto"` then falls back to Playwright.                 |
+| 3b  | Web, fully isolated flows                                | `execution.web.engine: "auto"` (direct CDP for Chromium) plus `execution.web.freshContextPerFlow: true` (defaults to fast `"hot-cache"` isolation; set `contextIsolation: "fresh"` for brand-new browser contexts) | You need `wsEndpoint`, a browser `channel`, HAR artifacts or a non-Chromium browser: `"auto"` then falls back to Playwright.                 |
 | 4   | Hybrid, Electron or Electrobun: spana-bridge             | `execution.bridge.enabled: true` in config, and call `initSpanaBridge()` from `spana-bridge` in the app's test build | You cannot change the app. Pure native React Native screens (no WebView DOM). Multi-worker web runs (use #3).                                |
 | 5   | Skip UI sign-in                                          | Web: `execution.web.storageState: "./auth/user.json"`                                                                | Not web. On mobile and desktop, use the bridge (#4) to inject sign-in state.                                                                 |
 | 6   | Keep drivers warm between runs                           | Web: `execution.web.warmBrowser: true` (Chromium only). Mobile: `execution.warmDaemons.enabled: true`                | Not Chromium. `cdpUrl` or `wsEndpoint` is set.                                                                                               |
@@ -193,7 +193,10 @@ it turns off.
 | `execution.web.waitUntil: "domcontentloaded"`              | Continues as soon as the HTML is parsed, not after every asset loads (default `"load"`).              | Your app needs all assets before it can respond.      |
 | `defaults.failFastWhenIdle: true`                          | Fails a web element wait early when the page is idle and loaded, instead of waiting the full timeout. | Elements appear late without network or DOM activity. |
 | `defaults.tapMode: "dom"`                                  | Taps found in the DOM use a synthetic click instead of a real native touch.                           | You need real touch events (gestures, native sheets). |
-| `execution.web.maxContextsPerBrowser`                      | Contexts that share one browser process under parallel runs (default 1 with `engine: "cdp"`, else 2). | —                                                     |
+| `execution.web.contextIsolation`                           | `"hot-cache"` (default on Direct CDP) wipes cookies/storage/OPFS/IDB while keeping HTTP & V8 caches warm; `"fresh"` creates a brand-new context per flow. | You need strict per-flow cache cold-starts (`"fresh"`). |
+| `execution.web.maxContextsPerBrowser`                      | Contexts sharing one multiplexed browser process under parallel runs (default 4 with `engine: "cdp"`, else 2). | —                                                     |
+| `defaults.actionStableFrames`                              | Consecutive animation frames an element's rect must stay still before clicking (default `2`; set `0` for static UIs). | Elements slide/animate into place before clicks. |
+| Programmatic `runTestCommand()`                            | `import { runTestCommand } from "spana-test"` runs flows in-process with zero CLI subprocess spawn overhead. | You want isolated OS processes (`--processes`). |
 
 In your app, set `window.__SPANA_APP_READY__ = false` at start and `true` when the app is ready
 (a function that returns a boolean also works). When this value is defined, Spana waits for it
@@ -421,6 +424,7 @@ execution?: {
     warmBrowser?: boolean;
     warmBrowserScope?: string;
     freshContextPerFlow?: boolean;
+    contextIsolation?: "hot-cache" | "fresh";
     maxContextsPerBrowser?: number;
     virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
     storageState?: string;
@@ -485,8 +489,9 @@ Use `execution.web` to configure the local browser runtime for web flows.
 | `blockResources`        | Abort `image`, `font`, `media`, or `stylesheet` requests                                                                                                                        |
 | `warmBrowser`           | Reuse a persistent warm Chromium process across runs (Chromium only; falls back to `warmDaemons.enabled`)                                                                       |
 | `warmBrowserScope`      | Key that isolates warm browsers between concurrent repos or runs                                                                                                                |
-| `freshContextPerFlow`   | Give each flow a fresh isolated browser context, using pre-warmed contexts                                                                                                      |
-| `maxContextsPerBrowser` | Max worker contexts per browser process under `--parallel` (default `1` for `cdp`, `2` otherwise)                                                                               |
+| `freshContextPerFlow`   | Isolate browser state between flows; defaults to `"hot-cache"` on Direct CDP (wipes cookies/storage/OPFS/IDB while keeping HTTP/V8 caches warm)                                |
+| `contextIsolation`      | Direct CDP isolation strategy when `freshContextPerFlow` is enabled: `"hot-cache"` (default, ~4 ms reset) or `"fresh"` (brand-new `Target.createBrowserContext` per flow)       |
+| `maxContextsPerBrowser` | Max worker contexts sharing one browser process under `--parallel` (default `4` for `cdp` with multiplexed WebSocket, `2` otherwise)                                            |
 | `virtualAuthenticator`  | Attach a WebAuthn virtual authenticator (passkeys) to each new context; `true` or an options object                                                                             |
 | `storageState`          | Preload Playwright cookies and storage state from a JSON file                                                                                                                   |
 | `verboseLogging`        | Print verbose Playwright browser/page diagnostics to stdout                                                                                                                     |
@@ -4586,7 +4591,7 @@ graph TD
 
 Workers share a single atomic index into the flow array. Because Bun is single-threaded, the increment is naturally safe with no mutex. A faster device finishes sooner and picks up the next flow immediately, draining the queue at the speed of the fastest workers. When a previous run recorded flow durations (`spana-output/.spana/last-run.json`), the queue is ordered longest-first.
 
-For web, `--workers <n>` creates `n` isolated browser contexts spread across `ceil(n / execution.web.maxContextsPerBrowser)` browser processes (default: 1 context per browser for the `cdp` engine, 2 for `playwright`). Android and iOS get one worker per discovered device.
+For web, `--workers <n>` creates `n` isolated browser contexts spread across `ceil(n / execution.web.maxContextsPerBrowser)` browser processes (default: 4 multiplexed contexts per browser for the `cdp` engine, 2 for `playwright`). Android and iOS get one worker per discovered device.
 
 - `parallel.ts` — `runParallel()` launches all workers with `Promise.all`, each looping over the queue until exhausted.
 - `orchestrator.ts` — `orchestrate()` runs each platform (single worker or `runParallel()` pool). Platforms run serially unless `parallelPlatforms` is enabled.

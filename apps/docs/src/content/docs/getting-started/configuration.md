@@ -210,6 +210,7 @@ execution?: {
     warmBrowser?: boolean;
     warmBrowserScope?: string;
     freshContextPerFlow?: boolean;
+    contextIsolation?: "hot-cache" | "fresh";
     maxContextsPerBrowser?: number;
     virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
     storageState?: string;
@@ -274,8 +275,9 @@ Use `execution.web` to configure the local browser runtime for web flows.
 | `blockResources`        | Abort `image`, `font`, `media`, or `stylesheet` requests                                                                                                                        |
 | `warmBrowser`           | Reuse a persistent warm Chromium process across runs (Chromium only; falls back to `warmDaemons.enabled`)                                                                       |
 | `warmBrowserScope`      | Key that isolates warm browsers between concurrent repos or runs                                                                                                                |
-| `freshContextPerFlow`   | Give each flow a fresh isolated browser context, using pre-warmed contexts                                                                                                      |
-| `maxContextsPerBrowser` | Max worker contexts per browser process under `--parallel` (default `1` for `cdp`, `2` otherwise)                                                                               |
+| `freshContextPerFlow`   | Isolate browser state between flows; defaults to `"hot-cache"` on Direct CDP (wipes cookies/storage/OPFS/IDB while keeping HTTP/V8 caches warm)                                 |
+| `contextIsolation`      | Direct CDP isolation strategy when `freshContextPerFlow` is enabled: `"hot-cache"` (default, ~4 ms reset) or `"fresh"` (brand-new `Target.createBrowserContext` per flow)       |
+| `maxContextsPerBrowser` | Max worker contexts sharing one browser process under `--parallel` (default `4` for `cdp` with multiplexed WebSocket, `2` otherwise)                                            |
 | `virtualAuthenticator`  | Attach a WebAuthn virtual authenticator (passkeys) to each new context; `true` or an options object                                                                             |
 | `storageState`          | Preload Playwright cookies and storage state from a JSON file                                                                                                                   |
 | `verboseLogging`        | Print verbose Playwright browser/page diagnostics to stdout                                                                                                                     |

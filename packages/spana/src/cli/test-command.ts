@@ -101,6 +101,8 @@ export interface TestCommandOptions {
   listOnly?: boolean;
   /** Emit JSON output for `spana list`. */
   json?: boolean;
+  /** Working directory for config discovery, relative paths, and git filters (defaults to `process.cwd()`). */
+  cwd?: string;
 }
 
 function validateOptions(opts: TestCommandOptions): string | null {
@@ -492,7 +494,7 @@ async function setupReporters(
   config: ProvConfig,
   resolveFromConfig: (p: string) => string,
   appiumUrl: string | undefined,
-  opts: Pick<TestCommandOptions, "quiet">,
+  opts: Pick<TestCommandOptions, "quiet" | "cwd">,
   filterSummaries: string[] = [],
 ) {
   const { createRedactor, registerUrlSecrets } = await import("../report/redact.js");
@@ -519,23 +521,24 @@ async function setupReporters(
     const reporterTarget = colonIdx > 0 ? trimmed.slice(colonIdx + 1) : undefined;
 
     if (BUILTIN_REPORTERS.has(reporterKind)) {
+      const workDir = opts.cwd ? resolve(opts.cwd) : process.cwd();
       switch (reporterKind) {
         case "json":
           reporters.push(
-            createJsonReporter(reporterTarget ? resolve(process.cwd(), reporterTarget) : undefined),
+            createJsonReporter(reporterTarget ? resolve(workDir, reporterTarget) : undefined),
           );
           break;
         case "junit":
           reporters.push(
             createJUnitReporter(
-              reporterTarget ? resolve(process.cwd(), reporterTarget) : resolvedOutputDir,
+              reporterTarget ? resolve(workDir, reporterTarget) : resolvedOutputDir,
             ),
           );
           break;
         case "html":
           reporters.push(
             createHtmlReporter(
-              reporterTarget ? resolve(process.cwd(), reporterTarget) : resolvedOutputDir,
+              reporterTarget ? resolve(workDir, reporterTarget) : resolvedOutputDir,
             ),
           );
           break;
@@ -575,17 +578,22 @@ interface ExecutionContext {
 async function resolveExecutionContext(
   opts: TestCommandOptions,
 ): Promise<{ ok: true; context: ExecutionContext } | { ok: false; success: boolean }> {
+  const workDir = opts.cwd ? resolve(opts.cwd) : process.cwd();
   let config: ProvConfig = {};
   let loadedConfigPath: string | undefined;
   try {
-    const loaded = await loadConfig({ configPath: opts.configPath, allowMissing: true });
+    const loaded = await loadConfig({
+      configPath: opts.configPath,
+      cwd: workDir,
+      allowMissing: true,
+    });
     config = loaded.config;
     loadedConfigPath = loaded.configPath;
   } catch (error) {
     console.log(error instanceof Error ? error.message : String(error));
     return { ok: false, success: false };
   }
-  const configDir = dirname(loadedConfigPath ?? resolve("spana.config.ts"));
+  const configDir = dirname(loadedConfigPath ?? resolve(workDir, "spana.config.ts"));
 
   if (opts.validateConfigOnly) {
     if (!loadedConfigPath) {
@@ -700,6 +708,7 @@ interface LoadedFlowSource {
 
 interface FlowDiscoveryInput {
   flowDir: string;
+  cwd?: string;
   configPath?: string;
   tags?: string[];
   grep?: string;
@@ -754,7 +763,7 @@ async function discoverAndFilterFlows(
   if (input.changed) {
     let changedFiles: string[];
     try {
-      changedFiles = getGitChangedFiles(process.cwd());
+      changedFiles = getGitChangedFiles(input.cwd ?? process.cwd());
     } catch (error) {
       console.log(error instanceof Error ? error.message : String(error));
       return { ok: false, success: false, watchRoots };
@@ -826,7 +835,7 @@ async function discoverAndFilterFlows(
     const { applyTestFilters, buildFilterCandidates, collectGitChanges, formatFilterSummary } =
       await import("../core/filters.js");
     try {
-      const cwd = process.cwd();
+      const cwd = input.cwd ?? process.cwd();
       const changes = collectGitChanges(input.changedSince, cwd);
       const candidates = buildFilterCandidates(filteredLoadedFlows, cwd);
       const result = await applyTestFilters(filteredLoadedFlows, candidates, input.filters, {
@@ -1035,8 +1044,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     let allPassed = true;
     try {
       const executeProject = async (project: import("../core/projects.js").ProjectConfig) => {
-        const projFlowDir =
-          opts.flowPath ?? resolveFromConfig(project.flowDir ?? config.flowDir ?? "./flows");
+        const projFlowDir = opts.flowPath
+          ? resolve(opts.cwd ? resolve(opts.cwd) : process.cwd(), opts.flowPath)
+          : resolveFromConfig(project.flowDir ?? config.flowDir ?? "./flows");
         const projPlatforms: Platform[] =
           opts.platforms.length > 0
             ? opts.platforms
@@ -1048,6 +1058,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         for (const p of projPlatforms) allProjectPlatforms.add(p);
         const discovered = await discoverAndFilterFlows({
           flowDir: projFlowDir,
+          cwd: opts.cwd ? resolve(opts.cwd) : process.cwd(),
           configPath,
           tags: opts.tags ?? project.tags,
           grep: opts.grep ?? project.grep,
@@ -1196,11 +1207,15 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         ? config.platforms
         : ["web"];
 
-  const flowDir = opts.flowPath ?? resolveFromConfig(config.flowDir ?? "./flows");
+  const workDir = opts.cwd ? resolve(opts.cwd) : process.cwd();
+  const flowDir = opts.flowPath
+    ? resolve(workDir, opts.flowPath)
+    : resolveFromConfig(config.flowDir ?? "./flows");
 
   if (opts.listOnly) {
     const listed = await discoverAndFilterFlows({
       flowDir,
+      cwd: workDir,
       configPath,
       tags: opts.tags,
       grep: opts.grep,
@@ -1288,6 +1303,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       const [mpFlowResult, mpPriorRunState] = await Promise.all([
         discoverAndFilterFlows({
           flowDir,
+          cwd: workDir,
           configPath,
           tags: opts.tags,
           grep: opts.grep,
@@ -1519,6 +1535,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     [flowResult, priorRunState] = await Promise.all([
       discoverAndFilterFlows({
         flowDir,
+        cwd: workDir,
         configPath,
         tags: opts.tags,
         grep: opts.grep,

@@ -31,6 +31,7 @@ import type {
   Route,
 } from "playwright-core";
 import { DriverError } from "../errors.js";
+import { buildDirectChromiumLaunchArgs } from "./cdp-browser.js";
 import { hasLaunchDeviceState } from "./launch-options.js";
 import { deviceEffect } from "./device-controls.js";
 import { resolveNetworkConditions } from "./network-profiles.js";
@@ -209,27 +210,11 @@ export async function ensureWarmBrowserDaemon(
   const execPath = config.executablePath ?? chromium.executablePath();
   const child = spawn(
     execPath,
-    [
-      ...(config.headless !== false ? ["--headless=new"] : []),
-      `--remote-debugging-port=${port}`,
-      "--remote-debugging-address=127.0.0.1",
-      `--user-data-dir=${userDataDir}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
-      "--disable-ipc-flooding-protection",
-      "--disable-hang-monitor",
-      "--disable-default-apps",
-      "--disable-extensions",
-      "--disable-sync",
-      "--metrics-recording-only",
-      "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
-      ...(config.headless !== false ? ["--disable-gpu"] : []),
-      "about:blank",
-    ],
+    buildDirectChromiumLaunchArgs({
+      userDataDir,
+      remoteDebuggingPort: port,
+      headless: config.headless,
+    }),
     { detached: true, stdio: "ignore" },
   );
   child.unref();
