@@ -85,6 +85,8 @@ jobs:
           disable-animations: true
           working-directory: packages/spana
           script: >-
+            adb shell settings put global hidden_api_policy 1 &&
+            trap 'adb shell settings delete global hidden_api_policy' EXIT &&
             bun ./dist/cli.js test
             --driver local
             --platform android
