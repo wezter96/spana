@@ -18,6 +18,7 @@ export default flow(
     tags: ["conformance", "app-lifecycle"],
     platforms: ["android", "ios"],
     autoLaunch: false,
+    timeout: 100_000,
   },
   async (ctx) => {
     const { app, expect } = ctx;

@@ -19,7 +19,7 @@ export default flow(
 
     // Sentinel starts off-screen at the bottom.
     await app.scrollUntilVisible(
-      { testID: "playground-sentinel" },
+      { testID: "playground-sentinel-text" },
       { timeout: 20_000, maxScrolls: 15 },
     );
     await expect({ testID: "playground-sentinel" }).toBeVisible({ timeout: 10_000 });
