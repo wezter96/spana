@@ -43,6 +43,6 @@
     "@babel/core": "^7.26.10",
     "@spana/config": "workspace:*",
     "@types/react": "~19.3.0",
-    "typescript": "~6.0.3"
+    "typescript": "^7.0.2"
   }
 }

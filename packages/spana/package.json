@@ -52,7 +52,7 @@
   },
   "scripts": {
     "dev": "tsup --watch",
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json --emitDeclarationOnly",
     "test": "bun test",
     "test:e2e:framework-app": "bun run build && bun ./dist/cli.js test --config ./spana.config.ts",
     "test:watch": "bun test --watch",
@@ -81,7 +81,7 @@
     "@types/bun": "^1.2.0",
     "@types/pngjs": "^6.0.4",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@cucumber/cucumber-expressions": "^19.0.0",

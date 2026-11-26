@@ -17,13 +17,7 @@ export default defineConfig({
     cli: "src/cli/index.ts",
   },
   format: ["esm"],
-  dts: {
-    entry: {
-      index: "src/index.ts",
-      "gherkin/steps": "src/gherkin/steps.ts",
-      "agent/index": "src/agent/index.ts",
-    },
-  },
+  dts: false,
   sourcemap: true,
   clean: true,
   splitting: true,
