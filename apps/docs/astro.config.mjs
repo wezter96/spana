@@ -12,7 +12,7 @@ export default defineConfig({
   compressHTML: true,
   markdown: { processor: unified() },
   integrations: [
-    astroMermaid(),
+    astroMermaid({ mermaidConfig: { layout: "dagre", look: "classic" } }),
     starlight({
       title: "spana",
       components: { PageTitle: "./src/components/PageTitle.astro" },
