@@ -1,5 +1,4 @@
-import { DarkTheme, DefaultTheme, type Theme, ThemeProvider } from "@react-navigation/native";
-import { Stack } from "expo-router";
+import { DarkTheme, DefaultTheme, Stack, type Theme, ThemeProvider } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
 import { NAV_THEME } from "@/lib/constants";

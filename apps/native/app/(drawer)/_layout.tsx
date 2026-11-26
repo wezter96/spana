@@ -1,23 +1,23 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { Link, useNavigation } from "expo-router";
-import { Pressable } from "react-native";
-import { Drawer } from "expo-router/drawer";
 import {
+  Drawer,
   DrawerContentScrollView,
   DrawerItem,
   type DrawerContentComponentProps,
-} from "@react-navigation/drawer";
+} from "expo-router/drawer";
+import { Pressable } from "react-native";
 import { HeaderButton } from "@/components/header-button";
 import { NAV_THEME } from "@/lib/constants";
 import { useColorScheme } from "@/lib/use-color-scheme";
 
 function DrawerToggle({ color }: { color: string }) {
-  const navigation = useNavigation();
+  const navigation = useNavigation<DrawerContentComponentProps["navigation"]>();
   return (
     <Pressable
       accessibilityLabel="Show navigation menu"
       accessibilityRole="button"
-      onPress={() => (navigation as any).toggleDrawer()}
+      onPress={() => navigation.toggleDrawer()}
       style={{ marginLeft: 16, padding: 4 }}
     >
       <Ionicons name="menu" size={24} color={color} />
@@ -46,7 +46,7 @@ function FrameworkDrawerContent({
         activeTintColor={theme.primary}
         inactiveTintColor={theme.text}
         labelStyle={{ color: theme.text }}
-        icon={({ size, color }) => <Ionicons name="home-outline" size={size} color={color} />}
+        icon={({ size, color }) => <Ionicons name="home-outline" size={size} style={{ color }} />}
         onPress={() => {
           props.navigation.navigate("index");
           props.navigation.closeDrawer();
@@ -61,7 +61,7 @@ function FrameworkDrawerContent({
         inactiveTintColor={theme.text}
         labelStyle={{ color: theme.text }}
         icon={({ size, color }) => (
-          <Ionicons name="game-controller-outline" size={size} color={color} />
+          <Ionicons name="game-controller-outline" size={size} style={{ color }} />
         )}
         onPress={() => {
           props.navigation.navigate("playground");
@@ -76,7 +76,9 @@ function FrameworkDrawerContent({
         activeTintColor={theme.primary}
         inactiveTintColor={theme.text}
         labelStyle={{ color: theme.text }}
-        icon={({ size, color }) => <MaterialIcons name="border-bottom" size={size} color={color} />}
+        icon={({ size, color }) => (
+          <MaterialIcons name="border-bottom" size={size} style={{ color }} />
+        )}
         onPress={() => {
           props.navigation.navigate("(tabs)");
           props.navigation.closeDrawer();
@@ -117,7 +119,7 @@ const DrawerLayout = () => {
           headerTitle: "Home",
           drawerLabel: "Home",
           drawerIcon: ({ size, color }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
+            <Ionicons name="home-outline" size={size} style={{ color }} />
           ),
         }}
       />
@@ -127,7 +129,7 @@ const DrawerLayout = () => {
           headerTitle: "Playground",
           drawerLabel: "Playground",
           drawerIcon: ({ size, color }) => (
-            <Ionicons name="game-controller-outline" size={size} color={color} />
+            <Ionicons name="game-controller-outline" size={size} style={{ color }} />
           ),
         }}
       />
@@ -137,7 +139,7 @@ const DrawerLayout = () => {
           headerTitle: "Demo Tabs",
           drawerLabel: "Demo Tabs",
           drawerIcon: ({ size, color }) => (
-            <MaterialIcons name="border-bottom" size={size} color={color} />
+            <MaterialIcons name="border-bottom" size={size} style={{ color }} />
           ),
           headerRight: () => (
             <Link href="/modal" asChild>
