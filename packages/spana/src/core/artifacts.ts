@@ -4,6 +4,7 @@ import type { RawDriverService } from "../drivers/raw-driver.js";
 import { Effect } from "effect";
 import type { ArtifactConfig as ArtifactConfigInput } from "../schemas/config.js";
 import type { Attachment } from "../report/types.js";
+import { captureAndroidLogcat, captureIosSimulatorCrashLogs } from "../diagnostics/native-logs.js";
 
 export interface ResolvedArtifactConfig {
   outputDir: string;
@@ -18,6 +19,8 @@ export interface ResolvedArtifactConfig {
   jsCoverage: boolean;
   video: "off" | "on" | "retain-on-failure";
   playback: boolean;
+  trace: boolean;
+  nativeLogs: boolean;
 }
 
 export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
@@ -33,6 +36,8 @@ export const DEFAULT_ARTIFACT_CONFIG: ResolvedArtifactConfig = {
   jsCoverage: false,
   video: "off",
   playback: false,
+  trace: false,
+  nativeLogs: false,
 };
 
 export function safeArtifactName(value: string): string {
@@ -186,6 +191,35 @@ export async function captureArtifacts(
       }
     } catch {
       // Driver log capture failed — don't block test execution
+    }
+  }
+
+  if (status === "failed" && config.nativeLogs) {
+    if (platform === "android") {
+      try {
+        const info = await Effect.runPromise(Effect.orDie(driver.getDeviceInfo())).catch(
+          () => null,
+        );
+        const logcat = await captureAndroidLogcat(info?.deviceId);
+        if (logcat) {
+          attachments.push(
+            writeTextAttachment(dir, "android-logcat.txt", "android-logcat", logcat),
+          );
+        }
+      } catch {
+        // Best-effort logcat collection
+      }
+    } else if (platform === "ios") {
+      try {
+        const crashes = captureIosSimulatorCrashLogs({ maxFiles: 3 });
+        if (crashes.length > 0) {
+          attachments.push(
+            writeJsonAttachment(dir, "ios-crash-logs.json", "ios-crash-logs", crashes),
+          );
+        }
+      } catch {
+        // Best-effort crash log collection
+      }
     }
   }
 

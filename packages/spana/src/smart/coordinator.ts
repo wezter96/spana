@@ -5,7 +5,10 @@ import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/s
 import { isSystemUISelector } from "../schemas/selector.js";
 import {
   buildDomActionabilityDiagScript,
+  buildDomFocusScript,
+  buildDomSelectOptionScript,
   type DomWaitForMatchOptions,
+  type SelectOptionInput,
 } from "../channels/dom-channel.js";
 import type { WaitTimeoutError } from "../errors.js";
 import { DriverError, ElementNotFoundError, TextMismatchError } from "../errors.js";
@@ -267,7 +270,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       const domChannel = driver.domChannel;
       if (
         domMatchSpec &&
-        config.platform === "web" &&
+        (config.platform === "web" || !config.platform) &&
         !isSystemUISelector(selector) &&
         !isRelativeSelectorLike(selector) &&
         domChannel?.isConnected() &&
@@ -900,6 +903,223 @@ export function createCoordinator<T extends string = string, R extends string = 
         negate,
       ),
 
+    assertChecked: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => ({
+          matched: el.checked === true || el.attributes?.["aria-checked"] === "true",
+          actual: el.checked ? "checked" : "unchecked",
+        }),
+        (actual, timeout) => ({
+          message: negate
+            ? `Expected element NOT to be checked but it was "${actual ?? "checked"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected element to be checked but it was "${actual ?? "unchecked"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? "unchecked" : "checked",
+        }),
+        { kind: "checked" },
+        negate,
+      ),
+
+    assertEditable: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => ({
+          matched: el.editable === true,
+          actual: el.editable ? "editable" : "not editable",
+        }),
+        (actual, timeout) => ({
+          message: negate
+            ? `Expected element NOT to be editable but it was "${actual ?? "editable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected element to be editable but it was "${actual ?? "not editable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? "not editable" : "editable",
+        }),
+        { kind: "editable" },
+        negate,
+      ),
+
+    assertEmpty: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const isEmpty =
+            el.empty !== undefined
+              ? el.empty
+              : (el.value ?? el.textContent ?? el.text ?? "").trim().length === 0;
+          return {
+            matched: isEmpty,
+            actual: isEmpty ? "empty" : (el.value ?? el.text ?? "non-empty"),
+          };
+        },
+        (actual, timeout) => ({
+          message: negate
+            ? `Expected element NOT to be empty after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected element to be empty but got "${actual ?? "(non-empty)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? "non-empty" : "empty",
+        }),
+        { kind: "empty" },
+        negate,
+      ),
+
+    assertClass: (
+      selector: ExtendedSelector,
+      expected: string | RegExp,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const cls = el.className ?? el.attributes?.["class"] ?? "";
+          const matched =
+            expected instanceof RegExp
+              ? expected.test(cls)
+              : expected
+                  .trim()
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .every((tok) => cls.trim().split(/\s+/).includes(tok));
+          return { matched, actual: cls };
+        },
+        (actual, timeout) => ({
+          message: negate
+            ? `Expected class NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected class ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? `not ${String(expected)}` : String(expected),
+        }),
+        expected instanceof RegExp
+          ? { kind: "class", patternSource: expected.source, patternFlags: expected.flags }
+          : { kind: "class", expected },
+        negate,
+      ),
+
+    assertCss: (
+      selector: ExtendedSelector,
+      property: string,
+      expected: string | RegExp,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<
+      void,
+      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+    > =>
+      pollUntilMatch(
+        selector,
+        opts,
+        (el) => {
+          const actual = el.attributes?.[`style:${property}`] ?? "";
+          const matched =
+            expected instanceof RegExp ? expected.test(actual) : actual.trim() === expected.trim();
+          return { matched, actual };
+        },
+        (actual, timeout) => ({
+          message: negate
+            ? `Expected CSS "${property}" NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+            : `Expected CSS "${property}" to be ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+          expected: negate ? `not ${String(expected)}` : String(expected),
+        }),
+        expected instanceof RegExp
+          ? {
+              kind: "css",
+              cssProperty: property,
+              patternSource: expected.source,
+              patternFlags: expected.flags,
+            }
+          : { kind: "css", cssProperty: property, expected },
+        negate,
+      ),
+
+    waitForTitle: (
+      expected: string | RegExp,
+      opts?: WaitOptions,
+      negate: boolean = false,
+    ): Effect.Effect<void, TextMismatchError | DriverError> =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+        const start = Date.now();
+        let lastTitle = "";
+        const matchesTitle = (t: string): boolean =>
+          expected instanceof RegExp ? expected.test(t) : t === expected;
+
+        const domChannel = driver.domChannel;
+        if (
+          (config.platform === "web" || !config.platform) &&
+          domChannel?.isConnected() &&
+          domChannel.waitForMatch
+        ) {
+          const reactive = yield* Effect.tryPromise({
+            try: () =>
+              domChannel.waitForMatch!("", {
+                kind: "title",
+                ...(expected instanceof RegExp
+                  ? { patternSource: expected.source, patternFlags: expected.flags }
+                  : { expected }),
+                ...(negate ? { negate: true } : {}),
+                timeoutMs: timeout,
+              }),
+            catch: () => null,
+          }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
+          if (reactive) {
+            if (reactive.matched) return;
+            return yield* new TextMismatchError({
+              message: negate
+                ? `Expected title NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`
+                : `Expected title ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`,
+              expected: negate ? `not ${String(expected)}` : String(expected),
+              actual: reactive.actual ?? "",
+              selector: "title",
+            });
+          }
+        }
+
+        while (Date.now() - start < timeout) {
+          const title = yield* driver
+            .evaluate<string>("typeof document !== 'undefined' ? String(document.title || '') : ''")
+            .pipe(Effect.catchAll(() => Effect.succeed("")));
+          lastTitle = title;
+          if (negate ? !matchesTitle(title) : matchesTitle(title)) return;
+          yield* Effect.sleep(Duration.millis(pollInterval));
+        }
+
+        return yield* new TextMismatchError({
+          message: negate
+            ? `Expected title NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastTitle)} after ${timeout}ms`
+            : `Expected title ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastTitle)} after ${timeout}ms`,
+          expected: negate ? `not ${String(expected)}` : String(expected),
+          actual: lastTitle,
+          selector: "title",
+        });
+      }),
+
     assertCount: (
       selector: ExtendedSelector,
       expectedCount: number,
@@ -1001,7 +1221,11 @@ export function createCoordinator<T extends string = string, R extends string = 
             : url === expected || url.includes(expected);
 
         const domChannel = driver.domChannel;
-        if (config.platform === "web" && domChannel?.isConnected() && domChannel.waitForMatch) {
+        if (
+          (config.platform === "web" || !config.platform) &&
+          domChannel?.isConnected() &&
+          domChannel.waitForMatch
+        ) {
           const reactive = yield* Effect.tryPromise({
             try: () =>
               domChannel.waitForMatch!("", {
@@ -1487,6 +1711,140 @@ export function createCoordinator<T extends string = string, R extends string = 
       Effect.gen(function* () {
         yield* driver.pressKey(key);
         cache.invalidate();
+      }),
+
+    check: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const resolved = yield* waitForResolvedElementResult(
+          driver,
+          selector,
+          parse,
+          true,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        );
+        const alreadyChecked =
+          resolved.element.checked === true ||
+          resolved.element.attributes?.["aria-checked"] === "true";
+        if (alreadyChecked) return;
+        const { x, y } = centerOf(resolved.element);
+        yield* driver.tapAtCoordinate(x, y);
+        yield* afterMutation();
+      }),
+
+    uncheck: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const resolved = yield* waitForResolvedElementResult(
+          driver,
+          selector,
+          parse,
+          true,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        );
+        const currentlyChecked =
+          resolved.element.checked === true ||
+          resolved.element.attributes?.["aria-checked"] === "true";
+        if (!currentlyChecked) return;
+        const { x, y } = centerOf(resolved.element);
+        yield* driver.tapAtCoordinate(x, y);
+        yield* afterMutation();
+      }),
+
+    selectOption: (
+      selector: ExtendedSelector,
+      option: SelectOptionInput,
+      opts?: WaitOptions,
+    ): Effect.Effect<string[], ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        yield* waitForResolvedElementResult(
+          driver,
+          selector,
+          parse,
+          true,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        );
+        if (isRelativeSelectorLike(selector) || isSystemUISelector(selector)) {
+          return yield* new DriverError({
+            message: "selectOption() requires a DOM selector targeting a <select> element",
+          });
+        }
+        const script = buildDomSelectOptionScript(selector as Selector, option);
+        const res = driver.domChannel?.isConnected()
+          ? yield* Effect.tryPromise({
+              try: () =>
+                driver.domChannel!.evaluate<{ ok: boolean; selected?: string[]; error?: string }>(
+                  script,
+                ),
+              catch: (e) => new DriverError({ message: `selectOption() failed: ${e}` }),
+            })
+          : yield* driver.evaluate<{ ok: boolean; selected?: string[]; error?: string }>(script);
+        if (!res?.ok) {
+          return yield* new DriverError({
+            message: `selectOption() failed for ${formatSelector(selector)}: ${res?.error ?? "unknown error"}`,
+          });
+        }
+        yield* afterMutation();
+        return res.selected ?? [];
+      }),
+
+    focus: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const resolved = yield* waitForResolvedElementResult(
+          driver,
+          selector,
+          parse,
+          false,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        );
+        if (!isRelativeSelectorLike(selector) && !isSystemUISelector(selector)) {
+          const script = buildDomFocusScript(selector as Selector);
+          const ok = driver.domChannel?.isConnected()
+            ? yield* Effect.tryPromise({
+                try: () => driver.domChannel!.evaluate<boolean>(script),
+                catch: () => false,
+              }).pipe(Effect.catchAll(() => Effect.succeed(false)))
+            : yield* driver
+                .evaluate<boolean>(script)
+                .pipe(Effect.catchAll(() => Effect.succeed(false)));
+          if (ok) {
+            yield* afterMutation();
+            return;
+          }
+        }
+        const { x, y } = centerOf(resolved.element);
+        yield* driver.tapAtCoordinate(x, y);
+        yield* afterMutation();
+      }),
+
+    dragTo: (
+      source: ExtendedSelector,
+      target: ExtendedSelector,
+      opts?: WaitOptions & { steps?: number },
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const merged = { ...defaults, ...opts, platform: opts?.platform ?? config.platform };
+        const src = yield* waitForActionElement(driver, source, parse, merged, cache);
+        const dst = yield* waitForActionElement(driver, target, parse, merged, cache);
+        const from = centerOf(src);
+        const to = centerOf(dst);
+        if (driver.dragAndDrop) {
+          yield* driver.dragAndDrop(from.x, from.y, to.x, to.y, opts?.steps ?? 10);
+        } else {
+          yield* driver.swipe(from.x, from.y, to.x, to.y, 400);
+        }
+        yield* afterMutation();
       }),
 
     hideKeyboard: (): Effect.Effect<void, DriverError> =>

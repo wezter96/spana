@@ -50,6 +50,8 @@ import {
 import { orderFlowsLongestFirst } from "../core/parallel.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startWebServers } from "../runtime/web-server.js";
+import { filterFlowsForProject, resolveProjectExecutionPlan } from "../core/projects.js";
 
 export interface TestCommandOptions {
   platforms: Platform[];
@@ -88,6 +90,16 @@ export interface TestCommandOptions {
   watch?: boolean;
   updateBaselines?: boolean;
   jsCoverage?: boolean;
+  /** Run web browser in headed mode (overrides `execution.web.headless`). */
+  headed?: boolean;
+  /** Enable Playwright-style interactive `trace.json` + `trace-viewer.html` generation. */
+  trace?: boolean;
+  /** Named projects to run (expands transitive `dependencies`). */
+  projects?: string[];
+  /** Dry-run: list matching flows without launching browsers/devices. */
+  listOnly?: boolean;
+  /** Emit JSON output for `spana list`. */
+  json?: boolean;
 }
 
 function validateOptions(opts: TestCommandOptions): string | null {
@@ -571,17 +583,22 @@ async function resolveExecutionContext(
     config.artifacts.outputDir = resolveFromConfig(config.artifacts.outputDir);
   }
   if (opts.jsCoverage) config.artifacts = { ...config.artifacts, jsCoverage: true };
+  if (opts.trace) config.artifacts = { ...config.artifacts, trace: true };
 
-  // CLI --browser override and per-process warm daemon isolation scope
-  if (opts.browser || process.env.SPANA_WARM_SCOPE) {
+  // CLI --browser / --headed override and per-process warm daemon isolation scope
+  if (opts.browser || opts.headed || process.env.SPANA_WARM_SCOPE) {
     config.execution = {
       ...config.execution,
       web: {
         ...config.execution?.web,
         ...(opts.browser ? { browser: opts.browser } : {}),
+        ...(opts.headed ? { headless: false } : {}),
         ...(process.env.SPANA_WARM_SCOPE ? { warmBrowserScope: process.env.SPANA_WARM_SCOPE } : {}),
       },
     };
+  }
+  if (opts.strictCache) {
+    config.replayCache = { ...config.replayCache, mode: "strict" };
   }
 
   // Determine execution mode: CLI --driver flag overrides config
@@ -959,7 +976,121 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   // 1. Load config and resolve execution context
   const ctxResult = await resolveExecutionContext(opts);
   if (!ctxResult.ok) return { success: ctxResult.success, watchRoots: [] };
-  const { config, configPath, executionMode, resolveFromConfig } = ctxResult.context;
+  const { config, configPath, configDir, executionMode, resolveFromConfig } = ctxResult.context;
+
+  // Named projects DAG execution (`config.projects` or `--project <name>`)
+  if (config.projects && config.projects.length > 0 && !opts.listOnly) {
+    let plan;
+    try {
+      plan = resolveProjectExecutionPlan(config.projects, opts.projects);
+    } catch (error) {
+      console.log(error instanceof Error ? error.message : String(error));
+      return { success: false, watchRoots: [] };
+    }
+
+    const webServers = await startWebServers(config.webServer, { cwd: configDir });
+    let allPassed = true;
+    try {
+      const executeProject = async (project: import("../core/projects.js").ProjectConfig) => {
+        const projFlowDir =
+          opts.flowPath ?? resolveFromConfig(project.flowDir ?? config.flowDir ?? "./flows");
+        const projPlatforms: Platform[] =
+          opts.platforms.length > 0
+            ? opts.platforms
+            : project.platform
+              ? [project.platform]
+              : config.platforms && config.platforms.length > 0
+                ? config.platforms
+                : ["web"];
+        const discovered = await discoverAndFilterFlows({
+          flowDir: projFlowDir,
+          configPath,
+          tags: opts.tags ?? project.tags,
+          grep: opts.grep ?? project.grep,
+          platforms: projPlatforms,
+          outputDir: config.artifacts?.outputDir ?? resolveFromConfig("./spana-output"),
+        });
+        if (!discovered.ok) return discovered.success;
+        const matched = filterFlowsForProject(discovered.selectedFlows, project);
+        if (matched.length === 0) {
+          console.log(`[project:${project.name}] No matching flows, skipping.`);
+          return true;
+        }
+        console.log(`\n[project:${project.name}] Running ${matched.length} flow(s)...`);
+        const projConfig: ProvConfig = {
+          ...config,
+          projects: undefined,
+          webServer: undefined,
+          apps: {
+            ...config.apps,
+            ...(project.baseUrl ? { web: { ...config.apps?.web, url: project.baseUrl } } : {}),
+          },
+          execution: {
+            ...config.execution,
+            web: {
+              ...config.execution?.web,
+              ...project.use,
+              ...(project.browser ? { browser: project.browser } : {}),
+              ...(project.storageState
+                ? { storageState: resolveFromConfig(project.storageState) }
+                : {}),
+            },
+          },
+          defaults: {
+            ...config.defaults,
+            ...(project.retries !== undefined ? { retries: project.retries } : {}),
+          },
+        };
+        const runtimes: RuntimeHandle[] = [];
+        try {
+          const platformConfigs = await buildSerialPlatformConfigs(
+            projPlatforms,
+            opts,
+            projConfig,
+            runtimes,
+            executionMode,
+            opts.appiumUrl ??
+              process.env.SPANA_APPIUM_URL ??
+              projConfig.execution?.appium?.serverUrl,
+            projConfig.execution?.appium ?? {},
+            undefined,
+            null,
+            resolveFromConfig,
+          );
+          const orchResult = await orchestrate(matched, platformConfigs, {
+            retries: opts.retries ?? projConfig.defaults?.retries ?? 0,
+            bail: opts.bail,
+          });
+          console.log(
+            `[project:${project.name}] ${orchResult.passed} passed, ${orchResult.failed} failed, ${orchResult.skipped} skipped`,
+          );
+          return orchResult.failed === 0;
+        } finally {
+          for (const rt of runtimes) {
+            await rt.cleanup().catch(() => {});
+          }
+        }
+      };
+
+      for (const wave of plan.waves) {
+        const waveOutcomes = await Promise.all(wave.map((proj) => executeProject(proj)));
+        if (waveOutcomes.some((ok) => !ok)) {
+          allPassed = false;
+          break;
+        }
+      }
+      for (const td of plan.teardowns) {
+        const tdOk = await executeProject(td);
+        if (!tdOk) allPassed = false;
+      }
+    } finally {
+      await webServers.stopAll();
+    }
+    return {
+      success: allPassed,
+      watchRoots: collectWatchRoots(resolveFromConfig(config.flowDir ?? "./flows"), configPath),
+    };
+  }
 
   const platforms: Platform[] =
     opts.platforms.length > 0
@@ -969,6 +1100,48 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         : ["web"];
 
   const flowDir = opts.flowPath ?? resolveFromConfig(config.flowDir ?? "./flows");
+
+  if (opts.listOnly) {
+    const listed = await discoverAndFilterFlows({
+      flowDir,
+      configPath,
+      tags: opts.tags,
+      grep: opts.grep,
+      platforms,
+      shard: opts.shard,
+      lastFailed: opts.lastFailed,
+      changed: opts.changed,
+      changedSince: opts.changedSince,
+      filters: config.filters as import("../core/filters.js").TestFilter[] | undefined,
+      outputDir: config.artifacts?.outputDir ?? resolveFromConfig("./spana-output"),
+    });
+    if (!listed.ok) {
+      return { success: listed.success, watchRoots: listed.watchRoots };
+    }
+    const items = listed.selectedLoadedFlows.map((item) => ({
+      name: item.flow.name,
+      sourcePath: item.sourcePath,
+      tags: item.flow.config.tags ?? [],
+      platforms: item.flow.config.platforms ?? platforms,
+      skip: Boolean(item.flow.config.skip),
+      fixme: Boolean(item.flow.config.fixme),
+      only: Boolean(item.flow.config.only),
+    }));
+    if (opts.json) {
+      console.log(JSON.stringify({ count: items.length, flows: items }, null, 2));
+    } else {
+      console.log(`Found ${items.length} flow(s):`);
+      for (const item of items) {
+        const tagsText = item.tags.length > 0 ? ` [${item.tags.join(", ")}]` : "";
+        const flags = [item.only ? "only" : "", item.skip ? "skip" : "", item.fixme ? "fixme" : ""]
+          .filter(Boolean)
+          .join(",");
+        const flagText = flags ? ` (${flags})` : "";
+        console.log(`  • ${item.name}${tagsText}${flagText} — ${item.sourcePath}`);
+      }
+    }
+    return { success: true, watchRoots: listed.watchRoots };
+  }
 
   // Resolve explicit device targeting
   let targetDevice: import("../device/discover.js").DiscoveredDevice | null = null;
@@ -1211,6 +1384,11 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   process.on("SIGTERM", handleSignal);
 
   try {
+    if (config.webServer && !process.env.SPANA_WORKER_PROCESS) {
+      const startedServers = await startWebServers(config.webServer, { cwd: configDir });
+      runCleanups.push(() => startedServers.stopAll());
+    }
+
     const appiumConfig = config.execution?.appium ?? {};
     const wantAutoStart =
       executionMode === "appium" && (opts.appiumAutoStart ?? appiumConfig.autoStart ?? false);

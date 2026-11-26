@@ -13,6 +13,10 @@ import type { Selector } from "../schemas/selector.js";
 import type {
   BrowserConsoleLog,
   BrowserCookie,
+  BrowserDialogHandler,
+  BrowserDialogInfo,
+  BrowserDownloadInfo,
+  BrowserEmulationOptions,
   BrowserJSError,
   BrowserMockResponse,
   BrowserResponseInfo,
@@ -30,6 +34,7 @@ import {
   buildDomFindElementScript,
   SPANA_INJECTED_RUNTIME_SCRIPT,
 } from "../channels/dom-channel.js";
+import { applyExtensionChromeArgs, resolveBrowserExtensions } from "./browser-extensions.js";
 
 export interface DirectCdpBrowserLaunchOptions {
   /** Explicit Chromium/Chrome binary path. Auto-detects system Chrome or Playwright Chromium if omitted. */
@@ -40,6 +45,8 @@ export interface DirectCdpBrowserLaunchOptions {
   warmBrowser?: boolean;
   /** Isolation scope key for warm Chromium daemon (defaults to cwd hash). */
   warmBrowserScope?: string;
+  /** Unpacked browser extension directories to load into Chromium. */
+  extensions?: string[];
   /** Extra Chrome launch flags. */
   args?: string[];
 }
@@ -170,7 +177,7 @@ export async function launchDirectCdpBrowser(
   const port = await allocateFreePort(9350);
   // Fresh throwaway profile: never expose the user's real Chrome profile (cookies, logins) over CDP.
   const userDataDir = mkdtempSync(join(tmpdir(), "spana-cdp-profile-"));
-  const chromeArgs = [
+  const baseChromeArgs = [
     ...(options.headless !== false ? ["--headless=new"] : []),
     `--remote-debugging-port=${port}`,
     "--remote-debugging-address=127.0.0.1",
@@ -192,6 +199,14 @@ export async function launchDirectCdpBrowser(
     ...(options.args ?? []),
     "about:blank",
   ];
+  const resolvedExts =
+    options.extensions && options.extensions.length > 0
+      ? resolveBrowserExtensions(options.extensions)
+      : [];
+  const chromeArgs =
+    resolvedExts.length > 0
+      ? applyExtensionChromeArgs(baseChromeArgs, resolvedExts)
+      : baseChromeArgs;
 
   const child: ChildProcess = spawn(execPath, chromeArgs, {
     detached: Boolean(options.warmBrowser),
@@ -284,6 +299,8 @@ export interface LightweightCdpDriverOptions {
   virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
   /** Optional Playwright-compatible storageState JSON path to preload into contexts. */
   storageState?: string;
+  /** Emulate `prefers-color-scheme`, `prefers-reduced-motion`, `locale`, or `timezoneId` on every context. */
+  emulation?: BrowserEmulationOptions;
   /** Injectable fetch & WebSocket factory for tests. */
   fetchFn?: typeof fetch;
   createWebSocket?: WebSocketFactory;
@@ -485,14 +502,15 @@ export function makeLightweightCdpDriver(
         }),
     });
 
-    const width = options.viewport?.width ?? 1280;
-    const height = options.viewport?.height ?? 720;
+    let width = options.viewport?.width ?? 1280;
+    let height = options.viewport?.height ?? 720;
     const label = options.engineLabel ?? "cdp";
 
     let activeSlot: CdpContextSlot | undefined;
     let prefetchedSlotPromise: Promise<CdpContextSlot> | undefined;
     let hasRunFirstFlow = false;
     let activeAuthenticatorId: string | undefined;
+    let dialogHandler: BrowserDialogHandler | null = null;
     const backgroundDisposals: Array<Promise<unknown>> = [];
     const consoleLogs: BrowserConsoleLog[] = [];
     const jsErrors: BrowserJSError[] = [];
@@ -501,29 +519,46 @@ export function makeLightweightCdpDriver(
     let activeResponseWatchers = 0;
     let nextTabSeq = 1;
     let downloadDir: string | undefined;
-    const completedDownloads: string[] = [];
+    interface CompletedCdpDownload {
+      filePath: string;
+      suggestedFilename: string;
+      url: string;
+    }
+    const completedDownloads: CompletedCdpDownload[] = [];
     const downloadWaiters: Array<{
-      resolve: (filePath: string) => void;
+      resolve: (dl: CompletedCdpDownload) => void;
       reject: (err: Error) => void;
     }> = [];
-    const pendingDownloadGuids = new Map<string, string>();
+    const pendingDownloadGuids = new Map<string, CompletedCdpDownload>();
 
     cdpChannel.onEvent("Browser.downloadWillBegin", (params) => {
       if (params?.guid && downloadDir) {
-        pendingDownloadGuids.set(String(params.guid), join(downloadDir, String(params.guid)));
+        const guid = String(params.guid);
+        pendingDownloadGuids.set(guid, {
+          filePath: join(downloadDir, guid),
+          suggestedFilename: String(params?.suggestedFilename ?? guid),
+          url: String(params?.url ?? ""),
+        });
       }
     });
 
     cdpChannel.onEvent("Browser.downloadProgress", (params) => {
       if (params?.state === "completed" && params?.guid) {
-        const filePath =
-          pendingDownloadGuids.get(String(params.guid)) ??
-          (downloadDir ? join(downloadDir, String(params.guid)) : "");
-        pendingDownloadGuids.delete(String(params.guid));
-        if (!filePath) return;
+        const guid = String(params.guid);
+        const entry: CompletedCdpDownload | undefined =
+          pendingDownloadGuids.get(guid) ??
+          (downloadDir
+            ? {
+                filePath: join(downloadDir, guid),
+                suggestedFilename: guid,
+                url: "",
+              }
+            : undefined);
+        pendingDownloadGuids.delete(guid);
+        if (!entry) return;
         const waiter = downloadWaiters.shift();
-        if (waiter) waiter.resolve(filePath);
-        else completedDownloads.push(filePath);
+        if (waiter) waiter.resolve(entry);
+        else completedDownloads.push(entry);
       }
     });
 
@@ -655,6 +690,51 @@ export function makeLightweightCdpDriver(
         await cdpChannel
           .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId)
           .catch(() => {});
+      }
+
+      if (options.emulation) {
+        const emuFeatures: Array<{ name: string; value: string }> = [];
+        if (options.emulation.colorScheme !== undefined) {
+          emuFeatures.push({
+            name: "prefers-color-scheme",
+            value:
+              options.emulation.colorScheme === "no-preference"
+                ? ""
+                : options.emulation.colorScheme,
+          });
+        }
+        if (options.emulation.reducedMotion !== undefined) {
+          emuFeatures.push({
+            name: "prefers-reduced-motion",
+            value:
+              options.emulation.reducedMotion === "no-preference"
+                ? ""
+                : options.emulation.reducedMotion,
+          });
+        }
+        if (emuFeatures.length > 0) {
+          await cdpChannel
+            .sendCommand("Emulation.setEmulatedMedia", { features: emuFeatures }, sessionId)
+            .catch(() => {});
+        }
+        if (options.emulation.locale) {
+          await cdpChannel
+            .sendCommand(
+              "Emulation.setLocaleOverride",
+              { locale: options.emulation.locale },
+              sessionId,
+            )
+            .catch(() => {});
+        }
+        if (options.emulation.timezoneId) {
+          await cdpChannel
+            .sendCommand(
+              "Emulation.setTimezoneOverride",
+              { timezoneId: options.emulation.timezoneId },
+              sessionId,
+            )
+            .catch(() => {});
+        }
       }
 
       let authenticatorId: string | undefined;
@@ -818,13 +898,60 @@ export function makeLightweightCdpDriver(
       }
     });
 
-    // Auto-handle JS dialogs (alert/confirm/prompt/beforeunload) so page teardown
-    // or unexpected dialogs never freeze subsequent CDP commands or navigation.
+    // Handle JS dialogs (alert/confirm/prompt/beforeunload) via registered custom handler,
+    // falling back to safe auto-handling so dialogs never freeze subsequent CDP commands.
     cdpChannel.onEvent("Page.javascriptDialogOpening", (params, sid) => {
-      const accept = params?.type === "beforeunload";
-      void cdpChannel
-        .sendCommand("Page.handleJavaScriptDialog", { accept }, sid ?? null)
-        .catch(() => {});
+      const targetSid = sid ?? null;
+      const dialogType = String(params?.type ?? "alert") as BrowserDialogInfo["type"];
+      const message = String(params?.message ?? "");
+      const defaultValue = String(params?.defaultPrompt ?? "");
+      const activeHandler = dialogHandler;
+      if (!activeHandler) {
+        const accept = dialogType === "beforeunload";
+        void cdpChannel
+          .sendCommand("Page.handleJavaScriptDialog", { accept }, targetSid)
+          .catch(() => {});
+        return;
+      }
+
+      let handled = false;
+      const info: BrowserDialogInfo = {
+        type: dialogType,
+        message,
+        defaultValue,
+        accept: async (promptText?: string) => {
+          if (handled) return;
+          handled = true;
+          await cdpChannel.sendCommand(
+            "Page.handleJavaScriptDialog",
+            {
+              accept: true,
+              ...(promptText !== undefined ? { promptText } : {}),
+            },
+            targetSid,
+          );
+        },
+        dismiss: async () => {
+          if (handled) return;
+          handled = true;
+          await cdpChannel.sendCommand("Page.handleJavaScriptDialog", { accept: false }, targetSid);
+        },
+      };
+
+      void Promise.resolve(activeHandler(info))
+        .catch(() => {})
+        .finally(() => {
+          if (!handled) {
+            handled = true;
+            void cdpChannel
+              .sendCommand(
+                "Page.handleJavaScriptDialog",
+                { accept: dialogType === "beforeunload" },
+                targetSid,
+              )
+              .catch(() => {});
+          }
+        });
     });
 
     cdpChannel.setFrameOffsetResolver(async (child) => {
@@ -1040,6 +1167,7 @@ export function makeLightweightCdpDriver(
           try: async () => {
             consoleLogs.length = 0;
             jsErrors.length = 0;
+            dialogHandler = null;
             cdpChannel.clearChildSessions();
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
               if (options.contextIsolation === "hot-cache" && activeSlot) {
@@ -1824,14 +1952,14 @@ export function makeLightweightCdpDriver(
             }
             const downloaded =
               completedDownloads.shift() ??
-              (await new Promise<string>((resolve, reject) => {
+              (await new Promise<CompletedCdpDownload>((resolve, reject) => {
                 const timer = setTimeout(() => {
                   reject(new Error("Timed out waiting for CDP file download"));
                 }, 15_000);
                 downloadWaiters.push({
-                  resolve: (fp) => {
+                  resolve: (entry) => {
                     clearTimeout(timer);
-                    resolve(fp);
+                    resolve(entry);
                   },
                   reject: (err) => {
                     clearTimeout(timer);
@@ -1839,9 +1967,219 @@ export function makeLightweightCdpDriver(
                   },
                 });
               }));
-            await copyFile(downloaded, destPath);
+            await copyFile(downloaded.filePath, destPath);
           },
           catch: (e) => new DriverError({ message: `CDP downloadFile failed: ${e}` }),
+        }),
+
+      dragAndDrop: (fromX: number, fromY: number, toX: number, toY: number, steps = 10) =>
+        Effect.tryPromise({
+          try: async () => {
+            const totalSteps = Math.max(1, Math.round(steps));
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x: fromX,
+              y: fromY,
+            });
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x: fromX,
+              y: fromY,
+              button: "left",
+              buttons: 1,
+              clickCount: 1,
+            });
+            for (let i = 1; i <= totalSteps; i++) {
+              const t = i / totalSteps;
+              await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+                type: "mouseMoved",
+                x: fromX + (toX - fromX) * t,
+                y: fromY + (toY - fromY) * t,
+                button: "left",
+                buttons: 1,
+              });
+            }
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              x: toX,
+              y: toY,
+              button: "left",
+              buttons: 0,
+              clickCount: 1,
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP dragAndDrop failed: ${e}` }),
+        }),
+
+      setViewport: (viewport) =>
+        Effect.tryPromise({
+          try: async () => {
+            width = viewport.width;
+            height = viewport.height;
+            await cdpChannel.sendCommand("Emulation.setDeviceMetricsOverride", {
+              width: viewport.width,
+              height: viewport.height,
+              deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
+              mobile: viewport.mobile ?? false,
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP setViewport failed: ${e}` }),
+        }),
+
+      setEmulation: (emulationOpts: BrowserEmulationOptions) =>
+        Effect.tryPromise({
+          try: async () => {
+            const features: Array<{ name: string; value: string }> = [];
+            if (emulationOpts.colorScheme !== undefined) {
+              features.push({
+                name: "prefers-color-scheme",
+                value:
+                  emulationOpts.colorScheme === "no-preference" ? "" : emulationOpts.colorScheme,
+              });
+            }
+            if (emulationOpts.reducedMotion !== undefined) {
+              features.push({
+                name: "prefers-reduced-motion",
+                value:
+                  emulationOpts.reducedMotion === "no-preference"
+                    ? ""
+                    : emulationOpts.reducedMotion,
+              });
+            }
+            if (features.length > 0) {
+              await cdpChannel.sendCommand("Emulation.setEmulatedMedia", { features });
+            }
+            if (emulationOpts.locale !== undefined) {
+              await cdpChannel
+                .sendCommand("Emulation.setLocaleOverride", { locale: emulationOpts.locale })
+                .catch(() => {});
+            }
+            if (emulationOpts.timezoneId !== undefined) {
+              await cdpChannel
+                .sendCommand("Emulation.setTimezoneOverride", {
+                  timezoneId: emulationOpts.timezoneId,
+                })
+                .catch(() => {});
+            }
+          },
+          catch: (e) => new DriverError({ message: `CDP setEmulation failed: ${e}` }),
+        }),
+
+      setDialogHandler: (handler) =>
+        Effect.sync(() => {
+          dialogHandler = handler;
+        }),
+
+      getClipboard: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (activeSlot?.browserContextId) {
+              await cdpChannel
+                .sendCommand(
+                  "Browser.grantPermissions",
+                  {
+                    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+                    browserContextId: activeSlot.browserContextId,
+                  },
+                  null,
+                )
+                .catch(() => {});
+            }
+            const res = (await cdpChannel.sendCommand("Runtime.evaluate", {
+              expression: `(async () => {
+                if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+                  try { return await navigator.clipboard.readText(); } catch {}
+                }
+                return typeof window.__spanaClipboardText === "string" ? window.__spanaClipboardText : "";
+              })()`,
+              awaitPromise: true,
+              returnByValue: true,
+              userGesture: true,
+            })) as { result?: { value?: unknown } };
+            return typeof res?.result?.value === "string" ? res.result.value : "";
+          },
+          catch: (e) => new DriverError({ message: `CDP getClipboard failed: ${e}` }),
+        }),
+
+      setClipboard: (text: string) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (activeSlot?.browserContextId) {
+              await cdpChannel
+                .sendCommand(
+                  "Browser.grantPermissions",
+                  {
+                    permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+                    browserContextId: activeSlot.browserContextId,
+                  },
+                  null,
+                )
+                .catch(() => {});
+            }
+            const encoded = JSON.stringify(text);
+            await cdpChannel.sendCommand("Runtime.evaluate", {
+              expression: `(async (txt) => {
+                window.__spanaClipboardText = txt;
+                if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                  try { await navigator.clipboard.writeText(txt); return; } catch {}
+                }
+              })(${encoded})`,
+              awaitPromise: true,
+              returnByValue: true,
+              userGesture: true,
+            });
+          },
+          catch: (e) => new DriverError({ message: `CDP setClipboard failed: ${e}` }),
+        }),
+
+      waitForDownload: (triggerFn, dlOpts) =>
+        Effect.tryPromise({
+          try: async (): Promise<BrowserDownloadInfo> => {
+            const timeoutMs = dlOpts?.timeout ?? 15_000;
+            if (!downloadDir) {
+              downloadDir = mkdtempSync(join(tmpdir(), "spana-cdp-dl-"));
+              await cdpChannel.sendCommand(
+                "Browser.setDownloadBehavior",
+                {
+                  behavior: "allowAndName",
+                  downloadPath: downloadDir,
+                  eventsEnabled: true,
+                  ...(activeSlot?.browserContextId
+                    ? { browserContextId: activeSlot.browserContextId }
+                    : {}),
+                },
+                null,
+              );
+            }
+            const downloadPromise = new Promise<CompletedCdpDownload>((resolve, reject) => {
+              const timer = setTimeout(() => {
+                reject(new Error(`Timed out waiting for download after ${timeoutMs}ms`));
+              }, timeoutMs);
+              downloadWaiters.push({
+                resolve: (entry) => {
+                  clearTimeout(timer);
+                  resolve(entry);
+                },
+                reject: (err) => {
+                  clearTimeout(timer);
+                  reject(err);
+                },
+              });
+            });
+            await triggerFn();
+            const entry = await downloadPromise;
+            return {
+              suggestedFilename: entry.suggestedFilename,
+              path: entry.filePath,
+              url: entry.url,
+              text: () => readFile(entry.filePath, "utf8"),
+              bytes: async () => new Uint8Array(await readFile(entry.filePath)),
+              saveAs: async (destPath: string) => {
+                await copyFile(entry.filePath, destPath);
+              },
+            };
+          },
+          catch: (e) => new DriverError({ message: `CDP waitForDownload failed: ${e}` }),
         }),
 
       newTab: (url?: string) =>

@@ -232,6 +232,32 @@ export interface CdpSessionHandle {
   readonly browserContextId?: string;
 }
 
+export interface BrowserDialogInfo {
+  type: "alert" | "confirm" | "prompt" | "beforeunload";
+  message: string;
+  defaultValue?: string;
+  accept(promptText?: string): Promise<void>;
+  dismiss(): Promise<void>;
+}
+
+export type BrowserDialogHandler = (dialog: BrowserDialogInfo) => void | Promise<void>;
+
+export interface BrowserEmulationOptions {
+  colorScheme?: "light" | "dark" | "no-preference";
+  reducedMotion?: "reduce" | "no-preference";
+  locale?: string;
+  timezoneId?: string;
+}
+
+export interface BrowserDownloadInfo {
+  suggestedFilename: string;
+  path: string;
+  url?: string;
+  text(): Promise<string>;
+  bytes(): Promise<Uint8Array>;
+  saveAs(destPath: string): Promise<void>;
+}
+
 export interface RawDriverService<_T extends string = string, R extends string = string> {
   // Flow lifecycle
   readonly beginFlow?: (flowName: string) => Effect.Effect<void, DriverError>;
@@ -288,6 +314,29 @@ export interface RawDriverService<_T extends string = string, R extends string =
     options?: PermissionOptions,
   ) => Effect.Effect<void, DriverError>;
   readonly setOrientation?: (orientation: Orientation) => Effect.Effect<void, DriverError>;
+  readonly setViewport?: (size: {
+    width: number;
+    height: number;
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+  }) => Effect.Effect<void, DriverError>;
+  readonly setEmulation?: (opts: BrowserEmulationOptions) => Effect.Effect<void, DriverError>;
+  readonly setDialogHandler?: (
+    handler: BrowserDialogHandler | null,
+  ) => Effect.Effect<void, DriverError>;
+  readonly dragAndDrop?: (
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    steps?: number,
+  ) => Effect.Effect<void, DriverError>;
+  readonly getClipboard?: () => Effect.Effect<string, DriverError>;
+  readonly setClipboard?: (text: string) => Effect.Effect<void, DriverError>;
+  readonly waitForDownload?: (
+    trigger: () => Promise<unknown>,
+    opts?: { timeout?: number },
+  ) => Effect.Effect<BrowserDownloadInfo, DriverError>;
   readonly setBiometricEnrollment?: (enabled: boolean) => Effect.Effect<void, DriverError>;
   readonly simulateBiometric?: (options: BiometricOptions) => Effect.Effect<void, DriverError>;
   readonly sendPushNotification?: (
@@ -490,6 +539,13 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     setSystemTime: wrapOptionalMethod(logs, "setSystemTime", driver.setSystemTime),
     setPermission: wrapOptionalMethod(logs, "setPermission", driver.setPermission),
     setOrientation: wrapOptionalMethod(logs, "setOrientation", driver.setOrientation),
+    setViewport: wrapOptionalMethod(logs, "setViewport", driver.setViewport),
+    setEmulation: wrapOptionalMethod(logs, "setEmulation", driver.setEmulation),
+    setDialogHandler: wrapOptionalMethod(logs, "setDialogHandler", driver.setDialogHandler),
+    dragAndDrop: wrapOptionalMethod(logs, "dragAndDrop", driver.dragAndDrop),
+    getClipboard: wrapOptionalMethod(logs, "getClipboard", driver.getClipboard),
+    setClipboard: wrapOptionalMethod(logs, "setClipboard", driver.setClipboard),
+    waitForDownload: wrapOptionalMethod(logs, "waitForDownload", driver.waitForDownload),
     setBiometricEnrollment: wrapOptionalMethod(
       logs,
       "setBiometricEnrollment",

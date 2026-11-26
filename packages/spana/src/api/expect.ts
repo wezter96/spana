@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { Effect } from "effect";
+import { assertDataSnapshot, type DataSnapshotOptions } from "./snapshots.js";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import { isRelativeSelector, type ExtendedSelector } from "../schemas/selector.js";
 import { createCoordinator, type CoordinatorConfig } from "../smart/coordinator.js";
@@ -28,6 +29,11 @@ export interface NegatedPromiseExpectation {
   toContainText(expected: string, opts?: WaitOptions): Promise<void>;
   toHaveCount(expected: number, opts?: WaitOptions): Promise<void>;
   toBeFocused(opts?: WaitOptions): Promise<void>;
+  toBeChecked(opts?: WaitOptions): Promise<void>;
+  toBeEditable(opts?: WaitOptions): Promise<void>;
+  toBeEmpty(opts?: WaitOptions): Promise<void>;
+  toHaveClass(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  toHaveCSS(property: string, expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   toHaveAccessibleDescription(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
 }
@@ -46,6 +52,16 @@ export interface PromiseExpectation<T extends string = string> {
   toHaveCount(expected: number, opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element currently has focus (`document.activeElement`). */
   toBeFocused(opts?: WaitOptions): Promise<void>;
+  /** Assert that a checkbox/radio/switch element is checked. */
+  toBeChecked(opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element is enabled and editable. */
+  toBeEditable(opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched input/container has empty value/text. */
+  toBeEmpty(opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element has the expected CSS class token(s) or matches a RegExp. */
+  toHaveClass(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Assert that the matched element's computed CSS property matches expected value or RegExp. */
+  toHaveCSS(property: string, expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element's computed accessible name matches string or RegExp. */
   toHaveAccessibleName(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element's computed accessible description matches string or RegExp. */
@@ -118,15 +134,21 @@ export interface PromiseExpectFn<T extends string = string> {
   (fn: () => unknown | Promise<unknown>): ToPassExpectation;
   soft: ((selector: ExtendedSelector<T>) => PromiseExpectation<T>) & {
     toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+    toHaveTitle(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   };
   /** Assert that the current page URL matches a substring/exact string or RegExp. */
   toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
-  /** Negated page-level matchers (`expect.not.toHaveURL(...)`). */
+  /** Assert that the current document title matches exact string or RegExp. */
+  toHaveTitle(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+  /** Negated page-level matchers (`expect.not.toHaveURL(...)`, `expect.not.toHaveTitle(...)`). */
   readonly not: {
     toHaveURL(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
+    toHaveTitle(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   };
   /** Poll an async/sync getter until the chained matcher passes (Playwright `expect.poll(fn)`). */
   poll<V>(fn: () => V | Promise<V>, opts?: RetryAssertionOptions): PollExpectation<V>;
+  /** Assert that a string or JSON-serializable object matches a persisted disk snapshot. */
+  toMatchSnapshot(actual: unknown, name: string, opts?: DataSnapshotOptions): Promise<void>;
 }
 
 function selectorToCss<T extends string = string>(sel: ExtendedSelector<T>): string {
@@ -326,6 +348,28 @@ export function createPromiseExpect<T extends string = string, R extends string 
     toBeFocused: (opts) =>
       runStep("expect.not.toBeFocused", selector, () =>
         run(coord.assertFocused(selector, opts, true)),
+      ),
+    toBeChecked: (opts) =>
+      runStep("expect.not.toBeChecked", selector, () =>
+        run(coord.assertChecked(selector, opts, true)),
+      ),
+    toBeEditable: (opts) =>
+      runStep("expect.not.toBeEditable", selector, () =>
+        run(coord.assertEditable(selector, opts, true)),
+      ),
+    toBeEmpty: (opts) =>
+      runStep("expect.not.toBeEmpty", selector, () => run(coord.assertEmpty(selector, opts, true))),
+    toHaveClass: (expected, opts) =>
+      runStep(
+        `expect.not.toHaveClass(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertClass(selector, expected, opts, true)),
+      ),
+    toHaveCSS: (property, expected, opts) =>
+      runStep(
+        `expect.not.toHaveCSS(${JSON.stringify(property)}, ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertCss(selector, property, expected, opts, true)),
       ),
     toHaveAccessibleName: (expected, opts) =>
       runStep(
@@ -537,6 +581,24 @@ export function createPromiseExpect<T extends string = string, R extends string 
       ),
     toBeFocused: (opts) =>
       runStep("expect.toBeFocused", selector, () => run(coord.assertFocused(selector, opts))),
+    toBeChecked: (opts) =>
+      runStep("expect.toBeChecked", selector, () => run(coord.assertChecked(selector, opts))),
+    toBeEditable: (opts) =>
+      runStep("expect.toBeEditable", selector, () => run(coord.assertEditable(selector, opts))),
+    toBeEmpty: (opts) =>
+      runStep("expect.toBeEmpty", selector, () => run(coord.assertEmpty(selector, opts))),
+    toHaveClass: (expected, opts) =>
+      runStep(
+        `expect.toHaveClass(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertClass(selector, expected, opts)),
+      ),
+    toHaveCSS: (property, expected, opts) =>
+      runStep(
+        `expect.toHaveCSS(${JSON.stringify(property)}, ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertCss(selector, property, expected, opts)),
+      ),
     toHaveAccessibleName: (expected, opts) =>
       runStep(
         `expect.toHaveAccessibleName(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
@@ -658,12 +720,19 @@ export function createPromiseExpect<T extends string = string, R extends string 
     const label = `expect.toHaveURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
     return recordStep(label, () => run(coord.waitForURL(expected, opts)));
   };
+  const toHaveTitle = (expected: string | RegExp, opts?: WaitOptions) => {
+    const label = `expect.toHaveTitle(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
+    return recordStep(label, () => run(coord.waitForTitle(expected, opts)));
+  };
   expectFn.toHaveURL = toHaveURL;
+  expectFn.toHaveTitle = toHaveTitle;
   expectFn.soft = Object.assign(
     (selector: ExtendedSelector<T>) => buildSelectorExpectation(selector, runSoftSelectorStep),
     {
       toHaveURL: (expected: string | RegExp, opts?: WaitOptions) =>
         recordSoft(() => toHaveURL(expected, opts)),
+      toHaveTitle: (expected: string | RegExp, opts?: WaitOptions) =>
+        recordSoft(() => toHaveTitle(expected, opts)),
     },
   );
 
@@ -673,6 +742,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
       toHaveURL: (expected: string | RegExp, opts?: WaitOptions) => {
         const label = `expect.not.toHaveURL(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
         return recordStep(label, () => run(coord.waitForURL(expected, opts, true)));
+      },
+      toHaveTitle: (expected: string | RegExp, opts?: WaitOptions) => {
+        const label = `expect.not.toHaveTitle(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`;
+        return recordStep(label, () => run(coord.waitForTitle(expected, opts, true)));
       },
     },
   });
@@ -684,6 +757,14 @@ export function createPromiseExpect<T extends string = string, R extends string 
     ...buildPollMatchers(fn, opts, false),
     not: buildPollMatchers(fn, opts, true),
   });
+
+  expectFn.toMatchSnapshot = (actual: unknown, name: string, opts?: DataSnapshotOptions) =>
+    recordStep(`expect.toMatchSnapshot(${JSON.stringify(name)})`, async () => {
+      assertDataSnapshot(actual, name, {
+        ...opts,
+        updateBaselines: opts?.updateBaselines ?? ctx.updateBaselines,
+      });
+    });
 
   return expectFn;
 }

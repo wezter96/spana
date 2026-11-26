@@ -4,9 +4,19 @@ import type {
   LaunchOptions,
   VirtualAuthenticatorOptions,
 } from "../drivers/raw-driver.js";
+import type { WebServerConfig } from "../runtime/web-server.js";
+import type { ProjectConfig } from "../core/projects.js";
+import type { AgentProviderConfig } from "../api/agent-fixture.js";
 import { z, type ZodError } from "zod";
 
-export type { DeviceStateConfig, LaunchOptions, VirtualAuthenticatorOptions };
+export type {
+  DeviceStateConfig,
+  LaunchOptions,
+  VirtualAuthenticatorOptions,
+  WebServerConfig,
+  ProjectConfig,
+  AgentProviderConfig,
+};
 
 export interface IOSSigningConfig {
   /** Apple Development Team ID (from developer.apple.com or Xcode) */
@@ -163,6 +173,14 @@ export interface WebExecutionConfig {
   verboseLogging?: boolean;
   /** Optional Storybook config for isolated component/story flows in the browser runtime */
   storybook?: StorybookConfig;
+  /** Unpacked Chromium browser extension directories to load at launch. */
+  extensions?: string[];
+  /** Emulate `prefers-color-scheme` on web launch (`"dark"` | `"light"` | `"no-preference"`). */
+  colorScheme?: "dark" | "light" | "no-preference";
+  /** Emulate `prefers-reduced-motion` on web launch (`"reduce"` | `"no-preference"`). */
+  reducedMotion?: "reduce" | "no-preference";
+  /** Emulate IANA timezone ID on Chromium launch (e.g. `"America/New_York"`). */
+  timezoneId?: string;
 }
 
 export interface CloudAppReferenceConfig {
@@ -262,6 +280,10 @@ export interface ArtifactConfig {
   video?: VideoRecordingMode;
   /** Embed interactive step-by-step visual playback timeline inside report.html (auto-enabled when video !== "off"). */
   playback?: boolean;
+  /** Write Playwright-style interactive `trace.json` + `trace-viewer.html` bundle per flow. */
+  trace?: boolean;
+  /** Automatically attach Android `adb logcat` / iOS Simulator crash logs on native failure (default: true). */
+  nativeLogs?: boolean;
 }
 
 export interface HookContext {
@@ -347,6 +369,12 @@ export interface ProvConfig {
     mode?: "read-write" | "strict" | "off";
     dir?: string;
   };
+  /** Auto-boot one or more dev servers before tests run and tear them down cleanly afterwards. */
+  webServer?: WebServerConfig | WebServerConfig[];
+  /** Named test projects with dependency DAG (`dependencies`, `teardown`, per-project `storageState` / `browser` / `testMatch`). */
+  projects?: ProjectConfig[];
+  /** Optional LLM provider configuration for `agent.act()` / `agent.verify()` / `agent.extract()` and `spana explore`. */
+  agent?: Omit<AgentProviderConfig, "fetchFn">;
 }
 
 const platformSchema = z.enum(["web", "android", "ios", "electron", "electrobun"]);
@@ -536,6 +564,10 @@ const webExecutionConfigSchema = z
     storageState: z.string().min(1).optional(),
     verboseLogging: z.boolean().optional(),
     storybook: storybookConfigSchema.optional(),
+    extensions: z.array(z.string().min(1)).optional(),
+    colorScheme: z.enum(["dark", "light", "no-preference"]).optional(),
+    reducedMotion: z.enum(["reduce", "no-preference"]).optional(),
+    timezoneId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -563,6 +595,8 @@ const artifactConfigSchema = z
     jsCoverage: z.boolean().optional(),
     video: z.enum(["off", "on", "retain-on-failure"]).optional(),
     playback: z.boolean().optional(),
+    trace: z.boolean().optional(),
+    nativeLogs: z.boolean().optional(),
   })
   .strict();
 
@@ -658,6 +692,74 @@ export const provConfigSchema = z
       .object({
         mode: z.enum(["read-write", "strict", "off"]).optional(),
         dir: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    webServer: z
+      .union([
+        z
+          .object({
+            command: z.string().min(1),
+            url: z.string().url().optional(),
+            port: z.number().int().positive().optional(),
+            cwd: z.string().min(1).optional(),
+            env: z.record(z.string(), z.string()).optional(),
+            timeout: z.number().positive().optional(),
+            reuseExistingServer: z.boolean().optional(),
+            stdout: z.enum(["pipe", "ignore", "inherit"]).optional(),
+            stderr: z.enum(["pipe", "ignore", "inherit"]).optional(),
+            ignoreHTTPSErrors: z.boolean().optional(),
+            gracefulShutdownMs: z.number().nonnegative().optional(),
+          })
+          .strict(),
+        z.array(
+          z
+            .object({
+              command: z.string().min(1),
+              url: z.string().url().optional(),
+              port: z.number().int().positive().optional(),
+              cwd: z.string().min(1).optional(),
+              env: z.record(z.string(), z.string()).optional(),
+              timeout: z.number().positive().optional(),
+              reuseExistingServer: z.boolean().optional(),
+              stdout: z.enum(["pipe", "ignore", "inherit"]).optional(),
+              stderr: z.enum(["pipe", "ignore", "inherit"]).optional(),
+              ignoreHTTPSErrors: z.boolean().optional(),
+              gracefulShutdownMs: z.number().nonnegative().optional(),
+            })
+            .strict(),
+        ),
+      ])
+      .optional(),
+    projects: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1),
+            platform: platformSchema.optional(),
+            browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+            baseUrl: z.string().url().optional(),
+            storageState: z.string().min(1).optional(),
+            flowDir: z.string().min(1).optional(),
+            testMatch: z.array(z.union([z.string().min(1), z.instanceof(RegExp)])).optional(),
+            testIgnore: z.array(z.union([z.string().min(1), z.instanceof(RegExp)])).optional(),
+            tags: z.array(z.string().min(1)).optional(),
+            grep: z.string().min(1).optional(),
+            dependencies: z.array(z.string().min(1)).optional(),
+            teardown: z.string().min(1).optional(),
+            retries: z.number().int().nonnegative().optional(),
+            use: z.record(z.string(), z.unknown()).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    agent: z
+      .object({
+        model: z.string().min(1).optional(),
+        baseUrl: z.string().url().optional(),
+        apiKey: z.string().min(1).optional(),
+        apiKeyEnv: z.string().min(1).optional(),
+        maxSteps: z.number().int().positive().optional(),
       })
       .strict()
       .optional(),

@@ -44,6 +44,9 @@ if (command === "test") {
   let watch = false;
   let updateBaselines = false;
   let jsCoverage = false;
+  let headed = false;
+  let trace = false;
+  let projects: string[] | undefined;
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
@@ -128,6 +131,12 @@ if (command === "test") {
       updateBaselines = true;
     } else if (arg === "--js-coverage") {
       jsCoverage = true;
+    } else if (arg === "--headed") {
+      headed = true;
+    } else if (arg === "--trace") {
+      trace = true;
+    } else if (arg === "--project" && args[i + 1]) {
+      projects = [...(projects ?? []), ...args[++i]!.split(",")];
     } else if (!arg.startsWith("--")) {
       flowPath = arg;
     }
@@ -167,8 +176,167 @@ if (command === "test") {
     watch,
     updateBaselines,
     jsCoverage,
+    headed,
+    trace,
+    projects,
   });
   process.exit(success ? 0 : 1);
+} else if (command === "list") {
+  const platforms: Platform[] = [];
+  let tags: string[] | undefined;
+  let grep: string | undefined;
+  let configPath: string | undefined;
+  let flowPath: string | undefined;
+  let projects: string[] | undefined;
+  let jsonMode = false;
+
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--platform" && args[i + 1]) {
+      platforms.push(...(args[++i]!.split(",") as Platform[]));
+    } else if (arg === "--tag" && args[i + 1]) {
+      tags = args[++i]!.split(",");
+    } else if (arg === "--grep" && args[i + 1]) {
+      grep = args[++i];
+    } else if (arg === "--config" && args[i + 1]) {
+      configPath = args[++i];
+    } else if (arg === "--project" && args[i + 1]) {
+      projects = [...(projects ?? []), ...args[++i]!.split(",")];
+    } else if (arg === "--json") {
+      jsonMode = true;
+    } else if (!arg.startsWith("--")) {
+      flowPath = arg;
+    }
+  }
+
+  const { runTestCommand } = await import("./test-command.js");
+  const success = await runTestCommand({
+    platforms,
+    tags,
+    grep,
+    configPath,
+    flowPath,
+    projects,
+    listOnly: true,
+    json: jsonMode,
+  });
+  process.exit(success ? 0 : 1);
+} else if (command === "report") {
+  let outputDir = "./spana-output";
+  let noOpen = false;
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === "--output" && args[i + 1]) outputDir = args[++i]!;
+    if (args[i] === "--no-open") noOpen = true;
+  }
+  const { existsSync } = await import("node:fs");
+  const { resolve, join } = await import("node:path");
+  const reportHtml = resolve(join(outputDir, "report.html"));
+  if (!existsSync(reportHtml)) {
+    console.log(`No HTML report found at ${reportHtml}. Run \`spana test --reporter html\` first.`);
+    process.exit(1);
+  }
+  console.log(`Report: ${reportHtml}`);
+  if (!noOpen) {
+    const { spawn } = await import("node:child_process");
+    const opener =
+      process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+    const openArgs = process.platform === "win32" ? ["/c", "start", "", reportHtml] : [reportHtml];
+    spawn(opener, openArgs, { detached: true, stdio: "ignore" }).unref();
+  }
+  process.exit(0);
+} else if (command === "cache") {
+  const sub = args[1] ?? "inspect";
+  let cacheDir = ".spana/cache";
+  let match: string | undefined;
+  let jsonMode = false;
+  for (let i = 2; i < args.length; i++) {
+    if (args[i] === "--dir" && args[i + 1]) cacheDir = args[++i]!;
+    if (args[i] === "--match" && args[i + 1]) match = args[++i];
+    if (args[i] === "--json") jsonMode = true;
+  }
+  const { inspectReplayCache, clearReplayCache, formatCacheInspectTable } =
+    await import("./cache-command.js");
+  if (sub === "clear") {
+    const cleared = clearReplayCache(cacheDir, { match });
+    if (jsonMode) {
+      printMachinePayload(createMachineSuccess("cache", { ...cleared }));
+    } else {
+      console.log(
+        `Removed ${cleared.removedCount} replay cache entry(ies) from ${cleared.cacheDir}.`,
+      );
+    }
+  } else {
+    const inspected = inspectReplayCache(cacheDir);
+    if (jsonMode) {
+      printMachinePayload(createMachineSuccess("cache", { ...inspected }));
+    } else {
+      console.log(formatCacheInspectTable(inspected));
+    }
+  }
+  process.exit(0);
+} else if (command === "explore") {
+  let goal: string | undefined;
+  let url: string | undefined;
+  let outputFile: string | undefined;
+  let headed = false;
+  let configPath: string | undefined;
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--url" && args[i + 1]) url = args[++i];
+    else if (arg === "--output" && args[i + 1]) outputFile = args[++i];
+    else if (arg === "--headed") headed = true;
+    else if (arg === "--config" && args[i + 1]) configPath = args[++i];
+    else if (!arg.startsWith("--") && !goal) goal = arg;
+  }
+  if (!goal) {
+    console.log(
+      'Usage: spana explore "<goal>" [--url <url>] [--output flows/explored.flow.ts] [--headed]',
+    );
+    process.exit(1);
+  }
+  const { loadConfig } = await import("./config-loader.js");
+  const { config } = await loadConfig({ configPath, allowMissing: true });
+  const { buildWebRuntime } = await import("../runtime/local.js");
+  const { createPromiseApp } = await import("../api/app.js");
+  const { runExploreSession } = await import("../api/agent-fixture.js");
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  const { dirname, resolve } = await import("node:path");
+
+  const mergedConfig = {
+    ...config,
+    apps: { ...config.apps, web: { ...config.apps?.web, ...(url ? { url } : {}) } },
+    execution: {
+      ...config.execution,
+      web: { ...config.execution?.web, ...(headed ? { headless: false } : {}) },
+    },
+  };
+  const { runtime, engineConfig } = await buildWebRuntime(mergedConfig);
+  try {
+    const app = createPromiseApp(
+      runtime.driver,
+      engineConfig.appId,
+      engineConfig.coordinatorConfig,
+      undefined,
+      {
+        platform: "web",
+      },
+    );
+    if (url || config.apps?.web?.url) {
+      await app.openLink(url ?? config.apps!.web!.url!);
+    }
+    const result = await runExploreSession({ goal, app, provider: config.agent });
+    if (outputFile) {
+      const absOut = resolve(outputFile);
+      mkdirSync(dirname(absOut), { recursive: true });
+      writeFileSync(absOut, result.flowCode, "utf8");
+      console.log(`✓ Wrote explored flow (${result.actions.length} actions) to ${absOut}`);
+    } else {
+      console.log(result.flowCode);
+    }
+  } finally {
+    await runtime.cleanup();
+  }
+  process.exit(0);
 } else if (command === "hierarchy" || command === "selectors") {
   let platform: Platform = "web";
   let pretty = false;
@@ -522,7 +690,7 @@ if (command === "test") {
   const server = new SpanaMcpServer();
   await server.runStdio();
 } else if (command === "version" || args.includes("--version") || args.includes("-v")) {
-  console.log("spana v0.8.0");
+  console.log("spana v0.11.0");
 } else {
   console.log(
     "spana — One test. Every screen. TypeScript E2E testing for Web, iOS, Android, Electron & Electrobun",
@@ -530,6 +698,16 @@ if (command === "test") {
   console.log("");
   console.log("Commands:");
   console.log("  spana test [path]              Run test flows");
+  console.log(
+    "  spana list [path]              List matching test flows without launching devices",
+  );
+  console.log("  spana report                   Open the latest HTML report");
+  console.log(
+    "  spana cache [inspect|clear]    Inspect or clear verified replay cache (.spana/cache)",
+  );
+  console.log(
+    "  spana explore <goal>           Autonomously explore and emit a verified .flow.ts file",
+  );
   console.log("  spana mcp                      Start stdio MCP server for coding agents");
   console.log("  spana hierarchy --platform <p> Dump element hierarchy as JSON");
   console.log("  spana selectors --platform <p> List actionable elements with suggested selectors");

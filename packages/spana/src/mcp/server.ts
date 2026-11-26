@@ -1,6 +1,12 @@
 import { createInterface } from "node:readline";
 import type { ExtendedSelector, Platform } from "../schemas/selector.js";
 import type { ConnectOptions, Session } from "../agent/session.js";
+import {
+  buildComponentTreeScript,
+  buildPerformanceProfileScript,
+  type ComponentTreeReport,
+  type PerformanceProfileReport,
+} from "../diagnostics/live-inspector.js";
 
 /** MCP Tool definition advertised by `tools/list`. */
 export interface McpToolDefinition {
@@ -248,6 +254,41 @@ export const SPANA_MCP_TOOLS: McpToolDefinition[] = [
         },
       },
       required: ["flowPath"],
+    },
+  },
+  {
+    name: "spana_network_logs",
+    description:
+      "Argent-inspired live network inspector: query captured HTTP/Fetch requests with optional URL, method, and status/error filters.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        urlIncludes: { type: "string" },
+        method: { type: "string" },
+        failedOnly: { type: "boolean" },
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "spana_component_tree",
+    description:
+      "Argent-inspired live component tree inspector: inspect mounted React Fiber, Vue 3, and Web Component hierarchy with prop previews.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        maxDepth: { type: "number" },
+        maxNodes: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "spana_performance_profile",
+    description:
+      "Argent-inspired live performance profiler: returns Web Vitals (FCP, LCP, CLS), navigation timing (TTFB, DCL, Load), long tasks, slowest resources, DOM size, and JS heap.",
+    inputSchema: {
+      type: "object",
+      properties: {},
     },
   },
 ];
@@ -576,6 +617,55 @@ export class SpanaMcpServer {
           const platform = args["platform"] as Platform | undefined;
           const passed = await this.runFlowFn({ flowPath, platform });
           return this.jsonResult({ flowPath, platform: platform ?? "default", passed });
+        }
+
+        case "spana_network_logs": {
+          const session = this.requireSession();
+          const har = await session.getHAR().catch(() => null);
+          const urlIncludes =
+            typeof args["urlIncludes"] === "string" ? args["urlIncludes"].toLowerCase() : undefined;
+          const methodFilter =
+            typeof args["method"] === "string" ? args["method"].toUpperCase() : undefined;
+          const failedOnly = Boolean(args["failedOnly"]);
+          const limit = typeof args["limit"] === "number" ? args["limit"] : 50;
+          const entries = (har?.log?.entries ?? [])
+            .map((e) => ({
+              method: e.request.method,
+              url: e.request.url,
+              status: e.response.status,
+              statusText: e.response.statusText,
+              durationMs: e.time,
+              resourceType: e._resourceType,
+              failed:
+                e.response.status === 0 || e.response.status >= 400 || Boolean(e._failureText),
+              errorText: e._failureText,
+            }))
+            .filter((e) => {
+              if (urlIncludes && !e.url.toLowerCase().includes(urlIncludes)) return false;
+              if (methodFilter && e.method.toUpperCase() !== methodFilter) return false;
+              if (failedOnly && !e.failed) return false;
+              return true;
+            })
+            .slice(-Math.max(1, limit));
+          return this.jsonResult({ count: entries.length, entries });
+        }
+
+        case "spana_component_tree": {
+          const session = this.requireSession();
+          const maxDepth = typeof args["maxDepth"] === "number" ? args["maxDepth"] : undefined;
+          const maxNodes = typeof args["maxNodes"] === "number" ? args["maxNodes"] : undefined;
+          const report = await session.evaluate<ComponentTreeReport>(
+            buildComponentTreeScript({ maxDepth, maxNodes }),
+          );
+          return this.jsonResult(report);
+        }
+
+        case "spana_performance_profile": {
+          const session = this.requireSession();
+          const profile = await session.evaluate<PerformanceProfileReport>(
+            buildPerformanceProfileScript(),
+          );
+          return this.jsonResult(profile);
         }
 
         default:

@@ -4,6 +4,9 @@ import type {
   RawDriverService,
   LaunchOptions,
   BrowserCookie,
+  BrowserDialogHandler,
+  BrowserDownloadInfo,
+  BrowserEmulationOptions,
   BrowserMockResponse,
   BrowserNetworkConditions,
   BrowserResponseInfo,
@@ -53,6 +56,7 @@ import type {
   DomClearStorageOptions,
   DomIdleOptions,
   DomStorageEntries,
+  SelectOptionInput,
 } from "../channels/dom-channel.js";
 
 export type {
@@ -63,6 +67,10 @@ export type {
 export type {
   BrowserConsoleLog,
   BrowserCookie,
+  BrowserDialogHandler,
+  BrowserDialogInfo,
+  BrowserDownloadInfo,
+  BrowserEmulationOptions,
   BrowserHAR,
   BrowserJSError,
   BrowserResponseInfo,
@@ -71,6 +79,7 @@ export type {
   VirtualCredential,
   VirtualCredentialInput,
 } from "../drivers/raw-driver.js";
+export type { SelectOptionInput } from "../channels/dom-channel.js";
 export type { StorybookOpenOptions } from "./storybook.js";
 
 export interface BrowserRequestOptions {
@@ -136,6 +145,16 @@ export interface FrameScope<T extends string = string> {
   longPress(selector: Selector<T>, opts?: { duration?: number } & WaitOptions): Promise<void>;
   hover(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
   fill(selector: Selector<T>, value: string, opts?: WaitOptions): Promise<void>;
+  clear(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
+  check(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
+  uncheck(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
+  selectOption(
+    selector: Selector<T>,
+    option: SelectOptionInput,
+    opts?: WaitOptions,
+  ): Promise<string[]>;
+  focus(selector: Selector<T>, opts?: WaitOptions): Promise<void>;
+  dragTo(source: Selector<T>, target: Selector<T>, opts?: WaitOptions): Promise<void>;
   uploadFile(selector: Selector<T>, path: string | string[]): Promise<void>;
   getText(selector: Selector<T>, opts?: WaitOptions): Promise<string>;
   getAttribute(
@@ -164,6 +183,50 @@ export interface PromiseApp<T extends string = string, R extends string = string
   inputText(text: string): Promise<void>;
   /** Atomic 1-round-trip form fill: waits for actionability, focuses, replaces value, and dispatches input/change. */
   fill(selector: ExtendedSelector<T>, value: string, opts?: WaitOptions): Promise<void>;
+  /** Clear the text value of an input, textarea, or contenteditable element. */
+  clear(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
+  /** Ensure a checkbox, radio button, or ARIA switch is checked (idempotent). */
+  check(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
+  /** Ensure a checkbox or ARIA switch is unchecked (idempotent). */
+  uncheck(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
+  /** Select one or more options in a `<select>` element by value, label, or index. Returns selected option values. */
+  selectOption(
+    selector: ExtendedSelector<T>,
+    option: SelectOptionInput,
+    opts?: WaitOptions,
+  ): Promise<string[]>;
+  /** Focus an element. */
+  focus(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<void>;
+  /** Drag a source element onto a target element. */
+  dragTo(
+    source: ExtendedSelector<T>,
+    target: ExtendedSelector<T>,
+    opts?: WaitOptions,
+  ): Promise<void>;
+  /** Resize the active browser viewport dynamically mid-flow. */
+  setViewport(viewport: {
+    width: number;
+    height: number;
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+  }): Promise<void>;
+  /** Emulate CSS media (`colorScheme`, `reducedMotion`), locale, or timezone dynamically mid-flow. */
+  setEmulation(options: BrowserEmulationOptions): Promise<void>;
+  /** Register a custom handler for JS alert/confirm/prompt/beforeunload dialogs (pass `null` to restore auto-handling). */
+  onDialog(handler: BrowserDialogHandler | null): Promise<void>;
+  /** Accept the next JS dialog (optionally passing prompt text) and resolve with the dialog metadata. */
+  acceptNextDialog(promptText?: string): Promise<void>;
+  /** Dismiss the next JS dialog. */
+  dismissNextDialog(): Promise<void>;
+  /** Read plain text from the browser clipboard. */
+  getClipboard(): Promise<string>;
+  /** Write plain text to the browser clipboard. */
+  setClipboard(text: string): Promise<void>;
+  /** Wait for a file download triggered by `triggerFn` and return rich download metadata & helpers. */
+  waitForDownload(
+    triggerFn: () => Promise<unknown>,
+    opts?: { timeout?: number },
+  ): Promise<BrowserDownloadInfo>;
   pressKey(key: string): Promise<void>;
   hideKeyboard(): Promise<void>;
   dismissKeyboard(opts?: DismissKeyboardOptions): Promise<void>;
@@ -661,6 +724,84 @@ export function createPromiseApp<T extends string = string, R extends string = s
         selector,
         captureScreenshot: true,
       }),
+    clear: (selector, opts) =>
+      runStep("clear", () => run(coord.fill(selector, "", opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    check: (selector, opts) =>
+      runStep("check", () => run(coord.check(selector, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    uncheck: (selector, opts) =>
+      runStep("uncheck", () => run(coord.uncheck(selector, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    selectOption: (selector, option, opts) =>
+      runStep("selectOption", () => run(coord.selectOption(selector, option, opts)), {
+        selector: { target: selector, option },
+        captureScreenshot: true,
+      }),
+    focus: (selector, opts) =>
+      runStep("focus", () => run(coord.focus(selector, opts)), {
+        selector,
+        captureScreenshot: true,
+      }),
+    dragTo: (source, target, opts) =>
+      runStep("dragTo", () => run(coord.dragTo(source, target, opts)), {
+        selector: { source, target },
+        captureScreenshot: true,
+      }),
+    setViewport: (viewport) =>
+      runStep(`setViewport(${viewport.width}x${viewport.height})`, () =>
+        run(optionalMethod("setViewport", driver.setViewport)(viewport)),
+      ),
+    setEmulation: (emulationOpts) =>
+      runStep(
+        "setEmulation",
+        () => run(optionalMethod("setEmulation", driver.setEmulation)(emulationOpts)),
+        { selector: emulationOpts },
+      ),
+    onDialog: (handler) =>
+      runStep("onDialog", () => run(optionalMethod("onDialog", driver.setDialogHandler)(handler))),
+    acceptNextDialog: (promptText) =>
+      runStep("acceptNextDialog", () =>
+        run(
+          optionalMethod(
+            "acceptNextDialog",
+            driver.setDialogHandler,
+          )(async (dialog) => {
+            await dialog.accept(promptText);
+            if (driver.setDialogHandler) {
+              await run(driver.setDialogHandler(null)).catch(() => {});
+            }
+          }),
+        ),
+      ),
+    dismissNextDialog: () =>
+      runStep("dismissNextDialog", () =>
+        run(
+          optionalMethod(
+            "dismissNextDialog",
+            driver.setDialogHandler,
+          )(async (dialog) => {
+            await dialog.dismiss();
+            if (driver.setDialogHandler) {
+              await run(driver.setDialogHandler(null)).catch(() => {});
+            }
+          }),
+        ),
+      ),
+    getClipboard: () =>
+      runStep("getClipboard", () => run(optionalMethod("getClipboard", driver.getClipboard)())),
+    setClipboard: (text) =>
+      runStep("setClipboard", () => run(optionalMethod("setClipboard", driver.setClipboard)(text))),
+    waitForDownload: (triggerFn, opts) =>
+      runStep("waitForDownload", () =>
+        run(optionalMethod("waitForDownload", driver.waitForDownload)(triggerFn, opts)),
+      ),
     pressKey: (key) =>
       runStep(`pressKey(${key})`, () => run(coord.pressKey(key)), { captureScreenshot: true }),
     hideKeyboard: () =>
@@ -936,6 +1077,12 @@ export function createPromiseApp<T extends string = string, R extends string = s
         longPress: (sel, opts) => appObj.longPress(scoped(sel), opts),
         hover: (sel, opts) => appObj.hover(scoped(sel), opts),
         fill: (sel, value, opts) => appObj.fill(scoped(sel), value, opts),
+        clear: (sel, opts) => appObj.clear(scoped(sel), opts),
+        check: (sel, opts) => appObj.check(scoped(sel), opts),
+        uncheck: (sel, opts) => appObj.uncheck(scoped(sel), opts),
+        selectOption: (sel, option, opts) => appObj.selectOption(scoped(sel), option, opts),
+        focus: (sel, opts) => appObj.focus(scoped(sel), opts),
+        dragTo: (source, target, opts) => appObj.dragTo(scoped(source), scoped(target), opts),
         uploadFile: (sel, path) => appObj.uploadFile(scoped(sel), path),
         getText: (sel, opts) => appObj.getText(scoped(sel), opts),
         getAttribute: (sel, name, opts) => appObj.getAttribute(scoped(sel), name, opts),

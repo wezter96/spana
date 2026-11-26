@@ -45,6 +45,10 @@ import {
   type RawHierarchy,
   type LaunchOptions,
   type BrowserCookie,
+  type BrowserDialogHandler,
+  type BrowserDialogInfo,
+  type BrowserDownloadInfo,
+  type BrowserEmulationOptions,
   type BrowserMockResponse,
   type BrowserResponseInfo,
   type NetworkConditions,
@@ -522,6 +526,7 @@ export function makePlaywrightDriver(
       resolve: (download: Download) => void;
       reject: (error: Error) => void;
     }> = [];
+    let dialogHandler: BrowserDialogHandler | null = null;
     const attachedPages = new WeakSet<Page>();
 
     const resetWebDiagnostics = () => {
@@ -776,6 +781,35 @@ export function makePlaywrightDriver(
       activePage.on("download", (download) => {
         debugLog("download", getTabId(activePage), download.suggestedFilename(), download.url());
         flushDownload(download);
+      });
+
+      activePage.on("dialog", (dialog) => {
+        const activeHandler = dialogHandler;
+        if (!activeHandler) return;
+        let handled = false;
+        const info: BrowserDialogInfo = {
+          type: dialog.type() as BrowserDialogInfo["type"],
+          message: dialog.message(),
+          defaultValue: dialog.defaultValue(),
+          accept: async (promptText?: string) => {
+            if (handled) return;
+            handled = true;
+            await dialog.accept(promptText);
+          },
+          dismiss: async () => {
+            if (handled) return;
+            handled = true;
+            await dialog.dismiss();
+          },
+        };
+        void Promise.resolve(activeHandler(info))
+          .catch(() => {})
+          .finally(() => {
+            if (!handled) {
+              handled = true;
+              void dialog.dismiss().catch(() => {});
+            }
+          });
       });
 
       if (config.recordHar !== false) {
@@ -1832,6 +1866,133 @@ export function makePlaywrightDriver(
             debugLog("downloadFile", path, download.suggestedFilename());
           },
           catch: (e) => new DriverError({ message: `Failed to download file to ${path}: ${e}` }),
+        }),
+
+      dragAndDrop: (fromX, fromY, toX, toY, steps = 10) =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.mouse.move(fromX, fromY);
+            await page.mouse.down();
+            await page.mouse.move(toX, toY, { steps: Math.max(1, Math.round(steps)) });
+            await page.mouse.up();
+          },
+          catch: (e) => new DriverError({ message: `Failed to dragAndDrop: ${e}` }),
+        }),
+
+      setViewport: (viewport) =>
+        Effect.tryPromise({
+          try: async () => {
+            await page.setViewportSize({ width: viewport.width, height: viewport.height });
+          },
+          catch: (e) => new DriverError({ message: `Failed to set viewport: ${e}` }),
+        }),
+
+      setEmulation: (emulationOpts: BrowserEmulationOptions) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (
+              emulationOpts.colorScheme !== undefined ||
+              emulationOpts.reducedMotion !== undefined
+            ) {
+              await page.emulateMedia({
+                ...(emulationOpts.colorScheme !== undefined
+                  ? { colorScheme: emulationOpts.colorScheme }
+                  : {}),
+                ...(emulationOpts.reducedMotion !== undefined
+                  ? { reducedMotion: emulationOpts.reducedMotion }
+                  : {}),
+              });
+            }
+            if (
+              browserName === "chromium" &&
+              (emulationOpts.locale !== undefined || emulationOpts.timezoneId !== undefined)
+            ) {
+              const session = await ensureCdpSession();
+              if (emulationOpts.locale !== undefined) {
+                await session
+                  .send("Emulation.setLocaleOverride", { locale: emulationOpts.locale })
+                  .catch(() => {});
+              }
+              if (emulationOpts.timezoneId !== undefined) {
+                await session
+                  .send("Emulation.setTimezoneOverride", { timezoneId: emulationOpts.timezoneId })
+                  .catch(() => {});
+              }
+            }
+          },
+          catch: (e) => new DriverError({ message: `Failed to set emulation: ${e}` }),
+        }),
+
+      setDialogHandler: (handler) =>
+        Effect.sync(() => {
+          dialogHandler = handler;
+        }),
+
+      getClipboard: () =>
+        Effect.tryPromise({
+          try: async () => {
+            if (browserName === "chromium") {
+              await context.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+            }
+            const val = await page.evaluate<string>(`(async () => {
+              if (navigator.clipboard && typeof navigator.clipboard.readText === "function") {
+                try { return await navigator.clipboard.readText(); } catch {}
+              }
+              return typeof window.__spanaClipboardText === "string" ? window.__spanaClipboardText : "";
+            })()`);
+            return typeof val === "string" ? val : "";
+          },
+          catch: (e) => new DriverError({ message: `Failed to read clipboard: ${e}` }),
+        }),
+
+      setClipboard: (text) =>
+        Effect.tryPromise({
+          try: async () => {
+            if (browserName === "chromium") {
+              await context.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+            }
+            const encoded = JSON.stringify(text);
+            await page.evaluate(`(async (txt) => {
+              window.__spanaClipboardText = txt;
+              if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+                try { await navigator.clipboard.writeText(txt); } catch {}
+              }
+            })(${encoded})`);
+          },
+          catch: (e) => new DriverError({ message: `Failed to write clipboard: ${e}` }),
+        }),
+
+      waitForDownload: (triggerFn, dlOpts) =>
+        Effect.tryPromise({
+          try: async (): Promise<BrowserDownloadInfo> => {
+            const timeout = dlOpts?.timeout ?? 15_000;
+            const downloadPromise = page.waitForEvent("download", { timeout });
+            await triggerFn();
+            const download = await downloadPromise;
+            const filePath =
+              (await download.path()) ?? join(tmpdir(), download.suggestedFilename());
+            return {
+              suggestedFilename: download.suggestedFilename(),
+              path: filePath,
+              url: download.url(),
+              text: async () => {
+                const actualPath = await download.path();
+                if (!actualPath) {
+                  throw new Error("Download path unavailable (remote browser?)");
+                }
+                return readFile(actualPath, "utf8");
+              },
+              bytes: async () => {
+                const actualPath = await download.path();
+                if (!actualPath) {
+                  throw new Error("Download path unavailable (remote browser?)");
+                }
+                return new Uint8Array(await readFile(actualPath));
+              },
+              saveAs: (destPath: string) => download.saveAs(destPath),
+            };
+          },
+          catch: (e) => new DriverError({ message: `waitForDownload() failed: ${e}` }),
         }),
 
       uploadFile: (selector, path) =>

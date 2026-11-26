@@ -3,6 +3,7 @@ import type { ArtifactConfig } from "../schemas/config.js";
 import type { LaunchOptions } from "../drivers/raw-driver.js";
 import type { PromiseApp } from "./app.js";
 import type { PromiseExpectFn } from "./expect.js";
+import type { FlowAgent } from "./agent-fixture.js";
 import type { Sessions } from "../core/session-manager.js";
 
 export interface WhenCondition {
@@ -48,6 +49,10 @@ export interface FlowContext<T extends string = string, R extends string = strin
   expect: PromiseExpectFn<T>;
   platform: Platform;
   sessions: Sessions;
+  /** First-class verified replay-cache AI agent fixture (`agent.act()`, `agent.verify()`, `agent.extract()`). */
+  agent?: FlowAgent;
+  /** Group related actions into a named nested step in reports and Trace Viewer. */
+  step?: <A>(name: string, fn: () => Promise<A>) => Promise<A>;
 }
 
 export type FlowFn<T extends string = string, R extends string = string> = (

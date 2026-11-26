@@ -103,6 +103,8 @@ function buildEngineConfig(
     hooks: config.hooks,
     storybook: platform === "web" ? config.execution?.web?.storybook : undefined,
     visualRegression: config.visualRegression,
+    replayCache: config.replayCache,
+    agent: config.agent,
   };
 }
 
@@ -155,6 +157,7 @@ export function speculativelyPrelaunchWebBrowser(
     const cdpBrowserPromise = launchDirectCdpBrowser({
       executablePath: webExecution?.executablePath,
       headless: webExecution?.headless ?? true,
+      extensions: webExecution?.extensions,
       warmBrowser: useWarm,
       warmBrowserScope: webExecution?.warmBrowserScope
         ? `${webExecution.warmBrowserScope}-w0`
@@ -217,6 +220,7 @@ export async function buildWebRuntime(
         : await launchDirectCdpBrowser({
             executablePath: webExecution?.executablePath,
             headless: webExecution?.headless ?? true,
+            extensions: webExecution?.extensions,
             warmBrowser:
               webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
             warmBrowserScope: webExecution?.warmBrowserScope
@@ -225,6 +229,14 @@ export async function buildWebRuntime(
           });
       targetCdpUrl = launchedDirectCdp.browserWsUrl;
     }
+    const cdpEmulation =
+      webExecution?.colorScheme || webExecution?.reducedMotion || webExecution?.timezoneId
+        ? {
+            colorScheme: webExecution.colorScheme,
+            reducedMotion: webExecution.reducedMotion,
+            timezoneId: webExecution.timezoneId,
+          }
+        : undefined;
     rawDriver = await Effect.runPromise(
       makeLightweightCdpDriver({
         cdpUrl: targetCdpUrl ?? "http://127.0.0.1:9222",
@@ -238,6 +250,7 @@ export async function buildWebRuntime(
         blockResources: webExecution?.blockResources,
         virtualAuthenticator: webExecution?.virtualAuthenticator,
         storageState: webExecution?.storageState,
+        emulation: cdpEmulation,
       }),
     );
   } else {

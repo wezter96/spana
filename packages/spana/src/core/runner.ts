@@ -50,8 +50,34 @@ export async function loadTestSource(filePath: string): Promise<FlowDefinition[]
     return loadFeatureFile(absolutePath);
   }
 
-  const flow = await loadFlowFile(absolutePath);
-  return [flow];
+  const mod = await import(absolutePath);
+  if (!mod.default) {
+    throw new Error(`No default export found in ${filePath}`);
+  }
+
+  if (Array.isArray(mod.default)) {
+    const definitions = mod.default as FlowDefinition[];
+    for (const def of definitions) {
+      if (!def || !def.name || typeof def.fn !== "function") {
+        throw new Error(`Invalid flow definition in suite export from ${filePath}`);
+      }
+      if (mod.settings) {
+        Object.assign(def.config, mod.settings as FlowConfig);
+      }
+      def.sourcePath ??= absolutePath;
+    }
+    return definitions;
+  }
+
+  const flowDef = mod.default as FlowDefinition;
+  if (!flowDef.name || typeof flowDef.fn !== "function") {
+    throw new Error(`Invalid flow definition in ${filePath}`);
+  }
+  if (mod.settings) {
+    Object.assign(flowDef.config, mod.settings as FlowConfig);
+  }
+  flowDef.sourcePath ??= absolutePath;
+  return [flowDef];
 }
 
 async function loadFeatureFile(filePath: string): Promise<FlowDefinition[]> {

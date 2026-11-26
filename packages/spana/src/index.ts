@@ -259,6 +259,7 @@ export {
   deterministicImpactFilter,
   createOllamaDecisionJudge,
   createLogprobDecisionJudge,
+  createSystemOneDecisionJudge,
   probabilityFromTopLogprobs,
   applyTestFilters,
   collectGitChanges,
@@ -394,3 +395,115 @@ export {
   type JsonRpcResponse,
   type SpanaMcpServerOptions,
 } from "./mcp/server.js";
+
+// Auto-booting dev servers & Named project DAG
+export {
+  startWebServer,
+  startWebServers,
+  isTcpPortOpen,
+  isHttpUrlReady,
+  checkServerReady,
+  type WebServerConfig,
+  type RunningWebServer,
+  type StartWebServersOptions,
+} from "./runtime/web-server.js";
+export {
+  resolveProjectExecutionPlan,
+  filterFlowsForProject,
+  type ProjectConfig,
+  type ProjectExecutionPlan,
+} from "./core/projects.js";
+
+// First-class Agent fixture, secrets, explore & cache inspection
+export {
+  createFlowAgent,
+  createOpenAICompatibleAgentProvider,
+  runExploreSession,
+  formatActionsAsFlowCode,
+  secret,
+  isSecretValue,
+  unique,
+  type SecretValue,
+  type AgentProviderConfig,
+  type FlowAgent,
+  type CreateFlowAgentOptions,
+  type ExploreSessionResult,
+} from "./api/agent-fixture.js";
+export {
+  inspectReplayCache,
+  clearReplayCache,
+  formatCacheInspectTable,
+  type CacheInspectEntry,
+  type CacheInspectResult,
+  type CacheClearResult,
+} from "./cli/cache-command.js";
+
+// Suite grouping, nested step() & structured data snapshots
+export {
+  suite,
+  step,
+  withActiveStepRecorder,
+  type SuiteConfig,
+  type SuiteBuilder,
+} from "./api/suite.js";
+export {
+  matchDataSnapshot,
+  assertDataSnapshot,
+  type DataSnapshotOptions,
+  type DataSnapshotResult,
+} from "./api/snapshots.js";
+
+// Playwright-style Interactive Trace Viewer
+export {
+  buildRichFlowTrace,
+  renderTraceViewerHtml,
+  writeRichTraceBundle,
+  type RichTraceStep,
+  type RichFlowTrace,
+  type BuildRichTraceInput,
+} from "./core/trace-viewer.js";
+
+// Argent-inspired Live Diagnostics & Profiling
+export {
+  NetworkEventBuffer,
+  buildComponentTreeScript,
+  buildPerformanceProfileScript,
+  type LiveNetworkEvent,
+  type NetworkEventFilter,
+  type ComponentTreeNode,
+  type ComponentTreeReport,
+  type PerformanceProfileReport,
+} from "./diagnostics/live-inspector.js";
+export {
+  captureAndroidLogcat,
+  captureIosSimulatorCrashLogs,
+  type NativeLogCaptureOptions,
+  type IosCrashLogEntry,
+} from "./diagnostics/native-logs.js";
+
+// W3C WebDriver BiDi client & Browser Extensions / Multi-Origin OAuth helpers
+export {
+  WebDriverBidiClient,
+  BidiDomChannel,
+  createBidiDomChannel,
+  deserializeBidiRemoteValue,
+  type BidiWebSocketLike,
+  type BidiWebSocketFactory,
+  type WebDriverBidiClientOptions,
+} from "./channels/bidi-client.js";
+export {
+  resolveBrowserExtensions,
+  applyExtensionChromeArgs,
+  getLoadedExtensions,
+  runOAuthPopupFlow,
+  type ResolvedBrowserExtension,
+  type LoadedExtensionTarget,
+  type OAuthPopupFlowOptions,
+} from "./drivers/browser-extensions.js";
+export type {
+  BrowserDialogInfo,
+  BrowserDialogHandler,
+  BrowserEmulationOptions,
+  BrowserDownloadInfo,
+} from "./drivers/raw-driver.js";
+export type { SelectOptionInput } from "./channels/dom-channel.js";

@@ -7,7 +7,7 @@ import type {
   BrowserRouteMatcher,
 } from "../drivers/raw-driver.js";
 
-export type DomChannelKind = "bridge" | "cdp" | "webkit-inspector" | "playwright";
+export type DomChannelKind = "bridge" | "cdp" | "webkit-inspector" | "playwright" | "bidi";
 
 export interface DomRect {
   x: number;
@@ -37,6 +37,10 @@ export interface DomElementMatch {
   enabled: boolean;
   clickable: boolean;
   focused?: boolean;
+  checked?: boolean;
+  editable?: boolean;
+  empty?: boolean;
+  className?: string;
   attributes?: Record<string, string>;
   /** True when the matched element lives inside a ShadowRoot */
   inShadowDom?: boolean;
@@ -87,17 +91,25 @@ export interface DomWaitForMatchOptions {
     | "accessibleName"
     | "accessibleDescription"
     | "focused"
+    | "checked"
+    | "class"
+    | "css"
+    | "editable"
+    | "empty"
     | "count"
-    | "url";
+    | "url"
+    | "title";
   /** Expected value/substring (optional when `kind === "attribute"` or `"accessibilityLabel"` checks presence). */
   expected?: string;
   /** Expected element count when `kind === "count"`. */
   expectedCount?: number;
   /** Attribute name when `kind === "attribute"`. */
   attributeName?: string;
-  /** RegExp source when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "url"`. */
+  /** CSS property name when `kind === "css"`. */
+  cssProperty?: string;
+  /** RegExp source when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "class" | "css" | "url" | "title"`. */
   patternSource?: string;
-  /** RegExp flags when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "url"`. */
+  /** RegExp flags when `kind === "matchesText" | "accessibleName" | "accessibleDescription" | "class" | "css" | "url" | "title"`. */
   patternFlags?: string;
   /** Invert the match condition (`expect(...).not.*`). */
   negate?: boolean;
@@ -207,6 +219,10 @@ export function domMatchToElement(match: DomElementMatch, screenBounds?: Bounds)
     visible: match.visible,
     clickable: match.clickable,
     ...(match.focused !== undefined ? { focused: match.focused } : {}),
+    ...(match.checked !== undefined ? { checked: match.checked } : {}),
+    ...(match.editable !== undefined ? { editable: match.editable } : {}),
+    ...(match.empty !== undefined ? { empty: match.empty } : {}),
+    ...(match.className !== undefined ? { className: match.className } : {}),
     ...(match.attributes && Object.keys(match.attributes).length > 0
       ? { attributes: match.attributes }
       : {}),
@@ -903,6 +919,32 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var accName = getAccessibleName(el) || undefined;
     var accDesc = getAccessibleDescription(el) || undefined;
     var role = getImplicitRole(el) || undefined;
+    var isChecked =
+      el.tagName === "INPUT" && (el.type === "checkbox" || el.type === "radio")
+        ? Boolean(el.checked)
+        : el.getAttribute("aria-checked") === "true"
+          ? true
+          : el.getAttribute("aria-checked") === "false"
+            ? false
+            : undefined;
+    var isEditable = Boolean(
+      !el.hasAttribute("disabled") &&
+      el.getAttribute("aria-disabled") !== "true" &&
+      !el.hasAttribute("readonly") &&
+      el.getAttribute("aria-readonly") !== "true" &&
+      (el.isContentEditable ||
+        el.tagName === "TEXTAREA" ||
+        el.tagName === "SELECT" ||
+        (el.tagName === "INPUT" &&
+          ["button", "submit", "reset", "image", "hidden", "checkbox", "radio"].indexOf(
+            String(el.type || "text").toLowerCase(),
+          ) === -1)),
+    );
+    var isEmpty =
+      el.tagName === "INPUT" || el.tagName === "TEXTAREA"
+        ? String(el.value || "").length === 0
+        : (el.textContent || "").trim().length === 0;
+    var clsName = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
     return {
       id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
       tag: tag,
@@ -923,6 +965,10 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       enabled: !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
       clickable: isClickable(el),
       focused: document.activeElement === el,
+      checked: isChecked,
+      editable: isEditable,
+      empty: isEmpty,
+      className: clsName || undefined,
       attributes: attrs,
       inShadowDom: hit.inShadow || undefined,
       inIframe: hit.inIframe || undefined
@@ -1294,11 +1340,12 @@ export function buildDomWaitForMatchScript(
   const expected = JSON.stringify(opts.expected ?? null);
   const expectedCount = JSON.stringify(opts.expectedCount ?? null);
   const attributeName = JSON.stringify(opts.attributeName ?? null);
+  const cssProperty = JSON.stringify(opts.cssProperty ?? null);
   const patternSource = JSON.stringify(opts.patternSource ?? null);
   const patternFlags = JSON.stringify(opts.patternFlags ?? "");
   const negate = Boolean(opts.negate);
 
-  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, patternSource, patternFlags, negate) {
+  return `(function(sel, timeoutMs, kind, expected, expectedCount, attributeName, cssProperty, patternSource, patternFlags, negate) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var lastActual = undefined;
     var regex = patternSource !== null ? new RegExp(patternSource, patternFlags) : null;
@@ -1311,6 +1358,13 @@ export function buildDomWaitForMatchScript(
           ? regex.test(href)
           : (expected !== null && (href === expected || href.indexOf(String(expected)) !== -1));
         if (negate ? !urlOk : urlOk) return { matched: true, actual: href };
+        return null;
+      }
+      if (kind === "title") {
+        var docTitle = String(typeof document !== "undefined" ? (document.title || "") : "");
+        lastActual = docTitle;
+        var titleOk = regex ? regex.test(docTitle) : (expected !== null && docTitle === String(expected));
+        if (negate ? !titleOk : titleOk) return { matched: true, actual: docTitle };
         return null;
       }
       var hits = findAcrossRoots(sel);
@@ -1335,6 +1389,34 @@ export function buildDomWaitForMatchScript(
           var isFoc = Boolean(m.focused);
           actualVal = isFoc ? "focused" : "not focused";
           matched = isFoc;
+        } else if (kind === "checked") {
+          var isChk = Boolean(m.checked);
+          actualVal = isChk ? "checked" : "unchecked";
+          matched = isChk;
+        } else if (kind === "editable") {
+          var isEd = Boolean(m.editable);
+          actualVal = isEd ? "editable" : "not editable";
+          matched = isEd;
+        } else if (kind === "empty") {
+          var isEmp = Boolean(m.empty);
+          actualVal = isEmp ? "empty" : (m.value || m.textContent || "non-empty");
+          matched = isEmp;
+        } else if (kind === "class") {
+          var cls = m.className || "";
+          actualVal = cls;
+          if (regex) {
+            matched = regex.test(cls);
+          } else if (expected !== null) {
+            var tokens = cls.trim().split(/\\s+/).filter(Boolean);
+            var expectedTokens = String(expected).trim().split(/\\s+/).filter(Boolean);
+            matched = expectedTokens.length > 0 && expectedTokens.every(function(tok) { return tokens.indexOf(tok) !== -1; });
+          }
+        } else if (kind === "css" && cssProperty !== null) {
+          var elNode = hits[i].el;
+          var winObj = (elNode.ownerDocument && elNode.ownerDocument.defaultView) || window;
+          var cssVal = winObj && winObj.getComputedStyle ? winObj.getComputedStyle(elNode).getPropertyValue(cssProperty).trim() : "";
+          actualVal = cssVal;
+          matched = regex ? regex.test(cssVal) : (expected !== null && cssVal === String(expected).trim());
         } else if (kind === "accessibleName") {
           var acc = m.accessibleName || "";
           actualVal = acc;
@@ -1443,7 +1525,7 @@ export function buildDomWaitForMatchScript(
         }
       }
     });
-  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${patternSource}, ${patternFlags}, ${negate})`;
+  })(${serialized}, ${timeoutMs}, ${kind}, ${expected}, ${expectedCount}, ${attributeName}, ${cssProperty}, ${patternSource}, ${patternFlags}, ${negate})`;
 }
 
 /**
@@ -1854,6 +1936,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     var expected = opts.expected !== undefined ? opts.expected : null;
     var expectedCount = opts.expectedCount !== undefined ? opts.expectedCount : null;
     var attributeName = opts.attributeName !== undefined ? opts.attributeName : null;
+    var cssProperty = opts.cssProperty !== undefined ? opts.cssProperty : null;
     var patternSource = opts.patternSource !== undefined ? opts.patternSource : null;
     var patternFlags = opts.patternFlags || "";
     var negate = Boolean(opts.negate);
@@ -1868,6 +1951,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           ? regex.test(href)
           : (expected !== null && (href === expected || href.indexOf(String(expected)) !== -1));
         if (negate ? !urlOk : urlOk) return { matched: true, actual: href };
+        return null;
+      }
+      if (kind === "title") {
+        var docTitle = String(typeof document !== "undefined" ? (document.title || "") : "");
+        lastActual = docTitle;
+        var titleOk = regex ? regex.test(docTitle) : (expected !== null && docTitle === String(expected));
+        if (negate ? !titleOk : titleOk) return { matched: true, actual: docTitle };
         return null;
       }
 
@@ -1926,6 +2016,31 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         } else if (kind === "focused") {
           actualVal = m.focused ? "focused" : "not focused";
           matched = Boolean(m.focused);
+        } else if (kind === "checked") {
+          actualVal = m.checked ? "checked" : "unchecked";
+          matched = Boolean(m.checked);
+        } else if (kind === "editable") {
+          actualVal = m.editable ? "editable" : "not editable";
+          matched = Boolean(m.editable);
+        } else if (kind === "empty") {
+          actualVal = m.empty ? "empty" : (m.value || m.textContent || "non-empty");
+          matched = Boolean(m.empty);
+        } else if (kind === "class") {
+          var cls = m.className || "";
+          actualVal = cls;
+          if (regex) {
+            matched = regex.test(cls);
+          } else if (expected !== null) {
+            var tokens = cls.trim().split(/\\s+/).filter(Boolean);
+            var expectedTokens = String(expected).trim().split(/\\s+/).filter(Boolean);
+            matched = expectedTokens.length > 0 && expectedTokens.every(function(tok) { return tokens.indexOf(tok) !== -1; });
+          }
+        } else if (kind === "css" && cssProperty !== null) {
+          var elNode = hits[i].el;
+          var winObj = (elNode.ownerDocument && elNode.ownerDocument.defaultView) || window;
+          var cssVal = winObj && winObj.getComputedStyle ? winObj.getComputedStyle(elNode).getPropertyValue(cssProperty).trim() : "";
+          actualVal = cssVal;
+          matched = regex ? regex.test(cssVal) : (expected !== null && cssVal === String(expected).trim());
         }
         lastActual = actualVal;
         if (negate ? !matched : matched) return { matched: true, actual: actualVal };
@@ -2130,6 +2245,71 @@ export type InjectedRuntimeMethod =
   | "waitForHidden"
   | "waitForMatch"
   | "fill";
+
+export type SelectOptionInput =
+  | string
+  | string[]
+  | { value?: string; label?: string; index?: number }
+  | Array<{ value?: string; label?: string; index?: number }>;
+
+/** Build an in-page script selecting `<option>`(s) on a `<select>` element by value, label, or index. */
+export function buildDomSelectOptionScript(selector: Selector, option: SelectOptionInput): string {
+  const serializedSel = JSON.stringify(serializeSelectorForDom(selector));
+  const specs = (Array.isArray(option) ? option : [option]).map((item) =>
+    typeof item === "string" ? { valueOrLabel: item } : item,
+  );
+  const serializedSpecs = JSON.stringify(specs);
+  return `(function(sel, specs) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return { ok: false, error: "Select element not found" };
+    var el = hits[hits.length - 1].el;
+    if (!el || el.tagName !== "SELECT") return { ok: false, error: "Matched element is not a <select>" };
+    var opts = Array.prototype.slice.call(el.options || []);
+    var matchedIndices = [];
+    for (var s = 0; s < specs.length; s++) {
+      var sp = specs[s];
+      var foundIdx = -1;
+      if (typeof sp.index === "number") {
+        if (sp.index >= 0 && sp.index < opts.length) foundIdx = sp.index;
+      } else if (typeof sp.value === "string") {
+        for (var i = 0; i < opts.length; i++) { if (opts[i].value === sp.value) { foundIdx = i; break; } }
+      } else if (typeof sp.label === "string") {
+        for (var j = 0; j < opts.length; j++) { if ((opts[j].label || opts[j].text || "").trim() === sp.label.trim()) { foundIdx = j; break; } }
+      } else if (typeof sp.valueOrLabel === "string") {
+        for (var k = 0; k < opts.length; k++) { if (opts[k].value === sp.valueOrLabel) { foundIdx = k; break; } }
+        if (foundIdx === -1) {
+          for (var m = 0; m < opts.length; m++) { if ((opts[m].label || opts[m].text || "").trim() === sp.valueOrLabel.trim()) { foundIdx = m; break; } }
+        }
+      }
+      if (foundIdx === -1) return { ok: false, error: "Option not found: " + JSON.stringify(sp) };
+      matchedIndices.push(foundIdx);
+    }
+    if (el.multiple) {
+      for (var n = 0; n < opts.length; n++) opts[n].selected = matchedIndices.indexOf(n) !== -1;
+    } else if (matchedIndices.length > 0) {
+      el.selectedIndex = matchedIndices[0];
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    var selected = [];
+    for (var p = 0; p < opts.length; p++) { if (opts[p].selected) selected.push(opts[p].value); }
+    return { ok: true, selected: selected };
+  })(${serializedSel}, ${serializedSpecs})`;
+}
+
+/** Build an in-page script that focuses the matched element cleanly. */
+export function buildDomFocusScript(selector: Selector): string {
+  const serializedSel = JSON.stringify(serializeSelectorForDom(selector));
+  return `(function(sel) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(sel);
+    if (hits.length === 0) return false;
+    var el = hits[hits.length - 1].el;
+    if (typeof el.focus === "function") { el.focus(); return true; }
+    return false;
+  })(${serializedSel})`;
+}
 
 /** Build an in-page diagnostic script reporting why an existing element failed actionability (covered/disabled/hidden). */
 export function buildDomActionabilityDiagScript(selector: Selector): string {

@@ -22,6 +22,10 @@ export const Element = Schema.Struct({
   visible: Schema.optional(Schema.Boolean),
   clickable: Schema.optional(Schema.Boolean),
   focused: Schema.optional(Schema.Boolean),
+  checked: Schema.optional(Schema.Boolean),
+  editable: Schema.optional(Schema.Boolean),
+  empty: Schema.optional(Schema.Boolean),
+  className: Schema.optional(Schema.String),
   attributes: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
   children: Schema.optional(
     Schema.Array(Schema.suspend((): Schema.Schema<any, any, never> => Element)),

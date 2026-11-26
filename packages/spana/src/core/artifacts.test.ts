@@ -66,6 +66,8 @@ describe("artifacts", () => {
       jsCoverage: false,
       video: "off",
       playback: false,
+      trace: false,
+      nativeLogs: false,
     });
   });
 

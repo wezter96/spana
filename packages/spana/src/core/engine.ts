@@ -4,6 +4,9 @@ import type { Platform } from "../schemas/selector.js";
 import { Effect } from "effect";
 import { createPromiseApp } from "../api/app.js";
 import { createPromiseExpect } from "../api/expect.js";
+import { createFlowAgent, type AgentProviderConfig } from "../api/agent-fixture.js";
+import { step as recordNamedStep, withActiveStepRecorder } from "../api/suite.js";
+import { buildRichFlowTrace, writeRichTraceBundle } from "./trace-viewer.js";
 import { mergeLaunchOptions } from "../drivers/launch-options.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
 import type { Attachment, StepResult, ScenarioStepResult, FlowError } from "../report/types.js";
@@ -97,6 +100,9 @@ export interface EngineConfig {
   updateBaselines?: boolean;
   storybook?: StorybookConfig;
   visualRegression?: ProvConfig["visualRegression"];
+  replayCache?: ProvConfig["replayCache"];
+  strictCache?: boolean;
+  agent?: AgentProviderConfig;
 }
 
 export async function executeFlow(
@@ -170,7 +176,22 @@ export async function executeFlow(
     config.visualRegression,
   );
   // Mutable context so compiled Gherkin flows can attach scenarioSteps via __scenarioSteps
-  const flowCtx: any = { app, expect, platform, updateBaselines: flowMeta.updateBaselines };
+  const agent = createFlowAgent({
+    flowName: flow.name,
+    platform,
+    app,
+    cacheDir: config.replayCache?.dir,
+    cacheMode: config.strictCache ? "strict" : config.replayCache?.mode,
+    provider: config.agent,
+  });
+  const flowCtx: any = {
+    app,
+    expect,
+    platform,
+    agent,
+    step: recordNamedStep,
+    updateBaselines: flowMeta.updateBaselines,
+  };
   const sessionManager = new SessionManager();
   const sessions = createSessions(
     sessionManager,
@@ -293,6 +314,52 @@ export async function executeFlow(
     }
   };
 
+  const writeRichTraceIfEnabled = async (
+    status: "passed" | "failed",
+    attachments: Attachment[],
+    steps: StepResult[],
+    durationMs: number,
+    error?: { message: string; stack?: string },
+  ): Promise<void> => {
+    if (!artifactConfig.trace) return;
+    try {
+      const outDir = flowArtifactDir(artifactConfig, flow.name, platform);
+      const [consoleLogs, jsErrors, har, domSnapshot] = await Promise.all([
+        driver.getConsoleLogs
+          ? Effect.runPromise(Effect.orDie(driver.getConsoleLogs())).catch(() => [])
+          : Promise.resolve([]),
+        driver.getJSErrors
+          ? Effect.runPromise(Effect.orDie(driver.getJSErrors())).catch(() => [])
+          : Promise.resolve([]),
+        driver.getHAR
+          ? Effect.runPromise(Effect.orDie(driver.getHAR())).catch(() => undefined)
+          : Promise.resolve(undefined),
+        driver.dumpHierarchy
+          ? Effect.runPromise(Effect.orDie(driver.dumpHierarchy())).catch(() => undefined)
+          : Promise.resolve(undefined),
+      ]);
+      const richTrace = buildRichFlowTrace({
+        flowName: flow.name,
+        platform,
+        status,
+        durationMs,
+        steps,
+        consoleLogs,
+        jsErrors,
+        har,
+        domSnapshot,
+        error,
+      });
+      const { traceJsonPath, traceViewerHtmlPath } = writeRichTraceBundle(richTrace, outDir);
+      attachments.push(
+        { name: "trace-json", contentType: "application/json", path: traceJsonPath },
+        { name: "trace-viewer", contentType: "text/html", path: traceViewerHtmlPath },
+      );
+    } catch {
+      // Trace viewer generation is best-effort
+    }
+  };
+
   const buildFailureResult = async (error: unknown): Promise<TestResult> => {
     const attachments = await captureArtifacts(
       driver,
@@ -389,7 +456,7 @@ export async function executeFlow(
     }
 
     await Promise.race([
-      flow.fn(flowCtx),
+      withActiveStepRecorder(stepRecorder, () => flow.fn(flowCtx)),
       new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error(`Flow "${flow.name}" timed out after ${timeout}ms`)),
@@ -402,6 +469,7 @@ export async function executeFlow(
       throw softFailureError;
     }
 
+    agent.finalize(true);
     const attachments = await captureArtifacts(
       driver,
       artifactConfig,
@@ -413,6 +481,7 @@ export async function executeFlow(
     const steps = stepRecorder.getSteps();
     const durationMs = Date.now() - start;
     await finalizeRecording("passed", attachments, steps, durationMs);
+    await writeRichTraceIfEnabled("passed", attachments, steps, durationMs);
 
     result = {
       name: flow.name,
@@ -424,6 +493,7 @@ export async function executeFlow(
       scenarioSteps: flowCtx.__scenarioSteps,
     };
   } catch (error) {
+    agent.finalize(false);
     const attachments = await captureArtifacts(
       driver,
       artifactConfig,
@@ -441,6 +511,10 @@ export async function executeFlow(
       softFailures.length > 0 && error !== softFailureError
         ? aggregateFailures(normalized)
         : normalized;
+    await writeRichTraceIfEnabled("failed", attachments, steps, durationMs, {
+      message: flowError.message,
+      stack: flowError.stack,
+    });
     result = {
       name: flow.name,
       platform,
