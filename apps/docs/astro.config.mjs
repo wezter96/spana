@@ -1,3 +1,4 @@
+import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import astroMermaid from "astro-mermaid";
@@ -8,6 +9,8 @@ const base = process.env.BASE ?? "/";
 export default defineConfig({
   site,
   base,
+  compressHTML: true,
+  markdown: { processor: unified() },
   integrations: [
     astroMermaid(),
     starlight({
@@ -147,7 +150,7 @@ export default defineConfig({
         },
         {
           label: "Reference",
-          autogenerate: { directory: "reference" },
+          items: [{ autogenerate: { directory: "reference" } }],
         },
       ],
     }),
