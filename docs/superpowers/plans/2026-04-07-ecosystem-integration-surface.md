@@ -862,8 +862,7 @@ After `const runCompleted = statusData?.status === "completed";` (line 84), add:
 
 ```typescript
 const progress = (statusData as any)?.progress as
-  | Record<string, { done: number; total: number }>
-  | undefined;
+  Record<string, { done: number; total: number }> | undefined;
 ```
 
 Update the `<RunProgress>` component usage (line 289-295) to pass `progress`:

@@ -122,9 +122,7 @@ interface FlowConfig {
   autoLaunch?: boolean; // default true
   launchOptions?: LaunchOptions;
   artifacts?: ArtifactConfig; // same shape as config `artifacts`
-  defaults?: {
-    /* per-flow timing overrides */
-  };
+  defaults?: {/* per-flow timing overrides */};
   when?: WhenCondition;
 }
 
