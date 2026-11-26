@@ -69,6 +69,7 @@ function buildEngineConfig(
         platform,
         failFastWhenIdle: config.defaults?.failFastWhenIdle,
         actionStableFrames: config.defaults?.actionStableFrames,
+        fillVerifyMs: config.defaults?.fillVerifyMs,
       },
       waitForIdleTimeout: config.defaults?.waitForIdleTimeout,
       typingDelay: config.defaults?.typingDelay,

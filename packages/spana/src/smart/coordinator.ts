@@ -2177,9 +2177,14 @@ export function createCoordinator<T extends string = string, R extends string = 
           domChannel?.isConnected() &&
           domChannel.fillDom
         ) {
+          const verifyDelayMs = opts?.fillVerifyMs ?? defaults?.fillVerifyMs;
           const fillAttempt = yield* Effect.result(
             Effect.tryPromise({
-              try: () => domChannel.fillDom!(selector as Selector, text, { timeoutMs: timeout }),
+              try: () =>
+                domChannel.fillDom!(selector as Selector, text, {
+                  timeoutMs: timeout,
+                  ...(verifyDelayMs !== undefined ? { verifyDelayMs } : {}),
+                }),
               catch: (e) => new DriverError({ message: `DOM fill failed: ${e}` }),
             }),
           );

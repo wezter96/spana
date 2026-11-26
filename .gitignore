@@ -64,8 +64,9 @@ drivers/*.xctest
 apps/native/android/
 apps/native/ios/
 
-# Studio embedded build
+# Studio embedded build & prebuilt Rust native binaries
 packages/spana/studio-dist/
+packages/spana/native/
 
 # Local-only agent skills
 .agents/skills/caveman/

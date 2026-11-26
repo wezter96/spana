@@ -563,7 +563,8 @@ export {
 } from "./drivers/wasm.js";
 export type { WasmAppConfig } from "./schemas/config.js";
 
-// Programmatic in-process test runner (lazy-loaded to keep `spana-test` import time minimal)
+// Programmatic in-process test runner & portable CI timings (lazy-loaded to keep `spana-test` import time minimal)
+export { readDurationHintsFile, writeDurationHintsFile } from "./cli/iteration.js";
 export type { TestCommandOptions } from "./cli/test-command.js";
 export async function runTestCommand(
   opts: import("./cli/test-command.js").TestCommandOptions,

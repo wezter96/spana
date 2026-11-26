@@ -34,8 +34,10 @@ import {
   createLastRunStatePath,
   extractDurationHints,
   getGitChangedFiles,
+  readDurationHintsFile,
   readLastRunState,
   selectChangedFlowPaths,
+  writeDurationHintsFile,
   writeLastRunState,
 } from "./iteration.js";
 import { collectWatchRoots } from "./watch-mode.js";
@@ -71,6 +73,10 @@ export interface TestCommandOptions {
   noProviderReporting?: boolean;
   validateConfigOnly?: boolean;
   shard?: ShardOptions;
+  /** Portable JSON timings file or directory of shard timing files for balanced `--shard` & longest-first scheduling. */
+  timingsFile?: string;
+  /** Write/merge observed per-flow durations into a portable JSON manifest after run completion. */
+  writeTimingsFile?: string;
   bail?: number;
   debugOnFailure?: boolean;
   quiet?: boolean;
@@ -716,6 +722,7 @@ interface FlowDiscoveryInput {
   passWithNoTests?: boolean;
   platforms: Platform[];
   shard?: ShardOptions;
+  timingsFile?: string;
   lastFailed?: boolean;
   changed?: boolean;
   changedSince?: string;
@@ -888,10 +895,16 @@ async function discoverAndFilterFlows(
     console.log(`Rerunning ${filteredLoadedFlows.length} flow(s) from the last failed run.`);
   }
 
-  const lastRunStateForShard = input.shard
-    ? await readLastRunState(createLastRunStatePath(input.outputDir))
-    : null;
-  const shardDurationHints = extractDurationHints(lastRunStateForShard);
+  const [lastRunStateForShard, fileHintsForShard] = input.shard
+    ? await Promise.all([
+        readLastRunState(createLastRunStatePath(input.outputDir)),
+        input.timingsFile ? readDurationHintsFile(input.timingsFile) : Promise.resolve({}),
+      ])
+    : [null, {}];
+  const shardDurationHints: Record<string, number> = {
+    ...fileHintsForShard,
+    ...extractDurationHints(lastRunStateForShard),
+  };
   const selectedLoadedFlows = applyShard(
     filteredLoadedFlows,
     input.shard,
@@ -1208,6 +1221,12 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         : ["web"];
 
   const workDir = opts.cwd ? resolve(opts.cwd) : process.cwd();
+  const resolvedTimingsFile = opts.timingsFile
+    ? resolve(workDir, opts.timingsFile)
+    : config.defaults?.timingsFile;
+  const resolvedWriteTimingsFile = opts.writeTimingsFile
+    ? resolve(workDir, opts.writeTimingsFile)
+    : undefined;
   const flowDir = opts.flowPath
     ? resolve(workDir, opts.flowPath)
     : resolveFromConfig(config.flowDir ?? "./flows");
@@ -1223,6 +1242,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       passWithNoTests: opts.passWithNoTests,
       platforms,
       shard: opts.shard,
+      timingsFile: resolvedTimingsFile,
       lastFailed: opts.lastFailed,
       changed: opts.changed,
       changedSince: opts.changedSince,
@@ -1300,7 +1320,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   ) {
     const plan = planProcessPool(requestedWorkers, maxWorkersPerProcess, requestedProcesses);
     if (plan.processCount > 1) {
-      const [mpFlowResult, mpPriorRunState] = await Promise.all([
+      const [mpFlowResult, mpPriorRunState, mpTimingsHints] = await Promise.all([
         discoverAndFilterFlows({
           flowDir,
           cwd: workDir,
@@ -1310,6 +1330,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           grepInvert: opts.grepInvert,
           passWithNoTests: opts.passWithNoTests,
           platforms,
+          timingsFile: resolvedTimingsFile,
           lastFailed: opts.lastFailed,
           changed: opts.changed,
           changedSince: opts.changedSince,
@@ -1317,12 +1338,16 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           outputDir,
         }),
         readLastRunState(createLastRunStatePath(outputDir)),
+        resolvedTimingsFile ? readDurationHintsFile(resolvedTimingsFile) : Promise.resolve({}),
       ]);
       if (!mpFlowResult.ok) {
         return { success: mpFlowResult.success, watchRoots: mpFlowResult.watchRoots };
       }
 
-      const mpDurationHints = extractDurationHints(mpPriorRunState);
+      const mpDurationHints = {
+        ...mpTimingsHints,
+        ...extractDurationHints(mpPriorRunState),
+      };
       const orderedFlows = orderFlowsLongestFirst(mpFlowResult.selectedFlows, mpDurationHints);
       const effectiveProcesses = Math.min(plan.processCount, Math.max(1, orderedFlows.length));
       const effectivePlan = planProcessPool(
@@ -1531,8 +1556,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
 
   let flowResult;
   let priorRunState;
+  let externalTimingsHints: Record<string, number> = {};
   try {
-    [flowResult, priorRunState] = await Promise.all([
+    [flowResult, priorRunState, externalTimingsHints] = await Promise.all([
       discoverAndFilterFlows({
         flowDir,
         cwd: workDir,
@@ -1543,6 +1569,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         passWithNoTests: opts.passWithNoTests,
         platforms,
         shard: opts.shard,
+        timingsFile: resolvedTimingsFile,
         lastFailed: opts.lastFailed,
         changed: opts.changed,
         changedSince: opts.changedSince,
@@ -1550,6 +1577,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         outputDir,
       }),
       readLastRunState(createLastRunStatePath(outputDir)),
+      resolvedTimingsFile ? readDurationHintsFile(resolvedTimingsFile) : Promise.resolve({}),
     ]);
   } catch (err) {
     await closePrelaunchedWeb();
@@ -1560,7 +1588,10 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     return { success: flowResult.success, watchRoots: flowResult.watchRoots };
   }
   const { selectedLoadedFlows, selectedFlows, watchRoots, filterSummaries } = flowResult;
-  const durationHintsMs = extractDurationHints(priorRunState);
+  const durationHintsMs: Record<string, number> = {
+    ...externalTimingsHints,
+    ...extractDurationHints(priorRunState),
+  };
 
   console.log(`Running ${selectedFlows.length} flow(s) on ${platforms.join(", ")}...\n`);
 
@@ -1789,6 +1820,16 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       console.log(
         `Warning: Failed to update last run state at ${iterationStatePath}: ${error instanceof Error ? error.message : error}`,
       );
+    }
+
+    if (resolvedWriteTimingsFile) {
+      try {
+        await writeDurationHintsFile(resolvedWriteTimingsFile, result.results);
+      } catch (error) {
+        console.log(
+          `Warning: Failed to write timings file at ${resolvedWriteTimingsFile}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
     }
 
     // Report to cloud provider if applicable

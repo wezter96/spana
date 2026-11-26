@@ -370,6 +370,10 @@ export interface ProvConfig {
     failFastWhenIdle?: boolean;
     /** Consecutive stable animation frames required before pointer actions on web. Default: 2. Set 0 to disable. */
     actionStableFrames?: number;
+    /** Post-fill remount verification delay in ms (default: 12). Set 0 to verify synchronously for faster static-form runs. */
+    fillVerifyMs?: number;
+    /** Path to a portable JSON timings file (or directory of shard timing files) for duration-balanced `--shard` & longest-first scheduling. */
+    timingsFile?: string;
     /** Default timeout in ms for `expect(fn).toPass()` and `expect.poll()`. Defaults to remaining flow timeout. */
     toPassTimeout?: number;
   };
@@ -701,6 +705,8 @@ export const provConfigSchema = z
         locale: z.string().min(1).optional(),
         failFastWhenIdle: z.boolean().optional(),
         actionStableFrames: z.number().int().nonnegative().optional(),
+        fillVerifyMs: z.number().int().nonnegative().optional(),
+        timingsFile: z.string().min(1).optional(),
         toPassTimeout: z.number().positive().optional(),
       })
       .strict()

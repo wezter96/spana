@@ -430,6 +430,7 @@ export class CdpDomChannel implements DomChannel {
   private currentTargetId: string | null = null;
   private activeSessionId: string | null = null;
   private childSessions = new Map<string, CdpChildSessionInfo>();
+  private inProcessFrameWorlds = new Map<string, number>();
   private frameOffsetResolver?: CdpFrameOffsetResolver;
 
   constructor(options: CdpDomChannelOptions) {
@@ -565,11 +566,29 @@ export class CdpDomChannel implements DomChannel {
         }
         const method = parsed["method"];
         if (typeof method === "string") {
+          const params = parsed["params"];
+          const sessionId =
+            typeof parsed["sessionId"] === "string" ? parsed["sessionId"] : undefined;
+          if (method === "Page.frameNavigated" || method === "Page.frameDetached") {
+            const fid =
+              typeof params?.frame?.id === "string"
+                ? params.frame.id
+                : typeof params?.frameId === "string"
+                  ? params.frameId
+                  : undefined;
+            if (fid) {
+              this.inProcessFrameWorlds.delete(`${sessionId ?? this.activeSessionId ?? ""}:${fid}`);
+              // Main frame navigation destroys all child frame worlds on this session
+              if (method === "Page.frameNavigated" && !params?.frame?.parentId) {
+                const prefix = `${sessionId ?? this.activeSessionId ?? ""}:`;
+                for (const key of this.inProcessFrameWorlds.keys()) {
+                  if (key.startsWith(prefix)) this.inProcessFrameWorlds.delete(key);
+                }
+              }
+            }
+          }
           const listeners = this.eventListeners.get(method);
           if (listeners && listeners.size > 0) {
-            const params = parsed["params"];
-            const sessionId =
-              typeof parsed["sessionId"] === "string" ? parsed["sessionId"] : undefined;
             for (const fn of listeners) {
               try {
                 fn(params, sessionId);
@@ -603,6 +622,7 @@ export class CdpDomChannel implements DomChannel {
 
   setSessionId(sessionId: string | null): void {
     this.activeSessionId = sessionId;
+    this.inProcessFrameWorlds.clear();
   }
 
   get sessionId(): string | null {
@@ -620,6 +640,7 @@ export class CdpDomChannel implements DomChannel {
 
   clearChildSessions(): void {
     this.childSessions.clear();
+    this.inProcessFrameWorlds.clear();
   }
 
   getChildSessions(): CdpChildSessionInfo[] {
@@ -978,11 +999,12 @@ export class CdpDomChannel implements DomChannel {
     return out;
   }
 
-  private async evaluateInProcessFrame<T>(
-    frameId: string,
-    script: string,
-    timeoutMs?: number,
-  ): Promise<T> {
+  private async getOrCreateFrameWorld(frameId: string, forceFresh = false): Promise<number> {
+    const key = `${this.activeSessionId ?? ""}:${frameId}`;
+    if (!forceFresh) {
+      const cached = this.inProcessFrameWorlds.get(key);
+      if (cached !== undefined) return cached;
+    }
     const world = await this.sendCommand<{ executionContextId: number }>(
       "Page.createIsolatedWorld",
       {
@@ -991,13 +1013,63 @@ export class CdpDomChannel implements DomChannel {
         grantUniveralAccess: false,
       },
     );
-    return this.evaluateOnSessionWithTimeout<T>(
-      undefined,
-      script,
-      timeoutMs,
-      [],
-      world.executionContextId,
-    );
+    this.inProcessFrameWorlds.set(key, world.executionContextId);
+    return world.executionContextId;
+  }
+
+  private async invokeInProcessFrame<T>(
+    frameId: string,
+    method: InjectedRuntimeMethod,
+    args: unknown[],
+    fallbackScript: () => string,
+    timeoutMs?: number,
+  ): Promise<T> {
+    const key = `${this.activeSessionId ?? ""}:${frameId}`;
+    const runWithContext = async (contextId: number): Promise<T> => {
+      if (!this.useInjectedRuntime) {
+        return this.evaluateOnSessionWithTimeout<T>(
+          undefined,
+          fallbackScript(),
+          timeoutMs,
+          [],
+          contextId,
+          1,
+        );
+      }
+      const callExpr = buildInjectedCallScript(method, ...args);
+      const res = await this.evaluateOnSessionWithTimeout<
+        T | typeof SPANA_RUNTIME_MISSING_SENTINEL
+      >(undefined, callExpr, timeoutMs, [], contextId, 1);
+      if (res !== SPANA_RUNTIME_MISSING_SENTINEL) {
+        return res as T;
+      }
+      await this.evaluateOnSessionWithTimeout(
+        undefined,
+        SPANA_INJECTED_RUNTIME_SCRIPT,
+        timeoutMs,
+        [],
+        contextId,
+        1,
+      );
+      return this.evaluateOnSessionWithTimeout<T>(undefined, callExpr, timeoutMs, [], contextId, 1);
+    };
+
+    const contextId = await this.getOrCreateFrameWorld(frameId);
+    try {
+      return await runWithContext(contextId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        /Execution context was destroyed|Cannot find context with specified id|No frame for given id/i.test(
+          msg,
+        )
+      ) {
+        this.inProcessFrameWorlds.delete(key);
+        const freshContextId = await this.getOrCreateFrameWorld(frameId, true);
+        return runWithContext(freshContextId);
+      }
+      throw err;
+    }
   }
 
   private async resolveMatchingChildSessions(selector: Selector): Promise<CdpChildSessionInfo[]> {
@@ -1104,9 +1176,11 @@ export class CdpDomChannel implements DomChannel {
     if (this.hasExplicitFrame(selector)) {
       const inProcessFrames = await this.resolveInProcessChildFrames(selector);
       for (const frame of inProcessFrames) {
-        const frameRes = await this.evaluateInProcessFrame<DomElementMatch[]>(
+        const frameRes = await this.invokeInProcessFrame<DomElementMatch[]>(
           frame.frameId,
-          childFallback(),
+          "query",
+          [innerSel],
+          childFallback,
         ).catch(() => []);
         if (Array.isArray(frameRes) && frameRes.length > 0) {
           return this.applyFrameOffset(frameRes, frame.offset);
@@ -1165,9 +1239,11 @@ export class CdpDomChannel implements DomChannel {
         return Array.isArray(res) && res.length > 0 ? this.applyChildOffset(res, child) : [];
       }),
       ...inProcessFrames.map(async (frame) => {
-        const res = await this.evaluateInProcessFrame<DomElementMatch[]>(
+        const res = await this.invokeInProcessFrame<DomElementMatch[]>(
           frame.frameId,
-          childFallback(),
+          "waitForSelector",
+          [innerSel, opts ?? {}],
+          childFallback,
           rpcTimeout,
         ).catch(() => []);
         return Array.isArray(res) && res.length > 0 ? this.applyFrameOffset(res, frame.offset) : [];
@@ -1184,14 +1260,13 @@ export class CdpDomChannel implements DomChannel {
             const appeared = await this.resolveInProcessChildFrames(selector);
             if (appeared.length > 0) {
               const remaining = Math.max(200, deadline - Date.now());
-              const waitScript = buildDomWaitForSelectorScript(innerSel, {
-                ...opts,
-                timeoutMs: remaining,
-              });
+              const remOpts = { ...opts, timeoutMs: remaining };
               for (const frame of appeared) {
-                const res = await this.evaluateInProcessFrame<DomElementMatch[]>(
+                const res = await this.invokeInProcessFrame<DomElementMatch[]>(
                   frame.frameId,
-                  waitScript,
+                  "waitForSelector",
+                  [innerSel, remOpts],
+                  () => buildDomWaitForSelectorScript(innerSel, remOpts),
                   remaining + 2000,
                 ).catch(() => []);
                 if (Array.isArray(res) && res.length > 0) {
@@ -1237,9 +1312,11 @@ export class CdpDomChannel implements DomChannel {
       const childFallback = () => buildDomWaitForHiddenScript(innerSel, opts);
       for (const frame of inProcessFrames) {
         const ok = Boolean(
-          await this.evaluateInProcessFrame<boolean>(
+          await this.invokeInProcessFrame<boolean>(
             frame.frameId,
-            childFallback(),
+            "waitForHidden",
+            [innerSel, opts ?? {}],
+            childFallback,
             rpcTimeout,
           ).catch(() => true),
         );
@@ -1293,9 +1370,11 @@ export class CdpDomChannel implements DomChannel {
       if (inProcessFrames.length > 0) {
         let lastRes: DomWaitForMatchResult = { matched: false };
         for (const frame of inProcessFrames) {
-          const frameRes = await this.evaluateInProcessFrame<DomWaitForMatchResult>(
+          const frameRes = await this.invokeInProcessFrame<DomWaitForMatchResult>(
             frame.frameId,
-            childFallback(),
+            "waitForMatch",
+            [innerSel, opts],
+            childFallback,
             rpcTimeout,
           ).catch(() => ({ matched: false }) as DomWaitForMatchResult);
           if (frameRes?.matched) return frameRes;
@@ -1359,9 +1438,11 @@ export class CdpDomChannel implements DomChannel {
       if (inProcessFrames.length > 0) {
         for (const frame of inProcessFrames) {
           const ok = Boolean(
-            await this.evaluateInProcessFrame<boolean>(
+            await this.invokeInProcessFrame<boolean>(
               frame.frameId,
-              childFallback(),
+              "fill",
+              [innerSel, value, opts ?? {}],
+              childFallback,
               rpcTimeout,
             ).catch(() => false),
           );
@@ -1420,9 +1501,12 @@ export class CdpDomChannel implements DomChannel {
       const inProcessFrames = await this.resolveInProcessChildFrames(selector);
       for (const frame of inProcessFrames) {
         const ok = Boolean(
-          await this.evaluateInProcessFrame<boolean>(frame.frameId, childFallback()).catch(
-            () => false,
-          ),
+          await this.invokeInProcessFrame<boolean>(
+            frame.frameId,
+            "tap",
+            [innerSel],
+            childFallback,
+          ).catch(() => false),
         );
         if (ok) return true;
       }
@@ -1459,9 +1543,11 @@ export class CdpDomChannel implements DomChannel {
     if (this.hasExplicitFrame(selector)) {
       const inProcessFrames = await this.resolveInProcessChildFrames(selector);
       for (const frame of inProcessFrames) {
-        const frameRes = await this.evaluateInProcessFrame<DomElementMatch | null>(
+        const frameRes = await this.invokeInProcessFrame<DomElementMatch | null>(
           frame.frameId,
-          childFallback(),
+          "scrollIntoView",
+          [innerSel],
+          childFallback,
         ).catch(() => null);
         if (frameRes) {
           const adjusted = this.applyFrameOffset([frameRes], frame.offset);
@@ -1480,6 +1566,7 @@ export class CdpDomChannel implements DomChannel {
 
   async disconnect(): Promise<void> {
     this.connected = false;
+    this.inProcessFrameWorlds.clear();
     this.rejectAllPending(new Error("CDP channel disconnected"));
     if (this.ws) {
       try {

@@ -137,6 +137,8 @@ export interface DomFillOptions {
   timeoutMs?: number;
   /** Verify center point via deep `elementFromPoint` before filling. Default: true. */
   checkHitTest?: boolean;
+  /** Delay in ms before checking that a controlled input didn't remount/reset after fill. Default: 12. Set 0 for synchronous verify. */
+  verifyDelayMs?: number;
 }
 
 export interface DomWaitForMatchResult {
@@ -1903,8 +1905,10 @@ export function buildDomFillScript(
   const serializedVal = JSON.stringify(value);
   const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
   const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : true;
+  const verifyDelayMs =
+    opts.verifyDelayMs !== undefined ? Math.max(0, Math.round(opts.verifyDelayMs)) : 12;
 
-  return `(function(sel, val, timeoutMs, checkHitTest) {
+  return `(function(sel, val, timeoutMs, checkHitTest, verifyDelayMs) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     function writeValue(el) {
       if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
@@ -1959,6 +1963,13 @@ export function buildDomFillScript(
       if (!el) return Promise.resolve(false);
       if (el.isContentEditable) return Promise.resolve(false);
       if (!writeValue(el)) return Promise.resolve(false);
+      if (verifyDelayMs <= 0) {
+        var syncLatest = findEditableNow() || el;
+        if (syncLatest && syncLatest.isConnected && String(syncLatest.value == null ? "" : syncLatest.value) === val) {
+          return Promise.resolve(true);
+        }
+        return attemptsLeft > 1 ? verifyAndRetryFill(attemptsLeft - 1) : Promise.resolve(false);
+      }
       return new Promise(function(resolve) {
         // Let React/Vue microtask + single paint flush settle, then verify value survived remount/re-render
         setTimeout(function() {
@@ -1972,7 +1983,7 @@ export function buildDomFillScript(
           } else {
             resolve(false);
           }
-        }, 12);
+        }, verifyDelayMs);
       });
     }
 
@@ -2036,7 +2047,7 @@ export function buildDomFillScript(
         }
       }
     });
-  })(${serializedSel}, ${serializedVal}, ${timeoutMs}, ${checkHitTest})`;
+  })(${serializedSel}, ${serializedVal}, ${timeoutMs}, ${checkHitTest}, ${verifyDelayMs})`;
 }
 
 /**
@@ -2556,6 +2567,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     opts = opts || {};
     var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
     var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : true;
+    var verifyDelayMs = opts.verifyDelayMs !== undefined ? Math.max(0, Math.round(opts.verifyDelayMs)) : 12;
     function writeValue(el) {
       if (el.isContentEditable) return false;
       if (typeof el.focus === "function") { try { el.focus(); } catch (e) {} }
@@ -2601,6 +2613,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       var el = findEditableNow();
       if (!el || el.isContentEditable) return Promise.resolve(false);
       if (!writeValue(el)) return Promise.resolve(false);
+      if (verifyDelayMs <= 0) {
+        var syncLatest = findEditableNow() || el;
+        if (syncLatest && syncLatest.isConnected && String(syncLatest.value == null ? "" : syncLatest.value) === val) {
+          return Promise.resolve(true);
+        }
+        return attemptsLeft > 1 ? verifyAndRetryFill(attemptsLeft - 1) : Promise.resolve(false);
+      }
       return new Promise(function(resolve) {
         setTimeout(function() {
           var latest = findEditableNow() || el;
@@ -2613,7 +2632,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           } else {
             resolve(false);
           }
-        }, 12);
+        }, verifyDelayMs);
       });
     }
     var immEl = findEditableNow();

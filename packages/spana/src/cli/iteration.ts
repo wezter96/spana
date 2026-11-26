@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { FlowResult } from "../report/types.js";
@@ -90,6 +90,93 @@ export async function writeLastRunState(filePath: string, state: LastRunState): 
   const dir = dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   await writeFile(filePath, JSON.stringify(state, null, 2), "utf8");
+}
+
+function mergeParsedDurationHints(raw: unknown, out: Record<string, number>): void {
+  if (!raw || typeof raw !== "object") return;
+  const obj = raw as Record<string, unknown>;
+  if (Array.isArray(obj["flows"])) {
+    for (const entry of obj["flows"]) {
+      if (
+        entry &&
+        typeof entry === "object" &&
+        typeof (entry as Record<string, unknown>)["name"] === "string" &&
+        typeof (entry as Record<string, unknown>)["durationMs"] === "number"
+      ) {
+        const name = (entry as Record<string, unknown>)["name"] as string;
+        const durationMs = (entry as Record<string, unknown>)["durationMs"] as number;
+        if (durationMs > 0) out[name] = Math.max(out[name] ?? 0, Math.round(durationMs));
+      }
+    }
+    return;
+  }
+  const mapSource =
+    obj["durations"] && typeof obj["durations"] === "object" && !Array.isArray(obj["durations"])
+      ? (obj["durations"] as Record<string, unknown>)
+      : obj;
+  for (const [name, val] of Object.entries(mapSource)) {
+    if (typeof val === "number" && Number.isFinite(val) && val > 0) {
+      out[name] = Math.max(out[name] ?? 0, Math.round(val));
+    }
+  }
+}
+
+/**
+ * Read portable per-flow duration hints from either:
+ * - a JSON map `{ [flowName]: durationMs }` (e.g. a committed/cached `spana-timings.json`),
+ * - a Spana `last-run.json` file, or
+ * - a directory of shard timing JSON files (merged taking max duration per flow).
+ */
+export async function readDurationHintsFile(filePath: string): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  try {
+    const info = await stat(filePath);
+    if (info.isDirectory()) {
+      const entries = (await readdir(filePath)).filter((f) => f.endsWith(".json")).toSorted();
+      for (const name of entries) {
+        try {
+          const raw = await readFile(join(filePath, name), "utf8");
+          mergeParsedDurationHints(JSON.parse(raw), out);
+        } catch {
+          // ignore unreadable or malformed shard file
+        }
+      }
+      return out;
+    }
+    const raw = await readFile(filePath, "utf8");
+    mergeParsedDurationHints(JSON.parse(raw), out);
+  } catch {
+    // missing or unreadable timings file — fail open with empty hints
+  }
+  return out;
+}
+
+/**
+ * Write a portable, deterministic (sorted-key) `{ [flowName]: durationMs }` timings
+ * manifest suitable for cross-machine `--shard` balancing in CI.
+ * Merges with any existing hints in `filePath` so multi-shard runs accumulate cleanly.
+ */
+export async function writeDurationHintsFile(
+  filePath: string,
+  results: FlowResult[],
+  existingHints?: Record<string, number>,
+): Promise<Record<string, number>> {
+  const merged: Record<string, number> = {
+    ...(existingHints ?? (await readDurationHintsFile(filePath))),
+  };
+  for (const r of results) {
+    if (typeof r.durationMs === "number" && Number.isFinite(r.durationMs) && r.durationMs > 0) {
+      merged[r.name] = Math.round(r.durationMs);
+    }
+  }
+  const sorted: Record<string, number> = {};
+  for (const key of Object.keys(merged).toSorted()) {
+    sorted[key] = merged[key]!;
+  }
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(sorted, null, 2)}\n`, "utf8");
+  return sorted;
 }
 
 export function getGitChangedFiles(cwd: string): string[] {

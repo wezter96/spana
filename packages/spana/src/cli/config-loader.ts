@@ -104,6 +104,10 @@ function resolveConfigPaths(config: ProvConfig, configPath: string): ProvConfig 
     );
   }
 
+  if (config.defaults?.timingsFile) {
+    config.defaults.timingsFile = resolveIfRelative(configDir, config.defaults.timingsFile);
+  }
+
   return config;
 }
 

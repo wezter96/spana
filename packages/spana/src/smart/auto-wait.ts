@@ -34,6 +34,8 @@ export interface WaitOptions {
   idleQuietMs?: number;
   /** Consecutive stable animation frames required before pointer actions on web. Default: 2. */
   actionStableFrames?: number;
+  /** Post-fill remount verification delay in ms (default: 12). Set 0 for synchronous verify. */
+  fillVerifyMs?: number;
   /** Skip actionability checks (enabled, hit-test, stability) when performing an action (Playwright `{ force: true }`). */
   force?: boolean;
   /** Arm the moving-target tap guard inside `waitForSelector` so Direct CDP taps need 0 extra eval RTTs. */

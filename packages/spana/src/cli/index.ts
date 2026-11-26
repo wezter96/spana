@@ -30,6 +30,8 @@ if (command === "test") {
   let noProviderReporting = false;
   let validateConfigOnly = false;
   let shard: { current: number; total: number } | undefined;
+  let timingsFile: string | undefined;
+  let writeTimingsFile: string | undefined;
   let bail: number | undefined;
   let debugOnFailure = false;
   let quiet = false;
@@ -102,6 +104,10 @@ if (command === "test") {
         process.exit(1);
       }
       shard = { current, total };
+    } else if (arg === "--timings" && args[i + 1]) {
+      timingsFile = args[++i];
+    } else if (arg === "--write-timings" && args[i + 1]) {
+      writeTimingsFile = args[++i];
     } else if (arg === "--bail" && args[i + 1]) {
       bail = Number.parseInt(args[++i]!, 10);
       if (!Number.isInteger(bail) || bail < 1) {
@@ -169,6 +175,8 @@ if (command === "test") {
     noProviderReporting,
     validateConfigOnly,
     shard,
+    timingsFile,
+    writeTimingsFile,
     bail,
     debugOnFailure,
     quiet,
@@ -783,7 +791,9 @@ if (command === "test") {
     "  --reporter console|json|junit|html|allure|github Reporter format (default: console)",
   );
   console.log("  --retries <n>              Retry failed flows n times (flake detection)");
-  console.log("  --shard <current>/<total>  Distribute flows across CI jobs");
+  console.log("  --shard <current>/<total>  Distribute flows across CI jobs (LPT balanced)");
+  console.log("  --timings <path>           Timings JSON file or directory for balanced sharding");
+  console.log("  --write-timings <path>     Write/merge portable flow timings JSON after run");
   console.log("  --bail <n>                 Abort after N failures");
   console.log("  --debug-on-failure         Open an interactive REPL on the first failed flow");
   console.log("  --last-failed              Rerun only flows that failed in the last Spana run");
