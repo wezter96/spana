@@ -259,7 +259,6 @@ export {
   deterministicImpactFilter,
   createOllamaDecisionJudge,
   createLogprobDecisionJudge,
-  createSystemOneDecisionJudge,
   probabilityFromTopLogprobs,
   applyTestFilters,
   collectGitChanges,
