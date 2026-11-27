@@ -408,9 +408,14 @@ export interface CdpChildSessionInfo {
   url?: string;
 }
 
-export type CdpFrameOffsetResolver = (
-  child: CdpChildSessionInfo,
-) => Promise<{ x: number; y: number }>;
+export interface CdpFrameTransform {
+  x: number;
+  y: number;
+  scaleX?: number;
+  scaleY?: number;
+}
+
+export type CdpFrameOffsetResolver = (child: CdpChildSessionInfo) => Promise<CdpFrameTransform>;
 
 export class CdpDomChannel implements DomChannel {
   readonly kind = "cdp" as const;
@@ -428,6 +433,7 @@ export class CdpDomChannel implements DomChannel {
   private closedReason = "Browser context closed";
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
+  private pendingEventCancels = new Set<(err: Error) => void>();
   private eventListeners = new Map<string, Set<(params: any, sessionId?: string) => void>>();
   private currentTargetId: string | null = null;
   private activeSessionId: string | null = null;
@@ -641,6 +647,10 @@ export class CdpDomChannel implements DomChannel {
       entry.reject(error);
     }
     this.pending.clear();
+    for (const cancel of Array.from(this.pendingEventCancels)) {
+      cancel(error);
+    }
+    this.pendingEventCancels.clear();
   }
 
   setSessionId(sessionId: string | null): void {
@@ -655,6 +665,17 @@ export class CdpDomChannel implements DomChannel {
   /** Register an attached cross-origin iframe (OOPIF) flattened CDP session. */
   addChildSession(sessionId: string, meta?: { targetId?: string; url?: string }): void {
     this.childSessions.set(sessionId, { sessionId, ...meta });
+  }
+
+  /** Update cached URL metadata for an OOPIF child session when `Target.targetInfoChanged` fires. */
+  updateChildSessionByTargetId(targetId: string, meta: { url?: string }): void {
+    for (const entry of this.childSessions.values()) {
+      if (entry.targetId === targetId) {
+        if (meta.url !== undefined) {
+          entry.url = meta.url;
+        }
+      }
+    }
   }
 
   removeChildSession(sessionId: string): void {
@@ -727,23 +748,72 @@ export class CdpDomChannel implements DomChannel {
     };
   }
 
+  waitForEventCancellable<T = any>(
+    method: string,
+    timeoutMs: number = this.timeoutMs,
+    predicate?: (params: T, sessionId?: string) => boolean,
+  ): { promise: Promise<T>; cancel: () => void } {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let off: (() => void) | undefined;
+    let abortOnClose: ((err: Error) => void) | undefined;
+    let resolveFn: ((val: T) => void) | undefined;
+
+    const cleanup = () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (off) {
+        off();
+        off = undefined;
+      }
+      if (abortOnClose) {
+        this.pendingEventCancels.delete(abortOnClose);
+        abortOnClose = undefined;
+      }
+    };
+
+    const promise = new Promise<T>((resolve, reject) => {
+      resolveFn = resolve;
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(`CDP event "${method}" timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      abortOnClose = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+      this.pendingEventCancels.add(abortOnClose);
+      off = this.onEvent(method, (params: T, sessionId?: string) => {
+        if (settled) return;
+        if (predicate && !predicate(params, sessionId)) return;
+        settled = true;
+        cleanup();
+        resolve(params);
+      });
+    });
+
+    const cancel = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveFn?.(undefined as unknown as T);
+    };
+
+    return { promise, cancel };
+  }
+
   waitForEvent<T = any>(
     method: string,
     timeoutMs: number = this.timeoutMs,
     predicate?: (params: T, sessionId?: string) => boolean,
   ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        off();
-        reject(new Error(`CDP event "${method}" timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      const off = this.onEvent(method, (params: T, sessionId?: string) => {
-        if (predicate && !predicate(params, sessionId)) return;
-        clearTimeout(timer);
-        off();
-        resolve(params);
-      });
-    });
+    return this.waitForEventCancellable<T>(method, timeoutMs, predicate).promise;
   }
 
   async sendCommand<T = any>(
@@ -920,17 +990,9 @@ export class CdpDomChannel implements DomChannel {
     child: CdpChildSessionInfo,
   ): Promise<DomElementMatch[]> {
     const offset = this.frameOffsetResolver
-      ? await this.frameOffsetResolver(child).catch(() => ({ x: 0, y: 0 }))
-      : { x: 0, y: 0 };
-    return matches.map((m) => ({
-      ...m,
-      inIframe: true,
-      rect: {
-        ...m.rect,
-        x: m.rect.x + offset.x,
-        y: m.rect.y + offset.y,
-      },
-    }));
+      ? await this.frameOffsetResolver(child).catch(() => ({ x: 0, y: 0, scaleX: 1, scaleY: 1 }))
+      : { x: 0, y: 0, scaleX: 1, scaleY: 1 };
+    return this.applyFrameOffset(matches, offset);
   }
 
   private hasExplicitFrame(selector: Selector): boolean {
@@ -952,15 +1014,21 @@ export class CdpDomChannel implements DomChannel {
 
   private applyFrameOffset(
     matches: DomElementMatch[],
-    offset: { x: number; y: number },
+    offset: CdpFrameTransform,
   ): DomElementMatch[] {
+    const sx =
+      offset.scaleX && Number.isFinite(offset.scaleX) && offset.scaleX > 0 ? offset.scaleX : 1;
+    const sy =
+      offset.scaleY && Number.isFinite(offset.scaleY) && offset.scaleY > 0 ? offset.scaleY : 1;
     return matches.map((m) => ({
       ...m,
       inIframe: true,
       rect: {
         ...m.rect,
-        x: m.rect.x + offset.x,
-        y: m.rect.y + offset.y,
+        x: offset.x + m.rect.x * sx,
+        y: offset.y + m.rect.y * sy,
+        width: m.rect.width * sx,
+        height: m.rect.height * sy,
       },
     }));
   }
@@ -976,7 +1044,10 @@ export class CdpDomChannel implements DomChannel {
       name: string;
       x: number;
       y: number;
+      scaleX: number;
+      scaleY: number;
       sameOriginAccessible: boolean;
+      isSrcdoc?: boolean;
     }>
   > {
     const matcherFn = `function __matchIframes(fSel) {
@@ -1005,7 +1076,16 @@ export class CdpDomChannel implements DomChannel {
     }`;
 
     const metaList = await this.evaluateOnSessionWithTimeout<
-      Array<{ src: string; name: string; x: number; y: number; sameOriginAccessible: boolean }>
+      Array<{
+        src: string;
+        name: string;
+        x: number;
+        y: number;
+        scaleX: number;
+        scaleY: number;
+        sameOriginAccessible: boolean;
+        isSrcdoc?: boolean;
+      }>
     >(
       sessionId,
       `((fSel) => {
@@ -1013,7 +1093,20 @@ export class CdpDomChannel implements DomChannel {
           ${matcherFn}
           return __matchIframes(fSel).map((el) => {
             var r = el.getBoundingClientRect();
+            var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+            var cs = win && win.getComputedStyle ? win.getComputedStyle(el) : null;
+            var bLeft = cs ? (parseFloat(cs.borderLeftWidth) || 0) : 0;
+            var bTop = cs ? (parseFloat(cs.borderTopWidth) || 0) : 0;
+            var bRight = cs ? (parseFloat(cs.borderRightWidth) || 0) : 0;
+            var bBottom = cs ? (parseFloat(cs.borderBottomWidth) || 0) : 0;
+            var layoutW = el.offsetWidth || (el.clientWidth + bLeft + bRight);
+            var layoutH = el.offsetHeight || (el.clientHeight + bTop + bBottom);
+            var sx = layoutW > 0 ? (r.width / layoutW) : 1;
+            var sy = layoutH > 0 ? (r.height / layoutH) : 1;
+            if (!isFinite(sx) || sx <= 0) sx = 1;
+            if (!isFinite(sy) || sy <= 0) sy = 1;
             var accessible = false;
+            var isSrcdoc = el.hasAttribute("srcdoc");
             try {
               var srcAttr = el.getAttribute("src") || "";
               var crossOriginSrc = false;
@@ -1025,7 +1118,16 @@ export class CdpDomChannel implements DomChannel {
               }
               accessible = !crossOriginSrc && Boolean(el.contentDocument && el.contentDocument.documentElement);
             } catch (e) {}
-            return { src: el.src || "", name: el.getAttribute("name") || "", x: r.left, y: r.top, sameOriginAccessible: accessible };
+            return {
+              src: el.src || "",
+              name: el.getAttribute("name") || "",
+              x: r.left + bLeft * sx,
+              y: r.top + bTop * sy,
+              scaleX: sx,
+              scaleY: sy,
+              sameOriginAccessible: accessible,
+              isSrcdoc: isSrcdoc
+            };
           });
         } catch (e) { return []; }
       })(${JSON.stringify(frameSel)})`,
@@ -1045,7 +1147,10 @@ export class CdpDomChannel implements DomChannel {
       name: string;
       x: number;
       y: number;
+      scaleX: number;
+      scaleY: number;
       sameOriginAccessible: boolean;
+      isSrcdoc?: boolean;
     }> = [];
     for (let idx = 0; idx < metaList.length; idx++) {
       const info = metaList[idx]!;
@@ -1088,7 +1193,7 @@ export class CdpDomChannel implements DomChannel {
    */
   private async resolveInProcessChildFrames(
     selector: Selector,
-  ): Promise<Array<{ frameId: string; url: string; offset: { x: number; y: number } }>> {
+  ): Promise<Array<{ frameId: string; url: string; offset: CdpFrameTransform }>> {
     if (!this.hasExplicitFrame(selector)) return [];
     const frameSel = (selector as { frame?: unknown }).frame;
 
@@ -1119,12 +1224,18 @@ export class CdpDomChannel implements DomChannel {
     if (flatFrames.length === 0) return [];
 
     const matchInfoToFrame = (
-      info: { frameId?: string; src: string; name: string },
+      info: { frameId?: string; src: string; name: string; isSrcdoc?: boolean },
       pool: Array<{ id: string; url: string; name: string }>,
     ) => {
       if (info.frameId) {
         const exact = pool.find((f) => f.id === info.frameId);
         if (exact) return exact;
+      }
+      if (info.isSrcdoc) {
+        const srcdocFrame = pool.find(
+          (f) => f.url === "about:srcdoc" && (!info.name || f.name === info.name),
+        );
+        if (srcdocFrame) return srcdocFrame;
       }
       return (
         pool.find((f) => {
@@ -1151,12 +1262,16 @@ export class CdpDomChannel implements DomChannel {
       );
     };
 
-    const out: Array<{ frameId: string; url: string; offset: { x: number; y: number } }> = [];
+    const out: Array<{ frameId: string; url: string; offset: CdpFrameTransform }> = [];
     const topInfos = await this.inspectMatchingIframes(frameSel);
     for (const info of topInfos) {
       const match = matchInfoToFrame(info, flatFrames);
       if (match && !out.some((x) => x.frameId === match.id)) {
-        out.push({ frameId: match.id, url: match.url, offset: { x: info.x, y: info.y } });
+        out.push({
+          frameId: match.id,
+          url: match.url,
+          offset: { x: info.x, y: info.y, scaleX: info.scaleX, scaleY: info.scaleY },
+        });
       }
     }
 
@@ -1166,7 +1281,7 @@ export class CdpDomChannel implements DomChannel {
       const visited = new Set<string>();
       const searchChildrenOf = async (
         parentFrameId: string,
-        parentOffset: { x: number; y: number },
+        parentOffset: CdpFrameTransform,
         depth: number,
       ) => {
         if (depth > 4 || visited.has(parentFrameId)) return;
@@ -1187,6 +1302,9 @@ export class CdpDomChannel implements DomChannel {
           }
         })();
 
+        const pSx = parentOffset.scaleX ?? 1;
+        const pSy = parentOffset.scaleY ?? 1;
+
         for (const childFrame of directChildren) {
           const rectInfo = childIframeRects.find(
             (r) =>
@@ -1194,9 +1312,11 @@ export class CdpDomChannel implements DomChannel {
               (r.name && childFrame.name && r.name === childFrame.name) ||
               (r.src && childFrame.url && childFrame.url.startsWith(r.src)),
           );
-          const childOffset = {
-            x: parentOffset.x + (rectInfo?.x ?? 0),
-            y: parentOffset.y + (rectInfo?.y ?? 0),
+          const childOffset: CdpFrameTransform = {
+            x: parentOffset.x + (rectInfo?.x ?? 0) * pSx,
+            y: parentOffset.y + (rectInfo?.y ?? 0) * pSy,
+            scaleX: pSx * (rectInfo?.scaleX ?? 1),
+            scaleY: pSy * (rectInfo?.scaleY ?? 1),
           };
           try {
             const ctxId = await this.getOrCreateFrameWorld(childFrame.id);
@@ -1211,7 +1331,12 @@ export class CdpDomChannel implements DomChannel {
                 out.push({
                   frameId: match.id,
                   url: match.url,
-                  offset: { x: childOffset.x + nInfo.x, y: childOffset.y + nInfo.y },
+                  offset: {
+                    x: childOffset.x + nInfo.x * (childOffset.scaleX ?? 1),
+                    y: childOffset.y + nInfo.y * (childOffset.scaleY ?? 1),
+                    scaleX: (childOffset.scaleX ?? 1) * nInfo.scaleX,
+                    scaleY: (childOffset.scaleY ?? 1) * nInfo.scaleY,
+                  },
                 });
               }
             }
@@ -1224,7 +1349,7 @@ export class CdpDomChannel implements DomChannel {
         }
       };
       if (topFrameId) {
-        await searchChildrenOf(topFrameId, { x: 0, y: 0 }, 0);
+        await searchChildrenOf(topFrameId, { x: 0, y: 0, scaleX: 1, scaleY: 1 }, 0);
       }
     }
 
@@ -1324,7 +1449,9 @@ export class CdpDomChannel implements DomChannel {
       if ("accessibilityLabel" in frameSel && frameSel.accessibilityLabel) {
         hints.push(frameSel.accessibilityLabel);
       }
-      if ("text" in frameSel && frameSel.text) hints.push(frameSel.text);
+      if ("text" in frameSel && typeof frameSel.text === "string" && frameSel.text) {
+        hints.push(frameSel.text);
+      }
     }
     // Prefer exact CDP frameId matching via DOM.describeNode so multiple iframes sharing an origin never collide (2.18d)
     const inspected = await this.inspectMatchingIframes(frameSel);
@@ -1358,7 +1485,15 @@ export class CdpDomChannel implements DomChannel {
       const byHint = all.filter((c) => c.url && hints.some((h) => c.url!.includes(h)));
       if (byHint.length > 0) return byHint;
     }
-    return inspected.length === 0 ? [] : all;
+    // If the host DOM already has a matching iframe with a known frameId or non-blank src,
+    // and NONE of the currently attached OOPIF sessions match it, the target OOPIF is still
+    // attaching/navigating — return [] rather than returning unrelated sibling OOPIFs!
+    const hasSpecificIdentity =
+      exactFrameIds.size > 0 || iframeSrcs.some((src) => src && src !== "about:blank");
+    if (inspected.length === 0 || hasSpecificIdentity) {
+      return [];
+    }
+    return all;
   }
 
   async query(selector: Selector): Promise<DomElementMatch[]> {
@@ -1466,29 +1601,58 @@ export class CdpDomChannel implements DomChannel {
       }),
     ];
 
-    // If an explicit frame hasn't navigated/mounted into Page.getFrameTree yet, poll briefly until it appears
+    const raceState = { done: false };
+    // If an explicit frame hasn't navigated/mounted into Page.getFrameTree or OOPIF childSessions yet, poll briefly until it appears
     if (explicitFrame && candidates.length === 0 && inProcessFrames.length === 0) {
       const deadline = Date.now() + (opts?.timeoutMs ?? 5000);
       racers.push(
         (async () => {
-          while (Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, 60));
+          while (!raceState.done && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 50));
+            if (raceState.done) return [];
+            const appearedOopif =
+              this.childSessions.size > 0 ? await this.resolveMatchingChildSessions(selector) : [];
+            if (appearedOopif.length > 0) {
+              const remaining = Math.max(200, deadline - Date.now());
+              const remOpts = { ...opts, timeoutMs: remaining };
+              const subHits = await Promise.all(
+                appearedOopif.map(async (child) => {
+                  const res = await this.invokeDom<DomElementMatch[]>(
+                    child.sessionId,
+                    "waitForSelector",
+                    [innerSel, remOpts],
+                    () => buildDomWaitForSelectorScript(innerSel, remOpts),
+                    remaining + 2000,
+                  ).catch(() => []);
+                  return Array.isArray(res) && res.length > 0
+                    ? this.applyChildOffset(res, child)
+                    : [];
+                }),
+              );
+              const firstHit = subHits.find((h) => h.length > 0);
+              if (firstHit) return firstHit;
+            }
+            if (raceState.done) return [];
             const appeared = await this.resolveInProcessChildFrames(selector);
             if (appeared.length > 0) {
               const remaining = Math.max(200, deadline - Date.now());
               const remOpts = { ...opts, timeoutMs: remaining };
-              for (const frame of appeared) {
-                const res = await this.invokeInProcessFrame<DomElementMatch[]>(
-                  frame.frameId,
-                  "waitForSelector",
-                  [innerSel, remOpts],
-                  () => buildDomWaitForSelectorScript(innerSel, remOpts),
-                  remaining + 2000,
-                ).catch(() => []);
-                if (Array.isArray(res) && res.length > 0) {
-                  return this.applyFrameOffset(res, frame.offset);
-                }
-              }
+              const subHits = await Promise.all(
+                appeared.map(async (frame) => {
+                  const res = await this.invokeInProcessFrame<DomElementMatch[]>(
+                    frame.frameId,
+                    "waitForSelector",
+                    [innerSel, remOpts],
+                    () => buildDomWaitForSelectorScript(innerSel, remOpts),
+                    remaining + 2000,
+                  ).catch(() => []);
+                  return Array.isArray(res) && res.length > 0
+                    ? this.applyFrameOffset(res, frame.offset)
+                    : [];
+                }),
+              );
+              const firstHit = subHits.find((h) => h.length > 0);
+              if (firstHit) return firstHit;
             }
           }
           return [];
@@ -1504,12 +1668,14 @@ export class CdpDomChannel implements DomChannel {
           if (resolved) return;
           if (Array.isArray(matches) && matches.length > 0) {
             resolved = true;
+            raceState.done = true;
             resolve(matches);
             return;
           }
           remaining -= 1;
           if (remaining <= 0) {
             resolved = true;
+            raceState.done = true;
             resolve([]);
           }
         });

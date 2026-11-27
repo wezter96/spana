@@ -282,9 +282,23 @@ export interface DirectChromiumLaunchArgsOptions {
 export function buildDirectChromiumLaunchArgs(options: DirectChromiumLaunchArgsOptions): string[] {
   const extraArgs = options.args ?? [];
   const needNoSandbox = options.chromiumSandbox !== true && !extraArgs.includes("--no-sandbox");
+  const needDisableSetuidSandbox =
+    process.platform === "linux" &&
+    options.chromiumSandbox !== true &&
+    !extraArgs.includes("--disable-setuid-sandbox");
+  const hasBlinkSettings = extraArgs.some((a) => a.startsWith("--blink-settings="));
+  const isHeadless = options.headless !== false;
   return [
-    ...(options.headless !== false ? ["--headless=new"] : []),
+    ...(isHeadless ? ["--headless=new"] : []),
     ...(needNoSandbox ? ["--no-sandbox"] : []),
+    ...(needDisableSetuidSandbox ? ["--disable-setuid-sandbox"] : []),
+    ...(!hasBlinkSettings
+      ? [
+          "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+        ]
+      : []),
+    ...(isHeadless && !extraArgs.includes("--hide-scrollbars") ? ["--hide-scrollbars"] : []),
+    ...(isHeadless && !extraArgs.includes("--mute-audio") ? ["--mute-audio"] : []),
     `--remote-debugging-port=${options.remoteDebuggingPort ?? 0}`,
     "--remote-debugging-address=127.0.0.1",
     `--user-data-dir=${options.userDataDir}`,
@@ -370,8 +384,8 @@ export async function launchDirectCdpBrowser(
   // crashes with SIGABRT ("Socket path too long") if TMPDIR exceeds ~50 chars (Linux 108-byte sun_path limit).
   const rawTmp = tmpdir();
   const safeTmpDir =
-    process.platform === "linux" && rawTmp.length > 50 && existsSync("/tmp") ? "/tmp" : rawTmp;
-  const userDataDir = mkdtempSync(join(safeTmpDir, "spana-cdp-profile-"));
+    process.platform === "linux" && rawTmp.length > 40 && existsSync("/tmp") ? "/tmp" : rawTmp;
+  const userDataDir = mkdtempSync(join(safeTmpDir, "spana-cdp-"));
   const baseChromeArgs = buildDirectChromiumLaunchArgs({
     userDataDir,
     remoteDebuggingPort: 0,
@@ -627,12 +641,21 @@ function matchUrl(matcher: BrowserRouteMatcher, url: string): boolean {
   return url.includes(matcher);
 }
 
-const CDP_SPECIAL_KEYS: Record<string, { code: string; keyCode: number; text?: string }> = {
+const CDP_SPECIAL_KEYS: Record<
+  string,
+  { key?: string; code: string; keyCode: number; text?: string }
+> = {
   Enter: { code: "Enter", keyCode: 13, text: "\r" },
   Backspace: { code: "Backspace", keyCode: 8 },
   Tab: { code: "Tab", keyCode: 9 },
   Escape: { code: "Escape", keyCode: 27 },
   Delete: { code: "Delete", keyCode: 46 },
+  Insert: { code: "Insert", keyCode: 45 },
+  CapsLock: { code: "CapsLock", keyCode: 20 },
+  NumLock: { code: "NumLock", keyCode: 144 },
+  ScrollLock: { code: "ScrollLock", keyCode: 145 },
+  PrintScreen: { code: "PrintScreen", keyCode: 44 },
+  Pause: { code: "Pause", keyCode: 19 },
   ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
   ArrowUp: { code: "ArrowUp", keyCode: 38 },
   ArrowRight: { code: "ArrowRight", keyCode: 39 },
@@ -641,11 +664,76 @@ const CDP_SPECIAL_KEYS: Record<string, { code: string; keyCode: number; text?: s
   End: { code: "End", keyCode: 35 },
   PageUp: { code: "PageUp", keyCode: 33 },
   PageDown: { code: "PageDown", keyCode: 34 },
-  Space: { code: "Space", keyCode: 32, text: " " },
-  " ": { code: "Space", keyCode: 32, text: " " },
+  Space: { key: " ", code: "Space", keyCode: 32, text: " " },
+  " ": { key: " ", code: "Space", keyCode: 32, text: " " },
+  F1: { code: "F1", keyCode: 112 },
+  F2: { code: "F2", keyCode: 113 },
+  F3: { code: "F3", keyCode: 114 },
+  F4: { code: "F4", keyCode: 115 },
+  F5: { code: "F5", keyCode: 116 },
+  F6: { code: "F6", keyCode: 117 },
+  F7: { code: "F7", keyCode: 118 },
+  F8: { code: "F8", keyCode: 119 },
+  F9: { code: "F9", keyCode: 120 },
+  F10: { code: "F10", keyCode: 121 },
+  F11: { code: "F11", keyCode: 122 },
+  F12: { code: "F12", keyCode: 123 },
+  Control: { key: "Control", code: "ControlLeft", keyCode: 17 },
+  Shift: { key: "Shift", code: "ShiftLeft", keyCode: 16 },
+  Alt: { key: "Alt", code: "AltLeft", keyCode: 18 },
+  Meta: { key: "Meta", code: "MetaLeft", keyCode: 91 },
+  Backquote: { key: "`", code: "Backquote", keyCode: 192, text: "`" },
+  Minus: { key: "-", code: "Minus", keyCode: 189, text: "-" },
+  Equal: { key: "=", code: "Equal", keyCode: 187, text: "=" },
+  BracketLeft: { key: "[", code: "BracketLeft", keyCode: 219, text: "[" },
+  BracketRight: { key: "]", code: "BracketRight", keyCode: 221, text: "]" },
+  Backslash: { key: "\\", code: "Backslash", keyCode: 220, text: "\\" },
+  Semicolon: { key: ";", code: "Semicolon", keyCode: 186, text: ";" },
+  Quote: { key: "'", code: "Quote", keyCode: 222, text: "'" },
+  Comma: { key: ",", code: "Comma", keyCode: 188, text: "," },
+  Period: { key: ".", code: "Period", keyCode: 190, text: "." },
+  Slash: { key: "/", code: "Slash", keyCode: 191, text: "/" },
 };
 
-function parseCdpKeyDescriptor(rawKey: string): {
+const CDP_PUNCTUATION_CHAR_MAP: Record<string, { code: string; keyCode: number }> = {
+  "`": { code: "Backquote", keyCode: 192 },
+  "~": { code: "Backquote", keyCode: 192 },
+  "-": { code: "Minus", keyCode: 189 },
+  _: { code: "Minus", keyCode: 189 },
+  "=": { code: "Equal", keyCode: 187 },
+  "+": { code: "Equal", keyCode: 187 },
+  "[": { code: "BracketLeft", keyCode: 219 },
+  "{": { code: "BracketLeft", keyCode: 219 },
+  "]": { code: "BracketRight", keyCode: 221 },
+  "}": { code: "BracketRight", keyCode: 221 },
+  "\\": { code: "Backslash", keyCode: 220 },
+  "|": { code: "Backslash", keyCode: 220 },
+  ";": { code: "Semicolon", keyCode: 186 },
+  ":": { code: "Semicolon", keyCode: 186 },
+  "'": { code: "Quote", keyCode: 222 },
+  '"': { code: "Quote", keyCode: 222 },
+  ",": { code: "Comma", keyCode: 188 },
+  "<": { code: "Comma", keyCode: 188 },
+  ".": { code: "Period", keyCode: 190 },
+  ">": { code: "Period", keyCode: 190 },
+  "/": { code: "Slash", keyCode: 191 },
+  "?": { code: "Slash", keyCode: 191 },
+};
+
+function modifierBitForName(name: string): number {
+  const lower = name.toLowerCase();
+  if (lower === "alt" || lower === "option") return 1;
+  if (lower === "control" || lower === "ctrl") return 2;
+  if (lower === "meta" || lower === "cmd" || lower === "command") return 4;
+  if (lower === "controlormeta") return process.platform === "darwin" ? 4 : 2;
+  if (lower === "shift") return 8;
+  return 0;
+}
+
+function parseCdpKeyDescriptor(
+  rawKey: string,
+  extraModifiers = 0,
+): {
   key: string;
   code: string;
   windowsVirtualKeyCode: number;
@@ -654,27 +742,41 @@ function parseCdpKeyDescriptor(rawKey: string): {
   commands?: string[];
 } {
   const parts = rawKey.split("+");
-  let modifiers = 0;
+  let modifiers = extraModifiers;
   let baseKey = rawKey;
   if (parts.length > 1) {
     baseKey = parts[parts.length - 1] ?? rawKey;
     for (let i = 0; i < parts.length - 1; i++) {
-      const mod = (parts[i] ?? "").toLowerCase();
-      if (mod === "alt" || mod === "option") modifiers |= 1;
-      else if (mod === "control" || mod === "ctrl") modifiers |= 2;
-      else if (mod === "meta" || mod === "cmd" || mod === "command") modifiers |= 4;
-      else if (mod === "shift") modifiers |= 8;
+      modifiers |= modifierBitForName(parts[i] ?? "");
     }
+  }
+
+  if (baseKey.toLowerCase() === "controlormeta") {
+    baseKey = process.platform === "darwin" ? "Meta" : "Control";
+  }
+
+  const keyCodeMatch = /^Key([A-Z])$/.exec(baseKey);
+  if (keyCodeMatch) {
+    const letter = keyCodeMatch[1]!;
+    baseKey = (modifiers & 8) !== 0 ? letter : letter.toLowerCase();
+  }
+  const digitCodeMatch = /^Digit([0-9])$/.exec(baseKey);
+  if (digitCodeMatch) {
+    baseKey = digitCodeMatch[1]!;
   }
 
   const special = CDP_SPECIAL_KEYS[baseKey];
   if (special) {
+    const emitText =
+      special.text && (modifiers === 0 || modifiers === 8 || baseKey === "Enter")
+        ? special.text
+        : undefined;
     return {
-      key: baseKey === "Space" ? " " : baseKey,
+      key: special.key ?? baseKey,
       code: special.code,
       windowsVirtualKeyCode: special.keyCode,
       modifiers,
-      ...(special.text ? { text: special.text } : {}),
+      ...(emitText ? { text: emitText } : {}),
     };
   }
 
@@ -683,6 +785,7 @@ function parseCdpKeyDescriptor(rawKey: string): {
     const charCode = upper.charCodeAt(0);
     const isLetter = charCode >= 65 && charCode <= 90;
     const isDigit = charCode >= 48 && charCode <= 57;
+    const punct = CDP_PUNCTUATION_CHAR_MAP[baseKey];
     const commands: string[] = [];
     if ((modifiers & (2 | 4)) !== 0) {
       if (baseKey.toLowerCase() === "a") commands.push("selectAll");
@@ -693,8 +796,8 @@ function parseCdpKeyDescriptor(rawKey: string): {
     }
     return {
       key: baseKey,
-      code: isLetter ? `Key${upper}` : isDigit ? `Digit${baseKey}` : "",
-      windowsVirtualKeyCode: charCode,
+      code: isLetter ? `Key${upper}` : isDigit ? `Digit${baseKey}` : (punct?.code ?? ""),
+      windowsVirtualKeyCode: punct ? punct.keyCode : charCode,
       modifiers,
       ...(modifiers === 0 || modifiers === 8 ? { text: baseKey } : {}),
       ...(commands.length > 0 ? { commands } : {}),
@@ -736,7 +839,13 @@ export function makeLightweightCdpDriver(
   return Effect.gen(function* () {
     const isBrowserWs = options.cdpUrl.includes("/devtools/browser/");
     const useContexts = Boolean(
-      options.useBrowserContexts || options.freshContextPerFlow || isBrowserWs,
+      options.useBrowserContexts ||
+      options.freshContextPerFlow ||
+      options.contextIsolation !== undefined ||
+      isBrowserWs,
+    );
+    const effectiveFreshContextPerFlow = Boolean(
+      options.freshContextPerFlow ?? options.contextIsolation !== undefined,
     );
     const isWs = options.cdpUrl.startsWith("ws://") || options.cdpUrl.startsWith("wss://");
 
@@ -779,6 +888,7 @@ export function makeLightweightCdpDriver(
     let viewportMutated = false;
     let geolocationMutated = false;
     let permissionsMutated = false;
+    let slotHasCustomStorageState = false;
     let isAtBlank = true;
     const label = options.engineLabel ?? "cdp";
     const contextIsolation = options.contextIsolation ?? "hot-cache";
@@ -861,7 +971,11 @@ export function makeLightweightCdpDriver(
     };
     let currentNetworkConditions: NetworkConditions | undefined;
     let cachedUserAgent: string | undefined;
-    let fetchInterceptEnabled = false;
+    const fetchEnabledSessions = new Set<string | null>();
+    let heldModifiers = 0;
+    let pressedMouseButtons = 0;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
     let activeResponseWatchers = 0;
     let nextTabSeq = 1;
     let downloadDir: string | undefined;
@@ -1034,11 +1148,17 @@ export function makeLightweightCdpDriver(
       includeFlowState = false,
     ) => {
       const state = await loadStorageStateFile(storageStatePath);
+      const targetWidth = includeFlowState ? width : initialWidth;
+      const targetHeight = includeFlowState ? height : initialHeight;
       await Promise.all([
         cdpChannel.sendCommand("Page.enable", {}, sessionId).catch(() => {}),
         cdpChannel.sendCommand("Runtime.enable", {}, sessionId).catch(() => {}),
         // Enable Network in the initial parallel batch (0 extra RTTs) so waitForResponse / app.cdp() never race fast localhost loads.
         cdpChannel.sendCommand("Network.enable", {}, sessionId).catch(() => {}),
+        // Emulate focused page on headless Linux so :focus / focus-visible / hover states match desktop Chrome.
+        cdpChannel
+          .sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId)
+          .catch(() => {}),
         ...(useInjectedRuntime
           ? [
               cdpChannel
@@ -1071,7 +1191,7 @@ export function makeLightweightCdpDriver(
         cdpChannel
           .sendCommand(
             "Emulation.setDeviceMetricsOverride",
-            { width, height, deviceScaleFactor: 1, mobile: false },
+            { width: targetWidth, height: targetHeight, deviceScaleFactor: 1, mobile: false },
             sessionId,
           )
           .catch(() => {}),
@@ -1111,6 +1231,15 @@ export function makeLightweightCdpDriver(
         for (const fnName of flowExposedFunctions.keys()) {
           await installExposeFunctionOnSession(sessionId, fnName);
         }
+        if (routeRules.length > 0) {
+          fetchEnabledSessions.add(sessionId);
+          await cdpChannel
+            .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId)
+            .catch(() => {});
+        }
+        if (currentNetworkConditions) {
+          await applyNetworkConditionsToSession(sessionId, currentNetworkConditions);
+        }
       }
 
       if (options.blockResources && options.blockResources.length > 0) {
@@ -1134,29 +1263,23 @@ export function makeLightweightCdpDriver(
             "Page.addScriptToEvaluateOnNewDocument",
             {
               source: `(() => {
-                const origins = ${originsJson};
-                const hit = origins.find((o) => o.origin === window.location.origin);
-                if (hit && Array.isArray(hit.localStorage)) {
-                  for (const item of hit.localStorage) {
-                    try { window.localStorage.setItem(item.name, item.value); } catch {}
+                try {
+                  const seedKey = "__spana_storage_seeded__:" + window.location.origin;
+                  if (window.sessionStorage.getItem(seedKey)) return;
+                  const origins = ${originsJson};
+                  const hit = origins.find((o) => o.origin === window.location.origin);
+                  if (hit && Array.isArray(hit.localStorage)) {
+                    for (const item of hit.localStorage) {
+                      try { window.localStorage.setItem(item.name, item.value); } catch {}
+                    }
+                    window.sessionStorage.setItem(seedKey, "1");
                   }
-                }
+                } catch {}
               })();`,
             },
             sessionId,
           )
           .catch(() => {});
-      }
-
-      if (routeRules.length > 0) {
-        fetchInterceptEnabled = true;
-        await cdpChannel
-          .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId)
-          .catch(() => {});
-      }
-
-      if (currentNetworkConditions) {
-        await applyNetworkConditionsToSession(sessionId, currentNetworkConditions);
       }
 
       if (options.emulation) {
@@ -1186,6 +1309,24 @@ export function makeLightweightCdpDriver(
         }
         if (options.emulation.locale) {
           await applyLocaleOverride(sessionId, options.emulation.locale);
+        }
+        if (options.emulation.userAgent) {
+          const locale = options.emulation.locale;
+          const acceptLanguage = locale
+            ? locale.includes("-")
+              ? `${locale},${locale.split("-")[0]};q=0.9`
+              : locale
+            : undefined;
+          await cdpChannel
+            .sendCommand(
+              "Emulation.setUserAgentOverride",
+              {
+                userAgent: options.emulation.userAgent,
+                ...(acceptLanguage ? { acceptLanguage } : {}),
+              },
+              sessionId,
+            )
+            .catch(() => {});
         }
         if (options.emulation.timezoneId) {
           await cdpChannel
@@ -1219,7 +1360,12 @@ export function makeLightweightCdpDriver(
       )) as { browserContextId: string };
       const targetRes = (await cdpChannel.sendCommand(
         "Target.createTarget",
-        { url: "about:blank", browserContextId: ctxRes.browserContextId, width, height },
+        {
+          url: "about:blank",
+          browserContextId: ctxRes.browserContextId,
+          width: initialWidth,
+          height: initialHeight,
+        },
         null,
       )) as { targetId: string };
       const attachRes = (await cdpChannel.sendCommand(
@@ -1262,7 +1408,7 @@ export function makeLightweightCdpDriver(
     const schedulePrefetch = () => {
       if (
         !useContexts ||
-        !options.freshContextPerFlow ||
+        !effectiveFreshContextPerFlow ||
         contextIsolation === "hot-cache" ||
         prefetchedSlotPromise
       ) {
@@ -1308,16 +1454,19 @@ export function makeLightweightCdpDriver(
             activeSlot.tabs.push({ tabId: newTabId, targetId, sessionId: childSid });
           }
           const setupCalls: Array<Promise<unknown>> = [
+            // Enable Network FIRST unconditionally so fast popup fetch/XHR bodies are buffered before requestWillBeSent
+            cdpChannel.sendCommand("Network.enable", {}, childSid).catch(() => {}),
             cdpChannel.sendCommand("Page.enable", {}, childSid).catch(() => {}),
             cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {}),
+            cdpChannel
+              .sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }, childSid)
+              .catch(() => {}),
           ];
-          if (activeResponseWatchers > 0 || requestListeners.size > 0) {
-            setupCalls.push(cdpChannel.sendCommand("Network.enable", {}, childSid).catch(() => {}));
-          }
           if (currentNetworkConditions) {
             setupCalls.push(applyNetworkConditionsToSession(childSid, currentNetworkConditions));
           }
-          if (fetchInterceptEnabled) {
+          if (routeRules.length > 0) {
+            fetchEnabledSessions.add(childSid);
             setupCalls.push(
               cdpChannel
                 .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, childSid)
@@ -1452,9 +1601,26 @@ export function makeLightweightCdpDriver(
       }
     });
 
+    cdpChannel.onEvent("Target.targetInfoChanged", (params) => {
+      const targetInfo = params?.targetInfo;
+      if (!targetInfo?.targetId || typeof targetInfo.url !== "string") return;
+      cdpChannel.updateChildSessionByTargetId(String(targetInfo.targetId), {
+        url: targetInfo.url,
+      });
+      try {
+        const parsed = new URL(targetInfo.url);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          observedOrigins.add(parsed.origin);
+        }
+      } catch {
+        // ignore non-http(s) URLs
+      }
+    });
+
     cdpChannel.onEvent("Target.detachedFromTarget", (params) => {
       if (typeof params?.sessionId === "string") {
         cdpChannel.removeChildSession(params.sessionId);
+        fetchEnabledSessions.delete(params.sessionId);
         if (activeSlot) {
           const wasActive = activeSlot.sessionId === params.sessionId;
           activeSlot.tabs = activeSlot.tabs.filter((t) => t.sessionId !== params.sessionId);
@@ -1525,7 +1691,7 @@ export function makeLightweightCdpDriver(
     });
 
     cdpChannel.setFrameOffsetResolver(async (child) => {
-      if (!child.targetId) return { x: 0, y: 0 };
+      if (!child.targetId) return { x: 0, y: 0, scaleX: 1, scaleY: 1 };
       try {
         await cdpChannel.sendCommand("DOM.enable");
         const owner = (await cdpChannel.sendCommand("DOM.getFrameOwner", {
@@ -1534,17 +1700,53 @@ export function makeLightweightCdpDriver(
         const boxParams = owner.backendNodeId
           ? { backendNodeId: owner.backendNodeId }
           : { nodeId: owner.nodeId };
+        // Prefer Runtime.callFunctionOn so CSS transform: scale(...) + border offsets are computed accurately
+        const resolved = (await cdpChannel
+          .sendCommand("DOM.resolveNode", boxParams)
+          .catch(() => null)) as { object?: { objectId?: string } } | null;
+        if (resolved?.object?.objectId) {
+          const objectId = resolved.object.objectId;
+          try {
+            const callRes = (await cdpChannel.sendCommand("Runtime.callFunctionOn", {
+              objectId,
+              functionDeclaration: `function() {
+                var r = this.getBoundingClientRect();
+                var win = (this.ownerDocument && this.ownerDocument.defaultView) || window;
+                var cs = win && win.getComputedStyle ? win.getComputedStyle(this) : null;
+                var bLeft = cs ? (parseFloat(cs.borderLeftWidth) || 0) : 0;
+                var bTop = cs ? (parseFloat(cs.borderTopWidth) || 0) : 0;
+                var bRight = cs ? (parseFloat(cs.borderRightWidth) || 0) : 0;
+                var bBottom = cs ? (parseFloat(cs.borderBottomWidth) || 0) : 0;
+                var layoutW = this.offsetWidth || (this.clientWidth + bLeft + bRight);
+                var layoutH = this.offsetHeight || (this.clientHeight + bTop + bBottom);
+                var sx = layoutW > 0 ? (r.width / layoutW) : 1;
+                var sy = layoutH > 0 ? (r.height / layoutH) : 1;
+                if (!isFinite(sx) || sx <= 0) sx = 1;
+                if (!isFinite(sy) || sy <= 0) sy = 1;
+                return { x: r.left + bLeft * sx, y: r.top + bTop * sy, scaleX: sx, scaleY: sy };
+              }`,
+              returnByValue: true,
+            })) as {
+              result?: { value?: { x: number; y: number; scaleX: number; scaleY: number } };
+            };
+            if (callRes?.result?.value) {
+              return callRes.result.value;
+            }
+          } finally {
+            void cdpChannel.sendCommand("Runtime.releaseObject", { objectId }).catch(() => {});
+          }
+        }
         const box = (await cdpChannel.sendCommand("DOM.getBoxModel", boxParams)) as {
           model?: { content?: number[]; border?: number[] };
         };
         const quad = box?.model?.content ?? box?.model?.border;
         if (Array.isArray(quad) && quad.length >= 2) {
-          return { x: quad[0] ?? 0, y: quad[1] ?? 0 };
+          return { x: quad[0] ?? 0, y: quad[1] ?? 0, scaleX: 1, scaleY: 1 };
         }
       } catch {
         // Cross-origin frame owner unavailable — default to (0, 0)
       }
-      return { x: 0, y: 0 };
+      return { x: 0, y: 0, scaleX: 1, scaleY: 1 };
     });
 
     // Capture console logs, JS errors, worker WASM traps, and Fetch interception over the single raw WS
@@ -1686,20 +1888,30 @@ export function makeLightweightCdpDriver(
     });
 
     cdpChannel.onEvent("Fetch.requestPaused", (params, sid) => {
-      // Only handle Fetch.requestPaused when Spana itself enabled Fetch interception;
+      // Only handle Fetch.requestPaused on sessions where Spana itself enabled Fetch interception;
       // otherwise leave pauses alone for user `app.cdp().send("Fetch.enable", ...)` handlers! (2.17)
-      if (!fetchInterceptEnabled) return;
+      const sessionKey = sid ?? null;
+      if (!fetchEnabledSessions.has(sessionKey)) return;
       const reqId = params?.requestId;
       const reqObj = params?.request ?? {};
       const url = String(reqObj.url ?? "");
       if (!reqId) return;
-      const rule = routeRules.find((r) => matchUrl(r.matcher, url));
-      if (!rule) {
+
+      // Match routes newest-first (LIFO, matching Playwright semantics) so `route.fallback()` can chain cleanly.
+      const matchingRules: CdpRouteRule[] = [];
+      for (let ri = routeRules.length - 1; ri >= 0; ri--) {
+        const candidate = routeRules[ri]!;
+        if (matchUrl(candidate.matcher, url)) {
+          matchingRules.push(candidate);
+        }
+      }
+      if (matchingRules.length === 0) {
         void cdpChannel
-          .sendCommand("Fetch.continueRequest", { requestId: reqId }, sid ?? null)
+          .sendCommand("Fetch.continueRequest", { requestId: reqId }, sessionKey)
           .catch(() => {});
         return;
       }
+
       const fulfillWith = async (resp: BrowserMockResponse) => {
         const bodyStr = resp.json !== undefined ? JSON.stringify(resp.json) : (resp.body ?? "");
         const headersObj: Record<string, string> = { ...resp.headers };
@@ -1726,131 +1938,177 @@ export function makeLightweightCdpDriver(
             responseHeaders,
             body: Buffer.from(bodyStr, "utf8").toString("base64"),
           },
-          sid ?? null,
+          sessionKey,
         );
       };
 
-      if (rule.kind === "handler" && rule.handler) {
-        const rawHeaders = (reqObj.headers ?? {}) as Record<string, unknown>;
-        const headers: Record<string, string> = {};
-        for (const [k, v] of Object.entries(rawHeaders)) {
-          headers[k.toLowerCase()] = String(v);
-        }
-        const postDataStr = typeof reqObj.postData === "string" ? reqObj.postData : null;
-        const reqInfo: BrowserRequestInfo = {
-          url,
-          method: String(reqObj.method ?? "GET"),
-          headers,
-          resourceType:
-            typeof params?.resourceType === "string"
-              ? params.resourceType.toLowerCase()
-              : undefined,
-          postData: () => postDataStr,
-          postDataJSON: <T = unknown>() => {
-            if (!postDataStr) return null;
-            try {
-              return JSON.parse(postDataStr) as T;
-            } catch {
-              return null;
-            }
-          },
-        };
-        let handled = false;
-        const routeObj: BrowserRoute = {
-          request: () => reqInfo,
-          continue: async (overrides) => {
-            if (handled) return;
-            handled = true;
-            await cdpChannel.sendCommand(
-              "Fetch.continueRequest",
-              {
-                requestId: reqId,
-                ...(overrides?.url ? { url: overrides.url } : {}),
-                ...(overrides?.method ? { method: overrides.method } : {}),
-                ...(overrides?.headers
-                  ? {
-                      headers: Object.entries(overrides.headers).map(([name, value]) => ({
-                        name,
-                        value,
-                      })),
-                    }
-                  : {}),
-                ...(overrides?.postData !== undefined
-                  ? { postData: Buffer.from(overrides.postData, "utf8").toString("base64") }
-                  : {}),
-              },
-              sid ?? null,
-            );
-          },
-          abort: async (errorCode) => {
-            if (handled) return;
-            handled = true;
-            await cdpChannel.sendCommand(
-              "Fetch.failRequest",
-              { requestId: reqId, errorReason: errorCode ?? "Failed" },
-              sid ?? null,
-            );
-          },
-          fulfill: async (response) => {
-            if (handled) return;
-            handled = true;
-            await fulfillWith(response);
-          },
-          fetch: async (overrides) => {
-            const targetUrl = overrides?.url ?? url;
-            const fetchHeaders = { ...headers, ...overrides?.headers };
-            const fetchMethod = overrides?.method ?? reqInfo.method;
-            const body =
-              overrides?.postData !== undefined
-                ? overrides.postData
-                : fetchMethod !== "GET" && fetchMethod !== "HEAD"
-                  ? (postDataStr ?? undefined)
-                  : undefined;
-            const res = await fetch(targetUrl, {
-              method: fetchMethod,
-              headers: fetchHeaders,
-              ...(body !== undefined ? { body } : {}),
-            });
-            const resText = await res.text();
-            const outHeaders: Record<string, string> = {};
-            res.headers.forEach((v, k) => {
-              outHeaders[k.toLowerCase()] = v;
-            });
-            return {
-              url: res.url || targetUrl,
-              status: res.status,
-              statusText: res.statusText,
-              headers: outHeaders,
-              method: fetchMethod,
-              body: async () => resText,
-              json: async <T = unknown>() => JSON.parse(resText) as T,
-            };
-          },
-        };
-        void Promise.resolve(rule.handler(routeObj))
-          .catch(() => {})
-          .finally(() => {
-            if (!handled) {
-              handled = true;
-              void cdpChannel
-                .sendCommand("Fetch.continueRequest", { requestId: reqId }, sid ?? null)
-                .catch(() => {});
-            }
-          });
-        return;
+      let curUrl = url;
+      let curMethod = String(reqObj.method ?? "GET");
+      const rawHeaders = (reqObj.headers ?? {}) as Record<string, unknown>;
+      let curHeaders: Record<string, string> = {};
+      for (const [k, v] of Object.entries(rawHeaders)) {
+        curHeaders[k.toLowerCase()] = String(v);
       }
+      let curPostData: string | null = typeof reqObj.postData === "string" ? reqObj.postData : null;
+      let hasOverrides = false;
 
-      if (rule.kind === "block") {
-        void cdpChannel
-          .sendCommand(
-            "Fetch.failRequest",
-            { requestId: reqId, errorReason: "BlockedByClient" },
-            sid ?? null,
-          )
-          .catch(() => {});
-        return;
-      }
-      void fulfillWith(rule.response ?? {}).catch(() => {});
+      const continueRequest = async (overrides?: {
+        url?: string;
+        method?: string;
+        headers?: Record<string, string>;
+        postData?: string;
+      }) => {
+        const finalUrl = overrides?.url ?? (hasOverrides ? curUrl : undefined);
+        const finalMethod = overrides?.method ?? (hasOverrides ? curMethod : undefined);
+        const finalHeaders = overrides?.headers ?? (hasOverrides ? curHeaders : undefined);
+        const finalPostData =
+          overrides?.postData !== undefined
+            ? overrides.postData
+            : hasOverrides && curPostData !== null
+              ? curPostData
+              : undefined;
+        await cdpChannel.sendCommand(
+          "Fetch.continueRequest",
+          {
+            requestId: reqId,
+            ...(finalUrl ? { url: finalUrl } : {}),
+            ...(finalMethod ? { method: finalMethod } : {}),
+            ...(finalHeaders
+              ? {
+                  headers: Object.entries(finalHeaders).map(([name, value]) => ({
+                    name,
+                    value,
+                  })),
+                }
+              : {}),
+            ...(finalPostData !== undefined
+              ? { postData: Buffer.from(finalPostData, "utf8").toString("base64") }
+              : {}),
+          },
+          sessionKey,
+        );
+      };
+
+      const dispatchRuleAt = async (idx: number): Promise<void> => {
+        if (idx >= matchingRules.length) {
+          await continueRequest().catch(() => {});
+          return;
+        }
+        const rule = matchingRules[idx]!;
+        if (rule.kind === "block") {
+          await cdpChannel
+            .sendCommand(
+              "Fetch.failRequest",
+              { requestId: reqId, errorReason: "BlockedByClient" },
+              sessionKey,
+            )
+            .catch(() => {});
+          return;
+        }
+        if (rule.kind === "mock") {
+          await fulfillWith(rule.response ?? {}).catch(() => {});
+          return;
+        }
+        if (rule.kind === "handler" && rule.handler) {
+          const reqInfo: BrowserRequestInfo = {
+            url: curUrl,
+            method: curMethod,
+            headers: { ...curHeaders },
+            resourceType:
+              typeof params?.resourceType === "string"
+                ? params.resourceType.toLowerCase()
+                : undefined,
+            postData: () => curPostData,
+            postDataJSON: <T = unknown>() => {
+              if (!curPostData) return null;
+              try {
+                return JSON.parse(curPostData) as T;
+              } catch {
+                return null;
+              }
+            },
+          };
+          let handled = false;
+          let fellBack = false;
+          const routeObj: BrowserRoute = {
+            request: () => reqInfo,
+            continue: async (overrides) => {
+              if (handled) return;
+              handled = true;
+              await continueRequest(overrides);
+            },
+            fallback: async (overrides) => {
+              if (handled) return;
+              handled = true;
+              fellBack = true;
+              if (overrides) {
+                hasOverrides = true;
+                if (overrides.url) curUrl = overrides.url;
+                if (overrides.method) curMethod = overrides.method;
+                if (overrides.headers) curHeaders = { ...curHeaders, ...overrides.headers };
+                if (overrides.postData !== undefined) curPostData = overrides.postData;
+              }
+              await dispatchRuleAt(idx + 1);
+            },
+            abort: async (errorCode) => {
+              if (handled) return;
+              handled = true;
+              await cdpChannel.sendCommand(
+                "Fetch.failRequest",
+                { requestId: reqId, errorReason: errorCode ?? "Failed" },
+                sessionKey,
+              );
+            },
+            fulfill: async (response) => {
+              if (handled) return;
+              handled = true;
+              await fulfillWith(response);
+            },
+            fetch: async (overrides) => {
+              const targetUrl = overrides?.url ?? curUrl;
+              const fetchHeaders = { ...curHeaders, ...overrides?.headers };
+              const fetchMethod = overrides?.method ?? curMethod;
+              const body =
+                overrides?.postData !== undefined
+                  ? overrides.postData
+                  : fetchMethod !== "GET" && fetchMethod !== "HEAD"
+                    ? (curPostData ?? undefined)
+                    : undefined;
+              const res = await fetch(targetUrl, {
+                method: fetchMethod,
+                headers: fetchHeaders,
+                ...(body !== undefined ? { body } : {}),
+              });
+              const resText = await res.text();
+              const outHeaders: Record<string, string> = {};
+              res.headers.forEach((v, k) => {
+                outHeaders[k.toLowerCase()] = v;
+              });
+              return {
+                url: res.url || targetUrl,
+                status: res.status,
+                statusText: res.statusText,
+                headers: outHeaders,
+                method: fetchMethod,
+                body: async () => resText,
+                json: async <T = unknown>() => JSON.parse(resText) as T,
+              };
+            },
+          };
+          try {
+            await rule.handler(routeObj);
+          } catch {
+            // Fall through to continue if handler threw before resolving
+          } finally {
+            if (!handled && !fellBack) {
+              handled = true;
+              await continueRequest().catch(() => {});
+            }
+          }
+        }
+      };
+
+      void dispatchRuleAt(0);
     });
 
     if (useContexts) {
@@ -1861,7 +2119,7 @@ export function makeLightweightCdpDriver(
               "Target.setDiscoverTargets",
               {
                 discover: true,
-                filter: [{ type: "page" }],
+                filter: [{ type: "page" }, { type: "iframe" }],
               },
               null,
             )
@@ -1929,28 +2187,64 @@ export function makeLightweightCdpDriver(
       }
       isAtBlank = false;
       if (waitUntil === "commit") {
-        await cdpChannel.sendCommand("Page.navigate", { url: target });
+        const commitRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+          errorText?: string;
+        } | null;
+        if (commitRes?.errorText && commitRes.errorText !== "net::ERR_ABORTED") {
+          throw new Error(`Navigation to "${target}" failed: ${commitRes.errorText}`);
+        }
         return;
       }
 
       const eventName =
         waitUntil === "domcontentloaded" ? "Page.domContentEventFired" : "Page.loadEventFired";
-      const waiter = cdpChannel.waitForEvent(
+      const waiter = cdpChannel.waitForEventCancellable(
         eventName,
         15_000,
         (_p, sid) => !targetSid || !sid || sid === targetSid,
       );
-      await cdpChannel.sendCommand("Page.navigate", { url: target });
-      await waiter.catch(() => {});
+      waiter.promise.catch(() => {});
+      try {
+        const navRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+          errorText?: string;
+        } | null;
+        if (navRes?.errorText && navRes.errorText !== "net::ERR_ABORTED") {
+          throw new Error(`Navigation to "${target}" failed: ${navRes.errorText}`);
+        }
+        await waiter.promise.catch(() => {});
+      } finally {
+        waiter.cancel();
+      }
       // Pre-warm the next fresh context AFTER navigation settles so renderer spawn
       // never contends with the active flow's page load!
       schedulePrefetch();
     };
 
     const ensureFetchIntercept = async () => {
-      if (fetchInterceptEnabled) return;
-      fetchInterceptEnabled = true;
-      await cdpChannel.sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+      const sessions: Array<string | null> = activeSlot
+        ? Array.from(new Set([activeSlot.sessionId, ...activeSlot.tabs.map((t) => t.sessionId)]))
+        : [null];
+      const toEnable = sessions.filter((sid) => !fetchEnabledSessions.has(sid));
+      if (toEnable.length === 0) return;
+      for (const sid of toEnable) fetchEnabledSessions.add(sid);
+      await Promise.all(
+        toEnable.map((sid) =>
+          cdpChannel
+            .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sid)
+            .catch(() => {
+              fetchEnabledSessions.delete(sid);
+            }),
+        ),
+      );
+    };
+
+    const disableAllFetchInterception = async () => {
+      if (fetchEnabledSessions.size === 0) return;
+      const sessions = Array.from(fetchEnabledSessions);
+      fetchEnabledSessions.clear();
+      await Promise.all(
+        sessions.map((sid) => cdpChannel.sendCommand("Fetch.disable", {}, sid).catch(() => {})),
+      );
     };
 
     let coverageSession: string | null | undefined;
@@ -2140,14 +2434,18 @@ export function makeLightweightCdpDriver(
             dialogHandler = null;
             routeRules.length = 0;
             currentNetworkConditions = undefined;
+            heldModifiers = 0;
+            pressedMouseButtons = 0;
+            lastMouseX = 0;
+            lastMouseY = 0;
             width = initialWidth;
             height = initialHeight;
 
             // Remove all flow-scoped init scripts, fake clock init script, and exposed bindings (1.19)
             await cleanupFlowScopedHooks();
 
-            if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
-              if (contextIsolation === "hot-cache" && activeSlot) {
+            if (useContexts && effectiveFreshContextPerFlow && hasRunFirstFlow) {
+              if (contextIsolation === "hot-cache" && activeSlot && !slotHasCustomStorageState) {
                 const slotWasHealthy = await ensureActiveSlotHealthy();
                 if (slotWasHealthy && activeSlot) {
                   // Collect origins + partitioned StorageKeys from main frame tree AND attached OOPIF child sessions (1.24)
@@ -2205,18 +2503,28 @@ export function makeLightweightCdpDriver(
                     }
                   }
 
-                  // 1. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
-                  const preResetOps: Array<Promise<unknown>> = [];
-                  for (const child of activeChildSessions) {
-                    preResetOps.push(
-                      cdpChannel
-                        .evaluateOnSession(
-                          child.sessionId,
-                          "try { localStorage.clear(); sessionStorage.clear(); } catch {}",
-                        )
-                        .catch(() => {}),
+                  // 1. Wipe OOPIF in-page storage BEFORE navigating the main page to about:blank
+                  // (navigating in parallel destroys the OOPIF renderer mid-evaluate and can stall for 10s).
+                  if (activeChildSessions.length > 0) {
+                    await Promise.all(
+                      activeChildSessions.map((child) =>
+                        cdpChannel
+                          .sendCommand(
+                            "Runtime.evaluate",
+                            {
+                              expression:
+                                "try { localStorage.clear(); sessionStorage.clear(); } catch {}",
+                              returnByValue: true,
+                            },
+                            child.sessionId,
+                            500,
+                          )
+                          .catch(() => {}),
+                      ),
                     );
                   }
+                  // 2. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
+                  const preResetOps: Array<Promise<unknown>> = [];
                   if (activeSlot.tabs.length > 1) {
                     const primaryTab = activeSlot.tabs[0]!;
                     const extraTabs = activeSlot.tabs.slice(1);
@@ -2271,24 +2579,36 @@ export function makeLightweightCdpDriver(
                   // 2. Now that the page is safely on about:blank (no active document holding storage locks),
                   // wipe cookies, per-origin & partitioned storage keys, permissions, geolocation, routes, viewport, emulation, and network conditions in parallel.
                   const resetOps: Array<Promise<unknown>> = [
-                    cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
+                    cdpChannel
+                      .sendCommand("Network.clearBrowserCookies", {}, undefined, 2_000)
+                      .catch(() => {}),
                   ];
                   const storageTypes =
                     "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems";
                   for (const origin of visitedOrigins) {
                     resetOps.push(
                       cdpChannel
-                        .sendCommand("Storage.clearDataForOrigin", { origin, storageTypes })
+                        .sendCommand(
+                          "Storage.clearDataForOrigin",
+                          { origin, storageTypes },
+                          undefined,
+                          2_000,
+                        )
                         .catch(() => {}),
                     );
                   }
                   for (const storageKey of visitedStorageKeys) {
                     resetOps.push(
                       cdpChannel
-                        .sendCommand("Storage.clearDataForStorageKey", {
-                          storageKey,
-                          storageTypes,
-                        })
+                        .sendCommand(
+                          "Storage.clearDataForStorageKey",
+                          {
+                            storageKey,
+                            storageTypes,
+                          },
+                          undefined,
+                          2_000,
+                        )
                         .catch(() => {}),
                     );
                   }
@@ -2312,9 +2632,8 @@ export function makeLightweightCdpDriver(
                         .catch(() => {}),
                     );
                   }
-                  if (fetchInterceptEnabled) {
-                    fetchInterceptEnabled = false;
-                    resetOps.push(cdpChannel.sendCommand("Fetch.disable").catch(() => {}));
+                  if (fetchEnabledSessions.size > 0) {
+                    resetOps.push(disableAllFetchInterception());
                   }
                   if (viewportMutated) {
                     viewportMutated = false;
@@ -2338,7 +2657,8 @@ export function makeLightweightCdpDriver(
                         .catch(() => {}),
                       cdpChannel
                         .sendCommand("Emulation.setUserAgentOverride", {
-                          userAgent: cachedUserAgent || "Mozilla/5.0",
+                          userAgent:
+                            options.emulation?.userAgent || cachedUserAgent || "Mozilla/5.0",
                           acceptLanguage: defaultLocale
                             ? defaultLocale.includes("-")
                               ? `${defaultLocale},${defaultLocale.split("-")[0]};q=0.9`
@@ -2395,7 +2715,7 @@ export function makeLightweightCdpDriver(
                   }
                 } else {
                   cdpChannel.clearChildSessions();
-                  fetchInterceptEnabled = false;
+                  await disableAllFetchInterception();
                   emulationMutated = false;
                   viewportMutated = false;
                   permissionsMutated = false;
@@ -2406,11 +2726,12 @@ export function makeLightweightCdpDriver(
                 }
               } else {
                 cdpChannel.clearChildSessions();
-                fetchInterceptEnabled = false;
+                await disableAllFetchInterception();
                 emulationMutated = false;
                 viewportMutated = false;
                 permissionsMutated = false;
                 geolocationMutated = false;
+                slotHasCustomStorageState = false;
                 isAtBlank = true;
                 const previousSlot = activeSlot;
                 const pending = prefetchedSlotPromise;
@@ -2426,6 +2747,7 @@ export function makeLightweightCdpDriver(
               }
             } else if (activeSlot) {
               cdpChannel.clearChildSessions();
+              await disableAllFetchInterception();
               await ensureActiveSlotHealthy();
               if (activeSlot) {
                 await ensureVirtualAuthenticatorForSlot(activeSlot, false);
@@ -2448,26 +2770,39 @@ export function makeLightweightCdpDriver(
       tapAtCoordinate: (x, y) =>
         Effect.tryPromise({
           try: async () => {
-            // Pipeline move + down + up on the FIFO-ordered CDP WebSocket (1 RTT instead of 3)
+            lastMouseX = x;
+            lastMouseY = y;
+            // Pipeline move + down + up on the FIFO-ordered CDP WebSocket (1 RTT instead of 3).
+            // Always send `buttons: 1` on mousePressed & `buttons: 0` on mouseReleased with
+            // `pointerType: "mouse"` so UI libs like @base-ui/react don't misclassify it as a
+            // virtual screen-reader press (`isVirtualPointerEvent`).
             await Promise.all([
               cdpChannel.sendCommand("Input.dispatchMouseEvent", {
                 type: "mouseMoved",
                 x,
                 y,
+                modifiers: heldModifiers,
+                pointerType: "mouse",
               }),
               cdpChannel.sendCommand("Input.dispatchMouseEvent", {
                 type: "mousePressed",
                 x,
                 y,
                 button: "left",
+                buttons: 1,
                 clickCount: 1,
+                modifiers: heldModifiers,
+                pointerType: "mouse",
               }),
               cdpChannel.sendCommand("Input.dispatchMouseEvent", {
                 type: "mouseReleased",
                 x,
                 y,
                 button: "left",
+                buttons: 0,
                 clickCount: 1,
+                modifiers: heldModifiers,
+                pointerType: "mouse",
               }),
             ]);
           },
@@ -2477,19 +2812,54 @@ export function makeLightweightCdpDriver(
       doubleTapAtCoordinate: (x, y) =>
         Effect.tryPromise({
           try: async () => {
+            lastMouseX = x;
+            lastMouseY = y;
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x,
+              y,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
+            });
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mousePressed",
               x,
               y,
               button: "left",
-              clickCount: 2,
+              buttons: 1,
+              clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mouseReleased",
               x,
               y,
               button: "left",
+              buttons: 0,
+              clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
+            });
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x,
+              y,
+              button: "left",
+              buttons: 1,
               clickCount: 2,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
+            });
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              x,
+              y,
+              button: "left",
+              buttons: 0,
+              clickCount: 2,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
           },
           catch: (e) => new DriverError({ message: `CDP doubleTap failed: ${e}` }),
@@ -2498,12 +2868,24 @@ export function makeLightweightCdpDriver(
       longPressAtCoordinate: (x, y, duration) =>
         Effect.tryPromise({
           try: async () => {
+            lastMouseX = x;
+            lastMouseY = y;
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x,
+              y,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
+            });
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mousePressed",
               x,
               y,
               button: "left",
+              buttons: 1,
               clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
             await new Promise((r) => setTimeout(r, duration));
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
@@ -2511,7 +2893,10 @@ export function makeLightweightCdpDriver(
               x,
               y,
               button: "left",
+              buttons: 0,
               clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
           },
           catch: (e) => new DriverError({ message: `CDP longPress failed: ${e}` }),
@@ -2611,7 +2996,7 @@ export function makeLightweightCdpDriver(
       pressKey: (key) =>
         Effect.tryPromise({
           try: async () => {
-            const desc = parseCdpKeyDescriptor(key);
+            const desc = parseCdpKeyDescriptor(key, heldModifiers);
             await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
               type: desc.text ? "keyDown" : "rawKeyDown",
               key: desc.key,
@@ -2645,7 +3030,9 @@ export function makeLightweightCdpDriver(
       keyDown: (key) =>
         Effect.tryPromise({
           try: async () => {
-            const desc = parseCdpKeyDescriptor(key);
+            const modBit = modifierBitForName(key);
+            if (modBit) heldModifiers |= modBit;
+            const desc = parseCdpKeyDescriptor(key, heldModifiers);
             await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
               type: desc.text ? "keyDown" : "rawKeyDown",
               key: desc.key,
@@ -2666,7 +3053,9 @@ export function makeLightweightCdpDriver(
       keyUp: (key) =>
         Effect.tryPromise({
           try: async () => {
-            const desc = parseCdpKeyDescriptor(key);
+            const modBit = modifierBitForName(key);
+            if (modBit) heldModifiers &= ~modBit;
+            const desc = parseCdpKeyDescriptor(key, heldModifiers);
             await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
               type: "keyUp",
               key: desc.key,
@@ -2686,19 +3075,35 @@ export function makeLightweightCdpDriver(
       mouseDown: (x, y, opts) =>
         Effect.tryPromise({
           try: async () => {
-            const button = opts?.button ?? "left";
-            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
-              type: "mouseMoved",
-              x,
-              y,
-            });
+            const resolvedOpts =
+              typeof x === "object" && x !== null
+                ? (x as { button?: "left" | "right" | "middle" })
+                : opts;
+            const targetX = typeof x === "number" && Number.isFinite(x) ? x : lastMouseX;
+            const targetY = typeof y === "number" && Number.isFinite(y) ? y : lastMouseY;
+            const button = resolvedOpts?.button ?? "left";
+            const mask = button === "left" ? 1 : button === "right" ? 2 : 4;
+            pressedMouseButtons |= mask;
+            lastMouseX = targetX;
+            lastMouseY = targetY;
+            if (typeof x === "number" && typeof y === "number") {
+              await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+                type: "mouseMoved",
+                x: targetX,
+                y: targetY,
+                modifiers: heldModifiers,
+                pointerType: "mouse",
+              });
+            }
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mousePressed",
-              x,
-              y,
+              x: targetX,
+              y: targetY,
               button,
-              buttons: button === "left" ? 1 : button === "right" ? 2 : 4,
+              buttons: pressedMouseButtons,
               clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
           },
           catch: (e) => new DriverError({ message: `CDP mouseDown failed: ${e}` }),
@@ -2707,14 +3112,26 @@ export function makeLightweightCdpDriver(
       mouseUp: (x, y, opts) =>
         Effect.tryPromise({
           try: async () => {
-            const button = opts?.button ?? "left";
+            const resolvedOpts =
+              typeof x === "object" && x !== null
+                ? (x as { button?: "left" | "right" | "middle" })
+                : opts;
+            const targetX = typeof x === "number" && Number.isFinite(x) ? x : lastMouseX;
+            const targetY = typeof y === "number" && Number.isFinite(y) ? y : lastMouseY;
+            const button = resolvedOpts?.button ?? "left";
+            const mask = button === "left" ? 1 : button === "right" ? 2 : 4;
+            pressedMouseButtons &= ~mask;
+            lastMouseX = targetX;
+            lastMouseY = targetY;
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mouseReleased",
-              x,
-              y,
+              x: targetX,
+              y: targetY,
               button,
-              buttons: 0,
+              buttons: pressedMouseButtons,
               clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
           },
           catch: (e) => new DriverError({ message: `CDP mouseUp failed: ${e}` }),
@@ -2723,12 +3140,16 @@ export function makeLightweightCdpDriver(
       mouseWheel: (x, y, deltaX, deltaY) =>
         Effect.tryPromise({
           try: async () => {
+            lastMouseX = x;
+            lastMouseY = y;
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mouseWheel",
               x,
               y,
               deltaX,
               deltaY,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
           },
           catch: (e) =>
@@ -2801,14 +3222,39 @@ export function makeLightweightCdpDriver(
           catch: (e) => new DriverError({ message: `CDP getWasmMetrics failed: ${e}` }),
         }),
 
-      hoverAtCoordinate: (x, y) =>
+      hoverAtCoordinate: (x, y, opts) =>
         Effect.tryPromise({
           try: async () => {
-            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
-              type: "mouseMoved",
-              x,
-              y,
-            });
+            const steps = Math.max(1, Math.round(opts?.steps ?? 1));
+            const startX = lastMouseX;
+            const startY = lastMouseY;
+            const activeButton =
+              pressedMouseButtons & 1
+                ? "left"
+                : pressedMouseButtons & 2
+                  ? "right"
+                  : pressedMouseButtons & 4
+                    ? "middle"
+                    : "none";
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps;
+              const cx = steps === 1 ? x : startX + (x - startX) * t;
+              const cy = steps === 1 ? y : startY + (y - startY) * t;
+              await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+                type: "mouseMoved",
+                x: cx,
+                y: cy,
+                ...(activeButton !== "none" ? { button: activeButton } : {}),
+                ...(pressedMouseButtons ? { buttons: pressedMouseButtons } : {}),
+                modifiers: heldModifiers,
+                pointerType: "mouse",
+              });
+              if (steps > 1 && pressedMouseButtons) {
+                await new Promise((r) => setTimeout(r, 8));
+              }
+            }
+            lastMouseX = x;
+            lastMouseY = y;
           },
           catch: (e) => new DriverError({ message: `CDP hover failed at (${x}, ${y}): ${e}` }),
         }),
@@ -2822,13 +3268,18 @@ export function makeLightweightCdpDriver(
               waitUntil === "domcontentloaded"
                 ? "Page.domContentEventFired"
                 : "Page.loadEventFired";
-            const waiter = cdpChannel.waitForEvent(
+            const waiter = cdpChannel.waitForEventCancellable(
               eventName,
               15_000,
               (_p, sid) => !targetSid || !sid || sid === targetSid,
             );
-            await cdpChannel.sendCommand("Page.reload", {});
-            await waiter.catch(() => {});
+            waiter.promise.catch(() => {});
+            try {
+              await cdpChannel.sendCommand("Page.reload", {});
+              await waiter.promise.catch(() => {});
+            } finally {
+              waiter.cancel();
+            }
           },
           catch: (e) => new DriverError({ message: `CDP reload failed: ${e}` }),
         }),
@@ -2924,23 +3375,45 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             const timeoutMs = waitOpts?.timeout ?? 15_000;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let entry:
+              | { resolve: (tabId: string) => void; reject: (err: Error) => void }
+              | undefined;
+            const cleanup = () => {
+              if (timer !== undefined) {
+                clearTimeout(timer);
+                timer = undefined;
+              }
+              if (entry) {
+                const idx = popupWaiters.indexOf(entry);
+                if (idx >= 0) popupWaiters.splice(idx, 1);
+                entry = undefined;
+              }
+            };
             const popupPromise = new Promise<string>((resolve, reject) => {
-              const timer = setTimeout(() => {
+              timer = setTimeout(() => {
+                cleanup();
                 reject(new Error(`Timed out waiting for popup after ${timeoutMs}ms`));
               }, timeoutMs);
-              popupWaiters.push({
+              entry = {
                 resolve: (tabId) => {
-                  clearTimeout(timer);
+                  cleanup();
                   resolve(tabId);
                 },
                 reject: (err) => {
-                  clearTimeout(timer);
+                  cleanup();
                   reject(err);
                 },
-              });
+              };
+              popupWaiters.push(entry);
             });
-            await triggerFn();
-            return await popupPromise;
+            popupPromise.catch(() => {});
+            try {
+              await triggerFn();
+              return await popupPromise;
+            } finally {
+              cleanup();
+            }
           },
           catch: (e) => new DriverError({ message: `CDP waitForPopup failed: ${e}` }),
         }),
@@ -3133,22 +3606,29 @@ export function makeLightweightCdpDriver(
                 (options.waitUntil ?? "domcontentloaded") === "load"
                   ? "Page.loadEventFired"
                   : "Page.domContentEventFired";
-              const waiter = Promise.race([
-                cdpChannel.waitForEvent(
-                  eventName,
-                  10_000,
-                  (_p, sid) => !targetSid || !sid || sid === targetSid,
-                ),
-                cdpChannel.waitForEvent(
-                  "Page.navigatedWithinDocument",
-                  10_000,
-                  (_p, sid) => !targetSid || !sid || sid === targetSid,
-                ),
-              ]);
-              await cdpChannel.sendCommand("Page.navigateToHistoryEntry", {
-                entryId: targetEntry.id,
-              });
-              await waiter.catch(() => {});
+              const w1 = cdpChannel.waitForEventCancellable(
+                eventName,
+                10_000,
+                (_p, sid) => !targetSid || !sid || sid === targetSid,
+              );
+              const w2 = cdpChannel.waitForEventCancellable(
+                "Page.navigatedWithinDocument",
+                10_000,
+                (_p, sid) => !targetSid || !sid || sid === targetSid,
+              );
+              w1.promise.catch(() => {});
+              w2.promise.catch(() => {});
+              const waiter = Promise.race([w1.promise, w2.promise]);
+              waiter.catch(() => {});
+              try {
+                await cdpChannel.sendCommand("Page.navigateToHistoryEntry", {
+                  entryId: targetEntry.id,
+                });
+                await waiter.catch(() => {});
+              } finally {
+                w1.cancel();
+                w2.cancel();
+              }
               // Short non-fatal DOM-idle settle wait so back() layout/hydration settles (1.16)
               await cdpChannel
                 .evaluateFast(
@@ -3186,22 +3666,29 @@ export function makeLightweightCdpDriver(
                 (options.waitUntil ?? "domcontentloaded") === "load"
                   ? "Page.loadEventFired"
                   : "Page.domContentEventFired";
-              const waiter = Promise.race([
-                cdpChannel.waitForEvent(
-                  eventName,
-                  10_000,
-                  (_p, sid) => !targetSid || !sid || sid === targetSid,
-                ),
-                cdpChannel.waitForEvent(
-                  "Page.navigatedWithinDocument",
-                  10_000,
-                  (_p, sid) => !targetSid || !sid || sid === targetSid,
-                ),
-              ]);
-              await cdpChannel.sendCommand("Page.navigateToHistoryEntry", {
-                entryId: targetEntry.id,
-              });
-              await waiter.catch(() => {});
+              const w1 = cdpChannel.waitForEventCancellable(
+                eventName,
+                10_000,
+                (_p, sid) => !targetSid || !sid || sid === targetSid,
+              );
+              const w2 = cdpChannel.waitForEventCancellable(
+                "Page.navigatedWithinDocument",
+                10_000,
+                (_p, sid) => !targetSid || !sid || sid === targetSid,
+              );
+              w1.promise.catch(() => {});
+              w2.promise.catch(() => {});
+              const waiter = Promise.race([w1.promise, w2.promise]);
+              waiter.catch(() => {});
+              try {
+                await cdpChannel.sendCommand("Page.navigateToHistoryEntry", {
+                  entryId: targetEntry.id,
+                });
+                await waiter.catch(() => {});
+              } finally {
+                w1.cancel();
+                w2.cancel();
+              }
               // Short non-fatal DOM-idle settle wait so forward() layout/hydration settles (1.16)
               await cdpChannel
                 .evaluateFast(
@@ -3324,6 +3811,26 @@ export function makeLightweightCdpDriver(
           catch: (e) => new DriverError({ message: `CDP route failed: ${e}` }),
         }),
 
+      unroute: (matcher, handler) =>
+        Effect.tryPromise({
+          try: async () => {
+            const matchersEqual = (a: BrowserRouteMatcher, b: BrowserRouteMatcher) =>
+              a instanceof RegExp && b instanceof RegExp
+                ? a.source === b.source && a.flags === b.flags
+                : a === b;
+            for (let i = routeRules.length - 1; i >= 0; i--) {
+              const r = routeRules[i]!;
+              if (matchersEqual(r.matcher, matcher) && (!handler || r.handler === handler)) {
+                routeRules.splice(i, 1);
+              }
+            }
+            if (routeRules.length === 0) {
+              await disableAllFetchInterception();
+            }
+          },
+          catch: (e) => new DriverError({ message: `CDP unroute failed: ${e}` }),
+        }),
+
       mockNetwork: (matcher, response) =>
         Effect.tryPromise({
           try: async () => {
@@ -3346,10 +3853,7 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             routeRules.length = 0;
-            if (fetchInterceptEnabled) {
-              fetchInterceptEnabled = false;
-              await cdpChannel.sendCommand("Fetch.disable").catch(() => {});
-            }
+            await disableAllFetchInterception();
           },
           catch: (e) => new DriverError({ message: `CDP clearNetworkMocks failed: ${e}` }),
         }),
@@ -3500,15 +4004,31 @@ export function makeLightweightCdpDriver(
                   headers,
                   method: explicitMethod ?? requestMethods.get(`${sid ?? ""}:${requestId}`),
                   body: async () => {
-                    const bodyRes = (await cdpChannel.sendCommand(
-                      "Network.getResponseBody",
-                      { requestId },
-                      responseSid,
-                    )) as { body?: string; base64Encoded?: boolean };
-                    if (bodyRes?.base64Encoded && bodyRes.body) {
-                      return Buffer.from(bodyRes.body, "base64").toString("utf8");
+                    let lastErr: unknown;
+                    for (let attempt = 0; attempt < 25; attempt++) {
+                      try {
+                        const bodyRes = (await cdpChannel.sendCommand(
+                          "Network.getResponseBody",
+                          { requestId },
+                          responseSid,
+                        )) as { body?: string; base64Encoded?: boolean };
+                        if (bodyRes?.base64Encoded && bodyRes.body) {
+                          return Buffer.from(bodyRes.body, "base64").toString("utf8");
+                        }
+                        return bodyRes?.body ?? "";
+                      } catch (err) {
+                        lastErr = err;
+                        const msg = err instanceof Error ? err.message : String(err);
+                        if (
+                          !/No resource with given identifier|No data found/i.test(msg) ||
+                          attempt >= 24
+                        ) {
+                          throw err;
+                        }
+                        await new Promise((r) => setTimeout(r, 20));
+                      }
                     }
-                    return bodyRes?.body ?? "";
+                    throw lastErr;
                   },
                   json: async <T = unknown>() => {
                     const text = await info.body!();
@@ -3601,6 +4121,14 @@ export function makeLightweightCdpDriver(
       createIsolatedContext: (ctxOpts) =>
         Effect.tryPromise({
           try: async () => {
+            const childEmulation =
+              ctxOpts?.locale || ctxOpts?.userAgent
+                ? {
+                    ...options.emulation,
+                    ...(ctxOpts.locale ? { locale: ctxOpts.locale } : {}),
+                    ...(ctxOpts.userAgent ? { userAgent: ctxOpts.userAgent } : {}),
+                  }
+                : options.emulation;
             const childDriver = await Effect.runPromise(
               makeLightweightCdpDriver({
                 ...options,
@@ -3609,9 +4137,7 @@ export function makeLightweightCdpDriver(
                 freshContextPerFlow: false,
                 _markClosedOnKill: true,
                 ...(ctxOpts?.viewport ? { viewport: ctxOpts.viewport } : {}),
-                ...(ctxOpts?.locale
-                  ? { emulation: { ...options.emulation, locale: ctxOpts.locale } }
-                  : {}),
+                ...(childEmulation ? { emulation: childEmulation } : {}),
               }),
             );
             if (ctxOpts?.url) {
@@ -3675,6 +4201,7 @@ export function makeLightweightCdpDriver(
             if (useContexts) {
               const previousSlot = activeSlot;
               activeSlot = await createContextSlot(path);
+              slotHasCustomStorageState = true;
               cdpChannel.setSessionId(activeSlot.sessionId);
               activeAuthenticatorId = activeSlot.authenticatorId;
               if (previousSlot) disposeSlotInBackground(previousSlot);
@@ -3880,7 +4407,9 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             if (!downloadDir) {
-              downloadDir = mkdtempSync(join(tmpdir(), "spana-cdp-dl-"));
+              const dlBaseDir =
+                process.platform === "linux" && tmpdir().length > 40 ? "/tmp" : tmpdir();
+              downloadDir = mkdtempSync(join(dlBaseDir, "spana-cdp-dl-"));
               await cdpChannel.sendCommand(
                 "Browser.setDownloadBehavior",
                 {
@@ -3919,34 +4448,61 @@ export function makeLightweightCdpDriver(
       dragAndDrop: (fromX: number, fromY: number, toX: number, toY: number, steps = 10) =>
         Effect.tryPromise({
           try: async () => {
-            // If the source (or an ancestor) uses HTML5 Drag and Drop (`draggable="true"`),
-            // raw CDP mouse events do not trigger HTML5 DataTransfer drag events; drive DragEvent
-            // with a 2-rAF yield after `dragstart` so React/Vue drop handlers mount before `drop`.
-            const didHtml5Drag = await cdpChannel
-              .evaluate<boolean>(
-                `(async (fx, fy, tx, ty) => {
-                  const hit = document.elementFromPoint(fx, fy);
-                  const src = hit && hit.closest ? hit.closest('[draggable="true"]') : null;
-                  if (!src) return false;
-                  const dst = document.elementFromPoint(tx, ty) || document.body;
-                  const dt = new DataTransfer();
-                  src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, clientX: fx, clientY: fy, dataTransfer: dt }));
-                  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-                  dst.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
-                  dst.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
-                  dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
-                  src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: dt }));
-                  return true;
-                })(${fromX}, ${fromY}, ${toX}, ${toY})`,
-              )
-              .catch(() => false);
-            if (didHtml5Drag) return;
-            const totalSteps = Math.max(1, Math.round(steps));
+            // Move real pointer to source first so hover-revealed drag handles stay mounted,
+            // then check for HTML5 Drag and Drop (`draggable="true"`).
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mouseMoved",
               x: fromX,
               y: fromY,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
+            const hasDraggableSource = await cdpChannel
+              .evaluate<boolean>(
+                `((fx, fy) => {
+                  const hit = document.elementFromPoint(fx, fy);
+                  return Boolean(hit && hit.closest && hit.closest('[draggable="true"]'));
+                })(${fromX}, ${fromY})`,
+              )
+              .catch(() => false);
+            if (hasDraggableSource) {
+              await cdpChannel.evaluate(
+                `((fx, fy) => {
+                  const hit = document.elementFromPoint(fx, fy);
+                  const src = hit && hit.closest ? hit.closest('[draggable="true"]') : null;
+                  if (!src) return false;
+                  const dt = new DataTransfer();
+                  window.__spanaDragState = { src, dt };
+                  src.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, clientX: fx, clientY: fy, dataTransfer: dt }));
+                  return true;
+                })(${fromX}, ${fromY})`,
+              );
+              await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+                type: "mouseMoved",
+                x: toX,
+                y: toY,
+                modifiers: heldModifiers,
+                pointerType: "mouse",
+              });
+              await cdpChannel.evaluate(
+                `(async (tx, ty) => {
+                  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                  const st = window.__spanaDragState;
+                  delete window.__spanaDragState;
+                  if (!st) return false;
+                  const dst = document.elementFromPoint(tx, ty) || document.body;
+                  dst.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: st.dt }));
+                  dst.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: st.dt }));
+                  dst.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: st.dt }));
+                  st.src.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, clientX: tx, clientY: ty, dataTransfer: st.dt }));
+                  return true;
+                })(${toX}, ${toY})`,
+              );
+              lastMouseX = toX;
+              lastMouseY = toY;
+              return;
+            }
+            const totalSteps = Math.max(1, Math.round(steps));
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
               type: "mousePressed",
               x: fromX,
@@ -3954,6 +4510,8 @@ export function makeLightweightCdpDriver(
               button: "left",
               buttons: 1,
               clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
             for (let i = 1; i <= totalSteps; i++) {
               const t = i / totalSteps;
@@ -3963,6 +4521,8 @@ export function makeLightweightCdpDriver(
                 y: fromY + (toY - fromY) * t,
                 button: "left",
                 buttons: 1,
+                modifiers: heldModifiers,
+                pointerType: "mouse",
               });
             }
             await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
@@ -3972,7 +4532,11 @@ export function makeLightweightCdpDriver(
               button: "left",
               buttons: 0,
               clickCount: 1,
+              modifiers: heldModifiers,
+              pointerType: "mouse",
             });
+            lastMouseX = toX;
+            lastMouseY = toY;
           },
           catch: (e) => new DriverError({ message: `CDP dragAndDrop failed: ${e}` }),
         }),
@@ -4019,6 +4583,19 @@ export function makeLightweightCdpDriver(
             }
             if (emulationOpts.locale !== undefined) {
               await applyLocaleOverride(activeSlot?.sessionId ?? null, emulationOpts.locale);
+            }
+            if (emulationOpts.userAgent !== undefined) {
+              const acceptLanguage = emulationOpts.locale
+                ? emulationOpts.locale.includes("-")
+                  ? `${emulationOpts.locale},${emulationOpts.locale.split("-")[0]};q=0.9`
+                  : emulationOpts.locale
+                : undefined;
+              await cdpChannel
+                .sendCommand("Emulation.setUserAgentOverride", {
+                  userAgent: emulationOpts.userAgent,
+                  ...(acceptLanguage ? { acceptLanguage } : {}),
+                })
+                .catch(() => {});
             }
             if (emulationOpts.timezoneId !== undefined) {
               await cdpChannel
@@ -4105,7 +4682,9 @@ export function makeLightweightCdpDriver(
           try: async (): Promise<BrowserDownloadInfo> => {
             const timeoutMs = dlOpts?.timeout ?? 15_000;
             if (!downloadDir) {
-              downloadDir = mkdtempSync(join(tmpdir(), "spana-cdp-dl-"));
+              const dlBaseDir =
+                process.platform === "linux" && tmpdir().length > 40 ? "/tmp" : tmpdir();
+              downloadDir = mkdtempSync(join(dlBaseDir, "spana-cdp-dl-"));
               await cdpChannel.sendCommand(
                 "Browser.setDownloadBehavior",
                 {
@@ -4119,23 +4698,49 @@ export function makeLightweightCdpDriver(
                 null,
               );
             }
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let waiterEntry:
+              | {
+                  resolve: (dl: CompletedCdpDownload) => void;
+                  reject: (err: Error) => void;
+                }
+              | undefined;
+            const cleanup = () => {
+              if (timer !== undefined) {
+                clearTimeout(timer);
+                timer = undefined;
+              }
+              if (waiterEntry) {
+                const idx = downloadWaiters.indexOf(waiterEntry);
+                if (idx >= 0) downloadWaiters.splice(idx, 1);
+                waiterEntry = undefined;
+              }
+            };
             const downloadPromise = new Promise<CompletedCdpDownload>((resolve, reject) => {
-              const timer = setTimeout(() => {
+              timer = setTimeout(() => {
+                cleanup();
                 reject(new Error(`Timed out waiting for download after ${timeoutMs}ms`));
               }, timeoutMs);
-              downloadWaiters.push({
+              waiterEntry = {
                 resolve: (entry) => {
-                  clearTimeout(timer);
+                  cleanup();
                   resolve(entry);
                 },
                 reject: (err) => {
-                  clearTimeout(timer);
+                  cleanup();
                   reject(err);
                 },
-              });
+              };
+              downloadWaiters.push(waiterEntry);
             });
-            await triggerFn();
-            const entry = await downloadPromise;
+            downloadPromise.catch(() => {});
+            let entry: CompletedCdpDownload;
+            try {
+              await triggerFn();
+              entry = await downloadPromise;
+            } finally {
+              cleanup();
+            }
             return {
               suggestedFilename: entry.suggestedFilename,
               path: entry.filePath,

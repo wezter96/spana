@@ -23,6 +23,9 @@ export default defineConfig({
   splitting: true,
   shims: true,
   external: shared,
+  banner: {
+    js: 'import { createRequire as __spanaCreateRequire } from "node:module"; const require = __spanaCreateRequire(import.meta.url);',
+  },
   async onSuccess() {
     // Add shebang to CLI entry
     const cliPath = "dist/cli.js";

@@ -45,6 +45,7 @@ const WEB_TAG_ROLE_MAP: Record<string, string> = {
   article: "article",
   section: "region",
   form: "form",
+  fieldset: "group",
   table: "table",
   tr: "row",
   td: "cell",

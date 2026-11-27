@@ -7,7 +7,7 @@ import { allocatePort, releasePort } from "../../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../../runtime/daemon-manager.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const require = createRequire(import.meta.url);
+const nodeRequire = createRequire(import.meta.url);
 
 export interface WDASetupOptions {
   /** Reuse a healthy warm WDA daemon if already running, and leave it up between runs */
@@ -18,7 +18,7 @@ export interface WDASetupOptions {
 
 function resolveOptionalPackageDir(packageName: string): string | null {
   try {
-    const packageJsonPath = require.resolve(`${packageName}/package.json`);
+    const packageJsonPath = nodeRequire.resolve(`${packageName}/package.json`);
     return dirname(packageJsonPath);
   } catch {
     return null;

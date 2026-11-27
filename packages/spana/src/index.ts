@@ -367,6 +367,14 @@ export {
   type NativePngCompareResult,
   type NativeXmlRawNode,
 } from "./core/native-accel.js";
+export {
+  compareScreenshots,
+  cropToElement,
+  applyMask,
+  type CompareOptions,
+  type CompareResult,
+  type ScreenshotCompareMode,
+} from "./core/screenshot-compare.js";
 
 // Cross-platform video recording & interactive playback trace
 export {

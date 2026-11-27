@@ -206,6 +206,7 @@ function registerCliMocks(): void {
     },
   }));
   mock.module("../runtime/local.js", () => ({
+    resolveWebEngine: () => "cdp",
     speculativelyPrelaunchWebBrowser: () => undefined,
     buildWebRuntime: async () => ({
       runtime: {

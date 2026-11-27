@@ -10,8 +10,12 @@ export interface WebServerConfig {
   port?: number;
   /** Working directory for the spawned server process (defaults to `process.cwd()`). */
   cwd?: string;
-  /** Extra environment variables merged into `process.env`. */
+  /** Extra environment variables merged into `process.env` (or standalone when `inheritEnv: false`). */
   env?: Record<string, string>;
+  /** Whether to inherit host `process.env` (default: `true`). Set `false` for clean env isolation. */
+  inheritEnv?: boolean;
+  /** Host env variable names to forward when `inheritEnv: false` (default: `["PATH"]`). */
+  inheritEnvKeys?: string[];
   /** Maximum ms to wait for the server to become ready (default: 60_000). */
   timeout?: number;
   /** If true (default when not in CI), skip spawning if `url`/`port` is already reachable. */
@@ -169,9 +173,24 @@ export async function startWebServer(
   const stdoutMode = config.stdout ?? "pipe";
   const stderrMode = config.stderr ?? "pipe";
 
+  let spawnEnv: NodeJS.ProcessEnv;
+  if (config.inheritEnv === false) {
+    spawnEnv = {};
+    for (const key of config.inheritEnvKeys ?? ["PATH"]) {
+      if (process.env[key] !== undefined) {
+        spawnEnv[key] = process.env[key];
+      }
+    }
+    if (config.env) {
+      Object.assign(spawnEnv, config.env);
+    }
+  } else {
+    spawnEnv = { ...process.env, ...config.env };
+  }
+
   const child = spawn(config.command, {
     cwd: config.cwd ?? opts.cwd ?? process.cwd(),
-    env: { ...process.env, ...config.env },
+    env: spawnEnv,
     shell: true,
     detached: process.platform !== "win32",
     stdio: ["ignore", stdoutMode, stderrMode],

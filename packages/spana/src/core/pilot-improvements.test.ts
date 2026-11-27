@@ -75,7 +75,7 @@ describe("in-page actionability & zero-polling DOM waits", () => {
     expect(script).toContain("ensureInViewport");
     expect(script).toContain("requestAnimationFrame");
     expect(script).toContain("__spana_instant_anim");
-    expect(script).toContain("createTreeWalker");
+    expect(script).toContain("findTextInRoot");
     expect(script).toContain("fastTid");
 
     const fillScript = buildDomFillScript({ testID: "email" }, "alice@example.com");

@@ -367,6 +367,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     if (tag === "ARTICLE") return "article";
     if (tag === "FORM") return "form";
+    if (tag === "FIELDSET") return "group";
     if (tag === "PROGRESS") return "progressbar";
     if (tag === "HR") return "separator";
     if (tag === "SECTION") {
@@ -564,6 +565,17 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var alt = el.getAttribute && el.getAttribute("alt");
       if (alt && alt.trim()) return alt.trim();
     }
+    if (tag === "FIELDSET") {
+      var fkids = el.children || [];
+      for (var fi = 0; fi < fkids.length; fi++) {
+        var fk = fkids[fi];
+        if (fk && fk.tagName && fk.tagName.toUpperCase() === "LEGEND") {
+          var ltxt = visibleTextOf(fk, false, null);
+          if (ltxt) return ltxt;
+          break;
+        }
+      }
+    }
     var role = getImplicitRole(el);
     var nameFromAuthorOnly = {
       list: 1, navigation: 1, main: 1, region: 1, form: 1, dialog: 1, alertdialog: 1,
@@ -608,72 +620,119 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return "";
   }
-  function collectRoots(root, offsetX, offsetY, inShadow, inIframe, out) {
+  function getIframeTransform(frameEl) {
+    var fr = frameEl.getBoundingClientRect();
+    var fwin = (frameEl.ownerDocument && frameEl.ownerDocument.defaultView) || window;
+    var fcs = fwin && fwin.getComputedStyle ? fwin.getComputedStyle(frameEl) : null;
+    var bLeft = fcs ? (parseFloat(fcs.borderLeftWidth) || 0) : 0;
+    var bTop = fcs ? (parseFloat(fcs.borderTopWidth) || 0) : 0;
+    var bRight = fcs ? (parseFloat(fcs.borderRightWidth) || 0) : 0;
+    var bBottom = fcs ? (parseFloat(fcs.borderBottomWidth) || 0) : 0;
+    var layoutW = frameEl.offsetWidth || (frameEl.clientWidth + bLeft + bRight);
+    var layoutH = frameEl.offsetHeight || (frameEl.clientHeight + bTop + bBottom);
+    var sx = layoutW > 0 ? (fr.width / layoutW) : 1;
+    var sy = layoutH > 0 ? (fr.height / layoutH) : 1;
+    if (!isFinite(sx) || sx <= 0) sx = 1;
+    if (!isFinite(sy) || sy <= 0) sy = 1;
+    return { left: fr.left + bLeft * sx, top: fr.top + bTop * sy, scaleX: sx, scaleY: sy };
+  }
+  function collectRoots(root, offsetX, offsetY, scaleX, scaleY, inShadow, inIframe, out) {
     if (!root) return;
-    out.push({ root: root, offsetX: offsetX, offsetY: offsetY, inShadow: inShadow, inIframe: inIframe });
+    out.push({ root: root, offsetX: offsetX, offsetY: offsetY, scaleX: scaleX, scaleY: scaleY, inShadow: inShadow, inIframe: inIframe });
     if (root.shadowRoot) {
-      collectRoots(root.shadowRoot, offsetX, offsetY, true, inIframe, out);
+      collectRoots(root.shadowRoot, offsetX, offsetY, scaleX, scaleY, true, inIframe, out);
     }
     var nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
       if (el.shadowRoot) {
-        collectRoots(el.shadowRoot, offsetX, offsetY, true, inIframe, out);
+        collectRoots(el.shadowRoot, offsetX, offsetY, scaleX, scaleY, true, inIframe, out);
       }
       if (el.tagName === "IFRAME") {
         try {
           var frameDoc = el.contentDocument;
           if (frameDoc) {
-            var frameRect = el.getBoundingClientRect();
-            collectRoots(frameDoc, offsetX + frameRect.left, offsetY + frameRect.top, inShadow, true, out);
+            var ft = getIframeTransform(el);
+            collectRoots(
+              frameDoc,
+              offsetX + ft.left * scaleX,
+              offsetY + ft.top * scaleY,
+              scaleX * ft.scaleX,
+              scaleY * ft.scaleY,
+              inShadow,
+              true,
+              out
+            );
           }
         } catch (e) {}
       }
     }
   }
   function findTextInRoot(root, needle, exact, ctx, pushHit) {
-    var doc = root.ownerDocument || (root.nodeType === 9 ? root : document);
-    if (doc && typeof doc.createTreeWalker === "function" && typeof NodeFilter !== "undefined") {
-      var walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      var txtNode;
-      while ((txtNode = walker.nextNode())) {
-        var rawVal = (txtNode.nodeValue || "").trim();
-        var val = rawVal.toLowerCase();
-        var ok = exact ? rawVal === needle : (val && val.indexOf(needle.toLowerCase()) !== -1);
-        if (ok && txtNode.parentElement) {
-          pushHit(txtNode.parentElement, ctx);
+    if (!root) return;
+    var isRegex = Boolean(needle && typeof needle === "object" && typeof needle.__spanaRegex === "string");
+    var rawNeedleStr = isRegex ? "" : String(needle == null ? "" : needle);
+    var trimmedNeedle = rawNeedleStr.replace(/\\s+/g, " ").trim();
+    var lowerNeedle = trimmedNeedle.toLowerCase();
+    if (!isRegex && !trimmedNeedle) return;
+
+    var skipTags = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, HEAD: 1, META: 1, LINK: 1, TITLE: 1 };
+
+    // Button-like <input> elements store their label in .value (not ancestor .textContent),
+    // so check them directly before textContent-based subtree pruning.
+    if (root.querySelectorAll) {
+      var btnInputs = root.querySelectorAll('input[type="button"], input[type="submit"], input[type="reset"]');
+      for (var bi = 0; bi < btnInputs.length; bi++) {
+        var bNode = btnInputs[bi];
+        var bVal = String(bNode.value || "").replace(/\\s+/g, " ").trim();
+        if (bVal && matchSpec(bVal, needle, exact)) {
+          pushHit(bNode, ctx);
         }
       }
-      if (typeof root.querySelectorAll === "function") {
-        var inputs = root.querySelectorAll("input, button");
-        for (var ii = 0; ii < inputs.length; ii++) {
-          var inp = inputs[ii];
-          var rawInp = String(inp.value || "").trim();
-          var inpOk = exact ? rawInp === needle : (rawInp && rawInp.toLowerCase().indexOf(needle.toLowerCase()) !== -1);
-          if (inpOk) {
-            pushHit(inp, ctx);
-          }
+    }
+
+    function visitNode(node) {
+      if (!node || node.nodeType !== 1) return false;
+      var tag = node.tagName ? node.tagName.toUpperCase() : "";
+      if (skipTags[tag] || tag === "INPUT") return false;
+
+      var normText = String(node.textContent || "").replace(/\\s+/g, " ").trim();
+      if (!isRegex) {
+        if (!normText) return false;
+        if (exact) {
+          if (normText.indexOf(trimmedNeedle) === -1) return false;
+        } else {
+          if (normText.toLowerCase().indexOf(lowerNeedle) === -1) return false;
         }
       }
+
+      var childMatched = false;
+      var kids = node.children || [];
+      for (var i = 0; i < kids.length; i++) {
+        if (visitNode(kids[i])) childMatched = true;
+      }
+      if (childMatched) return true;
+
+      if (normText && matchSpec(normText, needle, exact)) {
+        pushHit(node, ctx);
+        return true;
+      }
+      return false;
+    }
+
+    if (root.nodeType === 9) {
+      var startEl = root.body || root.documentElement;
+      if (startEl) visitNode(startEl);
       return;
     }
-    var all = root.querySelectorAll ? root.querySelectorAll("*") : [];
-    for (var k = 0; k < all.length; k++) {
-      var node = all[k];
-      var directText = "";
-      for (var c = 0; c < node.childNodes.length; c++) {
-        if (node.childNodes[c].nodeType === 3) directText += node.childNodes[c].textContent || "";
-      }
-      var trimmedDirect = directText.trim();
-      var inpVal = (node.tagName === "INPUT" || node.tagName === "BUTTON") ? String(node.value || "").trim() : "";
-      var directOk = exact ? trimmedDirect === needle : (trimmedDirect && trimmedDirect.toLowerCase().indexOf(needle.toLowerCase()) !== -1);
-      var inputOk = exact ? inpVal === needle : (inpVal && inpVal.toLowerCase().indexOf(needle.toLowerCase()) !== -1);
-      if (directOk || inputOk) {
-        pushHit(node, ctx);
-      }
+    if (root.nodeType === 11) {
+      var fragKids = root.children || [];
+      for (var fi = 0; fi < fragKids.length; fi++) visitNode(fragKids[fi]);
+      return;
     }
+    visitNode(root);
   }
-  function findRoleInRoot(root, roleLower, nameSpec, exact, ctx, pushHit, includeHidden, level) {
+  function findRoleInRoot(root, roleLower, nameSpec, exact, ctx, pushHit, includeHidden, level, pressed) {
     if (!root || !root.querySelectorAll) return;
     var candidates = root.querySelectorAll("*");
     for (var i = 0; i < candidates.length; i++) {
@@ -681,6 +740,10 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       if (getImplicitRole(el) !== roleLower) continue;
       if (!includeHidden && isAriaHidden(el)) continue;
       if (level !== undefined && level !== null && headingLevelOf(el) !== Number(level)) continue;
+      if (pressed !== undefined && pressed !== null) {
+        var ap = (el.getAttribute && el.getAttribute("aria-pressed") || "").trim().toLowerCase();
+        if (pressed ? ap !== "true" : ap !== "false") continue;
+      }
       if (nameSpec !== undefined && nameSpec !== null) {
         var accName = getAccessibleName(el);
         if (!matchSpec(accName, nameSpec, Boolean(exact))) continue;
@@ -688,30 +751,49 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       pushHit(el, ctx);
     }
   }
-  function applyModifiersAndSlice(hits, sel) {
+  function isHitVisible(h) {
+    if (!h) return false;
+    if (h.wasmNode) {
+      return h.wasmNode.visible !== false && h.wasmRect && h.wasmRect.width > 0 && h.wasmRect.height > 0;
+    }
+    if (!h.el || !h.el.getBoundingClientRect) return false;
+    return isVisible(h.el, h.el.getBoundingClientRect());
+  }
+  function applyModifiersAndSlice(hits, sel, preferVisible) {
     if (!sel || typeof sel !== "object" || "point" in sel) return hits;
     var filtered = hits;
     if (sel.hasText !== undefined) {
       filtered = filtered.filter(function(h) {
-        var txt = (h.el.innerText || h.el.textContent || h.el.value || getAccessibleName(h.el) || "");
-        return matchSpec(txt, sel.hasText, false);
+        var normTc = String(h.el.textContent || "").replace(/\\s+/g, " ").trim();
+        var innerT = String(h.el.innerText || "").replace(/\\s+/g, " ").trim();
+        var fallbackTxt = String(h.el.value || getAccessibleName(h.el) || "");
+        return matchSpec(normTc, sel.hasText, false) || matchSpec(innerT, sel.hasText, false) || matchSpec(fallbackTxt, sel.hasText, false);
       });
     }
     if (sel.hasNotText !== undefined) {
       filtered = filtered.filter(function(h) {
-        var txt = (h.el.innerText || h.el.textContent || h.el.value || getAccessibleName(h.el) || "");
-        return !matchSpec(txt, sel.hasNotText, false);
+        var normTc = String(h.el.textContent || "").replace(/\\s+/g, " ").trim();
+        var innerT = String(h.el.innerText || "").replace(/\\s+/g, " ").trim();
+        var fallbackTxt = String(h.el.value || getAccessibleName(h.el) || "");
+        return !matchSpec(normTc, sel.hasNotText, false) && !matchSpec(innerT, sel.hasNotText, false) && !matchSpec(fallbackTxt, sel.hasNotText, false);
       });
     }
     if (sel.has !== undefined) {
       filtered = filtered.filter(function(h) {
-        return findInScope(sel.has, h.el, h.offsetX, h.offsetY, h.inShadow, h.inIframe).length > 0;
+        return findInScope(sel.has, h.el, h.offsetX, h.offsetY, h.scaleX, h.scaleY, h.inShadow, h.inIframe, preferVisible).length > 0;
       });
     }
     if (sel.hasNot !== undefined) {
       filtered = filtered.filter(function(h) {
-        return findInScope(sel.hasNot, h.el, h.offsetX, h.offsetY, h.inShadow, h.inIframe).length === 0;
+        return findInScope(sel.hasNot, h.el, h.offsetX, h.offsetY, h.scaleX, h.scaleY, h.inShadow, h.inIframe, preferVisible).length === 0;
       });
+    }
+    var wantsSlice = Boolean(sel.first || sel.last || typeof sel.nth === "number");
+    if (wantsSlice && !sel.includeHidden && preferVisible) {
+      var visibleFiltered = filtered.filter(isHitVisible);
+      if (preferVisible === "strict" || visibleFiltered.length > 0) {
+        filtered = visibleFiltered;
+      }
     }
     if (sel.first) return filtered.length > 0 ? [filtered[0]] : [];
     if (sel.last) return filtered.length > 0 ? [filtered[filtered.length - 1]] : [];
@@ -721,7 +803,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return filtered;
   }
-  function findInScope(sel, scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe) {
+  function findInScope(sel, scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, preferVisible) {
     var hits = [];
     var seen = typeof Set !== "undefined" ? new Set() : null;
     function pushHit(el, ctx) {
@@ -729,16 +811,24 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         if (seen.has(el)) return;
         seen.add(el);
       }
-      hits.push({ el: el, offsetX: ctx.offsetX, offsetY: ctx.offsetY, inShadow: ctx.inShadow, inIframe: ctx.inIframe });
+      hits.push({
+        el: el,
+        offsetX: ctx.offsetX,
+        offsetY: ctx.offsetY,
+        scaleX: ctx.scaleX != null ? ctx.scaleX : 1,
+        scaleY: ctx.scaleY != null ? ctx.scaleY : 1,
+        inShadow: ctx.inShadow,
+        inIframe: ctx.inIframe
+      });
     }
     if (typeof sel === "object" && sel !== null && "point" in sel) {
       var atPt = document.elementFromPoint(sel.point.x, sel.point.y);
-      if (atPt) pushHit(atPt, { offsetX: 0, offsetY: 0, inShadow: false, inIframe: false });
+      if (atPt) pushHit(atPt, { offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1, inShadow: false, inIframe: false });
       return hits;
     }
     // Frame scoping: find matching <iframe> first, then search inside its contentDocument
     if (typeof sel === "object" && sel !== null && sel.frame) {
-      var frameHits = findInScope(sel.frame, scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+      var frameHits = findInScope(sel.frame, scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, preferVisible);
       var innerSel = Object.assign({}, sel);
       delete innerSel.frame;
       for (var fi = 0; fi < frameHits.length; fi++) {
@@ -747,8 +837,20 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
           try {
             var fDoc = fEl.contentDocument;
             if (fDoc) {
-              var fRect = fEl.getBoundingClientRect();
-              var sub = findInScope(innerSel, fDoc, frameHits[fi].offsetX + fRect.left, frameHits[fi].offsetY + fRect.top, frameHits[fi].inShadow, true);
+              var fTr = getIframeTransform(fEl);
+              var pSx = frameHits[fi].scaleX != null ? frameHits[fi].scaleX : 1;
+              var pSy = frameHits[fi].scaleY != null ? frameHits[fi].scaleY : 1;
+              var sub = findInScope(
+                innerSel,
+                fDoc,
+                frameHits[fi].offsetX + fTr.left * pSx,
+                frameHits[fi].offsetY + fTr.top * pSy,
+                pSx * fTr.scaleX,
+                pSy * fTr.scaleY,
+                frameHits[fi].inShadow,
+                true,
+                preferVisible
+              );
               for (var si = 0; si < sub.length; si++) pushHit(sub[si].el, sub[si]);
             }
           } catch (e) {}
@@ -758,7 +860,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     // Parent scoping: resolve 'within' first, then search inside each matched container
     if (typeof sel === "object" && sel !== null && sel.within) {
-      var parentHits = findInScope(sel.within, scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+      var parentHits = findInScope(sel.within, scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, preferVisible);
       var childSel = Object.assign({}, sel);
       delete childSel.within;
       delete childSel.hasText;
@@ -772,31 +874,31 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var cSeen = typeof Set !== "undefined" ? new Set() : null;
       for (var pi = 0; pi < parentHits.length; pi++) {
         var ph = parentHits[pi];
-        var subHits = findInScope(childSel, ph.el, ph.offsetX, ph.offsetY, ph.inShadow, ph.inIframe);
+        var subHits = findInScope(childSel, ph.el, ph.offsetX, ph.offsetY, ph.scaleX, ph.scaleY, ph.inShadow, ph.inIframe, preferVisible);
         for (var ci = 0; ci < subHits.length; ci++) {
           if (cSeen && cSeen.has(subHits[ci].el)) continue;
           if (cSeen) cSeen.add(subHits[ci].el);
           combined.push(subHits[ci]);
         }
       }
-      return applyModifiersAndSlice(combined, sel);
+      return applyModifiersAndSlice(combined, sel, preferVisible);
     }
     // Logical OR composition (anyOf): union deduplicated hits across branches
     if (typeof sel === "object" && sel !== null && Array.isArray(sel.anyOf)) {
       for (var bi = 0; bi < sel.anyOf.length; bi++) {
-        var branchHits = findInScope(sel.anyOf[bi], scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+        var branchHits = findInScope(sel.anyOf[bi], scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, preferVisible);
         for (var bh = 0; bh < branchHits.length; bh++) {
           pushHit(branchHits[bh].el, branchHits[bh]);
         }
       }
-      return applyModifiersAndSlice(hits, sel);
+      return applyModifiersAndSlice(hits, sel, preferVisible);
     }
     // Logical AND composition (allOf): intersection of matched elements across branches
     if (typeof sel === "object" && sel !== null && Array.isArray(sel.allOf) && sel.allOf.length > 0) {
-      var firstBranch = findInScope(sel.allOf[0], scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+      var firstBranch = findInScope(sel.allOf[0], scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, preferVisible);
       var currentHits = firstBranch;
       for (var ai = 1; ai < sel.allOf.length && currentHits.length > 0; ai++) {
-        var nextBranch = findInScope(sel.allOf[ai], scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe);
+        var nextBranch = findInScope(sel.allOf[ai], scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, preferVisible);
         var nextEls = typeof Set !== "undefined" ? new Set(nextBranch.map(function(h) { return h.el; })) : null;
         currentHits = currentHits.filter(function(h) {
           if (nextEls) return nextEls.has(h.el);
@@ -804,7 +906,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         });
       }
       for (var ahi = 0; ahi < currentHits.length; ahi++) pushHit(currentHits[ahi].el, currentHits[ahi]);
-      return applyModifiersAndSlice(hits, sel);
+      return applyModifiersAndSlice(hits, sel, preferVisible);
     }
 
     function queryCssSafe(root, cssStr) {
@@ -892,7 +994,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var esc = function(v) {
       return typeof CSS !== "undefined" && CSS.escape ? CSS.escape(v) : String(v).replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"');
     };
-    var mainCtx = { root: scopeRoot, offsetX: baseOffsetX, offsetY: baseOffsetY, inShadow: baseInShadow, inIframe: baseInIframe };
+    var mainCtx = { root: scopeRoot, offsetX: baseOffsetX, offsetY: baseOffsetY, scaleX: baseScaleX, scaleY: baseScaleY, inShadow: baseInShadow, inIframe: baseInIframe };
     var hasModifiers = typeof sel === "object" && sel !== null && (sel.hasText !== undefined || sel.hasNotText !== undefined || sel.has !== undefined || sel.hasNot !== undefined || sel.first || sel.last || typeof sel.nth === "number");
 
     // O(1)-ish Light-DOM fast path: avoids scanning thousands of nodes with querySelectorAll("*")
@@ -931,7 +1033,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         findByAttrSpecInRoot(scopeRoot, "title", sel.title, Boolean(sel.exact), mainCtx, pushHit);
         if (hits.length > 0) return hits;
       } else if (typeof sel === "object" && sel !== null && "role" in sel) {
-        findRoleInRoot(scopeRoot, String(sel.role).toLowerCase(), sel.name, sel.exact, mainCtx, pushHit, sel.includeHidden, sel.level);
+        findRoleInRoot(scopeRoot, String(sel.role).toLowerCase(), sel.name, sel.exact, mainCtx, pushHit, sel.includeHidden, sel.level, sel.pressed);
         if (hits.length > 0) return hits;
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
         var fastNeedle = typeof sel === "string" ? sel : sel.text;
@@ -942,7 +1044,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
 
     var roots = [];
-    collectRoots(scopeRoot, baseOffsetX, baseOffsetY, baseInShadow, baseInIframe, roots);
+    collectRoots(scopeRoot, baseOffsetX, baseOffsetY, baseScaleX, baseScaleY, baseInShadow, baseInIframe, roots);
     for (var r = 0; r < roots.length; r++) {
       var ctx = roots[r];
       var root = ctx.root;
@@ -967,14 +1069,14 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       } else if (typeof sel === "object" && sel !== null && "title" in sel) {
         findByAttrSpecInRoot(root, "title", sel.title, Boolean(sel.exact), ctx, pushHit);
       } else if (typeof sel === "object" && sel !== null && "role" in sel) {
-        findRoleInRoot(root, String(sel.role).toLowerCase(), sel.name, sel.exact, ctx, pushHit, sel.includeHidden, sel.level);
+        findRoleInRoot(root, String(sel.role).toLowerCase(), sel.name, sel.exact, ctx, pushHit, sel.includeHidden, sel.level, sel.pressed);
       } else if (typeof sel === "string" || (typeof sel === "object" && sel !== null && "text" in sel)) {
         var needle = typeof sel === "string" ? sel : sel.text;
         var isExact = typeof sel === "object" && sel !== null && Boolean(sel.exact);
         findTextInRoot(root, needle, isExact, ctx, pushHit);
       }
     }
-    return applyModifiersAndSlice(hits, sel);
+    return applyModifiersAndSlice(hits, sel, preferVisible);
   }
   function findWasmSemanticHits(sel) {
     if (typeof window === "undefined" || !window.__SPANA_WASM_TREE__) return [];
@@ -1056,8 +1158,9 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return matched;
   }
-  function findAcrossRoots(sel) {
-    var domHits = findInScope(sel, document, 0, 0, false, false);
+  function findAcrossRoots(sel, preferVisible) {
+    var pv = preferVisible === undefined ? "prefer" : preferVisible;
+    var domHits = findInScope(sel, document, 0, 0, 1, 1, false, false, pv);
     var wasmHits = findWasmSemanticHits(sel);
     if (wasmHits.length === 0) return domHits;
     return domHits.length === 0 ? wasmHits : domHits.concat(wasmHits);
@@ -1093,9 +1196,9 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         try {
           var fdoc = el.contentDocument;
           if (fdoc && typeof fdoc.elementFromPoint === "function") {
-            var fr = el.getBoundingClientRect();
-            var fx = x - fr.left;
-            var fy = y - fr.top;
+            var ft = getIframeTransform(el);
+            var fx = (x - ft.left) / ft.scaleX;
+            var fy = (y - ft.top) / ft.scaleY;
             var fEl = fdoc.elementFromPoint(fx, fy);
             if (fEl && fEl !== el) { el = fEl; x = fx; y = fy; continue; }
           }
@@ -1166,10 +1269,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var contentsRect = getContentsUnionRect(el, 0);
       if (contentsRect) rect = contentsRect;
     }
+    var sx = hit.scaleX != null ? hit.scaleX : 1;
+    var sy = hit.scaleY != null ? hit.scaleY : 1;
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
-    var cx = rect.left + hit.offsetX + rect.width / 2;
-    var cy = rect.top + hit.offsetY + rect.height / 2;
+    var cx = hit.offsetX + (rect.left + rect.width / 2) * sx;
+    var cy = hit.offsetY + (rect.top + rect.height / 2) * sy;
     if (vw > 0 && vh > 0 && (cx < 0 || cy < 0 || cx > vw || cy > vh)) {
       return "outside viewport";
     }
@@ -1190,10 +1295,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var contentsRect = getContentsUnionRect(el, 0);
       if (contentsRect) rect = contentsRect;
     }
+    var sx = hit.scaleX != null ? hit.scaleX : 1;
+    var sy = hit.scaleY != null ? hit.scaleY : 1;
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
-    var cx = rect.left + hit.offsetX + rect.width / 2;
-    var cy = rect.top + hit.offsetY + rect.height / 2;
+    var cx = hit.offsetX + (rect.left + rect.width / 2) * sx;
+    var cy = hit.offsetY + (rect.top + rect.height / 2) * sy;
     if (vw > 0 && vh > 0 && (cx < 0 || cy < 0 || cx > vw || cy > vh)) {
       return false;
     }
@@ -1211,12 +1318,14 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var contentsRect = getContentsUnionRect(el, 0);
       if (contentsRect) rect = contentsRect;
     }
+    var sx = hit.scaleX != null ? hit.scaleX : 1;
+    var sy = hit.scaleY != null ? hit.scaleY : 1;
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
     if (vw <= 0 || vh <= 0 || rect.width <= 0 || rect.height <= 0) return false;
-    var left = rect.left + hit.offsetX;
-    var top = rect.top + hit.offsetY;
-    return left >= 0 && top >= 0 && (left + rect.width) <= vw && (top + rect.height) <= vh;
+    var left = hit.offsetX + rect.left * sx;
+    var top = hit.offsetY + rect.top * sy;
+    return left >= 0 && top >= 0 && (left + rect.width * sx) <= vw && (top + rect.height * sy) <= vh;
   }
   function ensureInViewport(hit) {
     var el = hit.el;
@@ -1227,10 +1336,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var contentsRect = getContentsUnionRect(el, 0);
       if (contentsRect) rect = contentsRect;
     }
+    var sx = hit.scaleX != null ? hit.scaleX : 1;
+    var sy = hit.scaleY != null ? hit.scaleY : 1;
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
-    var cx = rect.left + hit.offsetX + rect.width / 2;
-    var cy = rect.top + hit.offsetY + rect.height / 2;
+    var cx = hit.offsetX + (rect.left + rect.width / 2) * sx;
+    var cy = hit.offsetY + (rect.top + rect.height / 2) * sy;
     if (vw > 0 && vh > 0 && (cx < 1 || cy < 1 || cx > vw - 1 || cy > vh - 1)) {
       if (typeof el.scrollIntoView === "function") {
         try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); }
@@ -1288,7 +1399,22 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return false;
   }
+  function hasActiveViewTransition() {
+    if (typeof document === "undefined" || typeof document.getAnimations !== "function") return false;
+    try {
+      var allAnims = document.getAnimations();
+      for (var i = 0; i < allAnims.length; i++) {
+        var a = allAnims[i];
+        var pseudo = a && a.effect && a.effect.pseudoElement;
+        if (a && a.playState === "running" && typeof pseudo === "string" && pseudo.indexOf("::view-transition") === 0) {
+          return true;
+        }
+      }
+    } catch (e) {}
+    return false;
+  }
   function hasActiveAnimation(el) {
+    if (hasActiveViewTransition()) return true;
     var cur = el;
     var depth = 0;
     while (cur && depth++ < 8) {
@@ -1396,6 +1522,8 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         ? String(el.value || "").length === 0
         : (el.textContent || "").trim().length === 0;
     var clsName = typeof el.className === "string" ? el.className : (el.getAttribute("class") || "");
+    var sx = hit.scaleX != null ? hit.scaleX : 1;
+    var sy = hit.scaleY != null ? hit.scaleY : 1;
     return {
       id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
       tag: tag,
@@ -1406,7 +1534,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       accessibilityLabel: el.getAttribute("aria-label") || undefined,
       accessibleName: accName,
       accessibleDescription: accDesc,
-      rect: { x: rect.x + hit.offsetX, y: rect.y + hit.offsetY, width: rect.width, height: rect.height },
+      rect: { x: hit.offsetX + rect.x * sx, y: hit.offsetY + rect.y * sy, width: rect.width * sx, height: rect.height * sy },
       scrollX: window.scrollX || window.pageXOffset || 0,
       scrollY: window.scrollY || window.pageYOffset || 0,
       devicePixelRatio: window.devicePixelRatio || 1,
@@ -1575,7 +1703,8 @@ export function buildDomWaitForSelectorScript(
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
-      var rawHits = findAcrossRoots(sel);
+      if (forAction && hasActiveViewTransition()) return null;
+      var rawHits = findAcrossRoots(sel, "strict");
       var ready = [];
       for (var i = 0; i < rawHits.length; i++) {
         var h = rawHits[i];
@@ -1787,7 +1916,7 @@ export function buildDomWaitForHiddenScript(
   return `(function(sel, timeoutMs) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     function isHiddenNow() {
-      var hits = findAcrossRoots(sel);
+      var hits = findAcrossRoots(sel, false);
       for (var i = 0; i < hits.length; i++) {
         if (toMatch(hits[i]).visible) return false;
       }
@@ -1883,7 +2012,8 @@ export function buildDomWaitForMatchScript(
         if (negate ? !titleOk : titleOk) return { matched: true, actual: docTitle };
         return null;
       }
-      var hits = findAcrossRoots(sel);
+      var pvMode = (kind === "attached" || (kind === "count" && !visibleOnly)) ? false : (visibleOnly ? "strict" : "prefer");
+      var hits = findAcrossRoots(sel, pvMode);
       if (kind === "count") {
         var matchedCount = 0;
         if (visibleOnly) {
@@ -2132,7 +2262,7 @@ export function buildDomFillScript(
 
     function findEditableNow() {
       if (!isAppReady()) return null;
-      var hits = findAcrossRoots(sel);
+      var hits = findAcrossRoots(sel, "strict");
       for (var i = hits.length - 1; i >= 0; i--) {
         var h = hits[i];
         var m = toMatch(h);
@@ -2351,7 +2481,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
-      var rawHits = findAcrossRoots(sel);
+      if (forAction && hasActiveViewTransition()) return null;
+      var rawHits = findAcrossRoots(sel, "strict");
       var ready = [];
       for (var i = 0; i < rawHits.length; i++) {
         var h = rawHits[i];
@@ -2518,7 +2649,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     opts = opts || {};
     var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
     function isHiddenNow() {
-      var hits = findAcrossRoots(sel);
+      var hits = findAcrossRoots(sel, false);
       for (var i = 0; i < hits.length; i++) {
         if (toMatch(hits[i]).visible) return false;
       }
@@ -2588,7 +2719,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         return null;
       }
 
-      var hits = findAcrossRoots(sel);
+      var pvMode = (kind === "attached" || (kind === "count" && !visibleOnly)) ? false : (visibleOnly ? "strict" : "prefer");
+      var hits = findAcrossRoots(sel, pvMode);
 
       if (kind === "count") {
         var matchedCount = 0;
@@ -2804,7 +2936,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     }
     function findEditableNow() {
       if (!isAppReady()) return null;
-      var hits = findAcrossRoots(sel);
+      var hits = findAcrossRoots(sel, "strict");
       for (var i = hits.length - 1; i >= 0; i--) {
         var h = hits[i];
         var m = toMatch(h);

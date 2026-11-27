@@ -78,7 +78,11 @@ export function diagnoseElementNotFound(
   } else if ("testID" in simpleSelector && simpleSelector.testID) {
     const similar = findSimilarByTestID(allElements, simpleSelector.testID);
     suggestions.push(...similar);
-  } else if ("text" in simpleSelector && simpleSelector.text) {
+  } else if (
+    "text" in simpleSelector &&
+    typeof simpleSelector.text === "string" &&
+    simpleSelector.text
+  ) {
     const similar = findSimilarByText(allElements, simpleSelector.text);
     suggestions.push(...similar);
   }

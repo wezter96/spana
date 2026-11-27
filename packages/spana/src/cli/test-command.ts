@@ -25,6 +25,7 @@ import {
   buildElectrobunRuntime,
   buildLocalAndroidRuntime,
   buildLocalIOSRuntime,
+  resolveWebEngine,
   speculativelyPrelaunchWebBrowser,
   type PrelaunchedWebBrowser,
 } from "../runtime/local.js";
@@ -65,6 +66,8 @@ export interface TestCommandOptions {
   reporter?: string;
   configPath?: string;
   flowPath?: string;
+  /** Multiple positional flow file/directory paths passed on CLI. */
+  flowPaths?: string[];
   retries?: number;
   device?: string;
   driver?: "local" | "appium";
@@ -626,7 +629,9 @@ async function setupReporters(
           reporters.push(createGitHubPrReporter({ outputDir: resolvedOutputDir, filterSummaries }));
           break;
         default:
-          reporters.push(createConsoleReporter({ quiet: opts.quiet }));
+          reporters.push(
+            createConsoleReporter({ quiet: opts.quiet, webEngine: resolveWebEngine(config) }),
+          );
           break;
       }
     } else {
@@ -785,6 +790,7 @@ interface LoadedFlowSource {
 
 interface FlowDiscoveryInput {
   flowDir: string;
+  flowDirs?: string[];
   cwd?: string;
   configPath?: string;
   tags?: string[];
@@ -818,8 +824,23 @@ interface FlowDiscoveryEarlyExit {
 async function discoverAndFilterFlows(
   input: FlowDiscoveryInput,
 ): Promise<FlowDiscoverySuccess | FlowDiscoveryEarlyExit> {
-  const watchRoots = collectWatchRoots(input.flowDir, input.configPath);
-  let flowPaths = await discoverFlows(input.flowDir);
+  const searchTargets =
+    input.flowDirs && input.flowDirs.length > 0 ? input.flowDirs : [input.flowDir];
+  const watchRootSet = new Set<string>();
+  for (const target of searchTargets) {
+    for (const root of collectWatchRoots(target, input.configPath)) {
+      watchRootSet.add(root);
+    }
+  }
+  const watchRoots = [...watchRootSet];
+
+  const discoveredSet = new Set<string>();
+  for (const target of searchTargets) {
+    for (const p of await discoverFlows(target)) {
+      discoveredSet.add(p);
+    }
+  }
+  let flowPaths = [...discoveredSet];
 
   if (flowPaths.length === 0) {
     console.log("No flow files found.");
@@ -832,9 +853,15 @@ async function discoverAndFilterFlows(
   if (hasFeatureFiles) {
     const { stat: statPath } = await import("node:fs/promises");
     const { dirname: dirnameDyn } = await import("node:path");
-    const flowDirStats = await statPath(input.flowDir).catch(() => null);
-    const stepSearchDir = flowDirStats?.isDirectory() ? input.flowDir : dirnameDyn(input.flowDir);
-    stepPaths = await discoverStepFiles(stepSearchDir);
+    const stepSet = new Set<string>();
+    for (const target of searchTargets) {
+      const flowDirStats = await statPath(target).catch(() => null);
+      const stepSearchDir = flowDirStats?.isDirectory() ? target : dirnameDyn(target);
+      for (const sp of await discoverStepFiles(stepSearchDir)) {
+        stepSet.add(sp);
+      }
+    }
+    stepPaths = [...stepSet];
   }
 
   // Handle --changed flag
@@ -1147,11 +1174,37 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     const projectsStart = Date.now();
     let allPassed = true;
     const cliEntry = resolveSpanaCliEntrypoint();
+    const rawCliFlowPaths =
+      opts.flowPaths && opts.flowPaths.length > 0
+        ? opts.flowPaths
+        : opts.flowPath
+          ? [opts.flowPath]
+          : [];
+    const requestedProjectSet = new Set(opts.projects ?? []);
+    const dependencyProjectNames = new Set<string>();
+    for (const wave of plan.waves) {
+      for (const proj of wave) {
+        for (const dep of proj.dependencies ?? []) {
+          dependencyProjectNames.add(dep);
+        }
+      }
+    }
+    const teardownProjectNames = new Set(plan.teardowns.map((t) => t.name));
     try {
       const executeProject = async (project: import("../core/projects.js").ProjectConfig) => {
-        const projFlowDir = opts.flowPath
-          ? resolve(opts.cwd ? resolve(opts.cwd) : process.cwd(), opts.flowPath)
-          : resolveFromConfig(project.flowDir ?? config.flowDir ?? "./flows");
+        // Setup dependency projects and teardown projects must NOT be filtered out by
+        // CLI --tag, --grep, --grep-invert, or positional flow file filters unless the
+        // user explicitly targeted only that project via `--project <dep>`.
+        const isDependencyOrTeardown =
+          teardownProjectNames.has(project.name) ||
+          (dependencyProjectNames.has(project.name) &&
+            !(requestedProjectSet.size > 0 && requestedProjectSet.has(project.name)));
+        const cliWorkDir = opts.cwd ? resolve(opts.cwd) : process.cwd();
+        const projFlowDirs =
+          !isDependencyOrTeardown && rawCliFlowPaths.length > 0
+            ? rawCliFlowPaths.map((p) => resolve(cliWorkDir, p))
+            : [resolveFromConfig(project.flowDir ?? config.flowDir ?? "./flows")];
+        const projFlowDir = projFlowDirs[0]!;
         const projPlatforms: Platform[] =
           opts.platforms.length > 0
             ? opts.platforms
@@ -1161,13 +1214,17 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                 ? config.platforms
                 : ["web"];
         for (const p of projPlatforms) allProjectPlatforms.add(p);
+        const effectiveTags = isDependencyOrTeardown ? project.tags : (opts.tags ?? project.tags);
+        const effectiveGrep = isDependencyOrTeardown ? project.grep : (opts.grep ?? project.grep);
+        const effectiveGrepInvert = isDependencyOrTeardown ? undefined : opts.grepInvert;
         const discovered = await discoverAndFilterFlows({
           flowDir: projFlowDir,
-          cwd: opts.cwd ? resolve(opts.cwd) : process.cwd(),
+          flowDirs: projFlowDirs,
+          cwd: cliWorkDir,
           configPath,
-          tags: opts.tags ?? project.tags,
-          grep: opts.grep ?? project.grep,
-          grepInvert: opts.grepInvert,
+          tags: effectiveTags,
+          grep: effectiveGrep,
+          grepInvert: effectiveGrepInvert,
           passWithNoTests: opts.passWithNoTests ?? true,
           platforms: projPlatforms,
           outputDir: config.artifacts?.outputDir ?? resolveFromConfig("./spana-output"),
@@ -1255,7 +1312,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                   const args = [
                     cliEntry,
                     "test",
-                    ...(opts.flowPath ? [opts.flowPath] : []),
+                    ...(!isDependencyOrTeardown && rawCliFlowPaths.length > 0
+                      ? rawCliFlowPaths
+                      : []),
                     "--project",
                     project.name,
                     "--platform",
@@ -1267,9 +1326,13 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                     "--pass-with-no-tests",
                     ...(opts.browser ? ["--browser", opts.browser] : []),
                     ...(configPath ? ["--config", configPath] : []),
-                    ...(opts.tags?.flatMap((t) => ["--tag", t]) ?? []),
-                    ...(opts.grep ? ["--grep", opts.grep] : []),
-                    ...(opts.grepInvert ? ["--grep-invert", opts.grepInvert] : []),
+                    ...(!isDependencyOrTeardown && opts.tags
+                      ? opts.tags.flatMap((t) => ["--tag", t])
+                      : []),
+                    ...(!isDependencyOrTeardown && opts.grep ? ["--grep", opts.grep] : []),
+                    ...(!isDependencyOrTeardown && opts.grepInvert
+                      ? ["--grep-invert", opts.grepInvert]
+                      : []),
                     ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
                     ...(opts.jsCoverage ? ["--js-coverage"] : []),
                     ...(opts.trace ? ["--trace"] : []),
@@ -1448,13 +1511,22 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   const resolvedWriteTimingsFile = opts.writeTimingsFile
     ? resolve(workDir, opts.writeTimingsFile)
     : undefined;
-  const flowDir = opts.flowPath
-    ? resolve(workDir, opts.flowPath)
-    : resolveFromConfig(config.flowDir ?? "./flows");
+  const rawCliPaths =
+    opts.flowPaths && opts.flowPaths.length > 0
+      ? opts.flowPaths
+      : opts.flowPath
+        ? [opts.flowPath]
+        : [];
+  const flowDirs =
+    rawCliPaths.length > 0
+      ? rawCliPaths.map((p) => resolve(workDir, p))
+      : [resolveFromConfig(config.flowDir ?? "./flows")];
+  const flowDir = flowDirs[0]!;
 
   if (opts.listOnly) {
     const listed = await discoverAndFilterFlows({
       flowDir,
+      flowDirs,
       cwd: workDir,
       configPath,
       tags: opts.tags,
@@ -1554,6 +1626,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       const [mpFlowResult, mpPriorRunState, mpTimingsHints] = await Promise.all([
         discoverAndFilterFlows({
           flowDir,
+          flowDirs,
           cwd: workDir,
           configPath,
           tags: opts.tags,
@@ -1632,7 +1705,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
               const args = [
                 cliEntrypoint,
                 "test",
-                ...(opts.flowPath ? [opts.flowPath] : []),
+                ...(rawCliPaths.length > 0 ? rawCliPaths : []),
                 "--platform",
                 platforms.join(","),
                 "--workers",
@@ -1805,6 +1878,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     [flowResult, priorRunState, externalTimingsHints] = await Promise.all([
       discoverAndFilterFlows({
         flowDir,
+        flowDirs,
         cwd: workDir,
         configPath,
         tags: opts.tags,

@@ -11,7 +11,46 @@ import { isFlowStubPreset, isInitPreset } from "./scaffolds.js";
 const args = process.argv.slice(2);
 const command = args[0];
 
+function printTestHelp(): void {
+  console.log("Usage: spana test [path...] [options]");
+  console.log("");
+  console.log("Run one or more Spana test flow files or directories.");
+  console.log("");
+  console.log("Options:");
+  console.log(
+    "  --platform <list>          Platforms to test (web,android,ios,electron,electrobun)",
+  );
+  console.log(
+    "  --project <name>           Named project(s) from spana.config.ts (comma-separated)",
+  );
+  console.log("  --tag <list>               Filter flows by tag(s)");
+  console.log("  --grep <pattern>           Filter flows matching regex/substring");
+  console.log("  --grep-invert <pattern>    Exclude flows matching regex/substring");
+  console.log("  --pass-with-no-tests       Exit 0 when no flows match filters");
+  console.log(
+    "  --reporter <fmt>           console|json|junit|html|allure|github (or custom path)",
+  );
+  console.log("  --config <path>            Path to spana.config.ts");
+  console.log("  --workers <n>              Parallel workers per platform");
+  console.log("  --processes <m>            OS worker processes with dynamic queue");
+  console.log("  --parallel                 Auto-discover devices and run in parallel");
+  console.log("  --retries <n>              Retry failed flows n times");
+  console.log("  --bail <n>                 Stop after n failures");
+  console.log("  --shard <cur>/<total>      Distribute flows across CI shards");
+  console.log("  --browser <name>           chromium|firefox|webkit");
+  console.log("  --headed                   Run web browser visibly");
+  console.log("  --trace                    Record interactive trace bundle");
+  console.log("  --quiet, -q                Only print failures and final summary");
+  console.log("  --verbose                  Dump full failure diagnostics");
+  console.log("  --watch                    Re-run on file changes");
+  console.log("  --help, -h                 Show this help message");
+}
+
 if (command === "test") {
+  if (args.includes("--help") || args.includes("-h")) {
+    printTestHelp();
+    process.exit(0);
+  }
   const platforms: Platform[] = [];
   let tags: string[] | undefined;
   let grep: string | undefined;
@@ -19,7 +58,7 @@ if (command === "test") {
   let passWithNoTests = false;
   let reporter: string | undefined;
   let configPath: string | undefined;
-  let flowPath: string | undefined;
+  const flowPaths: string[] = [];
   let retries: number | undefined;
   let device: string | undefined;
   let driver: "local" | "appium" | undefined;
@@ -150,8 +189,8 @@ if (command === "test") {
       trace = true;
     } else if (arg === "--project" && args[i + 1]) {
       projects = [...(projects ?? []), ...args[++i]!.split(",")];
-    } else if (!arg.startsWith("--")) {
-      flowPath = arg;
+    } else if (!arg.startsWith("-")) {
+      flowPaths.push(arg);
     }
   }
 
@@ -164,7 +203,8 @@ if (command === "test") {
     passWithNoTests,
     reporter,
     configPath,
-    flowPath,
+    flowPath: flowPaths[0],
+    flowPaths: flowPaths.length > 0 ? flowPaths : undefined,
     retries,
     device,
     driver,
@@ -199,11 +239,17 @@ if (command === "test") {
   });
   process.exit(success ? 0 : 1);
 } else if (command === "list") {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log(
+      "Usage: spana list [path...] [--platform <p>] [--tag <t>] [--grep <re>] [--project <name>] [--config <path>] [--json]",
+    );
+    process.exit(0);
+  }
   const platforms: Platform[] = [];
   let tags: string[] | undefined;
   let grep: string | undefined;
   let configPath: string | undefined;
-  let flowPath: string | undefined;
+  const flowPaths: string[] = [];
   let projects: string[] | undefined;
   let jsonMode = false;
 
@@ -221,8 +267,8 @@ if (command === "test") {
       projects = [...(projects ?? []), ...args[++i]!.split(",")];
     } else if (arg === "--json") {
       jsonMode = true;
-    } else if (!arg.startsWith("--")) {
-      flowPath = arg;
+    } else if (!arg.startsWith("-")) {
+      flowPaths.push(arg);
     }
   }
 
@@ -232,7 +278,8 @@ if (command === "test") {
     tags,
     grep,
     configPath,
-    flowPath,
+    flowPath: flowPaths[0],
+    flowPaths: flowPaths.length > 0 ? flowPaths : undefined,
     projects,
     listOnly: true,
     json: jsonMode,
@@ -452,14 +499,36 @@ if (command === "test") {
     process.exit(1);
   }
 } else if (command === "validate") {
-  let path = "./flows";
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: spana validate [path] [--config <path>] [--json]");
+    process.exit(0);
+  }
+  let explicitPath: string | undefined;
+  let configPath: string | undefined;
   let jsonMode = false;
   for (let i = 1; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--json") {
       jsonMode = true;
-    } else if (!arg.startsWith("--")) {
-      path = arg;
+    } else if (arg === "--config" && args[i + 1]) {
+      configPath = args[++i];
+    } else if (!arg.startsWith("-")) {
+      explicitPath = arg;
+    }
+  }
+
+  let path = explicitPath ?? "./flows";
+  if (!explicitPath) {
+    try {
+      const { loadConfig } = await import("./config-loader.js");
+      const { dirname, resolve } = await import("node:path");
+      const loaded = await loadConfig({ configPath, allowMissing: true });
+      if (loaded.config.flowDir) {
+        const cfgDir = dirname(loaded.configPath ?? resolve("spana.config.ts"));
+        path = resolve(cfgDir, loaded.config.flowDir);
+      }
+    } catch {
+      // Fall back to ./flows if config cannot be loaded
     }
   }
 

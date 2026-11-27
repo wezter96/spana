@@ -150,6 +150,7 @@ export interface PollMatchers<V> {
   toBeFalsy(): Promise<void>;
   toBeDefined(): Promise<void>;
   toBeUndefined(): Promise<void>;
+  toBeNull(): Promise<void>;
   toHaveLength(expected: number): Promise<void>;
 }
 
@@ -594,6 +595,15 @@ export function createPromiseExpect<T extends string = string, R extends string 
             negate
               ? `Expected polled value NOT to be undefined`
               : `Expected polled value to be undefined, received ${JSON.stringify(v)}`,
+        ),
+      toBeNull: () =>
+        check(
+          "toBeNull",
+          (v) => v === null,
+          (v) =>
+            negate
+              ? `Expected polled value NOT to be null`
+              : `Expected polled value to be null, received ${JSON.stringify(v)}`,
         ),
       toHaveLength: (expected) =>
         check(

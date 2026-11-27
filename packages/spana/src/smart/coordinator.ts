@@ -2203,11 +2203,13 @@ export function createCoordinator<T extends string = string, R extends string = 
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.asVoid(
         runGuardedPointerAction(selector, opts, "doubleTap", (x, y) =>
-          Effect.gen(function* () {
-            yield* driver.tapAtCoordinate(x, y);
-            yield* Effect.promise(() => new Promise((r) => setTimeout(r, 200)));
-            yield* driver.tapAtCoordinate(x, y);
-          }),
+          driver.domChannel && driver.doubleTapAtCoordinate
+            ? driver.doubleTapAtCoordinate(x, y)
+            : Effect.gen(function* () {
+                yield* driver.tapAtCoordinate(x, y);
+                yield* Effect.promise(() => new Promise((r) => setTimeout(r, 200)));
+                yield* driver.tapAtCoordinate(x, y);
+              }),
         ),
       ),
 

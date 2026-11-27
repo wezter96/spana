@@ -1,0 +1,1078 @@
+{
+  "generatedAt": "2026-11-27T17:21:32.910Z",
+  "nodeVersion": "v22.23.3",
+  "bunVersion": "1.4.5",
+  "matrix": [
+    {
+      "id": "node-fresh-1w",
+      "runtime": "node",
+      "isolation": "fresh",
+      "workers": 1,
+      "exitCode": 0,
+      "wallMs": 25409,
+      "peakRssMb": 263.9,
+      "approxLaunchOverheadMs": 667,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 24742,
+        "avgMs": 247,
+        "p50Ms": 183,
+        "p95Ms": 622,
+        "maxMs": 1039
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1399,
+          "avgMs": 140,
+          "p50Ms": 121,
+          "p95Ms": 221,
+          "maxMs": 221
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1704,
+          "avgMs": 170,
+          "p50Ms": 160,
+          "p95Ms": 239,
+          "maxMs": 239
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1848,
+          "avgMs": 185,
+          "p50Ms": 148,
+          "p95Ms": 602,
+          "maxMs": 602
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3035,
+          "avgMs": 304,
+          "p50Ms": 268,
+          "p95Ms": 468,
+          "maxMs": 468
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1986,
+          "avgMs": 199,
+          "p50Ms": 190,
+          "p95Ms": 350,
+          "maxMs": 350
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1805,
+          "avgMs": 181,
+          "p50Ms": 147,
+          "p95Ms": 445,
+          "maxMs": 445
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 6506,
+          "avgMs": 651,
+          "p50Ms": 622,
+          "p95Ms": 1039,
+          "maxMs": 1039
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2770,
+          "avgMs": 277,
+          "p50Ms": 277,
+          "p95Ms": 372,
+          "maxMs": 372
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2106,
+          "avgMs": 211,
+          "p50Ms": 152,
+          "p95Ms": 450,
+          "maxMs": 450
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1583,
+          "avgMs": 158,
+          "p50Ms": 154,
+          "p95Ms": 242,
+          "maxMs": 242
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "node-hot-1w",
+      "runtime": "node",
+      "isolation": "hot-cache",
+      "workers": 1,
+      "exitCode": 0,
+      "wallMs": 17298,
+      "peakRssMb": 248.8,
+      "approxLaunchOverheadMs": 675,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 16623,
+        "avgMs": 166,
+        "p50Ms": 109,
+        "p95Ms": 479,
+        "maxMs": 733
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 652,
+          "avgMs": 65,
+          "p50Ms": 46,
+          "p95Ms": 185,
+          "maxMs": 185
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1128,
+          "avgMs": 113,
+          "p50Ms": 95,
+          "p95Ms": 188,
+          "maxMs": 188
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 931,
+          "avgMs": 93,
+          "p50Ms": 49,
+          "p95Ms": 370,
+          "maxMs": 370
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1874,
+          "avgMs": 187,
+          "p50Ms": 136,
+          "p95Ms": 405,
+          "maxMs": 405
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1159,
+          "avgMs": 116,
+          "p50Ms": 86,
+          "p95Ms": 196,
+          "maxMs": 196
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1052,
+          "avgMs": 105,
+          "p50Ms": 50,
+          "p95Ms": 358,
+          "maxMs": 358
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5332,
+          "avgMs": 533,
+          "p50Ms": 479,
+          "p95Ms": 733,
+          "maxMs": 733
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2147,
+          "avgMs": 215,
+          "p50Ms": 212,
+          "p95Ms": 318,
+          "maxMs": 318
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1546,
+          "avgMs": 155,
+          "p50Ms": 100,
+          "p95Ms": 403,
+          "maxMs": 403
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 802,
+          "avgMs": 80,
+          "p50Ms": 70,
+          "p95Ms": 148,
+          "maxMs": 148
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "node-fresh-4w",
+      "runtime": "node",
+      "isolation": "fresh",
+      "workers": 4,
+      "exitCode": 0,
+      "wallMs": 17288,
+      "peakRssMb": 324.2,
+      "approxLaunchOverheadMs": 1040,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 64992,
+        "avgMs": 650,
+        "p50Ms": 570,
+        "p95Ms": 1230,
+        "maxMs": 2502
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 4953,
+          "avgMs": 495,
+          "p50Ms": 475,
+          "p95Ms": 578,
+          "maxMs": 578
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5620,
+          "avgMs": 562,
+          "p50Ms": 602,
+          "p95Ms": 765,
+          "maxMs": 765
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5455,
+          "avgMs": 546,
+          "p50Ms": 492,
+          "p95Ms": 834,
+          "maxMs": 834
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 11149,
+          "avgMs": 1115,
+          "p50Ms": 926,
+          "p95Ms": 2502,
+          "maxMs": 2502
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5575,
+          "avgMs": 558,
+          "p50Ms": 532,
+          "p95Ms": 812,
+          "maxMs": 812
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5499,
+          "avgMs": 550,
+          "p50Ms": 407,
+          "p95Ms": 1235,
+          "maxMs": 1235
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 9914,
+          "avgMs": 991,
+          "p50Ms": 891,
+          "p95Ms": 1461,
+          "maxMs": 1461
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5449,
+          "avgMs": 545,
+          "p50Ms": 510,
+          "p95Ms": 754,
+          "maxMs": 754
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 6087,
+          "avgMs": 609,
+          "p50Ms": 599,
+          "p95Ms": 1020,
+          "maxMs": 1020
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5291,
+          "avgMs": 529,
+          "p50Ms": 552,
+          "p95Ms": 668,
+          "maxMs": 668
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "node-hot-4w",
+      "runtime": "node",
+      "isolation": "hot-cache",
+      "workers": 4,
+      "exitCode": 0,
+      "wallMs": 12251,
+      "peakRssMb": 292,
+      "approxLaunchOverheadMs": 1117,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 44535,
+        "avgMs": 445,
+        "p50Ms": 331,
+        "p95Ms": 1104,
+        "maxMs": 1567
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1975,
+          "avgMs": 198,
+          "p50Ms": 180,
+          "p95Ms": 337,
+          "maxMs": 337
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3077,
+          "avgMs": 308,
+          "p50Ms": 271,
+          "p95Ms": 424,
+          "maxMs": 424
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3182,
+          "avgMs": 318,
+          "p50Ms": 272,
+          "p95Ms": 606,
+          "maxMs": 606
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5313,
+          "avgMs": 531,
+          "p50Ms": 449,
+          "p95Ms": 955,
+          "maxMs": 955
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3810,
+          "avgMs": 381,
+          "p50Ms": 276,
+          "p95Ms": 825,
+          "maxMs": 825
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3398,
+          "avgMs": 340,
+          "p50Ms": 237,
+          "p95Ms": 569,
+          "maxMs": 569
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 11294,
+          "avgMs": 1129,
+          "p50Ms": 1104,
+          "p95Ms": 1567,
+          "maxMs": 1567
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5031,
+          "avgMs": 503,
+          "p50Ms": 487,
+          "p95Ms": 712,
+          "maxMs": 712
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 4284,
+          "avgMs": 428,
+          "p50Ms": 325,
+          "p95Ms": 896,
+          "maxMs": 896
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3171,
+          "avgMs": 317,
+          "p50Ms": 276,
+          "p95Ms": 612,
+          "maxMs": 612
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "bun-fresh-1w",
+      "runtime": "bun",
+      "isolation": "fresh",
+      "workers": 1,
+      "exitCode": 0,
+      "wallMs": 25528,
+      "peakRssMb": 259.8,
+      "approxLaunchOverheadMs": 542,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 24986,
+        "avgMs": 250,
+        "p50Ms": 183,
+        "p95Ms": 538,
+        "maxMs": 955
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1668,
+          "avgMs": 167,
+          "p50Ms": 168,
+          "p95Ms": 250,
+          "maxMs": 250
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1957,
+          "avgMs": 196,
+          "p50Ms": 179,
+          "p95Ms": 253,
+          "maxMs": 253
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1781,
+          "avgMs": 178,
+          "p50Ms": 116,
+          "p95Ms": 477,
+          "maxMs": 477
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2854,
+          "avgMs": 285,
+          "p50Ms": 242,
+          "p95Ms": 467,
+          "maxMs": 467
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2116,
+          "avgMs": 212,
+          "p50Ms": 178,
+          "p95Ms": 332,
+          "maxMs": 332
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1957,
+          "avgMs": 196,
+          "p50Ms": 166,
+          "p95Ms": 479,
+          "maxMs": 479
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 6425,
+          "avgMs": 643,
+          "p50Ms": 538,
+          "p95Ms": 955,
+          "maxMs": 955
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2447,
+          "avgMs": 245,
+          "p50Ms": 258,
+          "p95Ms": 310,
+          "maxMs": 310
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2349,
+          "avgMs": 235,
+          "p50Ms": 182,
+          "p95Ms": 494,
+          "maxMs": 494
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1432,
+          "avgMs": 143,
+          "p50Ms": 151,
+          "p95Ms": 226,
+          "maxMs": 226
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "bun-hot-1w",
+      "runtime": "bun",
+      "isolation": "hot-cache",
+      "workers": 1,
+      "exitCode": 0,
+      "wallMs": 19001,
+      "peakRssMb": 247.8,
+      "approxLaunchOverheadMs": 547,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 18454,
+        "avgMs": 185,
+        "p50Ms": 114,
+        "p95Ms": 543,
+        "maxMs": 971
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 625,
+          "avgMs": 63,
+          "p50Ms": 41,
+          "p95Ms": 183,
+          "maxMs": 183
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1019,
+          "avgMs": 102,
+          "p50Ms": 85,
+          "p95Ms": 173,
+          "maxMs": 173
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 947,
+          "avgMs": 95,
+          "p50Ms": 52,
+          "p95Ms": 379,
+          "maxMs": 379
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1770,
+          "avgMs": 177,
+          "p50Ms": 134,
+          "p95Ms": 369,
+          "maxMs": 369
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1063,
+          "avgMs": 106,
+          "p50Ms": 84,
+          "p95Ms": 183,
+          "maxMs": 183
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1058,
+          "avgMs": 106,
+          "p50Ms": 50,
+          "p95Ms": 322,
+          "maxMs": 322
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5504,
+          "avgMs": 550,
+          "p50Ms": 521,
+          "p95Ms": 971,
+          "maxMs": 971
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3721,
+          "avgMs": 372,
+          "p50Ms": 375,
+          "p95Ms": 668,
+          "maxMs": 668
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1712,
+          "avgMs": 171,
+          "p50Ms": 137,
+          "p95Ms": 420,
+          "maxMs": 420
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 1035,
+          "avgMs": 104,
+          "p50Ms": 86,
+          "p95Ms": 152,
+          "maxMs": 152
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "bun-fresh-4w",
+      "runtime": "bun",
+      "isolation": "fresh",
+      "workers": 4,
+      "exitCode": 0,
+      "wallMs": 22932,
+      "peakRssMb": 319.9,
+      "approxLaunchOverheadMs": 1212,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 86881,
+        "avgMs": 869,
+        "p50Ms": 732,
+        "p95Ms": 1877,
+        "maxMs": 3164
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5351,
+          "avgMs": 535,
+          "p50Ms": 497,
+          "p95Ms": 976,
+          "maxMs": 976
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 10137,
+          "avgMs": 1014,
+          "p50Ms": 1045,
+          "p95Ms": 1473,
+          "maxMs": 1473
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 6238,
+          "avgMs": 624,
+          "p50Ms": 497,
+          "p95Ms": 1077,
+          "maxMs": 1077
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 13752,
+          "avgMs": 1375,
+          "p50Ms": 1108,
+          "p95Ms": 3022,
+          "maxMs": 3022
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 7666,
+          "avgMs": 767,
+          "p50Ms": 547,
+          "p95Ms": 1543,
+          "maxMs": 1543
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5800,
+          "avgMs": 580,
+          "p50Ms": 454,
+          "p95Ms": 1180,
+          "maxMs": 1180
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 15496,
+          "avgMs": 1550,
+          "p50Ms": 1392,
+          "p95Ms": 3164,
+          "maxMs": 3164
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 6860,
+          "avgMs": 686,
+          "p50Ms": 513,
+          "p95Ms": 1877,
+          "maxMs": 1877
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 7766,
+          "avgMs": 777,
+          "p50Ms": 772,
+          "p95Ms": 1217,
+          "maxMs": 1217
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 7815,
+          "avgMs": 782,
+          "p50Ms": 721,
+          "p95Ms": 1232,
+          "maxMs": 1232
+        }
+      },
+      "failures": []
+    },
+    {
+      "id": "bun-hot-4w",
+      "runtime": "bun",
+      "isolation": "hot-cache",
+      "workers": 4,
+      "exitCode": 0,
+      "wallMs": 12260,
+      "peakRssMb": 142.1,
+      "approxLaunchOverheadMs": 1008,
+      "orphanChromes": 0,
+      "total": 100,
+      "passed": 100,
+      "failed": 0,
+      "flaky": 0,
+      "overall": {
+        "count": 100,
+        "sumMs": 45008,
+        "avgMs": 450,
+        "p50Ms": 398,
+        "p95Ms": 908,
+        "maxMs": 1201
+      },
+      "byProfile": {
+        "P1": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3717,
+          "avgMs": 372,
+          "p50Ms": 352,
+          "p95Ms": 598,
+          "maxMs": 598
+        },
+        "P2": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 2640,
+          "avgMs": 264,
+          "p50Ms": 252,
+          "p95Ms": 442,
+          "maxMs": 442
+        },
+        "P3": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3461,
+          "avgMs": 346,
+          "p50Ms": 322,
+          "p95Ms": 498,
+          "maxMs": 498
+        },
+        "P4": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 5059,
+          "avgMs": 506,
+          "p50Ms": 509,
+          "p95Ms": 685,
+          "maxMs": 685
+        },
+        "P5": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 4615,
+          "avgMs": 462,
+          "p50Ms": 324,
+          "p95Ms": 997,
+          "maxMs": 997
+        },
+        "P6": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3114,
+          "avgMs": 311,
+          "p50Ms": 221,
+          "p95Ms": 908,
+          "maxMs": 908
+        },
+        "P7": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 8874,
+          "avgMs": 887,
+          "p50Ms": 806,
+          "p95Ms": 1201,
+          "maxMs": 1201
+        },
+        "P8": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 6207,
+          "avgMs": 621,
+          "p50Ms": 623,
+          "p95Ms": 911,
+          "maxMs": 911
+        },
+        "P9": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 4269,
+          "avgMs": 427,
+          "p50Ms": 434,
+          "p95Ms": 700,
+          "maxMs": 700
+        },
+        "P10": {
+          "passed": 10,
+          "failed": 0,
+          "count": 10,
+          "sumMs": 3052,
+          "avgMs": 305,
+          "p50Ms": 298,
+          "p95Ms": 471,
+          "maxMs": 471
+        }
+      },
+      "failures": []
+    }
+  ],
+  "extraChecks": [
+    {
+      "name": "node: spana test --help",
+      "ok": true,
+      "detail": "exit=0"
+    },
+    {
+      "name": "node: dependencies:[setup] with --tag smoke",
+      "ok": true,
+      "detail": "exit=0, hasDirectCdp=true",
+      "errorLog": "\n[project:setup] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  auth.setup: sign in and persist storageState (570ms)\n[project:setup] 1 passed, 0 failed, 0 skipped\n\n[project:authed-app] Running 1 flow(s)...\n  ✓  authed-smoke: consumes setup storageState (180ms)\n[project:authed-app] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.6s)\n\n2/2 passed, 0 failed (2.1s)\n\n"
+    },
+    {
+      "name": "node: multi-file positional CLI args",
+      "ok": true,
+      "detail": "exit=0",
+      "errorLog": "Running 2 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/2 50%] P1-01: async SPA hydration button becomes actionable (235ms)\n  ✓ web [2/2 100%] P3-01: @media (any-hover: hover) and (hover: hover) are true in headless CDP (87ms)\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.2s)\n\n2/2 passed, 0 failed (0.3s)\n\n"
+    },
+    {
+      "name": "node: deep TMPDIR (>108B) Chromium launch",
+      "ok": true,
+      "detail": "exit=0",
+      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/1 100%] P10-01: console log/warn/error events captured accurately (162ms)\n\nweb (Direct CDP)          ✓  1/1 passed (0.2s)\n\n1/1 passed, 0 failed (0.2s)\n\n"
+    },
+    {
+      "name": "node: spana validate reads config.flowDir",
+      "ok": true,
+      "detail": "exit=0, out=✓ 10 flow(s) valid"
+    },
+    {
+      "name": "bun: spana test --help",
+      "ok": true,
+      "detail": "exit=0"
+    },
+    {
+      "name": "bun: dependencies:[setup] with --tag smoke",
+      "ok": true,
+      "detail": "exit=0, hasDirectCdp=true",
+      "errorLog": "\n[project:setup] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  auth.setup: sign in and persist storageState (280ms)\n[project:setup] 1 passed, 0 failed, 0 skipped\n\n[project:authed-app] Running 1 flow(s)...\n  ✓  authed-smoke: consumes setup storageState (139ms)\n[project:authed-app] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.3s)\n\n2/2 passed, 0 failed (1.1s)\n\n"
+    },
+    {
+      "name": "bun: multi-file positional CLI args",
+      "ok": true,
+      "detail": "exit=0",
+      "errorLog": "Running 2 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/2 50%] P1-01: async SPA hydration button becomes actionable (240ms)\n  ✓ web [2/2 100%] P3-01: @media (any-hover: hover) and (hover: hover) are true in headless CDP (104ms)\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.2s)\n\n2/2 passed, 0 failed (0.4s)\n\n"
+    },
+    {
+      "name": "bun: deep TMPDIR (>108B) Chromium launch",
+      "ok": true,
+      "detail": "exit=0",
+      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/1 100%] P10-01: console log/warn/error events captured accurately (144ms)\n\nweb (Direct CDP)          ✓  1/1 passed (0.1s)\n\n1/1 passed, 0 failed (0.1s)\n\n"
+    },
+    {
+      "name": "bun: spana validate reads config.flowDir",
+      "ok": true,
+      "detail": "exit=0, out=✓ 10 flow(s) valid"
+    },
+    {
+      "name": "orphan-check after extra checks",
+      "ok": true,
+      "detail": "orphans=0"
+    }
+  ]
+}

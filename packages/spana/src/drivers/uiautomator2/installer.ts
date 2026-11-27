@@ -8,7 +8,7 @@ import { allocatePort, releasePort } from "../../core/port-allocator.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../../runtime/daemon-manager.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const require = createRequire(import.meta.url);
+const nodeRequire = createRequire(import.meta.url);
 
 export interface UiAutomator2SetupOptions {
   /** Reuse a healthy warm UiAutomator2 server if already running, and leave it up between runs */
@@ -19,7 +19,7 @@ export interface UiAutomator2SetupOptions {
 
 function resolveOptionalPackageDir(packageName: string, subpath: string): string | null {
   try {
-    const packageJsonPath = require.resolve(`${packageName}/package.json`);
+    const packageJsonPath = nodeRequire.resolve(`${packageName}/package.json`);
     return resolve(dirname(packageJsonPath), subpath);
   } catch {
     return null;

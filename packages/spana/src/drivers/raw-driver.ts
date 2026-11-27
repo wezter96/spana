@@ -62,6 +62,13 @@ export interface BrowserRoute {
     headers?: Record<string, string>;
     postData?: string;
   }): Promise<void>;
+  /** Pass request handling to the next matching registered route handler (or continue to network if none). */
+  fallback(overrides?: {
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    postData?: string;
+  }): Promise<void>;
   abort(errorCode?: string): Promise<void>;
   fulfill(response: BrowserMockResponse): Promise<void>;
   fetch(overrides?: {
@@ -285,6 +292,7 @@ export interface BrowserEmulationOptions {
   reducedMotion?: "reduce" | "no-preference";
   locale?: string;
   timezoneId?: string;
+  userAgent?: string;
 }
 
 export interface BrowserDownloadInfo {
@@ -342,13 +350,13 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly keyDown?: (key: string) => Effect.Effect<void, DriverError>;
   readonly keyUp?: (key: string) => Effect.Effect<void, DriverError>;
   readonly mouseDown?: (
-    x: number,
-    y: number,
+    x?: number | { button?: "left" | "right" | "middle" },
+    y?: number,
     opts?: { button?: "left" | "right" | "middle" },
   ) => Effect.Effect<void, DriverError>;
   readonly mouseUp?: (
-    x: number,
-    y: number,
+    x?: number | { button?: "left" | "right" | "middle" },
+    y?: number,
     opts?: { button?: "left" | "right" | "middle" },
   ) => Effect.Effect<void, DriverError>;
   readonly mouseWheel?: (
@@ -420,7 +428,11 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly reload?: (opts?: {
     waitUntil?: "load" | "domcontentloaded" | "networkidle";
   }) => Effect.Effect<void, DriverError>;
-  readonly hoverAtCoordinate?: (x: number, y: number) => Effect.Effect<void, DriverError>;
+  readonly hoverAtCoordinate?: (
+    x: number,
+    y: number,
+    opts?: { steps?: number },
+  ) => Effect.Effect<void, DriverError>;
   readonly getUrl?: () => Effect.Effect<string, DriverError>;
   readonly getNavigationUrls?: () => string[];
   readonly waitForLoadState?: (
@@ -463,6 +475,10 @@ export interface RawDriverService<_T extends string = string, R extends string =
     matcher: BrowserRouteMatcher,
     handler: BrowserRouteHandler,
   ) => Effect.Effect<void, DriverError>;
+  readonly unroute?: (
+    matcher: BrowserRouteMatcher,
+    handler?: BrowserRouteHandler,
+  ) => Effect.Effect<void, DriverError>;
   readonly mockNetwork?: (
     matcher: BrowserRouteMatcher,
     response: BrowserMockResponse,
@@ -496,6 +512,7 @@ export interface RawDriverService<_T extends string = string, R extends string =
   readonly createIsolatedContext?: (opts?: {
     url?: string;
     locale?: string;
+    userAgent?: string;
     viewport?: { width: number; height: number };
   }) => Effect.Effect<{ driver: RawDriverService; close: () => Promise<void> }, DriverError>;
   readonly newTab?: (url?: string) => Effect.Effect<string, DriverError>;
@@ -681,6 +698,7 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     domChannel: driver.domChannel,
     resetFast: wrapOptionalMethod(logs, "resetFast", driver.resetFast),
     route: wrapOptionalMethod(logs, "route", driver.route),
+    unroute: wrapOptionalMethod(logs, "unroute", driver.unroute),
     mockNetwork: wrapOptionalMethod(logs, "mockNetwork", driver.mockNetwork),
     blockNetwork: wrapOptionalMethod(logs, "blockNetwork", driver.blockNetwork),
     clearNetworkMocks: wrapOptionalMethod(logs, "clearNetworkMocks", driver.clearNetworkMocks),

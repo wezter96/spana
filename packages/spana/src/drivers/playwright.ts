@@ -75,6 +75,8 @@ type RouteDefinition =
 interface AppliedRoute {
   matcher: BrowserRouteMatcher;
   handler: (route: Route) => Promise<void>;
+  userHandler?: BrowserRouteHandler;
+  definition: RouteDefinition;
 }
 
 export interface PlaywrightConfig {
@@ -94,6 +96,8 @@ export interface PlaywrightConfig {
   viewport?: { width: number; height: number };
   /** Default locale (e.g. "en-US", "sv-SE") for new contexts. */
   locale?: string;
+  /** Default User-Agent override for new contexts. */
+  userAgent?: string;
   /** Default timezone ID for new contexts. */
   timezoneId?: string;
   /** Default prefers-color-scheme for new contexts. */
@@ -446,6 +450,7 @@ function resolvePlaywrightLocator(
       ...(selector.name !== undefined ? { name: selector.name } : {}),
       ...(selector.exact !== undefined ? { exact: selector.exact } : {}),
       ...(selector.level !== undefined ? { level: selector.level } : {}),
+      ...(selector.pressed !== undefined ? { pressed: selector.pressed } : {}),
       ...(selector.includeHidden !== undefined ? { includeHidden: selector.includeHidden } : {}),
     });
   } else if ("label" in selector) {
@@ -968,6 +973,11 @@ export function makePlaywrightDriver(
                     handled = true;
                     await route.continue(overrides);
                   },
+                  fallback: async (overrides) => {
+                    if (handled) return;
+                    handled = true;
+                    await route.fallback(overrides);
+                  },
                   abort: async (errorCode) => {
                     if (handled) return;
                     handled = true;
@@ -1002,7 +1012,12 @@ export function makePlaywrightDriver(
               };
 
       await context.route(definition.matcher, handler);
-      appliedRoutes.push({ matcher: definition.matcher, handler });
+      appliedRoutes.push({
+        matcher: definition.matcher,
+        handler,
+        userHandler: definition.kind === "handler" ? definition.handler : undefined,
+        definition,
+      });
     };
 
     const reapplyRoutes = async () => {
@@ -1169,6 +1184,7 @@ export function makePlaywrightDriver(
         ...(storageStatePath ? { storageState: storageStatePath } : {}),
         ...(config.viewport ? { viewport: config.viewport } : {}),
         ...(config.locale ? { locale: config.locale } : {}),
+        ...(config.userAgent ? { userAgent: config.userAgent } : {}),
         ...(config.timezoneId ? { timezoneId: config.timezoneId } : {}),
         ...(config.colorScheme ? { colorScheme: config.colorScheme } : {}),
         ...(config.reducedMotion ? { reducedMotion: config.reducedMotion } : {}),
@@ -1637,8 +1653,14 @@ export function makePlaywrightDriver(
       mouseDown: (x, y, opts) =>
         Effect.tryPromise({
           try: async () => {
-            await page.mouse.move(x, y);
-            await page.mouse.down({ button: opts?.button ?? "left" });
+            const resolvedOpts =
+              typeof x === "object" && x !== null
+                ? (x as { button?: "left" | "right" | "middle" })
+                : opts;
+            if (typeof x === "number" && typeof y === "number") {
+              await page.mouse.move(x, y);
+            }
+            await page.mouse.down({ button: resolvedOpts?.button ?? "left" });
           },
           catch: (e) => new DriverError({ message: `Failed to mouseDown at (${x}, ${y}): ${e}` }),
         }),
@@ -1646,8 +1668,14 @@ export function makePlaywrightDriver(
       mouseUp: (x, y, opts) =>
         Effect.tryPromise({
           try: async () => {
-            await page.mouse.move(x, y);
-            await page.mouse.up({ button: opts?.button ?? "left" });
+            const resolvedOpts =
+              typeof x === "object" && x !== null
+                ? (x as { button?: "left" | "right" | "middle" })
+                : opts;
+            if (typeof x === "number" && typeof y === "number") {
+              await page.mouse.move(x, y);
+            }
+            await page.mouse.up({ button: resolvedOpts?.button ?? "left" });
           },
           catch: (e) => new DriverError({ message: `Failed to mouseUp at (${x}, ${y}): ${e}` }),
         }),
@@ -1870,10 +1898,10 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to reload page: ${e}` }),
         }),
 
-      hoverAtCoordinate: (x, y) =>
+      hoverAtCoordinate: (x, y, opts) =>
         Effect.tryPromise({
           try: async () => {
-            await page.mouse.move(x, y);
+            await page.mouse.move(x, y, opts?.steps ? { steps: opts.steps } : undefined);
           },
           catch: (e) => new DriverError({ message: `Failed to hover at (${x}, ${y}): ${e}` }),
         }),
@@ -2141,6 +2169,39 @@ export function makePlaywrightDriver(
           catch: (e) => new DriverError({ message: `Failed to register route: ${e}` }),
         }),
 
+      unroute: (matcher, handler) =>
+        Effect.tryPromise({
+          try: async () => {
+            const matchesSame = (a: BrowserRouteMatcher, b: BrowserRouteMatcher): boolean => {
+              if (a === b) return true;
+              if (a instanceof RegExp && b instanceof RegExp) {
+                return a.source === b.source && a.flags === b.flags;
+              }
+              return false;
+            };
+            const remainingApplied: AppliedRoute[] = [];
+            const removedDefs = new Set<RouteDefinition>();
+            for (const appliedRoute of appliedRoutes) {
+              const sameMatcher = matchesSame(appliedRoute.matcher, matcher);
+              const sameHandler = handler === undefined || appliedRoute.userHandler === handler;
+              if (sameMatcher && sameHandler) {
+                await context.unroute(appliedRoute.matcher, appliedRoute.handler);
+                removedDefs.add(appliedRoute.definition);
+              } else {
+                remainingApplied.push(appliedRoute);
+              }
+            }
+            appliedRoutes = remainingApplied;
+            for (let i = routeDefinitions.length - 1; i >= 0; i--) {
+              if (removedDefs.has(routeDefinitions[i]!)) {
+                routeDefinitions.splice(i, 1);
+              }
+            }
+            debugLog("unroute", typeof matcher === "string" ? matcher : matcher.toString());
+          },
+          catch: (e) => new DriverError({ message: `Failed to unroute: ${e}` }),
+        }),
+
       mockNetwork: (matcher, response) =>
         Effect.tryPromise({
           try: async () => {
@@ -2362,6 +2423,7 @@ export function makePlaywrightDriver(
                 wsEndpoint: undefined,
                 ...(ctxOpts?.viewport ? { viewport: ctxOpts.viewport } : {}),
                 ...(ctxOpts?.locale ? { locale: ctxOpts.locale } : {}),
+                ...(ctxOpts?.userAgent ? { userAgent: ctxOpts.userAgent } : {}),
               }),
             );
             if (ctxOpts?.url) {
@@ -2444,7 +2506,9 @@ export function makePlaywrightDriver(
             }
             if (
               browserName === "chromium" &&
-              (emulationOpts.locale !== undefined || emulationOpts.timezoneId !== undefined)
+              (emulationOpts.locale !== undefined ||
+                emulationOpts.timezoneId !== undefined ||
+                emulationOpts.userAgent !== undefined)
             ) {
               const session = await ensureCdpSession();
               if (emulationOpts.locale !== undefined) {
@@ -2455,6 +2519,11 @@ export function makePlaywrightDriver(
               if (emulationOpts.timezoneId !== undefined) {
                 await session
                   .send("Emulation.setTimezoneOverride", { timezoneId: emulationOpts.timezoneId })
+                  .catch(() => {});
+              }
+              if (emulationOpts.userAgent !== undefined) {
+                await session
+                  .send("Emulation.setUserAgentOverride", { userAgent: emulationOpts.userAgent })
                   .catch(() => {});
               }
             }

@@ -55,6 +55,7 @@ import {
   type ScrollUntilVisibleOptions,
 } from "../smart/coordinator.js";
 import { waitForElement, type WaitOptions } from "../smart/auto-wait.js";
+import { resolveElementAcrossChannels } from "../smart/channel-resolver.js";
 import type { StepRecorder } from "../core/step-recorder.js";
 import { buildStorybookUrl, type StorybookOpenOptions } from "./storybook.js";
 import {
@@ -120,8 +121,10 @@ export interface BrowserKeyboard {
 }
 
 export interface BrowserMouse {
-  move(x: number, y: number): Promise<void>;
+  move(x: number, y: number, opts?: { steps?: number }): Promise<void>;
+  down(opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
   down(x: number, y: number, opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
+  up(opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
   up(x: number, y: number, opts?: { button?: "left" | "right" | "middle" }): Promise<void>;
   click(x: number, y: number): Promise<void>;
   /** Dispatch a wheel/scroll event (ideal for zooming/panning WebGL/WASM canvases). */
@@ -358,6 +361,11 @@ export interface PromiseApp<T extends string = string, R extends string = string
   /** Expose a Node/Bun callback function onto `window[name]` in the browser page. */
   exposeFunction(name: string, fn: (...args: any[]) => any): Promise<void>;
   takeScreenshot(name?: string): Promise<Uint8Array>;
+  /** Return the visible bounding box `{ x, y, width, height }` of an element (or `null` if not found). */
+  boundingBox(
+    selector: ExtendedSelector<T>,
+    opts?: WaitOptions,
+  ): Promise<{ x: number; y: number; width: number; height: number } | null>;
   evaluate<Result = unknown>(fn: () => Result | Promise<Result>): Promise<Awaited<Result>>;
   evaluate<Arg, Result = unknown>(
     fn: (arg: Arg) => Result | Promise<Result>,
@@ -367,8 +375,10 @@ export interface PromiseApp<T extends string = string, R extends string = string
     fn: ((...args: any[]) => Result | Promise<Result>) | string,
     ...args: any[]
   ): Promise<Awaited<Result>>;
-  /** Register a dynamic request interceptor callback (`route.continue`, `route.fulfill`, `route.abort`, `route.fetch`). */
+  /** Register a dynamic request interceptor callback (`route.continue`, `route.fallback`, `route.fulfill`, `route.abort`, `route.fetch`). */
   route(matcher: BrowserRouteMatcher, handler: BrowserRouteHandler): Promise<void>;
+  /** Remove a previously registered route/mock/block matching `matcher` (and optional `handler`). */
+  unroute(matcher: BrowserRouteMatcher, handler?: BrowserRouteHandler): Promise<void>;
   mockNetwork(matcher: BrowserRouteMatcher, response: BrowserMockResponse): Promise<void>;
   setGeolocation(point: Geolocation): Promise<void>;
   setSystemTime(time: Date | number | string): Promise<void>;
@@ -408,6 +418,7 @@ export interface PromiseApp<T extends string = string, R extends string = string
   newContext(opts?: {
     url?: string;
     locale?: string;
+    userAgent?: string;
     viewport?: { width: number; height: number };
   }): Promise<IsolatedBrowserContext<T, R>>;
   /** Scope all subsequent selectors/actions/assertions inside a matching iframe (`frameLocator` equivalent). */
@@ -1279,18 +1290,26 @@ export function createPromiseApp<T extends string = string, R extends string = s
   };
 
   const mouseClient: BrowserMouse = {
-    move: (x, y) =>
+    move: (x, y, opts) =>
       runStep(`mouse.move(${x},${y})`, () =>
-        run(optionalMethod("mouse.move", driver.hoverAtCoordinate)(x, y)),
+        run(optionalMethod("mouse.move", driver.hoverAtCoordinate)(x, y, opts)),
       ),
-    down: (x, y, opts) =>
-      runStep(`mouse.down(${x},${y})`, () =>
-        run(optionalMethod("mouse.down", driver.mouseDown)(x, y, opts)),
-      ),
-    up: (x, y, opts) =>
-      runStep(`mouse.up(${x},${y})`, () =>
-        run(optionalMethod("mouse.up", driver.mouseUp)(x, y, opts)),
-      ),
+    down: ((
+      x?: number | { button?: "left" | "right" | "middle" },
+      y?: number,
+      opts?: { button?: "left" | "right" | "middle" },
+    ) =>
+      runStep(typeof x === "number" ? `mouse.down(${x},${y})` : "mouse.down()", () =>
+        run(optionalMethod("mouse.down", driver.mouseDown)(x as any, y as any, opts)),
+      )) as BrowserMouse["down"],
+    up: ((
+      x?: number | { button?: "left" | "right" | "middle" },
+      y?: number,
+      opts?: { button?: "left" | "right" | "middle" },
+    ) =>
+      runStep(typeof x === "number" ? `mouse.up(${x},${y})` : "mouse.up()", () =>
+        run(optionalMethod("mouse.up", driver.mouseUp)(x as any, y as any, opts)),
+      )) as BrowserMouse["up"],
     click: (x, y) => runStep(`mouse.click(${x},${y})`, () => run(coord.tapXY(x, y))),
     wheel: (deltaX, deltaY, opts) =>
       runStep(`mouse.wheel(${deltaX},${deltaY})`, async () => {
@@ -1672,6 +1691,29 @@ export function createPromiseApp<T extends string = string, R extends string = s
         () => run(driver.takeScreenshot()),
         { name },
       ),
+    boundingBox: (selector, opts) =>
+      runStep(
+        "boundingBox",
+        async () => {
+          try {
+            const el = await run(
+              coord.assertVisible(selector, {
+                timeout: opts?.timeout ?? 5_000,
+                platform: config.platform,
+              }),
+            );
+            return {
+              x: el.bounds.x,
+              y: el.bounds.y,
+              width: el.bounds.width,
+              height: el.bounds.height,
+            };
+          } catch {
+            return null;
+          }
+        },
+        { selector },
+      ),
     evaluate: ((fn: ((...args: any[]) => any) | string, ...args: any[]) =>
       runStep(formatEvaluateCommand(fn), () =>
         run(driver.evaluate(fn as any, ...args)),
@@ -1681,6 +1723,15 @@ export function createPromiseApp<T extends string = string, R extends string = s
         "route",
         () =>
           driver.route ? run(driver.route(matcher, handler)) : unsupportedNetworkFeature("route"),
+        { selector: { matcher: describeMatcher(matcher) } },
+      ),
+    unroute: (matcher, handler) =>
+      runStep(
+        "unroute",
+        () =>
+          driver.unroute
+            ? run(driver.unroute(matcher, handler))
+            : unsupportedNetworkFeature("unroute"),
         { selector: { matcher: describeMatcher(matcher) } },
       ),
     mockNetwork: (matcher, response) =>
@@ -2014,15 +2065,28 @@ export function createPromiseApp<T extends string = string, R extends string = s
         selector,
       }),
     isVisible: (selector, opts) => {
-      const timeout = opts?.timeout ?? 1000;
+      const timeout = opts?.timeout ?? 0;
       return run(
         Effect.gen(function* () {
+          if (timeout <= 0) {
+            const resolved = yield* Effect.result(
+              resolveElementAcrossChannels(driver, selector, config.parse, undefined, {
+                forAction: false,
+                platform: config.platform,
+              }),
+            );
+            return resolved._tag === "Success" && resolved.success !== undefined;
+          }
           const result = yield* Effect.result(
             waitForElement(
               driver,
               selector,
               config.parse,
-              { timeout, pollInterval: 100 },
+              {
+                timeout,
+                pollInterval: Math.min(100, timeout),
+                platform: config.platform,
+              },
               undefined,
             ),
           );

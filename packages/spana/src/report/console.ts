@@ -5,6 +5,8 @@ import type { FlowResult, Reporter, ScenarioStepResult } from "./types.js";
 export interface ConsoleReporterOptions {
   /** Only show failures and the final summary. */
   quiet?: boolean;
+  /** Resolved web browser engine label for accurate platform header reporting. */
+  webEngine?: "playwright" | "cdp" | "lightpanda";
 }
 
 function printResultAttachments(result: FlowResult): void {
@@ -52,6 +54,18 @@ const driverNames: Record<Platform, string> = {
   electrobun: "Electrobun",
 };
 
+function getDriverLabel(
+  platform: Platform,
+  webEngine?: "playwright" | "cdp" | "lightpanda",
+): string {
+  if (platform === "web") {
+    if (webEngine === "cdp") return "Direct CDP";
+    if (webEngine === "lightpanda") return "Lightpanda";
+    return "Playwright";
+  }
+  return driverNames[platform];
+}
+
 function printA11yViolations(result: FlowResult): void {
   for (const step of result.steps ?? []) {
     if (step.status === "failed" && step.command.includes("AccessibilityAudit") && step.error) {
@@ -65,6 +79,7 @@ function printA11yViolations(result: FlowResult): void {
 
 export function createConsoleReporter(options?: ConsoleReporterOptions): Reporter {
   const quiet = options?.quiet ?? false;
+  const webEngine = options?.webEngine;
   let completed = 0;
   let total = 0;
   let currentPlatform: Platform | undefined;
@@ -90,7 +105,7 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       // Print platform header when switching to a new platform
       if (platform !== currentPlatform) {
         currentPlatform = platform;
-        console.log(`\n  ${platform} (${driverNames[platform]})`);
+        console.log(`\n  ${platform} (${getDriverLabel(platform, webEngine)})`);
       }
 
       if (process.stderr.isTTY) {
@@ -158,7 +173,7 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
             r.flaky ? "~" : r.status === "passed" ? "✓" : r.status === "skipped" ? "–" : "✗",
           )
           .join("");
-        const label = `${platform} (${driverNames[platform]})`;
+        const label = `${platform} (${getDriverLabel(platform, webEngine)})`;
         const duration = Math.max(...results.map((r) => r.durationMs));
         console.log(
           `${label.padEnd(25)} ${symbols}  ${passed}/${totalCount} passed (${(duration / 1000).toFixed(1)}s)`,

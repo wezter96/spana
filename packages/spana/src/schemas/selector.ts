@@ -48,6 +48,7 @@ const _RoleSelectorSchema = Schema.Struct({
   name: Schema.optional(Schema.String),
   exact: Schema.optional(Schema.Boolean),
   level: Schema.optional(Schema.Number),
+  pressed: Schema.optional(Schema.Boolean),
   includeHidden: Schema.optional(Schema.Boolean),
 });
 const _CssSelectorSchema = Schema.Struct({
@@ -69,7 +70,7 @@ export const SelectorSchema = Schema.Union([
 
 export type ObjectSelector<T extends string = string> =
   | ({ testID: T } & SelectorModifiers<T>)
-  | ({ text: string; systemUI?: boolean; exact?: boolean } & SelectorModifiers<T>)
+  | ({ text: string | RegExp; systemUI?: boolean; exact?: boolean } & SelectorModifiers<T>)
   | ({ accessibilityLabel: string; systemUI?: boolean } & SelectorModifiers<T>)
   | ({ label: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
   | ({ placeholder: string | RegExp; exact?: boolean } & SelectorModifiers<T>)
@@ -80,6 +81,7 @@ export type ObjectSelector<T extends string = string> =
       name?: string | RegExp;
       exact?: boolean;
       level?: number;
+      pressed?: boolean;
       includeHidden?: boolean;
     } & SelectorModifiers<T>)
   | ({ css: string } & SelectorModifiers<T>)
@@ -132,20 +134,26 @@ function toObjectSelector<T extends string = string>(sel: Selector<T>): ObjectSe
   return sel;
 }
 
-/** Build an ARIA role selector (`getByRole(role, { name, exact, level, includeHidden })` or shorthand `byRole(role, name, opts)`). */
+/** Build an ARIA role selector (`getByRole(role, { name, exact, level, pressed, includeHidden })` or shorthand `byRole(role, name, opts)`). */
 export function byRole<T extends string = string>(
   role: string,
   opts?: {
     name?: string | RegExp;
     exact?: boolean;
     level?: number;
+    pressed?: boolean;
     includeHidden?: boolean;
   } & SelectorModifiers<T>,
 ): ObjectSelector<T>;
 export function byRole<T extends string = string>(
   role: string,
   name: string | RegExp,
-  opts?: { exact?: boolean; level?: number; includeHidden?: boolean } & SelectorModifiers<T>,
+  opts?: {
+    exact?: boolean;
+    level?: number;
+    pressed?: boolean;
+    includeHidden?: boolean;
+  } & SelectorModifiers<T>,
 ): ObjectSelector<T>;
 export function byRole<T extends string = string>(
   role: string,
@@ -156,9 +164,15 @@ export function byRole<T extends string = string>(
         name?: string | RegExp;
         exact?: boolean;
         level?: number;
+        pressed?: boolean;
         includeHidden?: boolean;
       } & SelectorModifiers<T>),
-  opts?: { exact?: boolean; level?: number; includeHidden?: boolean } & SelectorModifiers<T>,
+  opts?: {
+    exact?: boolean;
+    level?: number;
+    pressed?: boolean;
+    includeHidden?: boolean;
+  } & SelectorModifiers<T>,
 ): ObjectSelector<T> {
   if (typeof nameOrOpts === "string" || nameOrOpts instanceof RegExp) {
     return { role, name: nameOrOpts, ...opts };

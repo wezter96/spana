@@ -29,15 +29,23 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
   if ("testID" in selector) {
     baseMatch = element.id === selector.testID;
   } else if ("text" in selector) {
-    baseMatch = selector.exact
-      ? element.text === selector.text
-      : (element.text?.toLowerCase().includes(selector.text.toLowerCase()) ?? false);
+    if (selector.text instanceof RegExp) {
+      baseMatch = selector.text.test(element.text ?? "");
+    } else {
+      baseMatch = selector.exact
+        ? element.text === selector.text
+        : (element.text?.toLowerCase().includes(selector.text.toLowerCase()) ?? false);
+    }
   } else if ("accessibilityLabel" in selector) {
     baseMatch = element.accessibilityLabel === selector.accessibilityLabel;
   } else if ("role" in selector) {
     const elRole = (element.attributes?.role ?? element.elementType ?? "").toLowerCase();
     const roleMatch = elRole === selector.role.toLowerCase();
     if (!roleMatch) return false;
+    if (selector.pressed !== undefined) {
+      const ariaPressed = (element.attributes?.["aria-pressed"] ?? "").trim().toLowerCase();
+      if (selector.pressed ? ariaPressed !== "true" : ariaPressed !== "false") return false;
+    }
     if (selector.name === undefined) {
       baseMatch = true;
     } else {
@@ -208,7 +216,8 @@ function formatSimpleSelector(sel: Selector): string {
   if (typeof sel === "string") return `"${sel}"`;
   let base: string;
   if ("testID" in sel) base = `testID: "${sel.testID}"`;
-  else if ("text" in sel) base = `text: "${sel.text}"`;
+  else if ("text" in sel)
+    base = `text: ${sel.text instanceof RegExp ? sel.text.toString() : JSON.stringify(sel.text)}`;
   else if ("accessibilityLabel" in sel) base = `accessibilityLabel: "${sel.accessibilityLabel}"`;
   else if ("role" in sel) {
     const parts = [`role: "${sel.role}"`];
