@@ -64,11 +64,12 @@ import {
   type PromiseExpectation,
   type PromiseExpectFn,
 } from "./expect.js";
-import type {
-  DomClearStorageOptions,
-  DomIdleOptions,
-  DomStorageEntries,
-  SelectOptionInput,
+import {
+  buildDomFrameEvaluateScript,
+  type DomClearStorageOptions,
+  type DomIdleOptions,
+  type DomStorageEntries,
+  type SelectOptionInput,
 } from "../channels/dom-channel.js";
 
 export type {
@@ -231,6 +232,16 @@ export interface FrameScope<T extends string = string> {
   isEnabled(selector: Selector<T>, opts?: WaitOptions): Promise<boolean>;
   /** Count visible elements matching `selector` inside this frame (returns `0` when none exist). */
   count(selector: Selector<T>, opts?: WaitOptions): Promise<number>;
+  /**
+   * Evaluate a function or expression inside this iframe.
+   * For same-origin iframes (including `<iframe sandbox="allow-same-origin">` without `allow-scripts`),
+   * invokes `fn(iframe.contentDocument, iframe.contentWindow, ...args)` in the parent realm so
+   * Chromium's sandbox never blocks execution.
+   */
+  evaluate<R = unknown>(
+    fn: string | ((doc: any, win: any, ...args: any[]) => R),
+    ...args: unknown[]
+  ): Promise<R>;
   expect(selector: Selector<T>): PromiseExpectation<T>;
 }
 
@@ -1964,6 +1975,30 @@ export function createPromiseApp<T extends string = string, R extends string = s
         isVisible: (sel, opts) => appObj.isVisible(scoped(sel), opts),
         isEnabled: (sel, opts) => appObj.isEnabled(scoped(sel), opts),
         count: (sel, opts) => appObj.count(scoped(sel), opts),
+        evaluate: <Res = unknown>(
+          fn: string | ((doc: any, win: any, ...args: any[]) => Res),
+          ...args: unknown[]
+        ): Promise<Res> =>
+          runStep(
+            "frame.evaluate",
+            async () => {
+              const ch = driver.domChannel;
+              if (ch?.isConnected() && ch.evaluateInFrame) {
+                return ch.evaluateInFrame<Res>(frameSelector as Selector, fn, ...args);
+              }
+              const expr = buildDomFrameEvaluateScript(frameSelector as Selector, fn, args);
+              const res = await appObj.evaluate<{ __spanaFrameEvalOk?: boolean; value?: Res }>(
+                expr,
+              );
+              if (res?.__spanaFrameEvalOk) {
+                return res.value as Res;
+              }
+              throw new DriverError({
+                message: `Iframe matching ${JSON.stringify(frameSelector)} not found`,
+              });
+            },
+            { selector: frameSelector },
+          ),
         expect: (sel) => appExpect(scoped(sel)),
       };
     },

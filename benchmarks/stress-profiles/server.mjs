@@ -925,12 +925,75 @@ const primaryServer = http.createServer((req, res) => {
     req.on("close", () => clearTimeout(t));
     return;
   }
+  if (path === "/api/concurrency/reset") {
+    concurrencyState.active = 0;
+    concurrencyState.peak = 0;
+    concurrencyState.totalEntered = 0;
+    return sendJson(res, concurrencyState);
+  }
+  if (path === "/api/concurrency/enter") {
+    concurrencyState.active += 1;
+    concurrencyState.totalEntered += 1;
+    if (concurrencyState.active > concurrencyState.peak) {
+      concurrencyState.peak = concurrencyState.active;
+    }
+    return sendJson(res, concurrencyState);
+  }
+  if (path === "/api/concurrency/leave") {
+    concurrencyState.active = Math.max(0, concurrencyState.active - 1);
+    return sendJson(res, concurrencyState);
+  }
+  if (path === "/api/concurrency/stats") {
+    return sendJson(res, concurrencyState);
+  }
+  if (path === "/wave2") {
+    const srvUa = String(req.headers["user-agent"] || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;");
+    return sendHtml(
+      res,
+      pageShell(
+        "Wave 2 Regressions",
+        `<style>
+          .w2-spacer { height: 2200px; background: #f8fafc; }
+          .w2-hidden { display: none; }
+        </style>
+        <div id="w2-ua" data-testid="w2-ua">${srvUa}</div>
+        <button id="w2-async-en" data-testid="w2-async-en" disabled>Async Enable</button>
+        <button id="w2-async-dis" data-testid="w2-async-dis">Async Disable</button>
+        <fieldset disabled><button id="w2-fs-btn" data-testid="w2-fs-btn">FS Disabled</button></fieldset>
+        <label>Upload <input id="w2-hidden-file" data-testid="w2-hidden-file" type="file" disabled class="w2-hidden" /></label>
+        <canvas id="w2-canvas" width="32" height="32"></canvas>
+        <div id="w2-nbsp" data-testid="w2-nbsp">4\u00a0200\u00a0000\u00a0kr</div>
+        <div id="w2-nnbsp" data-testid="w2-nnbsp">9\u202f500\u202fkr</div>
+        <iframe id="w2-sb-noscript" data-testid="w2-sb-noscript" sandbox="allow-same-origin" width="300" height="120"
+          srcdoc="<!doctype html><html><body><h3 data-testid='w2-sb-h'>Sandboxed No-Scripts</h3><input id='w2-sb-input' data-testid='w2-sb-input' value='' /><div id='w2-sb-badge' data-testid='w2-sb-badge'>visible</div></body></html>"></iframe>
+        <div>
+          <label for="w2_lbl_in"><span>Lägg till en bild</span>: <span>beskriv bilden</span></label>
+          <input id="w2_lbl_in" data-testid="w2-lbl-in" type="text" value="" />
+        </div>
+        <input id="w2-sv-in" data-testid="w2-sv-in" type="text" value="" />
+        <div class="w2-spacer">Spacer</div>
+        <button id="w2-off-fold-btn" data-testid="w2-off-fold-btn" aria-disabled="true"
+          onclick="document.getElementById('w2-off-fold-out').textContent='forced-ok:' + Math.round(window.scrollY)">Off-Fold Force</button>
+        <div id="w2-off-fold-out" data-testid="w2-off-fold-out">idle</div>
+        <script>
+          setTimeout(() => {
+            document.getElementById('w2-async-en').disabled = false;
+            document.getElementById('w2-async-dis').disabled = true;
+          }, 80);
+        </script>`,
+      ),
+    );
+  }
 
   return sendHtml(
     res,
     pageShell("Spana Stress App", `<h1 data-testid="home-title">Stress Test Server Ready</h1>`),
   );
 });
+
+const concurrencyState = { active: 0, peak: 0, totalEntered: 0 };
 
 const crossOriginServer = http.createServer((req, res) => {
   const u = new URL(req.url || "/", CROSS_ORIGIN);

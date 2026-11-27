@@ -333,6 +333,10 @@ export async function buildWebRuntime(
         virtualAuthenticator: webExecution?.virtualAuthenticator,
         storageState: webExecution?.storageState,
         emulation: cdpEmulation,
+        sanitizeHeadlessUserAgent: !(
+          webExecution?.headless === false ||
+          webExecution?.args?.some((a) => /^--user-agent(?:=|$)/i.test(a))
+        ),
         readyExpression: webExecution?.readyExpression,
       }),
     );
@@ -515,6 +519,10 @@ export async function buildWebRuntimePool(
             virtualAuthenticator: webExecution?.virtualAuthenticator,
             storageState: webExecution?.storageState,
             emulation: poolEmulation,
+            sanitizeHeadlessUserAgent: !(
+              webExecution?.headless === false ||
+              webExecution?.args?.some((a) => /^--user-agent(?:=|$)/i.test(a))
+            ),
             readyExpression: webExecution?.readyExpression,
           }),
         );

@@ -144,7 +144,8 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
           try: () =>
             initialDomChannel.waitForSelector!(selector as Selector, {
               timeoutMs: remaining,
-              forAction: opts?.force ? false : forAction,
+              forAction,
+              ...(opts?.force ? { force: true } : {}),
               checkHitTest: opts?.force ? false : undefined,
               failFastWhenIdle: opts?.failFastWhenIdle,
               idleQuietMs: opts?.idleQuietMs,

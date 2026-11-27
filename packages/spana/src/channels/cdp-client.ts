@@ -1,6 +1,7 @@
 import type { Selector } from "../schemas/selector.js";
 import {
   buildDomFillScript,
+  buildDomFrameEvaluateScript,
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
@@ -9,6 +10,7 @@ import {
   buildDomWaitForSelectorScript,
   buildEvaluateExpression,
   buildInjectedCallScript,
+  serializeEvaluateArg,
   SPANA_INJECTED_RUNTIME_SCRIPT,
   SPANA_RUNTIME_MISSING_SENTINEL,
   type DomChannel,
@@ -1107,6 +1109,8 @@ export class CdpDomChannel implements DomChannel {
             if (!isFinite(sy) || sy <= 0) sy = 1;
             var accessible = false;
             var isSrcdoc = el.hasAttribute("srcdoc");
+            var sandboxAttr = el.getAttribute("sandbox");
+            var sandboxNoScripts = sandboxAttr !== null && !/\\ballow-scripts\\b/i.test(sandboxAttr);
             try {
               var srcAttr = el.getAttribute("src") || "";
               var crossOriginSrc = false;
@@ -1126,6 +1130,7 @@ export class CdpDomChannel implements DomChannel {
               scaleX: sx,
               scaleY: sy,
               sameOriginAccessible: accessible,
+              sandboxNoScripts: sandboxNoScripts,
               isSrcdoc: isSrcdoc
             };
           });
@@ -1264,7 +1269,14 @@ export class CdpDomChannel implements DomChannel {
 
     const out: Array<{ frameId: string; url: string; offset: CdpFrameTransform }> = [];
     const topInfos = await this.inspectMatchingIframes(frameSel);
+    // Same-origin accessible iframes (including `<iframe sandbox="allow-same-origin">` without
+    // `allow-scripts`) are traversed directly in the parent realm via `iframe.contentDocument` —
+    // never route them through `Page.createIsolatedWorld`, which Chromium blocks without `allow-scripts`.
+    if (topInfos.length > 0 && topInfos.every((info) => info.sameOriginAccessible)) {
+      return [];
+    }
     for (const info of topInfos) {
+      if (info.sameOriginAccessible) continue;
       const match = matchInfoToFrame(info, flatFrames);
       if (match && !out.some((x) => x.frameId === match.id)) {
         out.push({
@@ -1276,7 +1288,7 @@ export class CdpDomChannel implements DomChannel {
     }
 
     // Support nested iframes: if not matched directly in the top document, walk child frames recursively (2.18c)
-    if (out.length === 0) {
+    if (out.length === 0 && topInfos.length === 0) {
       const topFrameId = treeRes.frameTree.frame?.id;
       const visited = new Set<string>();
       const searchChildrenOf = async (
@@ -1496,6 +1508,66 @@ export class CdpDomChannel implements DomChannel {
     return all;
   }
 
+  async evaluateInFrame<T = unknown>(
+    frameSelector: Selector,
+    script: string | ((doc: any, win: any, ...args: any[]) => T),
+    ...args: any[]
+  ): Promise<T> {
+    // 1. Same-origin accessible iframes (including `<iframe sandbox="allow-same-origin">`
+    // without `allow-scripts`): evaluate in the parent realm bound to `(contentDocument, contentWindow)`.
+    const inspected = await this.inspectMatchingIframes(frameSelector);
+    if (inspected.some((i) => i.sameOriginAccessible)) {
+      const parentExpr = buildDomFrameEvaluateScript(frameSelector, script, args);
+      const res = await this.evaluateOnSession<{ __spanaFrameEvalOk?: boolean; value?: T }>(
+        undefined,
+        parentExpr,
+      );
+      if (res?.__spanaFrameEvalOk) {
+        return res.value as T;
+      }
+    }
+
+    const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
+    const frameExpr =
+      typeof script === "function"
+        ? `(${script.toString()})(document, window${serializedArgs ? `, ${serializedArgs}` : ""})`
+        : buildEvaluateExpression(script, args);
+
+    // 2. In-process cross-origin / opaque-sandboxed child frames (with `allow-scripts`)
+    const syntheticSel: Selector = { css: "*", frame: frameSelector };
+    const inProcessFrames = await this.resolveInProcessChildFrames(syntheticSel);
+    if (inProcessFrames.length > 0) {
+      const ctxId = await this.getOrCreateFrameWorld(inProcessFrames[0]!.frameId);
+      return this.evaluateOnSessionWithTimeout<T>(
+        undefined,
+        frameExpr,
+        this.timeoutMs,
+        [],
+        ctxId,
+        1,
+      );
+    }
+
+    // 3. OOPIF child sessions
+    if (this.childSessions.size > 0) {
+      const candidates = await this.resolveMatchingChildSessions(syntheticSel);
+      if (candidates.length > 0) {
+        return this.evaluateOnSession<T>(candidates[0]!.sessionId, frameExpr);
+      }
+    }
+
+    // 4. Final parent-realm attempt (e.g. iframe mounted between inspect and evaluate)
+    const retryExpr = buildDomFrameEvaluateScript(frameSelector, script, args);
+    const retryRes = await this.evaluateOnSession<{ __spanaFrameEvalOk?: boolean; value?: T }>(
+      undefined,
+      retryExpr,
+    );
+    if (retryRes?.__spanaFrameEvalOk) {
+      return retryRes.value as T;
+    }
+    throw new Error(`Iframe matching ${JSON.stringify(frameSelector)} not found`);
+  }
+
   async query(selector: Selector): Promise<DomElementMatch[]> {
     const fallback = () => buildDomQueryScript(selector);
     const result = await this.invokeDom<DomElementMatch[]>(
@@ -1602,61 +1674,70 @@ export class CdpDomChannel implements DomChannel {
     ];
 
     const raceState = { done: false };
-    // If an explicit frame hasn't navigated/mounted into Page.getFrameTree or OOPIF childSessions yet, poll briefly until it appears
-    if (explicitFrame && candidates.length === 0 && inProcessFrames.length === 0) {
+    // Poll continuously for newly mounted or process-swapped (about:blank -> OOPIF) child frames
+    // without letting a transient in-process frame block discovery of an OOPIF childSession.
+    if (explicitFrame) {
+      const triedSessionIds = new Set(candidates.map((c) => c.sessionId));
+      const triedFrameIds = new Set(inProcessFrames.map((f) => f.frameId));
       const deadline = Date.now() + (opts?.timeoutMs ?? 5000);
       racers.push(
-        (async () => {
-          while (!raceState.done && Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, 50));
-            if (raceState.done) return [];
-            const appearedOopif =
-              this.childSessions.size > 0 ? await this.resolveMatchingChildSessions(selector) : [];
-            if (appearedOopif.length > 0) {
+        new Promise<DomElementMatch[]>((resolvePoller) => {
+          const pollerState = { done: false };
+          const finishPoller = (hits: DomElementMatch[]) => {
+            if (pollerState.done) return;
+            pollerState.done = true;
+            resolvePoller(hits);
+          };
+          void (async () => {
+            while (!raceState.done && !pollerState.done && Date.now() < deadline) {
+              await new Promise((r) => setTimeout(r, 50));
+              if (raceState.done || pollerState.done) break;
               const remaining = Math.max(200, deadline - Date.now());
               const remOpts = { ...opts, timeoutMs: remaining };
-              const subHits = await Promise.all(
-                appearedOopif.map(async (child) => {
-                  const res = await this.invokeDom<DomElementMatch[]>(
-                    child.sessionId,
-                    "waitForSelector",
-                    [innerSel, remOpts],
-                    () => buildDomWaitForSelectorScript(innerSel, remOpts),
-                    remaining + 2000,
-                  ).catch(() => []);
-                  return Array.isArray(res) && res.length > 0
-                    ? this.applyChildOffset(res, child)
-                    : [];
-                }),
-              );
-              const firstHit = subHits.find((h) => h.length > 0);
-              if (firstHit) return firstHit;
+              const appearedOopif =
+                this.childSessions.size > 0
+                  ? await this.resolveMatchingChildSessions(selector)
+                  : [];
+              for (const child of appearedOopif) {
+                if (triedSessionIds.has(child.sessionId)) continue;
+                triedSessionIds.add(child.sessionId);
+                void this.invokeDom<DomElementMatch[]>(
+                  child.sessionId,
+                  "waitForSelector",
+                  [innerSel, remOpts],
+                  () => buildDomWaitForSelectorScript(innerSel, remOpts),
+                  remaining + 2000,
+                )
+                  .then(async (res) => {
+                    if (Array.isArray(res) && res.length > 0) {
+                      finishPoller(await this.applyChildOffset(res, child));
+                    }
+                  })
+                  .catch(() => {});
+              }
+              if (raceState.done || pollerState.done) break;
+              const appearedFrames = await this.resolveInProcessChildFrames(selector);
+              for (const frame of appearedFrames) {
+                if (triedFrameIds.has(frame.frameId)) continue;
+                triedFrameIds.add(frame.frameId);
+                void this.invokeInProcessFrame<DomElementMatch[]>(
+                  frame.frameId,
+                  "waitForSelector",
+                  [innerSel, remOpts],
+                  () => buildDomWaitForSelectorScript(innerSel, remOpts),
+                  remaining + 2000,
+                )
+                  .then((res) => {
+                    if (Array.isArray(res) && res.length > 0) {
+                      finishPoller(this.applyFrameOffset(res, frame.offset));
+                    }
+                  })
+                  .catch(() => {});
+              }
             }
-            if (raceState.done) return [];
-            const appeared = await this.resolveInProcessChildFrames(selector);
-            if (appeared.length > 0) {
-              const remaining = Math.max(200, deadline - Date.now());
-              const remOpts = { ...opts, timeoutMs: remaining };
-              const subHits = await Promise.all(
-                appeared.map(async (frame) => {
-                  const res = await this.invokeInProcessFrame<DomElementMatch[]>(
-                    frame.frameId,
-                    "waitForSelector",
-                    [innerSel, remOpts],
-                    () => buildDomWaitForSelectorScript(innerSel, remOpts),
-                    remaining + 2000,
-                  ).catch(() => []);
-                  return Array.isArray(res) && res.length > 0
-                    ? this.applyFrameOffset(res, frame.offset)
-                    : [];
-                }),
-              );
-              const firstHit = subHits.find((h) => h.length > 0);
-              if (firstHit) return firstHit;
-            }
-          }
-          return [];
-        })(),
+            finishPoller([]);
+          })();
+        }),
       );
     }
 

@@ -35,6 +35,7 @@ import type {
 import { CdpDomChannel, type WebSocketFactory } from "../channels/cdp-client.js";
 import {
   buildDomFindElementScript,
+  serializeEvaluateArg,
   SPANA_INJECTED_RUNTIME_SCRIPT,
 } from "../channels/dom-channel.js";
 import { applyExtensionChromeArgs, resolveBrowserExtensions } from "./browser-extensions.js";
@@ -519,14 +520,14 @@ export async function launchDirectCdpBrowser(
         } catch {
           // already exited
         }
-        await Promise.race([exitPromise, new Promise((r) => setTimeout(r, 150))]);
+        await Promise.race([exitPromise, new Promise((r) => setTimeout(r, 500))]);
         if (!exitState.exited) {
           try {
             child.kill("SIGKILL");
           } catch {
             // already exited
           }
-          await Promise.race([exitPromise, new Promise((r) => setTimeout(r, 50))]);
+          await Promise.race([exitPromise, new Promise((r) => setTimeout(r, 150))]);
         }
       }
       rmSync(userDataDir, { recursive: true, force: true });
@@ -578,6 +579,11 @@ export interface LightweightCdpDriverOptions {
   storageState?: string;
   /** Emulate `prefers-color-scheme`, `prefers-reduced-motion`, `locale`, or `timezoneId` on every context. */
   emulation?: BrowserEmulationOptions;
+  /**
+   * Sanitize Chromium's default `HeadlessChrome/` User-Agent token to `Chrome/` when no
+   * explicit `emulation.userAgent` (or `--user-agent=` flag) is provided. Default: `true`.
+   */
+  sanitizeHeadlessUserAgent?: boolean;
   /** Optional JS expression evaluated before fail-fast idle checks (sets `window.__SPANA_APP_READY__`). */
   readyExpression?: string;
   /** @internal Mark channel permanently closed on `killApp()` (used by `createIsolatedContext`). */
@@ -696,6 +702,16 @@ const CDP_SPECIAL_KEYS: Record<
 };
 
 const CDP_PUNCTUATION_CHAR_MAP: Record<string, { code: string; keyCode: number }> = {
+  "!": { code: "Digit1", keyCode: 49 },
+  "@": { code: "Digit2", keyCode: 50 },
+  "#": { code: "Digit3", keyCode: 51 },
+  $: { code: "Digit4", keyCode: 52 },
+  "%": { code: "Digit5", keyCode: 53 },
+  "^": { code: "Digit6", keyCode: 54 },
+  "&": { code: "Digit7", keyCode: 55 },
+  "*": { code: "Digit8", keyCode: 56 },
+  "(": { code: "Digit9", keyCode: 57 },
+  ")": { code: "Digit0", keyCode: 48 },
   "`": { code: "Backquote", keyCode: 192 },
   "~": { code: "Backquote", keyCode: 192 },
   "-": { code: "Minus", keyCode: 189 },
@@ -797,7 +813,7 @@ function parseCdpKeyDescriptor(
     return {
       key: baseKey,
       code: isLetter ? `Key${upper}` : isDigit ? `Digit${baseKey}` : (punct?.code ?? ""),
-      windowsVirtualKeyCode: punct ? punct.keyCode : charCode,
+      windowsVirtualKeyCode: isLetter || isDigit ? charCode : (punct?.keyCode ?? 0),
       modifiers,
       ...(modifiers === 0 || modifiers === 8 ? { text: baseKey } : {}),
       ...(commands.length > 0 ? { commands } : {}),
@@ -971,6 +987,12 @@ export function makeLightweightCdpDriver(
     };
     let currentNetworkConditions: NetworkConditions | undefined;
     let cachedUserAgent: string | undefined;
+    let defaultCleanUserAgent: string | undefined;
+    const hasExplicitUserAgent = Boolean(
+      options.emulation?.userAgent || options.sanitizeHeadlessUserAgent === false,
+    );
+    const sanitizeHeadlessUserAgent = (ua: string): string =>
+      hasExplicitUserAgent ? ua : ua.replaceAll(/HeadlessChrome\//gi, "Chrome/");
     const fetchEnabledSessions = new Set<string | null>();
     let heldModifiers = 0;
     let pressedMouseButtons = 0;
@@ -1074,16 +1096,18 @@ export function makeLightweightCdpDriver(
         const ua = await cdpChannel
           .evaluateOnSession<string>(sessionId, "navigator.userAgent")
           .catch(() => "");
-        if (ua) cachedUserAgent = ua;
+        if (ua) cachedUserAgent = sanitizeHeadlessUserAgent(ua);
       }
       const acceptLanguage = locale.includes("-")
         ? `${locale},${locale.split("-")[0]};q=0.9`
         : locale;
+      const effectiveUa =
+        options.emulation?.userAgent || defaultCleanUserAgent || cachedUserAgent || "Mozilla/5.0";
       await cdpChannel
         .sendCommand(
           "Emulation.setUserAgentOverride",
           {
-            userAgent: cachedUserAgent || "Mozilla/5.0",
+            userAgent: effectiveUa,
             acceptLanguage,
           },
           sessionId,
@@ -1195,6 +1219,17 @@ export function makeLightweightCdpDriver(
             sessionId,
           )
           .catch(() => {}),
+        ...(!options.emulation?.userAgent && !options.emulation?.locale && defaultCleanUserAgent
+          ? [
+              cdpChannel
+                .sendCommand(
+                  "Emulation.setUserAgentOverride",
+                  { userAgent: defaultCleanUserAgent },
+                  sessionId,
+                )
+                .catch(() => {}),
+            ]
+          : []),
       ]);
 
       if (options.instantAnimations) {
@@ -1423,10 +1458,118 @@ export function makeLightweightCdpDriver(
     // Track Web Worker / Service Worker sessions so worker logs & WASM traps are captured cleanly
     const workerSessions = new Map<string, string>();
     const wasmTraps: WasmTrap[] = [];
+    const handlingPopupTargets = new Set<string>();
 
-    // Discover popup pages in OUR OWN browserContextId without browser-level Target.setAutoAttach
-    // (browser-level setAutoAttach attaches to foreign contexts' pages, and detaching from them
-    // triggers Chromium's WebAuthnHandler::Disable() which wipes the other context's passkey! — 2.14, 1.26)
+    const setupPopupSession = async (
+      targetId: string,
+      childSid: string,
+      waitingForDebugger: boolean,
+    ) => {
+      if (!activeSlot) {
+        if (waitingForDebugger) {
+          await cdpChannel
+            .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+            .catch(() => {});
+        }
+        return;
+      }
+      const newTabId = `tab-${nextTabSeq++}`;
+      if (!activeSlot.tabs.some((t) => t.targetId === targetId)) {
+        activeSlot.tabs.push({ tabId: newTabId, targetId, sessionId: childSid });
+      }
+      const setupCalls: Array<Promise<unknown>> = [
+        // Enable Network FIRST unconditionally so fast popup fetch/XHR bodies are buffered before requestWillBeSent
+        cdpChannel.sendCommand("Network.enable", {}, childSid).catch(() => {}),
+        cdpChannel.sendCommand("Page.enable", {}, childSid).catch(() => {}),
+        cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {}),
+        cdpChannel
+          .sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }, childSid)
+          .catch(() => {}),
+        ...(!options.emulation?.userAgent && !options.emulation?.locale && defaultCleanUserAgent
+          ? [
+              cdpChannel
+                .sendCommand(
+                  "Emulation.setUserAgentOverride",
+                  { userAgent: defaultCleanUserAgent },
+                  childSid,
+                )
+                .catch(() => {}),
+            ]
+          : []),
+      ];
+      if (currentNetworkConditions) {
+        setupCalls.push(applyNetworkConditionsToSession(childSid, currentNetworkConditions));
+      }
+      if (routeRules.length > 0) {
+        fetchEnabledSessions.add(childSid);
+        setupCalls.push(
+          cdpChannel
+            .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, childSid)
+            .catch(() => {}),
+        );
+      }
+      if (useInjectedRuntime) {
+        setupCalls.push(
+          cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+              childSid,
+            )
+            .catch(() => {}),
+        );
+      }
+      if (readyInitScript) {
+        setupCalls.push(
+          cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: readyInitScript },
+              childSid,
+            )
+            .catch(() => {}),
+        );
+      }
+      for (const scriptSource of flowInitScripts) {
+        setupCalls.push(
+          cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: scriptSource },
+              childSid,
+            )
+            .then((res) => recordScriptId(flowInitScriptIds, childSid, res))
+            .catch(() => {}),
+        );
+      }
+      if (clockInitScript) {
+        setupCalls.push(
+          cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: clockInitScript },
+              childSid,
+            )
+            .then((res) => recordScriptId(clockInitScriptIds, childSid, res))
+            .catch(() => {}),
+        );
+      }
+      for (const fnName of flowExposedFunctions.keys()) {
+        setupCalls.push(installExposeFunctionOnSession(childSid, fnName).catch(() => {}));
+      }
+      await Promise.all(setupCalls);
+      if (waitingForDebugger) {
+        await cdpChannel
+          .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+          .catch(() => {});
+      }
+      if (popupWaiters.length > 0) {
+        const waiter = popupWaiters.shift();
+        if (waiter) waiter.resolve(newTabId);
+      }
+    };
+
+    // Fallback popup discovery if Target.setAutoAttach did not pause/attach the popup first
     cdpChannel.onEvent("Target.targetCreated", (params) => {
       const targetInfo = params?.targetInfo;
       if (
@@ -1439,7 +1582,13 @@ export function makeLightweightCdpDriver(
         return;
       }
       const targetId = String(targetInfo.targetId);
-      if (activeSlot.tabs.some((t) => t.targetId === targetId)) return;
+      if (
+        handlingPopupTargets.has(targetId) ||
+        activeSlot.tabs.some((t) => t.targetId === targetId)
+      ) {
+        return;
+      }
+      handlingPopupTargets.add(targetId);
       void (async () => {
         try {
           const attachRes = (await cdpChannel.sendCommand(
@@ -1448,96 +1597,42 @@ export function makeLightweightCdpDriver(
             null,
           )) as { sessionId?: string };
           const childSid = attachRes?.sessionId;
-          if (!childSid || !activeSlot) return;
-          const newTabId = `tab-${nextTabSeq++}`;
-          if (!activeSlot.tabs.some((t) => t.targetId === targetId)) {
-            activeSlot.tabs.push({ tabId: newTabId, targetId, sessionId: childSid });
-          }
-          const setupCalls: Array<Promise<unknown>> = [
-            // Enable Network FIRST unconditionally so fast popup fetch/XHR bodies are buffered before requestWillBeSent
-            cdpChannel.sendCommand("Network.enable", {}, childSid).catch(() => {}),
-            cdpChannel.sendCommand("Page.enable", {}, childSid).catch(() => {}),
-            cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {}),
-            cdpChannel
-              .sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }, childSid)
-              .catch(() => {}),
-          ];
-          if (currentNetworkConditions) {
-            setupCalls.push(applyNetworkConditionsToSession(childSid, currentNetworkConditions));
-          }
-          if (routeRules.length > 0) {
-            fetchEnabledSessions.add(childSid);
-            setupCalls.push(
-              cdpChannel
-                .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, childSid)
-                .catch(() => {}),
-            );
-          }
-          if (useInjectedRuntime) {
-            setupCalls.push(
-              cdpChannel
-                .sendCommand(
-                  "Page.addScriptToEvaluateOnNewDocument",
-                  { source: SPANA_INJECTED_RUNTIME_SCRIPT },
-                  childSid,
-                )
-                .catch(() => {}),
-            );
-          }
-          if (readyInitScript) {
-            setupCalls.push(
-              cdpChannel
-                .sendCommand(
-                  "Page.addScriptToEvaluateOnNewDocument",
-                  { source: readyInitScript },
-                  childSid,
-                )
-                .catch(() => {}),
-            );
-          }
-          for (const scriptSource of flowInitScripts) {
-            setupCalls.push(
-              cdpChannel
-                .sendCommand(
-                  "Page.addScriptToEvaluateOnNewDocument",
-                  { source: scriptSource },
-                  childSid,
-                )
-                .then((res) => recordScriptId(flowInitScriptIds, childSid, res))
-                .catch(() => {}),
-            );
-          }
-          if (clockInitScript) {
-            setupCalls.push(
-              cdpChannel
-                .sendCommand(
-                  "Page.addScriptToEvaluateOnNewDocument",
-                  { source: clockInitScript },
-                  childSid,
-                )
-                .then((res) => recordScriptId(clockInitScriptIds, childSid, res))
-                .catch(() => {}),
-            );
-          }
-          for (const fnName of flowExposedFunctions.keys()) {
-            setupCalls.push(installExposeFunctionOnSession(childSid, fnName).catch(() => {}));
-          }
-          await Promise.all(setupCalls);
-          if (popupWaiters.length > 0) {
-            const waiter = popupWaiters.shift();
-            if (waiter) waiter.resolve(newTabId);
-          }
+          if (!childSid) return;
+          await setupPopupSession(targetId, childSid, false);
         } catch {
           // ignore popup attach errors if popup closed immediately
         }
       })();
     });
 
-    // Auto-track cross-origin iframe (OOPIF) child targets & Web Workers attached to our own page sessions
+    // Auto-track popup pages (paused at birth so Network.enable & init scripts never race),
+    // cross-origin iframe (OOPIF) child targets, and Web Workers.
+    // IMPORTANT: Never call Target.detachFromTarget on foreign contexts' pages — detaching
+    // triggers Chromium's WebAuthnHandler::Disable() and wipes the foreign context's passkey (2.14, 1.26).
     cdpChannel.onEvent("Target.attachedToTarget", (params) => {
       const targetInfo = params?.targetInfo;
       const childSid = params?.sessionId;
       const waiting = Boolean(params?.waitingForDebugger);
+      if (targetInfo?.type === "page" && typeof childSid === "string") {
+        const targetId = typeof targetInfo.targetId === "string" ? targetInfo.targetId : "";
+        const isOurPopup = Boolean(
+          targetId &&
+          targetInfo.openerId &&
+          activeSlot &&
+          targetInfo.browserContextId === activeSlot.browserContextId,
+        );
+        if (isOurPopup && !handlingPopupTargets.has(targetId)) {
+          handlingPopupTargets.add(targetId);
+          void setupPopupSession(targetId, childSid, waiting).catch(() => {});
+          return;
+        }
+        if (waiting) {
+          void cdpChannel
+            .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+            .catch(() => {});
+        }
+        return;
+      }
       if (
         (targetInfo?.type === "worker" || targetInfo?.type === "service_worker") &&
         typeof childSid === "string"
@@ -2111,19 +2206,57 @@ export function makeLightweightCdpDriver(
       void dispatchRuleAt(0);
     });
 
+    // Sanitize default headless `HeadlessChrome/` → `Chrome/` UA so sites using real-browser
+    // UA detection / redirects / bot checks behave identically to regular Chrome unless the user
+    // explicitly provided `emulation.userAgent` or `--user-agent=...`.
+    if (!hasExplicitUserAgent) {
+      const browserVer = yield* Effect.tryPromise({
+        try: () =>
+          cdpChannel.sendCommand<{ userAgent?: string }>("Browser.getVersion", {}, null, 2_000),
+        catch: () => null,
+      }).pipe(Effect.catch(() => Effect.succeed(null)));
+      const rawUa = browserVer?.userAgent;
+      if (rawUa && /HeadlessChrome\//i.test(rawUa)) {
+        defaultCleanUserAgent = rawUa.replaceAll(/HeadlessChrome\//gi, "Chrome/");
+        cachedUserAgent = defaultCleanUserAgent;
+      }
+    }
+
     if (useContexts) {
       yield* Effect.tryPromise({
         try: () =>
-          cdpChannel
-            .sendCommand(
-              "Target.setDiscoverTargets",
-              {
-                discover: true,
-                filter: [{ type: "page" }, { type: "iframe" }],
-              },
-              null,
-            )
-            .catch(() => {}),
+          Promise.all([
+            cdpChannel
+              .sendCommand(
+                "Target.setDiscoverTargets",
+                {
+                  discover: true,
+                  filter: [{ type: "page" }, { type: "iframe" }],
+                },
+                null,
+              )
+              .catch(() => {}),
+            // Auto-attach popup pages paused at birth (`waitForDebuggerOnStart: true`) on top-level
+            // drivers so Network.enable, clean UA, routes, and init scripts install before byte 0.
+            // Skip on ephemeral child contexts (`_markClosedOnKill`) so closing a child context's
+            // WebSocket never detaches from the parent context's page (preserves WebAuthn — 2.14).
+            ...(!options._markClosedOnKill
+              ? [
+                  cdpChannel
+                    .sendCommand(
+                      "Target.setAutoAttach",
+                      {
+                        autoAttach: true,
+                        waitForDebuggerOnStart: true,
+                        flatten: true,
+                        filter: [{ type: "page", exclude: false }],
+                      },
+                      null,
+                    )
+                    .catch(() => {}),
+                ]
+              : []),
+          ]),
         catch: () => new DriverError({ message: "Failed to enable Target.setDiscoverTargets" }),
       }).pipe(Effect.catch(() => Effect.void));
       activeSlot = yield* Effect.tryPromise({
@@ -2133,6 +2266,16 @@ export function makeLightweightCdpDriver(
       });
       cdpChannel.setSessionId(activeSlot.sessionId);
       activeAuthenticatorId = activeSlot.authenticatorId;
+    } else if (defaultCleanUserAgent) {
+      yield* Effect.tryPromise({
+        try: () =>
+          cdpChannel.sendCommand(
+            "Emulation.setUserAgentOverride",
+            { userAgent: defaultCleanUserAgent },
+            null,
+          ),
+        catch: () => null,
+      }).pipe(Effect.catch(() => Effect.void));
     }
 
     const resolveUrlAsync = async (rawUrl: string): Promise<string> => {
@@ -2658,7 +2801,10 @@ export function makeLightweightCdpDriver(
                       cdpChannel
                         .sendCommand("Emulation.setUserAgentOverride", {
                           userAgent:
-                            options.emulation?.userAgent || cachedUserAgent || "Mozilla/5.0",
+                            options.emulation?.userAgent ||
+                            defaultCleanUserAgent ||
+                            cachedUserAgent ||
+                            "Mozilla/5.0",
                           acceptLanguage: defaultLocale
                             ? defaultLocale.includes("-")
                               ? `${defaultLocale},${defaultLocale.split("-")[0]};q=0.9`
@@ -2958,33 +3104,51 @@ export function makeLightweightCdpDriver(
           try: async () => {
             const delay = opts?.delay ?? 0;
             for (const ch of Array.from(text)) {
-              const desc = parseCdpKeyDescriptor(ch);
-              await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
-                type: "keyDown",
-                key: desc.key,
-                ...(desc.code ? { code: desc.code } : {}),
-                ...(desc.windowsVirtualKeyCode
-                  ? {
-                      windowsVirtualKeyCode: desc.windowsVirtualKeyCode,
-                      nativeVirtualKeyCode: desc.windowsVirtualKeyCode,
-                    }
-                  : {}),
-                modifiers: desc.modifiers,
-                text: ch,
-                unmodifiedText: ch,
-              });
-              await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
-                type: "keyUp",
-                key: desc.key,
-                ...(desc.code ? { code: desc.code } : {}),
-                ...(desc.windowsVirtualKeyCode
-                  ? {
-                      windowsVirtualKeyCode: desc.windowsVirtualKeyCode,
-                      nativeVirtualKeyCode: desc.windowsVirtualKeyCode,
-                    }
-                  : {}),
-                modifiers: desc.modifiers,
-              });
+              const cp = ch.codePointAt(0) ?? 0;
+              if (cp > 0x7e) {
+                // Non-ASCII characters (e.g. Swedish åäö, accented Latin, CJK, emoji) have no US
+                // virtual keyCode and can be dropped by raw Input.dispatchKeyEvent on Linux Chromium.
+                // Dispatch keyDown + Input.insertText + keyUp (matching Playwright CRKeyboard).
+                await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
+                  type: "keyDown",
+                  key: ch,
+                  modifiers: 0,
+                });
+                await cdpChannel.sendCommand("Input.insertText", { text: ch });
+                await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
+                  type: "keyUp",
+                  key: ch,
+                  modifiers: 0,
+                });
+              } else {
+                const desc = parseCdpKeyDescriptor(ch);
+                await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
+                  type: "keyDown",
+                  key: desc.key,
+                  ...(desc.code ? { code: desc.code } : {}),
+                  ...(desc.windowsVirtualKeyCode
+                    ? {
+                        windowsVirtualKeyCode: desc.windowsVirtualKeyCode,
+                        nativeVirtualKeyCode: desc.windowsVirtualKeyCode,
+                      }
+                    : {}),
+                  modifiers: desc.modifiers,
+                  text: ch,
+                  unmodifiedText: ch,
+                });
+                await cdpChannel.sendCommand("Input.dispatchKeyEvent", {
+                  type: "keyUp",
+                  key: desc.key,
+                  ...(desc.code ? { code: desc.code } : {}),
+                  ...(desc.windowsVirtualKeyCode
+                    ? {
+                        windowsVirtualKeyCode: desc.windowsVirtualKeyCode,
+                        nativeVirtualKeyCode: desc.windowsVirtualKeyCode,
+                      }
+                    : {}),
+                  modifiers: desc.modifiers,
+                });
+              }
               if (delay > 0) {
                 await new Promise((r) => setTimeout(r, delay));
               }
@@ -3715,9 +3879,7 @@ export function makeLightweightCdpDriver(
             if (typeof fn === "string") {
               return (await cdpChannel.evaluateOnce(fn)) as any;
             }
-            const serializedArgs = args
-              .map((a) => (a === undefined ? "undefined" : JSON.stringify(a)))
-              .join(", ");
+            const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
             return (await cdpChannel.evaluateOnce(`(${fn.toString()})(${serializedArgs})`)) as any;
           },
           catch: (e) => new DriverError({ message: `CDP evaluate failed: ${e}` }),
@@ -3729,11 +3891,13 @@ export function makeLightweightCdpDriver(
             const source =
               typeof script === "string"
                 ? script
-                : `(${script.toString()})(${args.map((a) => (a === undefined ? "undefined" : JSON.stringify(a))).join(", ")});`;
+                : `(${script.toString()})(${args.map((a) => serializeEvaluateArg(a)).join(", ")});`;
             flowInitScripts.push(source);
-            const sessions = activeSlot
-              ? activeSlot.tabs.map((t) => t.sessionId)
-              : [null as string | null];
+            const sessions: Array<string | null> = activeSlot
+              ? Array.from(
+                  new Set([activeSlot.sessionId, ...activeSlot.tabs.map((t) => t.sessionId)]),
+                )
+              : [null];
             await Promise.all(
               sessions.map((sid) =>
                 cdpChannel
@@ -3752,9 +3916,11 @@ export function makeLightweightCdpDriver(
             await removeTrackedScripts(clockInitScriptIds);
             clockInitScript = script;
             if (!script) return;
-            const sessions = activeSlot
-              ? activeSlot.tabs.map((t) => t.sessionId)
-              : [null as string | null];
+            const sessions: Array<string | null> = activeSlot
+              ? Array.from(
+                  new Set([activeSlot.sessionId, ...activeSlot.tabs.map((t) => t.sessionId)]),
+                )
+              : [null];
             await Promise.all(
               sessions.map((sid) =>
                 cdpChannel
@@ -4005,7 +4171,7 @@ export function makeLightweightCdpDriver(
                   method: explicitMethod ?? requestMethods.get(`${sid ?? ""}:${requestId}`),
                   body: async () => {
                     let lastErr: unknown;
-                    for (let attempt = 0; attempt < 25; attempt++) {
+                    for (let attempt = 0; attempt < 60; attempt++) {
                       try {
                         const bodyRes = (await cdpChannel.sendCommand(
                           "Network.getResponseBody",
@@ -4021,11 +4187,11 @@ export function makeLightweightCdpDriver(
                         const msg = err instanceof Error ? err.message : String(err);
                         if (
                           !/No resource with given identifier|No data found/i.test(msg) ||
-                          attempt >= 24
+                          attempt >= 59
                         ) {
                           throw err;
                         }
-                        await new Promise((r) => setTimeout(r, 20));
+                        await new Promise((r) => setTimeout(r, 25));
                       }
                     }
                     throw lastErr;

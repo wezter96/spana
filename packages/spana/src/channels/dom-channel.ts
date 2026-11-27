@@ -61,6 +61,8 @@ export interface DomWaitForSelectorOptions {
   timeoutMs?: number;
   /** Require the matched element to be visible, enabled, unobstructed, and stable for pointer actions. */
   forAction?: boolean;
+  /** Bypass enabled, hit-test, view-transition, and stability checks while still scrolling into view. */
+  force?: boolean;
   /** Fail early once the DOM stays quiet and document.readyState === "complete". */
   failFastWhenIdle?: boolean;
   /** Quiet window in ms before failFastWhenIdle resolves empty. Default: 250. */
@@ -183,6 +185,17 @@ export interface DomChannel {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   evaluate<T = unknown>(script: string | ((...args: any[]) => T), ...args: any[]): Promise<T>;
+  /**
+   * Evaluate a function or expression inside an iframe matched by `frameSelector`.
+   * For same-origin accessible iframes (including `<iframe sandbox="allow-same-origin">` without
+   * `allow-scripts`), runs in the parent realm bound to `(iframe.contentDocument, iframe.contentWindow, ...args)`
+   * so Chromium's sandbox never blocks execution.
+   */
+  evaluateInFrame?<T = unknown>(
+    frameSelector: Selector,
+    script: string | ((doc: any, win: any, ...args: any[]) => T),
+    ...args: any[]
+  ): Promise<T>;
   query(selector: Selector): Promise<DomElementMatch[]>;
   /** MutationObserver-reactive DOM wait: resolves immediately when a matching visible element mounts & is actionable. */
   waitForSelector?(
@@ -256,6 +269,56 @@ export function domMatchToElement(match: DomElementMatch, screenBounds?: Bounds)
 }
 
 /**
+ * Recursively serialize an argument into a JS literal expression that preserves
+ * `undefined` at top-level AND inside nested arrays/objects (unlike `JSON.stringify`,
+ * which turns `undefined` array items into `null` and omits `undefined` object keys),
+ * as well as `NaN`, `Infinity`, `-0`, `bigint`, `Date`, and `RegExp`.
+ */
+export function serializeEvaluateArg(val: unknown, seen: WeakSet<object> = new WeakSet()): string {
+  if (val === undefined) return "undefined";
+  if (val === null) return "null";
+  if (typeof val === "boolean") return val ? "true" : "false";
+  if (typeof val === "number") {
+    if (Number.isNaN(val)) return "NaN";
+    if (val === Infinity) return "Infinity";
+    if (val === -Infinity) return "-Infinity";
+    if (Object.is(val, -0)) return "-0";
+    return String(val);
+  }
+  if (typeof val === "bigint") return `${val.toString()}n`;
+  if (typeof val === "string") {
+    return JSON.stringify(val).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+  }
+  if (val instanceof Date) {
+    const t = val.getTime();
+    return `new Date(${Number.isNaN(t) ? "NaN" : t})`;
+  }
+  if (val instanceof RegExp) {
+    return `new RegExp(${JSON.stringify(val.source)}, ${JSON.stringify(val.flags)})`;
+  }
+  if (typeof val === "object") {
+    if (seen.has(val)) return "null";
+    seen.add(val);
+    try {
+      if (Array.isArray(val)) {
+        const items: string[] = [];
+        for (let i = 0; i < val.length; i++) {
+          items.push(serializeEvaluateArg(val[i], seen));
+        }
+        return `[${items.join(",")}]`;
+      }
+      const entries = Object.entries(val as Record<string, unknown>).map(
+        ([k, v]) => `${JSON.stringify(k)}:${serializeEvaluateArg(v, seen)}`,
+      );
+      return `{${entries.join(",")}}`;
+    } finally {
+      seen.delete(val);
+    }
+  }
+  return "undefined";
+}
+
+/**
  * Build a self-contained JS expression string for evaluating either a string
  * expression/body or a function + serializable arguments inside a remote DOM.
  */
@@ -263,17 +326,50 @@ export function buildEvaluateExpression(
   script: string | ((...args: unknown[]) => unknown),
   args: unknown[] = [],
 ): string {
-  const serializeArg = (arg: unknown) => (arg === undefined ? "undefined" : JSON.stringify(arg));
   if (typeof script === "function") {
-    const serializedArgs = args.map(serializeArg).join(", ");
+    const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
     return `(${script.toString()})(${serializedArgs})`;
   }
   const trimmed = script.trim();
   if (/\breturn\b/.test(trimmed) && !trimmed.startsWith("(") && !trimmed.startsWith("async")) {
-    const serializedArgs = args.map(serializeArg).join(", ");
+    const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
     return `(function(){ ${trimmed} })(${serializedArgs})`;
   }
   return script;
+}
+
+/**
+ * Build a parent-realm JS expression that locates a same-origin `<iframe>` matching
+ * `frameSelector` and invokes `script(contentDocument, contentWindow, ...args)` in the
+ * parent realm — bypassing Chromium's `allow-scripts` block on `<iframe sandbox="allow-same-origin">`.
+ */
+export function buildDomFrameEvaluateScript(
+  frameSelector: Selector,
+  script: string | ((doc: any, win: any, ...args: any[]) => unknown),
+  args: unknown[] = [],
+): string {
+  const serializedFrame = JSON.stringify(serializeSelectorForDom(frameSelector));
+  const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
+  const invoke =
+    typeof script === "function"
+      ? `(${script.toString()})(fDoc, fWin${serializedArgs ? `, ${serializedArgs}` : ""})`
+      : `(function(document, window){ ${/\breturn\b/.test(script.trim()) ? script : `return (${script});`} })(fDoc, fWin)`;
+  return `(function(frameSel) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var hits = findAcrossRoots(frameSel, "prefer");
+    for (var i = 0; i < hits.length; i++) {
+      var el = hits[i].el;
+      if (el && el.tagName === "IFRAME") {
+        var fDoc = null;
+        var fWin = null;
+        try { fDoc = el.contentDocument; fWin = el.contentWindow; } catch (e) {}
+        if (fDoc && fDoc.documentElement) {
+          return { __spanaFrameEvalOk: true, value: (${invoke}) };
+        }
+      }
+    }
+    return { __spanaFrameEvalOk: false };
+  })(${serializedFrame})`;
 }
 
 /**
@@ -307,13 +403,20 @@ export function serializeSelectorForDom(sel: unknown): unknown {
  * full composable selectors (`role`+`name`, `css`, `within`, `frame`, `hasText`, `hasNotText`, `nth`/`first`/`last`).
  */
 const SHARED_DOM_TRAVERSAL_HELPERS = `
+  function normWs(val) {
+    return String(val == null ? "" : val).replace(/[\\s\\u00a0\\u202f]+/g, " ").trim();
+  }
   function matchSpec(actual, spec, exact) {
-    var str = String(actual || "");
+    var raw = String(actual || "");
+    var str = normWs(raw);
     if (spec && typeof spec === "object" && typeof spec.__spanaRegex === "string") {
-      try { return new RegExp(spec.__spanaRegex, spec.flags || "").test(str); } catch (e) { return false; }
+      try {
+        var re = new RegExp(spec.__spanaRegex, spec.flags || "");
+        return re.test(raw) || re.test(str);
+      } catch (e) { return false; }
     }
-    var needle = String(spec == null ? "" : spec);
-    if (exact) return str.trim() === needle.trim();
+    var needle = normWs(spec);
+    if (exact) return str === needle;
     return str.toLowerCase().indexOf(needle.toLowerCase()) !== -1;
   }
   function isInsideSectioningContent(el) {
@@ -387,6 +490,13 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return "generic";
   }
+  var BLOCK_TAGS = {
+    ADDRESS: 1, ARTICLE: 1, ASIDE: 1, BLOCKQUOTE: 1, BR: 1, DD: 1, DETAILS: 1,
+    DIALOG: 1, DIV: 1, DL: 1, DT: 1, FIELDSET: 1, FIGCAPTION: 1, FIGURE: 1,
+    FOOTER: 1, FORM: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, HEADER: 1,
+    HGROUP: 1, HR: 1, LI: 1, MAIN: 1, NAV: 1, OL: 1, P: 1, PRE: 1, SECTION: 1,
+    SUMMARY: 1, TABLE: 1, TD: 1, TH: 1, TR: 1, UL: 1,
+  };
   function visibleTextOf(node, allowHiddenRoot, skipControl) {
     if (!node) return "";
     if (node.nodeType === 3) return node.nodeValue || "";
@@ -394,6 +504,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (node.nodeType === 1) {
       if (skipControl && node === skipControl) return "";
       var t = node.tagName ? node.tagName.toUpperCase() : "";
+      if (t === "BR") return " ";
       if (t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEMPLATE") return "";
       if (skipControl && (t === "SELECT" || t === "TEXTAREA" || t === "INPUT")) return "";
       if (!allowHiddenRoot) {
@@ -414,10 +525,17 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     var kids = node.childNodes || [];
     for (var i = 0; i < kids.length; i++) {
-      var k = visibleTextOf(kids[i], false, skipControl);
-      if (k) out.push(k);
+      var child = kids[i];
+      var k = visibleTextOf(child, false, skipControl);
+      if (!k) continue;
+      var cTag = child && child.nodeType === 1 && child.tagName ? child.tagName.toUpperCase() : "";
+      if (cTag && BLOCK_TAGS[cTag]) {
+        out.push(" ", k, " ");
+      } else {
+        out.push(k);
+      }
     }
-    return out.join(" ").replace(/\\s+/g, " ").trim();
+    return normWs(out.join(""));
   }
   function isHiddenInAncestorChain(el) {
     if (!el) return true;
@@ -672,7 +790,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (!root) return;
     var isRegex = Boolean(needle && typeof needle === "object" && typeof needle.__spanaRegex === "string");
     var rawNeedleStr = isRegex ? "" : String(needle == null ? "" : needle);
-    var trimmedNeedle = rawNeedleStr.replace(/\\s+/g, " ").trim();
+    var trimmedNeedle = normWs(rawNeedleStr);
     var lowerNeedle = trimmedNeedle.toLowerCase();
     if (!isRegex && !trimmedNeedle) return;
 
@@ -684,7 +802,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var btnInputs = root.querySelectorAll('input[type="button"], input[type="submit"], input[type="reset"]');
       for (var bi = 0; bi < btnInputs.length; bi++) {
         var bNode = btnInputs[bi];
-        var bVal = String(bNode.value || "").replace(/\\s+/g, " ").trim();
+        var bVal = normWs(bNode.value || "");
         if (bVal && matchSpec(bVal, needle, exact)) {
           pushHit(bNode, ctx);
         }
@@ -696,7 +814,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       var tag = node.tagName ? node.tagName.toUpperCase() : "";
       if (skipTags[tag] || tag === "INPUT") return false;
 
-      var normText = String(node.textContent || "").replace(/\\s+/g, " ").trim();
+      var normText = normWs(node.textContent || "");
       if (!isRegex) {
         if (!normText) return false;
         if (exact) {
@@ -764,17 +882,17 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var filtered = hits;
     if (sel.hasText !== undefined) {
       filtered = filtered.filter(function(h) {
-        var normTc = String(h.el.textContent || "").replace(/\\s+/g, " ").trim();
-        var innerT = String(h.el.innerText || "").replace(/\\s+/g, " ").trim();
-        var fallbackTxt = String(h.el.value || getAccessibleName(h.el) || "");
+        var normTc = normWs(h.el.textContent || "");
+        var innerT = normWs(h.el.innerText || "");
+        var fallbackTxt = normWs(h.el.value || getAccessibleName(h.el) || "");
         return matchSpec(normTc, sel.hasText, false) || matchSpec(innerT, sel.hasText, false) || matchSpec(fallbackTxt, sel.hasText, false);
       });
     }
     if (sel.hasNotText !== undefined) {
       filtered = filtered.filter(function(h) {
-        var normTc = String(h.el.textContent || "").replace(/\\s+/g, " ").trim();
-        var innerT = String(h.el.innerText || "").replace(/\\s+/g, " ").trim();
-        var fallbackTxt = String(h.el.value || getAccessibleName(h.el) || "");
+        var normTc = normWs(h.el.textContent || "");
+        var innerT = normWs(h.el.innerText || "");
+        var fallbackTxt = normWs(h.el.value || getAccessibleName(h.el) || "");
         return !matchSpec(normTc, sel.hasNotText, false) && !matchSpec(innerT, sel.hasNotText, false) && !matchSpec(fallbackTxt, sel.hasNotText, false);
       });
     }
@@ -937,16 +1055,32 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         if (!ctrlFromLbl && lblEl.getAttribute) {
           var forAttr = lblEl.getAttribute("for");
           if (forAttr) {
-            var lblDoc = lblEl.ownerDocument || document;
-            ctrlFromLbl = lblDoc.getElementById ? lblDoc.getElementById(forAttr) : null;
+            var lblRoot = typeof lblEl.getRootNode === "function" ? lblEl.getRootNode() : null;
+            if (lblRoot && typeof lblRoot.getElementById === "function") {
+              ctrlFromLbl = lblRoot.getElementById(forAttr);
+            }
+            if (!ctrlFromLbl) {
+              var lblDoc = lblEl.ownerDocument || document;
+              ctrlFromLbl = lblDoc.getElementById ? lblDoc.getElementById(forAttr) : null;
+            }
+            if (!ctrlFromLbl && root.querySelector) {
+              try {
+                var escFor = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(forAttr) : forAttr;
+                ctrlFromLbl = root.querySelector('[id="' + escFor + '"]');
+              } catch (e) {}
+            }
           }
         }
         if (!ctrlFromLbl && lblEl.querySelector) {
           ctrlFromLbl = lblEl.querySelector("input:not([type=hidden]), textarea, select, meter, output, progress");
         }
         if (!ctrlFromLbl) continue;
-        var rawLblText = visibleTextOf(lblEl, false, ctrlFromLbl) || (lblEl.textContent || "").trim();
-        if (rawLblText && matchSpec(rawLblText, spec, exact)) {
+        var rawLblText = visibleTextOf(lblEl, false, ctrlFromLbl) || normWs(lblEl.textContent || "");
+        var fullLblText = !lblEl.contains(ctrlFromLbl) ? normWs(lblEl.textContent || "") : "";
+        if (
+          (rawLblText && matchSpec(rawLblText, spec, exact)) ||
+          (fullLblText && matchSpec(fullLblText, spec, exact))
+        ) {
           addCtrl(ctrlFromLbl);
         }
       }
@@ -1430,6 +1564,21 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return false;
   }
+  function isElementEnabled(el) {
+    if (!el) return true;
+    if (el.hasAttribute && el.hasAttribute("disabled")) return false;
+    if (el.getAttribute && el.getAttribute("aria-disabled") === "true") return false;
+    try {
+      if (typeof el.matches === "function" && el.matches(":disabled")) return false;
+    } catch (e) {}
+    var cur = el.parentElement;
+    var guard = 0;
+    while (cur && guard++ < 16) {
+      if (cur.getAttribute && cur.getAttribute("aria-disabled") === "true") return false;
+      cur = cur.parentElement;
+    }
+    return true;
+  }
   function isVisible(el, rect, depth) {
     if (!el) return false;
     if (isHiddenInAncestorChain(el)) return false;
@@ -1491,11 +1640,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var val = (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT")
       ? String(el.value ?? "")
       : undefined;
-    var text = (el.innerText || el.textContent || "").trim() || undefined;
-    var normTextContent = (el.textContent || "").replace(/\\s+/g, " ").trim() || undefined;
+    var text = normWs(el.innerText || el.textContent || "") || undefined;
+    var normTextContent = normWs(el.textContent || "") || undefined;
     var accName = getAccessibleName(el) || undefined;
     var accDesc = getAccessibleDescription(el) || undefined;
     var role = getImplicitRole(el) || undefined;
+    var isEnabled = isElementEnabled(el);
     var isChecked =
       el.tagName === "INPUT" && (el.type === "checkbox" || el.type === "radio")
         ? Boolean(el.checked)
@@ -1505,8 +1655,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
             ? false
             : undefined;
     var isEditable = Boolean(
-      !el.hasAttribute("disabled") &&
-      el.getAttribute("aria-disabled") !== "true" &&
+      isEnabled &&
       !el.hasAttribute("readonly") &&
       el.getAttribute("aria-readonly") !== "true" &&
       (el.isContentEditable ||
@@ -1541,7 +1690,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       viewportWidth: (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0,
       viewportHeight: (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0,
       visible: isVisible(el, rect),
-      enabled: !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
+      enabled: isEnabled,
       clickable: isClickable(el),
       focused: document.activeElement === el,
       checked: isChecked,
@@ -1643,22 +1792,28 @@ export function buildDomWaitForSelectorScript(
   const serialized = JSON.stringify(serializeSelectorForDom(selector));
   const timeoutMs = Math.max(10, Math.round(opts.timeoutMs ?? 5000));
   const forAction = Boolean(opts.forAction);
+  const force = Boolean(opts.force);
   const failFastWhenIdle = Boolean(opts.failFastWhenIdle);
   const idleQuietMs = Math.max(50, Math.round(opts.idleQuietMs ?? 250));
-  const stableFrames =
-    opts.stableFrames !== undefined
+  const stableFrames = force
+    ? 0
+    : opts.stableFrames !== undefined
       ? Math.max(0, Math.round(opts.stableFrames))
       : forAction
         ? defaultActionStableFrames()
         : 0;
-  const checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
+  const checkHitTest = force
+    ? false
+    : opts.checkHitTest !== undefined
+      ? Boolean(opts.checkHitTest)
+      : forAction;
   const waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
-  const armTapGuard = Boolean(opts.armTapGuard && forAction);
+  const armTapGuard = Boolean(opts.armTapGuard && forAction && !force);
 
-  return `(function(sel, timeoutMs, forAction, failFastWhenIdle, idleQuietMs, reqStableFrames, checkHitTest, waitForAppReady, armTapGuard) {
+  return `(function(sel, timeoutMs, forAction, force, failFastWhenIdle, idleQuietMs, reqStableFrames, checkHitTest, waitForAppReady, armTapGuard) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
-    var explicitStableFrames = instantAnim ? 0 : reqStableFrames;
+    var explicitStableFrames = (instantAnim || force) ? 0 : reqStableFrames;
 
     function armTapGuardOnEl(el) {
       if (!armTapGuard || !el || el.nodeType !== 1) return;
@@ -1703,14 +1858,14 @@ export function buildDomWaitForSelectorScript(
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
-      if (forAction && hasActiveViewTransition()) return null;
+      if (forAction && !force && hasActiveViewTransition()) return null;
       var rawHits = findAcrossRoots(sel, "strict");
       var ready = [];
       for (var i = 0; i < rawHits.length; i++) {
         var h = rawHits[i];
         var m = toMatch(h);
         if (!m.visible) continue;
-        if (forAction && !m.enabled) continue;
+        if (forAction && !force && !m.enabled) continue;
         ready.push({ hit: h, match: m });
       }
       return ready.length > 0 ? ready : null;
@@ -1723,7 +1878,7 @@ export function buildDomWaitForSelectorScript(
       var target = ready[ready.length - 1];
       var alreadyInViewport = isFullyInViewport(target.hit);
       var didScroll = alreadyInViewport ? false : ensureInViewport(target.hit);
-      if (checkHitTest && !isHitTestClear(target.hit)) {
+      if (!force && checkHitTest && !isHitTestClear(target.hit)) {
         if (!alreadyInViewport || canScrollToUnobscure(target.hit)) {
           if (scrollToUnobscure(target.hit)) {
             didScroll = true;
@@ -1733,12 +1888,12 @@ export function buildDomWaitForSelectorScript(
         if (!isHitTestClear(target.hit)) return null;
       }
       var updated = toMatch(target.hit);
-      if (!updated.visible || !updated.enabled) return null;
+      if (!updated.visible || (!force && !updated.enabled)) return null;
       return { hits: ready, target: target, match: updated, didScroll: didScroll };
     }
 
     function neededStableFrames(candidate) {
-      if (!forAction || typeof requestAnimationFrame !== "function") return 0;
+      if (force || !forAction || typeof requestAnimationFrame !== "function") return 0;
       if (explicitStableFrames >= 0) return explicitStableFrames;
       // Smart auto stability: 0 rAF wait on static, unobstructed elements;
       // wait 2 frames if CSS animations/transitions are running or 1 frame right after scroll.
@@ -1899,7 +2054,7 @@ export function buildDomWaitForSelectorScript(
       armIdleTimer();
       attempt();
     });
-  })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs}, ${stableFrames}, ${checkHitTest}, ${waitForAppReady}, ${armTapGuard})`;
+  })(${serialized}, ${timeoutMs}, ${forAction}, ${force}, ${failFastWhenIdle}, ${idleQuietMs}, ${stableFrames}, ${checkHitTest}, ${waitForAppReady}, ${armTapGuard})`;
 }
 
 /**
@@ -2035,10 +2190,8 @@ export function buildDomWaitForMatchScript(
         return null;
       }
       var anyVisible = false;
-      for (var i = hits.length - 1; i >= 0; i--) {
-        var m = toMatch(hits[i]);
-        if (!allowHidden && !m.visible) continue;
-        if (m.visible) anyVisible = true;
+      var hiddenFallbackMatches = [];
+      var checkMatchItem = function(h, m) {
         var matched = false;
         var actualVal = undefined;
         if (kind === "focused") {
@@ -2054,7 +2207,7 @@ export function buildDomWaitForMatchScript(
           actualVal = isEn ? "enabled" : "disabled";
           matched = isEn;
         } else if (kind === "role") {
-          var elRole = m.role || getImplicitRole(hits[i].el) || "generic";
+          var elRole = m.role || getImplicitRole(h.el) || "generic";
           actualVal = elRole;
           matched = expected !== null && elRole.toLowerCase() === String(expected).toLowerCase();
         } else if (kind === "editable") {
@@ -2073,7 +2226,7 @@ export function buildDomWaitForMatchScript(
           actualVal = inVp ? "in viewport" : "outside viewport";
           matched = inVp;
         } else if (kind === "jsProperty" && propertyName !== null) {
-          var propNode = hits[i].el;
+          var propNode = h.el;
           var rawProp = propNode ? propNode[propertyName] : undefined;
           actualVal = typeof rawProp === "string" ? rawProp : JSON.stringify(rawProp);
           matched = JSON.stringify(rawProp) === JSON.stringify(expectedValue);
@@ -2088,34 +2241,35 @@ export function buildDomWaitForMatchScript(
             matched = expectedTokens.length > 0 && expectedTokens.every(function(tok) { return tokens.indexOf(tok) !== -1; });
           }
         } else if (kind === "css" && cssProperty !== null) {
-          var elNode = hits[i].el;
+          var elNode = h.el;
           var winObj = (elNode.ownerDocument && elNode.ownerDocument.defaultView) || window;
           var cssVal = winObj && winObj.getComputedStyle ? winObj.getComputedStyle(elNode).getPropertyValue(cssProperty).trim() : "";
           actualVal = cssVal;
           matched = regex ? regex.test(cssVal) : (expected !== null && cssVal === String(expected).trim());
         } else if (kind === "accessibleName") {
-          var acc = m.accessibleName || "";
+          var acc = normWs(m.accessibleName || "");
           actualVal = acc;
-          matched = regex ? regex.test(acc) : (expected === null ? acc.length > 0 : acc.trim() === String(expected).trim());
+          matched = regex ? (regex.test(m.accessibleName || "") || regex.test(acc)) : (expected === null ? acc.length > 0 : acc === normWs(expected));
         } else if (kind === "accessibleDescription") {
-          var accD = m.accessibleDescription || "";
+          var accD = normWs(m.accessibleDescription || "");
           actualVal = accD;
-          matched = regex ? regex.test(accD) : (expected === null ? accD.length > 0 : accD.trim() === String(expected).trim());
+          matched = regex ? (regex.test(m.accessibleDescription || "") || regex.test(accD)) : (expected === null ? accD.length > 0 : accD === normWs(expected));
         } else if (kind === "text") {
-          var normTxt = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var normTxt = normWs(m.textContent !== undefined ? m.textContent : (m.text || ""));
           actualVal = normTxt;
-          matched = normTxt === (expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : expected);
+          matched = normTxt === (expected !== null ? normWs(expected) : expected);
         } else if (kind === "containsText") {
-          var actual = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var actual = normWs(m.textContent !== undefined ? m.textContent : (m.text || ""));
           actualVal = actual;
-          var needle = expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : "";
+          var needle = expected !== null ? normWs(expected) : "";
           matched = expected !== null && (ignoreCase
             ? actual.toLowerCase().indexOf(needle.toLowerCase()) !== -1
             : actual.indexOf(needle) !== -1);
         } else if (kind === "matchesText") {
-          var actualRe = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var rawRe = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var actualRe = normWs(rawRe);
           actualVal = actualRe;
-          matched = Boolean(regex && regex.test(actualRe));
+          matched = Boolean(regex && (regex.test(rawRe) || regex.test(actualRe)));
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
           actualVal = val;
@@ -2133,6 +2287,23 @@ export function buildDomWaitForMatchScript(
         }
         lastActual = actualVal;
         if (negate ? !matched : matched) return { matched: true, actual: actualVal };
+        return null;
+      };
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var m = toMatch(hits[i]);
+        if (!allowHidden && !m.visible) {
+          if (kind === "enabled" || kind === "checked") hiddenFallbackMatches.push({ h: hits[i], m: m });
+          continue;
+        }
+        if (m.visible) anyVisible = true;
+        var resHit = checkMatchItem(hits[i], m);
+        if (resHit) return resHit;
+      }
+      if (!anyVisible && hiddenFallbackMatches.length > 0) {
+        for (var hi = 0; hi < hiddenFallbackMatches.length; hi++) {
+          var hRes = checkMatchItem(hiddenFallbackMatches[hi].h, hiddenFallbackMatches[hi].m);
+          if (hRes) return hRes;
+        }
       }
       return null;
     }
@@ -2236,12 +2407,13 @@ export function buildDomFillScript(
       // return false so coordinator falls back cleanly to real tap + SelectAll + Input.insertText.
       if (el.isContentEditable) return false;
       if (tag === "INPUT" || tag === "TEXTAREA") {
+        var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
         var proto = tag === "TEXTAREA"
-          ? (window.HTMLTextAreaElement && window.HTMLTextAreaElement.prototype)
-          : (window.HTMLInputElement && window.HTMLInputElement.prototype);
+          ? (win.HTMLTextAreaElement && win.HTMLTextAreaElement.prototype)
+          : (win.HTMLInputElement && win.HTMLInputElement.prototype);
         var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
         if (desc && typeof desc.set === "function") {
-          desc.set.call(el, val);
+          try { desc.set.call(el, val); } catch (e) { el.value = val; }
         } else {
           el.value = val;
         }
@@ -2429,14 +2601,15 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
     opts = opts || {};
     var timeoutMs = Math.max(10, Math.round(opts.timeoutMs != null ? opts.timeoutMs : 5000));
     var forAction = Boolean(opts.forAction);
+    var force = Boolean(opts.force);
     var failFastWhenIdle = Boolean(opts.failFastWhenIdle);
     var idleQuietMs = Math.max(50, Math.round(opts.idleQuietMs != null ? opts.idleQuietMs : 250));
-    var reqStableFrames = opts.stableFrames !== undefined ? Math.max(0, Math.round(opts.stableFrames)) : (forAction ? 2 : 0);
-    var checkHitTest = opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction;
+    var reqStableFrames = force ? 0 : (opts.stableFrames !== undefined ? Math.max(0, Math.round(opts.stableFrames)) : (forAction ? 2 : 0));
+    var checkHitTest = force ? false : (opts.checkHitTest !== undefined ? Boolean(opts.checkHitTest) : forAction);
     var waitForAppReady = opts.waitForAppReady !== undefined ? Boolean(opts.waitForAppReady) : true;
-    var armTapGuard = Boolean(opts.armTapGuard && forAction);
+    var armTapGuard = Boolean(opts.armTapGuard && forAction && !force);
     var instantAnim = Boolean(typeof document !== "undefined" && document.getElementById && document.getElementById("__spana_instant_anim"));
-    var explicitStableFrames = instantAnim ? 0 : reqStableFrames;
+    var explicitStableFrames = (instantAnim || force) ? 0 : reqStableFrames;
 
     function armTapGuardOnEl(el) {
       if (!armTapGuard || !el || el.nodeType !== 1) return;
@@ -2481,14 +2654,14 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
 
     function findCandidates() {
       if (waitForAppReady && !isAppReady()) return null;
-      if (forAction && hasActiveViewTransition()) return null;
+      if (forAction && !force && hasActiveViewTransition()) return null;
       var rawHits = findAcrossRoots(sel, "strict");
       var ready = [];
       for (var i = 0; i < rawHits.length; i++) {
         var h = rawHits[i];
         var m = toMatch(h);
         if (!m.visible) continue;
-        if (forAction && !m.enabled) continue;
+        if (forAction && !force && !m.enabled) continue;
         ready.push({ hit: h, match: m });
       }
       return ready.length > 0 ? ready : null;
@@ -2501,7 +2674,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       var target = ready[ready.length - 1];
       var alreadyInViewport = isFullyInViewport(target.hit);
       var didScroll = alreadyInViewport ? false : ensureInViewport(target.hit);
-      if (checkHitTest && !isHitTestClear(target.hit)) {
+      if (!force && checkHitTest && !isHitTestClear(target.hit)) {
         if (!alreadyInViewport || canScrollToUnobscure(target.hit)) {
           if (scrollToUnobscure(target.hit)) {
             didScroll = true;
@@ -2511,12 +2684,12 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         if (!isHitTestClear(target.hit)) return null;
       }
       var updated = toMatch(target.hit);
-      if (!updated.visible || !updated.enabled) return null;
+      if (!updated.visible || (!force && !updated.enabled)) return null;
       return { hits: ready, target: target, match: updated, didScroll: didScroll };
     }
 
     function neededStableFrames(candidate) {
-      if (!forAction || typeof requestAnimationFrame !== "function") return 0;
+      if (force || !forAction || typeof requestAnimationFrame !== "function") return 0;
       if (explicitStableFrames >= 0) return explicitStableFrames;
       if (hasActiveAnimation(candidate.target.hit.el)) return 2;
       if (candidate.didScroll) return 1;
@@ -2745,26 +2918,27 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         return null;
       }
 
-      for (var i = hits.length - 1; i >= 0; i--) {
-        var m = toMatch(hits[i]);
-        if (!allowHidden && !m.visible) continue;
+      var anyVisible2 = false;
+      var hiddenFallback2 = [];
+      var checkMatch2 = function(h, m) {
         var matched = false;
         var actualVal = undefined;
         if (kind === "text") {
-          var normTxt = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var normTxt = normWs(m.textContent !== undefined ? m.textContent : (m.text || ""));
           actualVal = normTxt;
-          matched = normTxt === (expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : expected);
+          matched = normTxt === (expected !== null ? normWs(expected) : expected);
         } else if (kind === "containsText") {
-          var actual = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var actual = normWs(m.textContent !== undefined ? m.textContent : (m.text || ""));
           actualVal = actual;
-          var needle = expected !== null ? String(expected).replace(/\\s+/g, " ").trim() : "";
+          var needle = expected !== null ? normWs(expected) : "";
           matched = expected !== null && (ignoreCase
             ? actual.toLowerCase().indexOf(needle.toLowerCase()) !== -1
             : actual.indexOf(needle) !== -1);
         } else if (kind === "matchesText") {
-          var actualRe = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var rawRe2 = m.textContent !== undefined ? m.textContent : (m.text || "");
+          var actualRe = normWs(rawRe2);
           actualVal = actualRe;
-          matched = Boolean(regex && regex.test(actualRe));
+          matched = Boolean(regex && (regex.test(rawRe2) || regex.test(actualRe)));
         } else if (kind === "value") {
           var val = m.value !== undefined ? m.value : "";
           actualVal = val;
@@ -2780,13 +2954,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           actualVal = lbl;
           matched = expected === null ? (lbl !== undefined && lbl.length > 0) : lbl === expected;
         } else if (kind === "accessibleName") {
-          var accName = m.accessibleName || m.accessibilityLabel || m.text || "";
+          var accName = normWs(m.accessibleName || m.accessibilityLabel || m.text || "");
           actualVal = accName;
-          matched = regex ? regex.test(accName) : (expected === null ? accName.length > 0 : accName.trim() === String(expected).trim());
+          matched = regex ? (regex.test(m.accessibleName || m.accessibilityLabel || m.text || "") || regex.test(accName)) : (expected === null ? accName.length > 0 : accName === normWs(expected));
         } else if (kind === "accessibleDescription") {
-          var accDesc = m.accessibleDescription || "";
+          var accDesc = normWs(m.accessibleDescription || "");
           actualVal = accDesc;
-          matched = regex ? regex.test(accDesc) : (expected === null ? accDesc.length > 0 : accDesc.trim() === String(expected).trim());
+          matched = regex ? (regex.test(m.accessibleDescription || "") || regex.test(accDesc)) : (expected === null ? accDesc.length > 0 : accDesc === normWs(expected));
         } else if (kind === "focused") {
           actualVal = m.focused ? "focused" : "not focused";
           matched = Boolean(m.focused);
@@ -2798,7 +2972,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           actualVal = isEn2 ? "enabled" : "disabled";
           matched = isEn2;
         } else if (kind === "role") {
-          var elRole2 = m.role || getImplicitRole(hits[i].el) || "generic";
+          var elRole2 = m.role || getImplicitRole(h.el) || "generic";
           actualVal = elRole2;
           matched = expected !== null && elRole2.toLowerCase() === String(expected).toLowerCase();
         } else if (kind === "editable") {
@@ -2815,7 +2989,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           actualVal = inVp ? "in viewport" : "outside viewport";
           matched = inVp;
         } else if (kind === "jsProperty" && propertyName !== null) {
-          var propNode = hits[i].el;
+          var propNode = h.el;
           var rawProp = propNode ? propNode[propertyName] : undefined;
           actualVal = typeof rawProp === "string" ? rawProp : JSON.stringify(rawProp);
           matched = JSON.stringify(rawProp) === JSON.stringify(expectedValue);
@@ -2830,7 +3004,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
             matched = expectedTokens.length > 0 && expectedTokens.every(function(tok) { return tokens.indexOf(tok) !== -1; });
           }
         } else if (kind === "css" && cssProperty !== null) {
-          var elNode = hits[i].el;
+          var elNode = h.el;
           var winObj = (elNode.ownerDocument && elNode.ownerDocument.defaultView) || window;
           var cssVal = winObj && winObj.getComputedStyle ? winObj.getComputedStyle(elNode).getPropertyValue(cssProperty).trim() : "";
           actualVal = cssVal;
@@ -2838,6 +3012,23 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         }
         lastActual = actualVal;
         if (negate ? !matched : matched) return { matched: true, actual: actualVal };
+        return null;
+      };
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var m = toMatch(hits[i]);
+        if (!allowHidden && !m.visible) {
+          if (kind === "enabled" || kind === "checked") hiddenFallback2.push({ h: hits[i], m: m });
+          continue;
+        }
+        if (m.visible) anyVisible2 = true;
+        var resHit2 = checkMatch2(hits[i], m);
+        if (resHit2) return resHit2;
+      }
+      if (!anyVisible2 && hiddenFallback2.length > 0) {
+        for (var hi2 = 0; hi2 < hiddenFallback2.length; hi2++) {
+          var hRes2 = checkMatch2(hiddenFallback2[hi2].h, hiddenFallback2[hi2].m);
+          if (hRes2) return hRes2;
+        }
       }
       return null;
     }
@@ -2919,7 +3110,9 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           ? (win.HTMLTextAreaElement && win.HTMLTextAreaElement.prototype)
           : (win.HTMLInputElement && win.HTMLInputElement.prototype);
         var desc = proto ? Object.getOwnPropertyDescriptor(proto, "value") : null;
-        if (desc && typeof desc.set === "function") desc.set.call(el, val);
+        if (desc && typeof desc.set === "function") {
+          try { desc.set.call(el, val); } catch (e) { el.value = val; }
+        }
         else el.value = val;
         if (el._valueTracker && typeof el._valueTracker.setValue === "function") {
           try { el._valueTracker.setValue(val === "" ? " " : ""); } catch (e) {}

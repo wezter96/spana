@@ -270,7 +270,7 @@ export function createCoordinator<T extends string = string, R extends string = 
     return directionMap[direction];
   };
 
-  const normalizeWhitespace = (s: string): string => s.replaceAll(/\s+/g, " ").trim();
+  const normalizeWhitespace = (s: string): string => s.replaceAll(/[\s\u00a0\u202f]+/g, " ").trim();
 
   const collectContainerText = (el: Element): string => {
     if (el.text) return el.text;
@@ -2667,8 +2667,67 @@ export function createCoordinator<T extends string = string, R extends string = 
         const deadline = Date.now() + totalTimeout;
         let scrollCount = 0;
 
+        const domChannel = driver.domChannel;
+        const isWebDom =
+          (config.platform === "web" || !config.platform) &&
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          Boolean(domChannel?.isConnected());
+
+        const isRectInViewport = (m: {
+          rect: { x: number; y: number; width: number; height: number };
+          viewportWidth?: number;
+          viewportHeight?: number;
+        }): boolean => {
+          const vpW = m.viewportWidth || 0;
+          const vpH = m.viewportHeight || 0;
+          if (vpW <= 0 || vpH <= 0) return true;
+          const r = m.rect;
+          return (
+            r.width > 0 &&
+            r.height > 0 &&
+            r.x + r.width > 0 &&
+            r.y + r.height > 0 &&
+            r.x < vpW &&
+            r.y < vpH
+          );
+        };
+
+        const probeVisibleInViewport = (): Effect.Effect<boolean, DriverError> =>
+          Effect.gen(function* () {
+            if (isWebDom && domChannel) {
+              const matches = yield* Effect.tryPromise({
+                try: () => domChannel.query(selector as Selector),
+                catch: (err) =>
+                  isInvalidSelectorError(err)
+                    ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                    : null,
+              }).pipe(
+                Effect.catch((err) =>
+                  err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+                ),
+              );
+              if (matches) {
+                const visibleMatches = matches.filter((m) => m.visible);
+                if (visibleMatches.length === 0) return false;
+                if (visibleMatches.some(isRectInViewport)) return true;
+                if (domChannel.scrollIntoView) {
+                  const scrolled = yield* Effect.tryPromise({
+                    try: () => domChannel.scrollIntoView!(selector as Selector),
+                    catch: () => null,
+                  }).pipe(Effect.catch(() => Effect.succeed(null)));
+                  if (scrolled && scrolled.visible && isRectInViewport(scrolled)) {
+                    return true;
+                  }
+                }
+                return false;
+              }
+            }
+            return yield* probeVisible(selector, opts);
+          });
+
         while (scrollCount <= maxScrolls && Date.now() <= deadline) {
-          const found = yield* probeVisible(selector, opts);
+          const found = yield* probeVisibleInViewport();
           if (found) {
             return;
           }

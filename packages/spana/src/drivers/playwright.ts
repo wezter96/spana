@@ -7,12 +7,14 @@ import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import {
   buildDomFillScript,
+  buildDomFrameEvaluateScript,
   buildDomQueryScript,
   buildDomScrollIntoViewScript,
   buildDomTapScript,
   buildDomWaitForHiddenScript,
   buildDomWaitForMatchScript,
   buildDomWaitForSelectorScript,
+  serializeEvaluateArg,
   type DomChannel,
   type DomElementMatch,
   type DomWaitForMatchResult,
@@ -151,9 +153,7 @@ async function evaluateOnPage<T = unknown>(
   if (args.length === 1) {
     return (await activePage.evaluate(script as never, args[0] as never)) as T;
   }
-  const serializedArgs = args
-    .map((arg) => (arg === undefined ? "undefined" : JSON.stringify(arg)))
-    .join(", ");
+  const serializedArgs = args.map((arg) => serializeEvaluateArg(arg)).join(", ");
   return (await activePage.evaluate(`(${script.toString()})(${serializedArgs})`)) as T;
 }
 
@@ -1242,6 +1242,7 @@ export function makePlaywrightDriver(
       closeContextInBackground(previousContext, previousPage);
     };
 
+    let hasFlowInitScripts = false;
     const beginFlow = async (flowName: string) => {
       currentFlowName = flowName;
       resetWebDiagnostics();
@@ -1258,7 +1259,8 @@ export function makePlaywrightDriver(
       }
       downloadWaiters = [];
 
-      if (config.freshContextPerFlow && hasRunFirstFlow) {
+      if ((config.freshContextPerFlow || hasFlowInitScripts) && hasRunFirstFlow) {
+        hasFlowInitScripts = false;
         const previousContext = context;
         const pendingSlot = prefetchedSlotPromise;
         prefetchedSlotPromise = undefined;
@@ -1347,6 +1349,33 @@ export function makePlaywrightDriver(
               script: string | ((...args: any[]) => T),
               ...args: any[]
             ): Promise<T> => evaluateOnPage<T>(page, script, args),
+            evaluateInFrame: async <T = unknown>(
+              frameSelector: Selector,
+              script: string | ((doc: any, win: any, ...args: any[]) => T),
+              ...args: any[]
+            ): Promise<T> => {
+              const parentRes = (await page
+                .evaluate(buildDomFrameEvaluateScript(frameSelector, script, args))
+                .catch(() => null)) as { __spanaFrameEvalOk?: boolean; value?: T } | null;
+              if (parentRes?.__spanaFrameEvalOk) {
+                return parentRes.value as T;
+              }
+              const iframeHandle = await page
+                .locator(selectorToFrameCss(frameSelector))
+                .first()
+                .elementHandle()
+                .catch(() => null);
+              const cf = iframeHandle ? await iframeHandle.contentFrame().catch(() => null) : null;
+              if (!cf) {
+                throw new Error(`Iframe matching ${JSON.stringify(frameSelector)} not found`);
+              }
+              const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
+              const expr =
+                typeof script === "function"
+                  ? `(${script.toString()})(document, window${serializedArgs ? `, ${serializedArgs}` : ""})`
+                  : script;
+              return (await cf.evaluate(expr)) as T;
+            },
             query: async (selector) => {
               const res = await page.evaluate(buildDomQueryScript(selector));
               if (Array.isArray(res) && res.length > 0) return res;
@@ -1938,10 +1967,11 @@ export function makePlaywrightDriver(
       addInitScript: (script, ...args) =>
         Effect.tryPromise({
           try: async () => {
+            hasFlowInitScripts = true;
             const source =
               typeof script === "string"
                 ? script
-                : `(${script.toString()})(${args.map((a) => (a === undefined ? "undefined" : JSON.stringify(a))).join(", ")});`;
+                : `(${script.toString()})(${args.map((a) => serializeEvaluateArg(a)).join(", ")});`;
             await context.addInitScript(source);
           },
           catch: (e) => new DriverError({ message: `addInitScript() failed: ${e}` }),

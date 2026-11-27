@@ -135,9 +135,13 @@ async function runMatrixEntry(entry) {
     },
   });
 
-  // Give Chrome a tiny beat to finish exiting before checking orphans
-  await new Promise((r) => setTimeout(r, 350));
-  const orphanChromes = countOrphanSpanaChromes();
+  // Give Chrome's subprocesses up to 1.5s to finish exiting before flagging true orphans
+  let orphanChromes = 0;
+  for (let waitAttempt = 0; waitAttempt < 10; waitAttempt++) {
+    await new Promise((r) => setTimeout(r, 150));
+    orphanChromes = countOrphanSpanaChromes();
+    if (orphanChromes === 0) break;
+  }
 
   let report = null;
   if (existsSync(reportFile)) {
@@ -152,7 +156,7 @@ async function runMatrixEntry(entry) {
     .map((r) => ({ name: r.name, error: r.error?.message || String(r.error || "unknown") }));
 
   const byProfile = {};
-  for (let p = 1; p <= 10; p++) {
+  for (let p = 1; p <= 11; p++) {
     const prefix = `P${p}-`;
     const profResults = results.filter((r) => r.name.includes(prefix));
     byProfile[`P${p}`] = {
@@ -302,8 +306,34 @@ async function runExtraChecks() {
     const valRes = await runCommandWithRss(bin, [cliPath, "validate"], { cwd: here });
     checks.push({
       name: `${label}: spana validate reads config.flowDir`,
-      ok: valRes.exitCode === 0 && valRes.stdout.includes("10 flow(s) valid"),
+      ok: valRes.exitCode === 0 && valRes.stdout.includes("11 flow(s) valid"),
       detail: `exit=${valRes.exitCode}, out=${valRes.stdout.trim()}`,
+    });
+
+    // 6. Multi-project wave concurrency cap: 5 projects in 1 wave with --workers 2 MUST cap peak <= 2
+    const waveCapDir = resolve(projectsDir, "wave-cap");
+    const waveCapCfg = resolve(waveCapDir, "spana-wavecap.config.ts");
+    await fetch(`http://127.0.0.1:${PRIMARY_PORT}/api/concurrency/reset`);
+    const waveRes = await runCommandWithRss(
+      bin,
+      [cliPath, "test", "--config", waveCapCfg, "--workers", "2"],
+      {
+        cwd: waveCapDir,
+        env: { STRESS_PORT: String(PRIMARY_PORT) },
+      },
+    );
+    const concStats = await fetch(`http://127.0.0.1:${PRIMARY_PORT}/api/concurrency/stats`).then(
+      (r) => r.json(),
+    );
+    checks.push({
+      name: `${label}: 5-project wave caps concurrency to --workers 2`,
+      ok:
+        waveRes.exitCode === 0 &&
+        concStats.totalEntered === 5 &&
+        concStats.peak >= 1 &&
+        concStats.peak <= 2,
+      detail: `exit=${waveRes.exitCode}, entered=${concStats.totalEntered}, peak=${concStats.peak}`,
+      errorLog: waveRes.stdout + "\n" + waveRes.stderr,
     });
   }
 
@@ -381,7 +411,7 @@ try {
 
   const anyFail =
     matrixResults.some(
-      (m) => m.exitCode !== 0 || m.failed > 0 || m.passed !== 100 || m.orphanChromes > 0,
+      (m) => m.exitCode !== 0 || m.failed > 0 || m.passed !== 110 || m.orphanChromes > 0,
     ) || extraChecks.some((c) => !c.ok);
   process.exitCode = anyFail ? 1 : 0;
 } finally {

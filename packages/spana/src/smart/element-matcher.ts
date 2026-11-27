@@ -19,23 +19,33 @@ export function flattenElements(root: Element): Element[] {
   return result;
 }
 
+function normalizeWs(s: string): string {
+  return s.replaceAll(/[\s\u00a0\u202f]+/g, " ").trim();
+}
+
+function matchTextSpec(actual: string, spec: string | RegExp, exact?: boolean): boolean {
+  const normActual = normalizeWs(actual);
+  if (spec instanceof RegExp) {
+    return spec.test(actual) || spec.test(normActual);
+  }
+  const normSpec = normalizeWs(spec);
+  return exact
+    ? normActual === normSpec
+    : normActual.toLowerCase().includes(normSpec.toLowerCase());
+}
+
 /** Check if an element matches a selector */
 export function matchesSelector(element: Element, selector: Selector): boolean {
   if (typeof selector === "string") {
-    // String shorthand = text match (case-insensitive)
-    return element.text?.toLowerCase().includes(selector.toLowerCase()) ?? false;
+    // String shorthand = text match (case-insensitive, Unicode NBSP normalized)
+    return element.text !== undefined && matchTextSpec(element.text, selector, false);
   }
   let baseMatch = false;
   if ("testID" in selector) {
     baseMatch = element.id === selector.testID;
   } else if ("text" in selector) {
-    if (selector.text instanceof RegExp) {
-      baseMatch = selector.text.test(element.text ?? "");
-    } else {
-      baseMatch = selector.exact
-        ? element.text === selector.text
-        : (element.text?.toLowerCase().includes(selector.text.toLowerCase()) ?? false);
-    }
+    baseMatch =
+      element.text !== undefined && matchTextSpec(element.text, selector.text, selector.exact);
   } else if ("accessibilityLabel" in selector) {
     baseMatch = element.accessibilityLabel === selector.accessibilityLabel;
   } else if ("role" in selector) {
@@ -50,12 +60,7 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
       baseMatch = true;
     } else {
       const candidateName = element.accessibilityLabel ?? element.text ?? "";
-      baseMatch =
-        selector.name instanceof RegExp
-          ? selector.name.test(candidateName)
-          : selector.exact
-            ? candidateName === selector.name
-            : candidateName.toLowerCase().includes(selector.name.toLowerCase());
+      baseMatch = matchTextSpec(candidateName, selector.name, selector.exact);
     }
   } else if ("css" in selector) {
     // Native hierarchy fallback cannot evaluate arbitrary CSS; DOM channel handles `{ css }`.
@@ -73,18 +78,10 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
   if (!("point" in selector)) {
     const text = element.text ?? element.accessibilityLabel ?? "";
     if (selector.hasText !== undefined) {
-      const ok =
-        selector.hasText instanceof RegExp
-          ? selector.hasText.test(text)
-          : text.toLowerCase().includes(selector.hasText.toLowerCase());
-      if (!ok) return false;
+      if (!matchTextSpec(text, selector.hasText, false)) return false;
     }
     if (selector.hasNotText !== undefined) {
-      const bad =
-        selector.hasNotText instanceof RegExp
-          ? selector.hasNotText.test(text)
-          : text.toLowerCase().includes(selector.hasNotText.toLowerCase());
-      if (bad) return false;
+      if (matchTextSpec(text, selector.hasNotText, false)) return false;
     }
     if (selector.has !== undefined) {
       const descendants = flattenElements(element).slice(1);

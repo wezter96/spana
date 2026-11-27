@@ -1191,7 +1191,10 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     }
     const teardownProjectNames = new Set(plan.teardowns.map((t) => t.name));
     try {
-      const executeProject = async (project: import("../core/projects.js").ProjectConfig) => {
+      const executeProject = async (
+        project: import("../core/projects.js").ProjectConfig,
+        allocatedWorkers?: number,
+      ) => {
         // Setup dependency projects and teardown projects must NOT be filtered out by
         // CLI --tag, --grep, --grep-invert, or positional flow file filters unless the
         // user explicitly targeted only that project via `--project <dep>`.
@@ -1260,16 +1263,32 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           },
         };
 
+        const effectiveProjWorkers =
+          allocatedWorkers !== undefined
+            ? Math.max(1, allocatedWorkers)
+            : (opts.workers ?? projConfig.defaults?.workers);
+        const scopedProjConfig: ProvConfig =
+          effectiveProjWorkers !== undefined
+            ? {
+                ...projConfig,
+                defaults: {
+                  ...projConfig.defaults,
+                  workers: effectiveProjWorkers,
+                },
+              }
+            : projConfig;
+        const scopedOpts: TestCommandOptions =
+          allocatedWorkers !== undefined ? { ...opts, workers: effectiveProjWorkers } : opts;
+
         // Honor --processes / defaults.processes inside project runs too (3.12)
-        const projMaxWorkersPerProc = projConfig.defaults?.maxWorkersPerProcess;
-        const projRequestedProcesses = opts.processes ?? projConfig.defaults?.processes;
-        const projRequestedWorkers =
-          opts.workers ?? projConfig.defaults?.workers ?? projRequestedProcesses;
+        const projMaxWorkersPerProc = scopedProjConfig.defaults?.maxWorkersPerProcess;
+        const projRequestedProcesses = scopedOpts.processes ?? scopedProjConfig.defaults?.processes;
+        const projRequestedWorkers = effectiveProjWorkers ?? projRequestedProcesses;
         if (
           projRequestedWorkers &&
-          !opts.shard &&
-          !opts.watch &&
-          !opts.device &&
+          !scopedOpts.shard &&
+          !scopedOpts.watch &&
+          !scopedOpts.device &&
           !process.env.SPANA_WORKER_PROCESS &&
           cliEntry
         ) {
@@ -1297,7 +1316,8 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
             );
             const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
             const baseWarmScope =
-              projConfig.execution?.web?.warmBrowserScope ?? `mp-proj-${project.name}-${runTag}`;
+              scopedProjConfig.execution?.web?.warmBrowserScope ??
+              `mp-proj-${project.name}-${runTag}`;
             let offsetCursor = 0;
             try {
               const poolResult = await runMultiProcessPool({
@@ -1324,20 +1344,24 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
                     "--reporter",
                     "json",
                     "--pass-with-no-tests",
-                    ...(opts.browser ? ["--browser", opts.browser] : []),
+                    ...(scopedOpts.browser ? ["--browser", scopedOpts.browser] : []),
                     ...(configPath ? ["--config", configPath] : []),
-                    ...(!isDependencyOrTeardown && opts.tags
-                      ? opts.tags.flatMap((t) => ["--tag", t])
+                    ...(!isDependencyOrTeardown && scopedOpts.tags
+                      ? scopedOpts.tags.flatMap((t) => ["--tag", t])
                       : []),
-                    ...(!isDependencyOrTeardown && opts.grep ? ["--grep", opts.grep] : []),
-                    ...(!isDependencyOrTeardown && opts.grepInvert
-                      ? ["--grep-invert", opts.grepInvert]
+                    ...(!isDependencyOrTeardown && scopedOpts.grep
+                      ? ["--grep", scopedOpts.grep]
                       : []),
-                    ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
-                    ...(opts.jsCoverage ? ["--js-coverage"] : []),
-                    ...(opts.trace ? ["--trace"] : []),
-                    ...(opts.headed ? ["--headed"] : []),
-                    ...(opts.bail !== undefined ? ["--bail", String(opts.bail)] : []),
+                    ...(!isDependencyOrTeardown && scopedOpts.grepInvert
+                      ? ["--grep-invert", scopedOpts.grepInvert]
+                      : []),
+                    ...(scopedOpts.retries !== undefined
+                      ? ["--retries", String(scopedOpts.retries)]
+                      : []),
+                    ...(scopedOpts.jsCoverage ? ["--js-coverage"] : []),
+                    ...(scopedOpts.trace ? ["--trace"] : []),
+                    ...(scopedOpts.headed ? ["--headed"] : []),
+                    ...(scopedOpts.bail !== undefined ? ["--bail", String(scopedOpts.bail)] : []),
                   ];
                   return {
                     command: process.execPath,
@@ -1368,31 +1392,30 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         console.log(`\n[project:${project.name}] Running ${matched.length} flow(s)...`);
         const runtimes: RuntimeHandle[] = [];
         const useParallelWorkers = Boolean(
-          opts.parallel ||
-          opts.devices ||
-          (opts.workers && opts.workers > 1) ||
-          (projConfig.defaults?.workers && projConfig.defaults.workers > 1),
+          scopedOpts.parallel ||
+          scopedOpts.devices ||
+          (effectiveProjWorkers !== undefined && effectiveProjWorkers > 1),
         );
         try {
           const platformConfigs =
             executionMode === "local" && useParallelWorkers
               ? await buildParallelPlatformConfigs(
                   projPlatforms,
-                  opts,
-                  projConfig,
+                  scopedOpts,
+                  scopedProjConfig,
                   runtimes,
                   resolveFromConfig,
                 )
               : await buildSerialPlatformConfigs(
                   projPlatforms,
-                  opts,
-                  projConfig,
+                  scopedOpts,
+                  scopedProjConfig,
                   runtimes,
                   executionMode,
-                  opts.appiumUrl ??
+                  scopedOpts.appiumUrl ??
                     process.env.SPANA_APPIUM_URL ??
-                    projConfig.execution?.appium?.serverUrl,
-                  projConfig.execution?.appium ?? {},
+                    scopedProjConfig.execution?.appium?.serverUrl,
+                  scopedProjConfig.execution?.appium ?? {},
                   undefined,
                   null,
                   resolveFromConfig,
@@ -1460,15 +1483,37 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         }
       };
 
+      // Enforce the global --workers budget across concurrent projects in each wave so
+      // a wave of N projects with --workers W never spawns N × W simultaneous browsers.
+      const globalWorkerBudget = Math.max(1, opts.workers ?? config.defaults?.workers ?? 1);
       for (const wave of plan.waves) {
-        const waveOutcomes = await Promise.all(wave.map((proj) => executeProject(proj)));
+        const maxConcurrentProjects = Math.min(wave.length, globalWorkerBudget);
+        const baseWorkersPerProj = Math.max(
+          1,
+          Math.floor(globalWorkerBudget / maxConcurrentProjects),
+        );
+        const extraWorkerSlots =
+          wave.length <= globalWorkerBudget
+            ? globalWorkerBudget - baseWorkersPerProj * maxConcurrentProjects
+            : 0;
+        const waveOutcomes: boolean[] = Array.from({ length: wave.length }, () => true);
+        let nextIndex = 0;
+        const runSlot = async (slotIdx: number) => {
+          const slotBudget = baseWorkersPerProj + (slotIdx < extraWorkerSlots ? 1 : 0);
+          while (true) {
+            const idx = nextIndex++;
+            if (idx >= wave.length) break;
+            waveOutcomes[idx] = await executeProject(wave[idx]!, slotBudget);
+          }
+        };
+        await Promise.all(Array.from({ length: maxConcurrentProjects }, (_, s) => runSlot(s)));
         if (waveOutcomes.some((ok) => !ok)) {
           allPassed = false;
           break;
         }
       }
       for (const td of plan.teardowns) {
-        const tdOk = await executeProject(td);
+        const tdOk = await executeProject(td, globalWorkerBudget);
         if (!tdOk) allPassed = false;
       }
 
