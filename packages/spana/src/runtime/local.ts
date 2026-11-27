@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import type { Browser } from "playwright-core";
-import type { BridgeConfig, ProvConfig } from "../schemas/config.js";
+import type { BridgeConfig, ProvConfig, WebExecutionConfig } from "../schemas/config.js";
 import type { Platform } from "../schemas/selector.js";
 import type { EngineConfig } from "../core/engine.js";
 import type { CoordinatorConfig } from "../smart/coordinator.js";
@@ -220,6 +220,41 @@ export function speculativelyPrelaunchWebBrowser(
   return { browserPromise, ownsBrowser };
 }
 
+function resolveWebDeviceOptions(webExecution?: WebExecutionConfig) {
+  const device = webExecution?.device;
+  const vp = webExecution?.viewport ?? device?.viewport;
+  const viewport = vp ? { width: vp.width, height: vp.height } : undefined;
+  const deviceScaleFactor =
+    webExecution?.deviceScaleFactor ??
+    webExecution?.viewport?.deviceScaleFactor ??
+    device?.deviceScaleFactor ??
+    device?.viewport?.deviceScaleFactor;
+  const isMobile =
+    webExecution?.isMobile ??
+    webExecution?.mobile ??
+    webExecution?.viewport?.isMobile ??
+    webExecution?.viewport?.mobile ??
+    device?.isMobile ??
+    device?.mobile ??
+    device?.viewport?.isMobile ??
+    device?.viewport?.mobile;
+  const hasTouch =
+    webExecution?.hasTouch ??
+    webExecution?.viewport?.hasTouch ??
+    device?.hasTouch ??
+    device?.viewport?.hasTouch;
+  const userAgent = webExecution?.userAgent ?? device?.userAgent;
+  return {
+    viewport,
+    deviceScaleFactor,
+    mobile: isMobile,
+    isMobile,
+    hasTouch,
+    userAgent,
+    httpCredentials: webExecution?.httpCredentials,
+  };
+}
+
 export async function buildWebRuntime(
   config: ProvConfig,
   prelaunched?: PrelaunchedWebBrowser,
@@ -305,16 +340,19 @@ export async function buildWebRuntime(
       targetCdpUrl = launchedDirectCdp.browserWsUrl;
     }
     const effectiveLocale = webExecution?.locale ?? config.defaults?.locale;
+    const webDeviceOpts = resolveWebDeviceOptions(webExecution);
     const cdpEmulation =
       webExecution?.colorScheme ||
       webExecution?.reducedMotion ||
       webExecution?.timezoneId ||
-      effectiveLocale
+      effectiveLocale ||
+      webDeviceOpts.userAgent
         ? {
             colorScheme: webExecution?.colorScheme,
             reducedMotion: webExecution?.reducedMotion,
             timezoneId: webExecution?.timezoneId,
             locale: effectiveLocale,
+            userAgent: webDeviceOpts.userAgent,
           }
         : undefined;
     rawDriver = await Effect.runPromise(
@@ -322,7 +360,12 @@ export async function buildWebRuntime(
         cdpUrl: targetCdpUrl ?? "http://127.0.0.1:9222",
         baseUrl: webUrl,
         engineLabel: engine,
-        viewport: webExecution?.viewport,
+        viewport: webDeviceOpts.viewport,
+        deviceScaleFactor: webDeviceOpts.deviceScaleFactor,
+        mobile: webDeviceOpts.mobile,
+        isMobile: webDeviceOpts.isMobile,
+        hasTouch: webDeviceOpts.hasTouch,
+        httpCredentials: webDeviceOpts.httpCredentials,
         evaluateTimeout: webExecution?.evaluateTimeout,
         useBrowserContexts: useContexts,
         freshContextPerFlow: webExecution?.freshContextPerFlow,
@@ -335,6 +378,7 @@ export async function buildWebRuntime(
         emulation: cdpEmulation,
         sanitizeHeadlessUserAgent: !(
           webExecution?.headless === false ||
+          Boolean(webDeviceOpts.userAgent) ||
           webExecution?.args?.some((a) => /^--user-agent(?:=|$)/i.test(a))
         ),
         readyExpression: webExecution?.readyExpression,
@@ -342,6 +386,7 @@ export async function buildWebRuntime(
     );
   } else {
     const { makePlaywrightDriver } = await import("../drivers/playwright.js");
+    const webDeviceOpts = resolveWebDeviceOptions(webExecution);
     rawDriver = await Effect.runPromise(
       makePlaywrightDriver({
         browser: webExecution?.browser,
@@ -349,7 +394,13 @@ export async function buildWebRuntime(
         executablePath: webExecution?.executablePath,
         channel: webExecution?.channel,
         args: webExecution?.args,
-        viewport: webExecution?.viewport,
+        viewport: webDeviceOpts.viewport,
+        deviceScaleFactor: webDeviceOpts.deviceScaleFactor,
+        mobile: webDeviceOpts.mobile,
+        isMobile: webDeviceOpts.isMobile,
+        hasTouch: webDeviceOpts.hasTouch,
+        httpCredentials: webDeviceOpts.httpCredentials,
+        userAgent: webDeviceOpts.userAgent,
         locale: webExecution?.locale ?? config.defaults?.locale,
         timezoneId: webExecution?.timezoneId,
         colorScheme: webExecution?.colorScheme,
@@ -480,16 +531,19 @@ export async function buildWebRuntimePool(
     }
 
     const effectivePoolLocale = webExecution?.locale ?? config.defaults?.locale;
+    const poolWebDeviceOpts = resolveWebDeviceOptions(webExecution);
     const poolEmulation =
       webExecution?.colorScheme ||
       webExecution?.reducedMotion ||
       webExecution?.timezoneId ||
-      effectivePoolLocale
+      effectivePoolLocale ||
+      poolWebDeviceOpts.userAgent
         ? {
             colorScheme: webExecution?.colorScheme,
             reducedMotion: webExecution?.reducedMotion,
             timezoneId: webExecution?.timezoneId,
             locale: effectivePoolLocale,
+            userAgent: poolWebDeviceOpts.userAgent,
           }
         : undefined;
 
@@ -506,7 +560,12 @@ export async function buildWebRuntimePool(
             cdpUrl: bucket.cdpUrl,
             baseUrl: workerWebUrl,
             engineLabel: "cdp",
-            viewport: webExecution?.viewport,
+            viewport: poolWebDeviceOpts.viewport,
+            deviceScaleFactor: poolWebDeviceOpts.deviceScaleFactor,
+            mobile: poolWebDeviceOpts.mobile,
+            isMobile: poolWebDeviceOpts.isMobile,
+            hasTouch: poolWebDeviceOpts.hasTouch,
+            httpCredentials: poolWebDeviceOpts.httpCredentials,
             evaluateTimeout: webExecution?.evaluateTimeout,
             useBrowserContexts: true,
             useInjectedRuntime: true,
@@ -521,6 +580,7 @@ export async function buildWebRuntimePool(
             emulation: poolEmulation,
             sanitizeHeadlessUserAgent: !(
               webExecution?.headless === false ||
+              Boolean(poolWebDeviceOpts.userAgent) ||
               webExecution?.args?.some((a) => /^--user-agent(?:=|$)/i.test(a))
             ),
             readyExpression: webExecution?.readyExpression,
@@ -623,6 +683,7 @@ export async function buildWebRuntimePool(
     browserBuckets[i % browserBuckets.length]!.remaining += 1;
   }
 
+  const poolPwDeviceOpts = resolveWebDeviceOptions(webExecution);
   const results: RuntimeResult[] = [];
   for (let i = 0; i < workerCount; i++) {
     const bucket = browserBuckets[i % browserBuckets.length]!;
@@ -638,7 +699,13 @@ export async function buildWebRuntimePool(
         executablePath: webExecution?.executablePath,
         channel: webExecution?.channel,
         args: webExecution?.args,
-        viewport: webExecution?.viewport,
+        viewport: poolPwDeviceOpts.viewport,
+        deviceScaleFactor: poolPwDeviceOpts.deviceScaleFactor,
+        mobile: poolPwDeviceOpts.mobile,
+        isMobile: poolPwDeviceOpts.isMobile,
+        hasTouch: poolPwDeviceOpts.hasTouch,
+        httpCredentials: poolPwDeviceOpts.httpCredentials,
+        userAgent: poolPwDeviceOpts.userAgent,
         locale: webExecution?.locale ?? config.defaults?.locale,
         timezoneId: webExecution?.timezoneId,
         colorScheme: webExecution?.colorScheme,

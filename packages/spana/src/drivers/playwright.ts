@@ -37,7 +37,7 @@ import { buildDirectChromiumLaunchArgs } from "./cdp-browser.js";
 import { hasLaunchDeviceState } from "./launch-options.js";
 import { deviceEffect } from "./device-controls.js";
 import { resolveNetworkConditions } from "./network-profiles.js";
-import type { BrowserName } from "../schemas/config.js";
+import type { BrowserName, WebViewportConfig } from "../schemas/config.js";
 import type { Selector } from "../schemas/selector.js";
 import {
   RawDriver,
@@ -54,6 +54,7 @@ import {
   type BrowserResponseInfo,
   type BrowserRoute,
   type BrowserRouteHandler,
+  type HttpCredentials,
   type NetworkConditions,
   type BrowserRouteMatcher,
   type BrowserConsoleLog,
@@ -94,8 +95,18 @@ export interface PlaywrightConfig {
   executablePath?: string;
   /** Extra browser launch arguments (forwarded to `browser.launch({ args })`). */
   args?: string[];
-  /** Default viewport dimensions for new contexts. */
-  viewport?: { width: number; height: number };
+  /** Default viewport dimensions (and optional mobile/DPR/touch fields) for new contexts. */
+  viewport?: WebViewportConfig;
+  /** Device pixel ratio override (default: 1). */
+  deviceScaleFactor?: number;
+  /** Emulate mobile viewport meta tag & scrollbars. */
+  mobile?: boolean;
+  /** Playwright-compatible alias for `mobile`. */
+  isMobile?: boolean;
+  /** Enable touch event emulation (`'ontouchstart' in window`). */
+  hasTouch?: boolean;
+  /** HTTP Basic / Digest authentication credentials for new contexts. */
+  httpCredentials?: HttpCredentials;
   /** Default locale (e.g. "en-US", "sv-SE") for new contexts. */
   locale?: string;
   /** Default User-Agent override for new contexts. */
@@ -578,6 +589,9 @@ export function makePlaywrightDriver(
     let dialogHandler: BrowserDialogHandler | null = null;
     const attachedPages = new WeakSet<Page>();
     const navigationUrls: string[] = [];
+    let lastNavigationStatus: number | null = null;
+    let activeLocale = config.locale;
+    let activeUserAgent = config.userAgent;
     const requestListeners = new Set<(req: BrowserRequestInfo) => void>();
     const toBrowserRequestInfo = (request: Request): BrowserRequestInfo => ({
       url: request.url(),
@@ -897,6 +911,19 @@ export function makePlaywrightDriver(
         }
       });
 
+      activePage.on("response", (response) => {
+        try {
+          if (
+            response.frame() === activePage.mainFrame() &&
+            response.request().isNavigationRequest()
+          ) {
+            lastNavigationStatus = response.status();
+          }
+        } catch {
+          // ignore response tracking errors on closing pages
+        }
+      });
+
       activePage.on("request", (request) => {
         if (requestListeners.size === 0) return;
         const info = toBrowserRequestInfo(request);
@@ -1179,10 +1206,20 @@ export function makePlaywrightDriver(
     };
 
     const prepareContextSlot = async (storageStatePath?: string) => {
+      const effectiveDpr = config.deviceScaleFactor ?? config.viewport?.deviceScaleFactor;
+      const effectiveIsMobile =
+        config.isMobile ?? config.mobile ?? config.viewport?.isMobile ?? config.viewport?.mobile;
+      const effectiveHasTouch = config.hasTouch ?? config.viewport?.hasTouch;
       const nextCtx = await browser.newContext({
         acceptDownloads: true,
         ...(storageStatePath ? { storageState: storageStatePath } : {}),
-        ...(config.viewport ? { viewport: config.viewport } : {}),
+        ...(config.viewport
+          ? { viewport: { width: config.viewport.width, height: config.viewport.height } }
+          : {}),
+        ...(effectiveDpr !== undefined ? { deviceScaleFactor: effectiveDpr } : {}),
+        ...(effectiveIsMobile !== undefined ? { isMobile: effectiveIsMobile } : {}),
+        ...(effectiveHasTouch !== undefined ? { hasTouch: effectiveHasTouch } : {}),
+        ...(config.httpCredentials ? { httpCredentials: config.httpCredentials } : {}),
         ...(config.locale ? { locale: config.locale } : {}),
         ...(config.userAgent ? { userAgent: config.userAgent } : {}),
         ...(config.timezoneId ? { timezoneId: config.timezoneId } : {}),
@@ -1247,6 +1284,9 @@ export function makePlaywrightDriver(
       currentFlowName = flowName;
       resetWebDiagnostics();
       navigationUrls.length = 0;
+      lastNavigationStatus = null;
+      activeLocale = config.locale;
+      activeUserAgent = config.userAgent;
       harEntries = [];
       harPages = new Map();
       tabIds = new Map();
@@ -1885,10 +1925,11 @@ export function makePlaywrightDriver(
                 }
               }
             }
-            await page.goto(
+            const navRes = await page.goto(
               targetUrl,
               config.waitUntil ? { waitUntil: config.waitUntil } : undefined,
             );
+            lastNavigationStatus = navRes ? navRes.status() : null;
             updateHarPage(page);
             schedulePrefetchNextContext();
             debugLog("openLink", targetUrl);
@@ -1899,7 +1940,8 @@ export function makePlaywrightDriver(
       back: () =>
         Effect.tryPromise({
           try: async () => {
-            await page.goBack();
+            const navRes = await page.goBack();
+            if (navRes) lastNavigationStatus = navRes.status();
             updateHarPage(page);
             debugLog("back", currentPageUrl(page));
           },
@@ -1909,7 +1951,8 @@ export function makePlaywrightDriver(
       forward: () =>
         Effect.tryPromise({
           try: async () => {
-            await page.goForward();
+            const navRes = await page.goForward();
+            if (navRes) lastNavigationStatus = navRes.status();
             updateHarPage(page);
             debugLog("forward", currentPageUrl(page));
           },
@@ -1920,7 +1963,8 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             const waitUntil = reloadOpts?.waitUntil ?? config.waitUntil;
-            await page.reload(waitUntil ? { waitUntil } : undefined);
+            const navRes = await page.reload(waitUntil ? { waitUntil } : undefined);
+            if (navRes) lastNavigationStatus = navRes.status();
             updateHarPage(page);
             debugLog("reload", currentPageUrl(page));
           },
@@ -1938,6 +1982,8 @@ export function makePlaywrightDriver(
       getUrl: () => Effect.sync(() => currentPageUrl(page)),
 
       getNavigationUrls: () => [...navigationUrls],
+
+      getLastNavigationStatus: () => lastNavigationStatus,
 
       waitForLoadState: (state = "load", waitOpts) =>
         Effect.tryPromise({
@@ -2452,6 +2498,13 @@ export function makePlaywrightDriver(
                 cdpEndpoint: undefined,
                 wsEndpoint: undefined,
                 ...(ctxOpts?.viewport ? { viewport: ctxOpts.viewport } : {}),
+                ...(ctxOpts?.deviceScaleFactor !== undefined
+                  ? { deviceScaleFactor: ctxOpts.deviceScaleFactor }
+                  : {}),
+                ...(ctxOpts?.mobile !== undefined ? { mobile: ctxOpts.mobile } : {}),
+                ...(ctxOpts?.isMobile !== undefined ? { isMobile: ctxOpts.isMobile } : {}),
+                ...(ctxOpts?.hasTouch !== undefined ? { hasTouch: ctxOpts.hasTouch } : {}),
+                ...(ctxOpts?.httpCredentials ? { httpCredentials: ctxOpts.httpCredentials } : {}),
                 ...(ctxOpts?.locale ? { locale: ctxOpts.locale } : {}),
                 ...(ctxOpts?.userAgent ? { userAgent: ctxOpts.userAgent } : {}),
               }),
@@ -2514,6 +2567,34 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             await page.setViewportSize({ width: viewport.width, height: viewport.height });
+            const hasMobileOpts =
+              viewport.deviceScaleFactor !== undefined ||
+              viewport.mobile !== undefined ||
+              viewport.isMobile !== undefined ||
+              viewport.hasTouch !== undefined;
+            if (hasMobileOpts && browserName === "chromium") {
+              const session = await ensureCdpSession();
+              const dpr = viewport.deviceScaleFactor ?? config.deviceScaleFactor ?? 1;
+              const isMob = Boolean(
+                viewport.isMobile ?? viewport.mobile ?? config.isMobile ?? config.mobile ?? false,
+              );
+              await session
+                .send("Emulation.setDeviceMetricsOverride", {
+                  width: viewport.width,
+                  height: viewport.height,
+                  deviceScaleFactor: dpr,
+                  mobile: isMob,
+                })
+                .catch(() => {});
+              if (viewport.hasTouch !== undefined) {
+                await session
+                  .send("Emulation.setTouchEmulationEnabled", {
+                    enabled: viewport.hasTouch,
+                    ...(viewport.hasTouch ? { maxTouchPoints: 5 } : {}),
+                  })
+                  .catch(() => {});
+              }
+            }
           },
           catch: (e) => new DriverError({ message: `Failed to set viewport: ${e}` }),
         }),
@@ -2534,6 +2615,12 @@ export function makePlaywrightDriver(
                   : {}),
               });
             }
+            if (emulationOpts.locale !== undefined) {
+              activeLocale = emulationOpts.locale;
+            }
+            if (emulationOpts.userAgent !== undefined) {
+              activeUserAgent = emulationOpts.userAgent;
+            }
             if (
               browserName === "chromium" &&
               (emulationOpts.locale !== undefined ||
@@ -2551,9 +2638,17 @@ export function makePlaywrightDriver(
                   .send("Emulation.setTimezoneOverride", { timezoneId: emulationOpts.timezoneId })
                   .catch(() => {});
               }
-              if (emulationOpts.userAgent !== undefined) {
+              if (emulationOpts.userAgent !== undefined || emulationOpts.locale !== undefined) {
+                let uaToUse = activeUserAgent;
+                if (!uaToUse) {
+                  const currentUa = await page.evaluate(() => navigator.userAgent).catch(() => "");
+                  uaToUse = currentUa ? currentUa.replaceAll("HeadlessChrome/", "Chrome/") : "";
+                }
                 await session
-                  .send("Emulation.setUserAgentOverride", { userAgent: emulationOpts.userAgent })
+                  .send("Emulation.setUserAgentOverride", {
+                    userAgent: uaToUse,
+                    ...(activeLocale ? { acceptLanguage: activeLocale } : {}),
+                  })
                   .catch(() => {});
               }
             }

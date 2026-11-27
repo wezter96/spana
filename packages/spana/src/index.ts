@@ -3,6 +3,8 @@
 // User-facing API
 export {
   flow,
+  FlowSkippedError,
+  isFlowSkippedError,
   type FlowConfig,
   type FlowSkipCondition,
   type FlowContext,
@@ -10,7 +12,9 @@ export {
   type FlowDefinition,
 } from "./api/flow.js";
 export {
+  createPromiseApp,
   type PromiseApp,
+  type PromiseAppOptions,
   type BackUntilVisibleOptions,
   type DismissKeyboardOptions,
   type ScrollUntilVisibleOptions,
@@ -26,6 +30,7 @@ export {
   type FrameScope,
 } from "./api/app.js";
 export {
+  createPromiseExpect,
   type PromiseExpectation,
   type NegatedPromiseExpectation,
   type PromiseExpectFn,
@@ -85,6 +90,9 @@ export {
   type WebContextIsolation,
   type VideoRecordingMode,
   type WebResourceBlockType,
+  type WebViewportConfig,
+  type WebDeviceConfig,
+  type HttpCredentialsConfig,
   type StorybookConfig,
   type StorybookValue,
   type WebExecutionConfig,
@@ -107,6 +115,7 @@ export {
   type BrowserRequestInfo,
   type BrowserRoute,
   type BrowserRouteHandler,
+  type HttpCredentials,
   type BrowserCookie,
   type BrowserResponseInfo,
   type BrowserNetworkConditions,
@@ -238,6 +247,13 @@ export {
   type DirectCdpBrowserHandle,
   type LightweightCdpDriverOptions,
 } from "./drivers/cdp-browser.js";
+export {
+  createCdpApp,
+  launchDirectCdpPage,
+  type CreateCdpAppOptions,
+  type DirectCdpAppHandle,
+} from "./drivers/cdp-embed.js";
+export { loadCachedAxeSource } from "./smart/coordinator.js";
 export { buildOrderedWorkUnits, orderFlowsLongestFirst } from "./core/parallel.js";
 export { makeElectronDriver, type ElectronDriverOptions } from "./drivers/electron.js";
 export {

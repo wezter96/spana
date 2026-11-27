@@ -29,6 +29,9 @@ function makeFakeContext(log: string[]): FlowContext {
     workerIndex: 0,
     parallelIndex: 0,
     sessions: {} as any,
+    skip: (() => {
+      throw new Error("skip");
+    }) as any,
   };
 }
 

@@ -29,6 +29,8 @@ export interface DomElementMatch {
   accessibleName?: string;
   accessibleDescription?: string;
   rect: DomRect;
+  /** Verified hit-tested click coordinates inside the visible clipped region of the element (when resolved for an action). */
+  clickPoint?: { x: number; y: number };
   scrollX: number;
   scrollY: number;
   devicePixelRatio: number;
@@ -319,6 +321,65 @@ export function serializeEvaluateArg(val: unknown, seen: WeakSet<object> = new W
 }
 
 /**
+ * Detect whether a JS snippet contains a top-level `return` keyword outside string literals,
+ * template literals, comments, and nested blocks/parentheses. Prevents string literals like
+ * `"Download the VAT return (file)"` inside serialized selectors from being mistaken for a
+ * bare function body needing `(function(){ ... })()` wrapping.
+ */
+function hasTopLevelReturn(code: string): boolean {
+  let depth = 0;
+  const len = code.length;
+  for (let i = 0; i < len; i++) {
+    const ch = code[i]!;
+    const next = i + 1 < len ? code[i + 1] : "";
+    // Line comment
+    if (ch === "/" && next === "/") {
+      i += 2;
+      while (i < len && code[i] !== "\n") i++;
+      continue;
+    }
+    // Block comment
+    if (ch === "/" && next === "*") {
+      i += 2;
+      while (i + 1 < len && !(code[i] === "*" && code[i + 1] === "/")) i++;
+      i++;
+      continue;
+    }
+    // Single, double, or template string literal
+    if (ch === '"' || ch === "'" || ch === "`") {
+      const quote = ch;
+      i++;
+      while (i < len) {
+        if (code[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (code[i] === quote) break;
+        i++;
+      }
+      continue;
+    }
+    if (ch === "{" || ch === "(" || ch === "[") {
+      depth++;
+      continue;
+    }
+    if (ch === "}" || ch === ")" || ch === "]") {
+      if (depth > 0) depth--;
+      continue;
+    }
+    if (depth === 0 && ch === "r" && code.startsWith("return", i)) {
+      const before = i > 0 ? code[i - 1]! : "";
+      const after = i + 6 < len ? code[i + 6]! : "";
+      const isIdent = (c: string) => c.length > 0 && /[A-Za-z0-9_$]/.test(c);
+      if (!isIdent(before) && !isIdent(after)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Build a self-contained JS expression string for evaluating either a string
  * expression/body or a function + serializable arguments inside a remote DOM.
  */
@@ -331,7 +392,7 @@ export function buildEvaluateExpression(
     return `(${script.toString()})(${serializedArgs})`;
   }
   const trimmed = script.trim();
-  if (/\breturn\b/.test(trimmed) && !trimmed.startsWith("(") && !trimmed.startsWith("async")) {
+  if (hasTopLevelReturn(trimmed) && !trimmed.startsWith("(") && !trimmed.startsWith("async")) {
     const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
     return `(function(){ ${trimmed} })(${serializedArgs})`;
   }
@@ -353,7 +414,7 @@ export function buildDomFrameEvaluateScript(
   const invoke =
     typeof script === "function"
       ? `(${script.toString()})(fDoc, fWin${serializedArgs ? `, ${serializedArgs}` : ""})`
-      : `(function(document, window){ ${/\breturn\b/.test(script.trim()) ? script : `return (${script});`} })(fDoc, fWin)`;
+      : `(function(document, window){ ${hasTopLevelReturn(script.trim()) ? script : `return (${script});`} })(fDoc, fWin)`;
   return `(function(frameSel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var hits = findAcrossRoots(frameSel, "prefer");
@@ -471,6 +532,11 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (tag === "ARTICLE") return "article";
     if (tag === "FORM") return "form";
     if (tag === "FIELDSET") return "group";
+    if (tag === "FIGURE") return "figure";
+    if (tag === "METER") return "meter";
+    if (tag === "OUTPUT") return "status";
+    if (tag === "P") return "paragraph";
+    if (tag === "STRONG") return "strong";
     if (tag === "PROGRESS") return "progressbar";
     if (tag === "HR") return "separator";
     if (tag === "SECTION") {
@@ -507,6 +573,19 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       if (t === "BR") return " ";
       if (t === "SCRIPT" || t === "STYLE" || t === "NOSCRIPT" || t === "TEMPLATE") return "";
       if (skipControl && (t === "SELECT" || t === "TEXTAREA" || t === "INPUT")) return "";
+      if (t === "IMG") {
+        var imgAlt = node.getAttribute && node.getAttribute("alt");
+        return imgAlt ? normWs(imgAlt) : "";
+      }
+      if (t === "SVG") {
+        var svgRole = (node.getAttribute && node.getAttribute("role") || "").trim().toLowerCase();
+        var svgLabel = node.getAttribute && node.getAttribute("aria-label");
+        if (svgLabel && svgLabel.trim()) return normWs(svgLabel);
+        if (svgRole === "img") {
+          var svgTitle = node.querySelector && node.querySelector("title");
+          if (svgTitle && svgTitle.textContent) return normWs(svgTitle.textContent);
+        }
+      }
       if (!allowHiddenRoot) {
         if (node.getAttribute && node.getAttribute("aria-hidden") === "true") return "";
         var win = (node.ownerDocument && node.ownerDocument.defaultView) || window;
@@ -545,13 +624,11 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     while (cur && guard++ < 48) {
       if (cur.getAttribute) {
         if (cur.getAttribute("aria-hidden") === "true") return true;
-        if (cur.hasAttribute && cur.hasAttribute("inert")) return true;
       }
       if (cur.nodeType === 1 && win && win.getComputedStyle) {
         var cs = win.getComputedStyle(cur);
         if (cs) {
           if (cs.display === "none") return true;
-          if (parseFloat(cs.opacity || "1") === 0) return true;
           if (cs.contentVisibility === "hidden") return true;
         }
       }
@@ -565,6 +642,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     return false;
   }
   function isAriaHidden(el) {
+    if (el && el.tagName && el.tagName.toUpperCase() === "OPTION") {
+      var parentSel = el.closest ? el.closest("select") : el.parentElement;
+      if (parentSel) {
+        return isHiddenInAncestorChain(parentSel);
+      }
+    }
     if (isHiddenInAncestorChain(el)) return true;
     if (el && el.nodeType === 1) {
       var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -605,8 +688,8 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         if (!child || child.nodeType !== 1) continue;
         var win = (child.ownerDocument && child.ownerDocument.defaultView) || window;
         var cst = win && win.getComputedStyle ? win.getComputedStyle(child) : null;
-        if (cst && (cst.display === "none" || cst.visibility === "hidden" || cst.visibility === "collapse" || parseFloat(cst.opacity || "1") === 0)) continue;
-        if (child.getAttribute && (child.getAttribute("aria-hidden") === "true" || child.hasAttribute("inert"))) continue;
+        if (cst && (cst.display === "none" || cst.visibility === "hidden" || cst.visibility === "collapse")) continue;
+        if (child.getAttribute && child.getAttribute("aria-hidden") === "true") continue;
         var r = cst && cst.display === "contents"
           ? getContentsUnionRect(child, depth + 1)
           : (child.getBoundingClientRect ? child.getBoundingClientRect() : null);
@@ -690,6 +773,28 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         if (fk && fk.tagName && fk.tagName.toUpperCase() === "LEGEND") {
           var ltxt = visibleTextOf(fk, false, null);
           if (ltxt) return ltxt;
+          break;
+        }
+      }
+    }
+    if (tag === "TABLE") {
+      var tkids = el.children || [];
+      for (var ti = 0; ti < tkids.length; ti++) {
+        var tk = tkids[ti];
+        if (tk && tk.tagName && tk.tagName.toUpperCase() === "CAPTION") {
+          var ctxt = visibleTextOf(tk, false, null);
+          if (ctxt) return ctxt;
+          break;
+        }
+      }
+    }
+    if (tag === "FIGURE") {
+      var fgkids = el.children || [];
+      for (var fgi = 0; fgi < fgkids.length; fgi++) {
+        var fgk = fgkids[fgi];
+        if (fgk && fgk.tagName && fgk.tagName.toUpperCase() === "FIGCAPTION") {
+          var fgtxt = visibleTextOf(fgk, false, null);
+          if (fgtxt) return fgtxt;
           break;
         }
       }
@@ -1089,7 +1194,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         textbox: 1, searchbox: 1, combobox: 1, listbox: 1, spinbutton: 1,
         slider: 1, checkbox: 1, radio: 1, switch: 1,
       };
-      var controls = root.querySelectorAll("input, textarea, select, meter, output, progress, [contenteditable], [aria-label], [aria-labelledby]");
+      var controls = root.querySelectorAll("input, textarea, select, meter, output, progress, audio, video, [contenteditable], [aria-label], [aria-labelledby]");
       for (var li = 0; li < controls.length; li++) {
         var ctrl = controls[li];
         if (seen.has(ctrl)) continue;
@@ -1098,6 +1203,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         var isFormControl =
           tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
           tag === "METER" || tag === "OUTPUT" || tag === "PROGRESS" ||
+          tag === "AUDIO" || tag === "VIDEO" ||
           (ctrl.hasAttribute && ctrl.hasAttribute("contenteditable"));
         var role = getImplicitRole(ctrl);
         if (!isFormControl && !labelableRoles[role]) continue;
@@ -1417,10 +1523,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (isSameOrDescendant(el, topEl)) return null;
     return describeEl(topEl);
   }
-  function isHitTestClear(hit) {
-    if (hit.wasmNode) {
-      return getHitTestBlocker(hit) === null;
-    }
+  function getClippedViewportBox(hit) {
     var el = hit.el;
     var rect = el.getBoundingClientRect();
     var winForRect = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -1431,16 +1534,110 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     var sx = hit.scaleX != null ? hit.scaleX : 1;
     var sy = hit.scaleY != null ? hit.scaleY : 1;
+    var left = hit.offsetX + rect.left * sx;
+    var top = hit.offsetY + rect.top * sy;
+    var right = hit.offsetX + (rect.left + rect.width) * sx;
+    var bottom = hit.offsetY + (rect.top + rect.height) * sy;
+    // Intersect with clipping ancestors (overflow: hidden/clip/scroll/auto) so half-clipped buttons
+    // target their visible region rather than clicking a clipped-out center onto the parent container.
+    var cur = el.parentElement;
+    var guard = 0;
+    while (cur && guard++ < 32) {
+      var cs = winForRect && winForRect.getComputedStyle ? winForRect.getComputedStyle(cur) : null;
+      if (cs) {
+        var ox = cs.overflowX || cs.overflow || "";
+        var oy = cs.overflowY || cs.overflow || "";
+        if (ox === "hidden" || ox === "clip" || ox === "scroll" || ox === "auto" ||
+            oy === "hidden" || oy === "clip" || oy === "scroll" || oy === "auto") {
+          var cr = cur.getBoundingClientRect();
+          if (cr.width > 0 && cr.height > 0) {
+            var cLeft = hit.offsetX + cr.left * sx;
+            var cTop = hit.offsetY + cr.top * sy;
+            var cRight = hit.offsetX + cr.right * sx;
+            var cBottom = hit.offsetY + cr.bottom * sy;
+            if (ox === "hidden" || ox === "clip" || ox === "scroll" || ox === "auto") {
+              if (cLeft > left) left = cLeft;
+              if (cRight < right) right = cRight;
+            }
+            if (oy === "hidden" || oy === "clip" || oy === "scroll" || oy === "auto") {
+              if (cTop > top) top = cTop;
+              if (cBottom < bottom) bottom = cBottom;
+            }
+          }
+        }
+      }
+      cur = cur.parentElement;
+    }
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
-    var cx = hit.offsetX + (rect.left + rect.width / 2) * sx;
-    var cy = hit.offsetY + (rect.top + rect.height / 2) * sy;
-    if (vw > 0 && vh > 0 && (cx < 0 || cy < 0 || cx > vw || cy > vh)) {
-      return false;
+    if (vw > 0 && vh > 0) {
+      if (left < 0) left = 0;
+      if (top < 0) top = 0;
+      if (right > vw) right = vw;
+      if (bottom > vh) bottom = vh;
     }
-    var topEl = deepElementFromPoint(document, cx, cy);
-    if (!topEl) return true;
-    return isSameOrDescendant(el, topEl);
+    return { left: left, top: top, right: right, bottom: bottom, vw: vw, vh: vh, rawRect: rect, sx: sx, sy: sy };
+  }
+  function findClickablePoint(hit) {
+    if (hit.wasmNode) {
+      var wr = hit.wasmRect;
+      return { x: wr.left + wr.width / 2, y: wr.top + wr.height / 2 };
+    }
+    var el = hit.el;
+    var box = getClippedViewportBox(hit);
+    var rawCx = hit.offsetX + (box.rawRect.left + box.rawRect.width / 2) * box.sx;
+    var rawCy = hit.offsetY + (box.rawRect.top + box.rawRect.height / 2) * box.sy;
+    var clipW = box.right - box.left;
+    var clipH = box.bottom - box.top;
+    if (box.vw > 0 && box.vh > 0 && (clipW <= 0 || clipH <= 0)) {
+      return null;
+    }
+    var tryPt = function(px, py) {
+      if (box.vw > 0 && box.vh > 0 && (px < 0 || py < 0 || px >= box.vw || py >= box.vh)) return null;
+      var topEl = deepElementFromPoint(document, px, py);
+      if (!topEl || isSameOrDescendant(el, topEl)) return { x: px, y: py };
+      return null;
+    };
+    // 1. Fast path: unclipped rounded center (matches 99.9% of elements in 1 hit-test call)
+    var rRaw = tryPt(Math.round(rawCx), Math.round(rawCy));
+    if (rRaw) return rRaw;
+    // 2. Clipped visible center (rounded, then fractional)
+    var cx = box.left + clipW / 2;
+    var cy = box.top + clipH / 2;
+    var rClip = tryPt(Math.round(cx), Math.round(cy));
+    if (rClip) return rClip;
+    var fClip = tryPt(cx, cy);
+    if (fClip) return fClip;
+    // 3. Interior points inside the visible clipped rect (handles 0.5px edge rounding onto clipping parent)
+    var padX = Math.min(2, clipW / 4);
+    var padY = Math.min(2, clipH / 4);
+    var candidates = [
+      [Math.floor(cx), Math.floor(cy)],
+      [Math.ceil(cx), Math.floor(cy)],
+      [Math.floor(cx), Math.ceil(cy)],
+      [Math.floor(box.left + padX), Math.floor(box.top + padY)],
+      [Math.ceil(box.left + padX), Math.ceil(box.top + padY)],
+      [Math.floor(box.right - padX), Math.floor(box.bottom - padY)],
+      [box.left + padX, box.top + padY],
+      [box.right - padX, box.bottom - padY],
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var hitPt = tryPt(candidates[i][0], candidates[i][1]);
+      if (hitPt) return hitPt;
+    }
+    return null;
+  }
+  function isHitTestClear(hit) {
+    if (hit.wasmNode) {
+      return getHitTestBlocker(hit) === null;
+    }
+    var pt = findClickablePoint(hit);
+    if (pt) {
+      hit._clickPoint = pt;
+      return true;
+    }
+    hit._clickPoint = null;
+    return false;
   }
   function isFullyInViewport(hit) {
     if (hit.wasmNode) return true;
@@ -1684,6 +1881,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       accessibleName: accName,
       accessibleDescription: accDesc,
       rect: { x: hit.offsetX + rect.x * sx, y: hit.offsetY + rect.y * sy, width: rect.width * sx, height: rect.height * sy },
+      clickPoint: hit._clickPoint || undefined,
       scrollX: window.scrollX || window.pageXOffset || 0,
       scrollY: window.scrollY || window.pageYOffset || 0,
       devicePixelRatio: window.devicePixelRatio || 1,
@@ -1974,15 +2172,18 @@ export function buildDomWaitForSelectorScript(
           if (done) return;
           if (!el.isConnected) {
             checkingStability = false;
+            scheduleAttempt();
             return;
           }
           if (checkHitTest && !isHitTestClear(candidate.target.hit)) {
             checkingStability = false;
+            scheduleAttempt();
             return;
           }
           var cur = toMatch(candidate.target.hit);
           if (!cur.visible || !cur.enabled) {
             checkingStability = false;
+            scheduleAttempt();
             return;
           }
           var dx = Math.abs(cur.rect.x - lastRect.x);
@@ -2761,10 +2962,10 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
 
         function step() {
           if (done) return;
-          if (!el.isConnected) { checkingStability = false; return; }
-          if (checkHitTest && !isHitTestClear(candidate.target.hit)) { checkingStability = false; return; }
+          if (!el.isConnected) { checkingStability = false; scheduleAttempt(); return; }
+          if (checkHitTest && !isHitTestClear(candidate.target.hit)) { checkingStability = false; scheduleAttempt(); return; }
           var cur = toMatch(candidate.target.hit);
-          if (!cur.visible || !cur.enabled) { checkingStability = false; return; }
+          if (!cur.visible || !cur.enabled) { checkingStability = false; scheduleAttempt(); return; }
           var dx = Math.abs(cur.rect.x - lastRect.x);
           var dy = Math.abs(cur.rect.y - lastRect.y);
           var dw = Math.abs(cur.rect.width - lastRect.width);

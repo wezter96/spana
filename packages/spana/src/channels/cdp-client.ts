@@ -889,12 +889,18 @@ export class CdpDomChannel implements DomChannel {
           wasThrown?: boolean;
         }>("Runtime.evaluate", evalParams, sessionId, remaining);
 
-        // Cancel a hung Runtime.evaluate immediately when navigation/reload destroys its execution context (2.21)
+        // Cancel a hung Runtime.evaluate shortly after navigation/reload destroys its execution context (2.21),
+        // while giving Chromium a short 150ms grace window so normal evaluations queued right as a navigation
+        // commits resolve cleanly on the new document without spurious `executionContextsCleared` errors.
+        let abortGraceTimer: ReturnType<typeof setTimeout> | undefined;
         const contextDestroyedPromise = new Promise<never>((_resolve, reject) => {
           const matchesTargetSession = (sid?: string) =>
             (sid ?? null) === (targetSid ?? null) || (!targetSid && !sid);
           const triggerAbort = (reason: string) => {
-            reject(new Error(`Execution context was destroyed (${reason})`));
+            if (abortGraceTimer !== undefined) return;
+            abortGraceTimer = setTimeout(() => {
+              reject(new Error(`Execution context was destroyed (${reason})`));
+            }, 150);
           };
           offCleared = this.onEvent("Runtime.executionContextsCleared", (_p, sid) => {
             if (matchesTargetSession(sid)) triggerAbort("executionContextsCleared");
@@ -916,7 +922,12 @@ export class CdpDomChannel implements DomChannel {
         // Prevent unhandled rejection if evalPromise settles first
         contextDestroyedPromise.catch(() => {});
 
-        const response = await Promise.race([evalPromise, contextDestroyedPromise]);
+        const response = await Promise.race([evalPromise, contextDestroyedPromise]).finally(() => {
+          if (abortGraceTimer !== undefined) {
+            clearTimeout(abortGraceTimer);
+            abortGraceTimer = undefined;
+          }
+        });
 
         if (response?.exceptionDetails) {
           const detail =
@@ -1032,6 +1043,14 @@ export class CdpDomChannel implements DomChannel {
         width: m.rect.width * sx,
         height: m.rect.height * sy,
       },
+      ...(m.clickPoint
+        ? {
+            clickPoint: {
+              x: offset.x + m.clickPoint.x * sx,
+              y: offset.y + m.clickPoint.y * sy,
+            },
+          }
+        : {}),
     }));
   }
 

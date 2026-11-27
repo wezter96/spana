@@ -38,6 +38,7 @@ export interface OrchestrateOptions {
 export interface OrchestratorResult {
   results: TestResult[];
   totalDurationMs: number;
+  platformDurations?: Partial<Record<Platform, number>>;
   passed: number;
   failed: number;
   skipped: number;
@@ -329,26 +330,36 @@ export async function orchestrate(
   };
 
   let platformResults: {
+    platform: Platform;
+    durationMs: number;
     results: TestResult[];
     workerStats?: Map<string, { flowCount: number; totalMs: number }>;
   }[];
 
+  const runTimedPlatform = async (pc: PlatformConfig) => {
+    const pStart = Date.now();
+    const pr = await runPlatform(flows, pc, options, shouldBail, noteFailure);
+    return { platform: pc.platform, durationMs: Date.now() - pStart, ...pr };
+  };
+
   if (options?.parallelPlatforms && platforms.length > 1) {
     // Run all platforms concurrently
-    platformResults = await Promise.all(
-      platforms.map((pc) => runPlatform(flows, pc, options, shouldBail, noteFailure)),
-    );
+    platformResults = await Promise.all(platforms.map((pc) => runTimedPlatform(pc)));
   } else {
     // Run platforms serially so each runtime has exclusive access to its
     // simulator/emulator/browser resources.
     platformResults = [];
     for (const pc of platforms) {
-      const pr = await runPlatform(flows, pc, options, shouldBail, noteFailure);
+      const pr = await runTimedPlatform(pc);
       platformResults.push(pr);
     }
   }
 
   const allResults = platformResults.flatMap((pr) => pr.results);
+  const platformDurations: Partial<Record<Platform, number>> = {};
+  for (const pr of platformResults) {
+    platformDurations[pr.platform] = (platformDurations[pr.platform] ?? 0) + pr.durationMs;
+  }
 
   const allWorkerStats = new Map<string, { flowCount: number; totalMs: number }>();
   for (const pr of platformResults) {
@@ -362,6 +373,7 @@ export async function orchestrate(
   return {
     results: allResults,
     totalDurationMs: Date.now() - start,
+    platformDurations,
     passed: allResults.filter((r) => r.status === "passed").length,
     failed: allResults.filter((r) => r.status === "failed").length,
     skipped: allResults.filter((r) => r.status === "skipped").length,

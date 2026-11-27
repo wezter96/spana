@@ -84,6 +84,8 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
   let total = 0;
   let currentPlatform: Platform | undefined;
   const platformDone = new Map<Platform, number>();
+  const platformFirstStart = new Map<Platform, number>();
+  const platformLastEnd = new Map<Platform, number>();
   let platformTotals: Partial<Record<Platform, number>> | undefined;
 
   function progressPrefix(platform?: Platform): string {
@@ -100,6 +102,9 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
 
   return {
     onFlowStart(name, platform, workerName) {
+      if (!platformFirstStart.has(platform)) {
+        platformFirstStart.set(platform, Date.now());
+      }
       if (quiet) return;
 
       // Print platform header when switching to a new platform
@@ -118,6 +123,7 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
     onFlowPass(result) {
       completed++;
       platformDone.set(result.platform, (platformDone.get(result.platform) ?? 0) + 1);
+      platformLastEnd.set(result.platform, Date.now());
       if (quiet) return;
 
       // Clear progress line
@@ -138,6 +144,7 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
     onFlowFail(result) {
       completed++;
       platformDone.set(result.platform, (platformDone.get(result.platform) ?? 0) + 1);
+      platformLastEnd.set(result.platform, Date.now());
 
       // Clear progress line
       if (process.stderr.isTTY) {
@@ -152,6 +159,23 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       if (result.scenarioSteps) printScenarioSteps(result.scenarioSteps);
       printResultAttachments(result);
       printA11yViolations(result);
+    },
+
+    onFlowSkip(result) {
+      completed++;
+      platformDone.set(result.platform, (platformDone.get(result.platform) ?? 0) + 1);
+      platformLastEnd.set(result.platform, Date.now());
+      if (quiet) return;
+
+      if (process.stderr.isTTY) {
+        process.stderr.write("\x1b[2K");
+      }
+
+      const reason = result.skipReason ? `: ${result.skipReason}` : "";
+      const tag = result.modifier ? `(${result.modifier}${reason})` : `(skipped${reason})`;
+      console.log(
+        `  – ${workerPrefix(result.workerName)}${progressPrefix(result.platform)} ${result.name} ${tag}`,
+      );
     },
 
     onRunComplete(summary) {
@@ -174,7 +198,17 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
           )
           .join("");
         const label = `${platform} (${getDriverLabel(platform, webEngine)})`;
-        const duration = Math.max(...results.map((r) => r.durationMs));
+        // Report true elapsed platform wall time (never just max single-flow duration)
+        const trackedElapsed =
+          platformFirstStart.has(platform) && platformLastEnd.has(platform)
+            ? Math.max(0, platformLastEnd.get(platform)! - platformFirstStart.get(platform)!)
+            : undefined;
+        const duration =
+          byPlatform.size === 1 && summary.durationMs > 0
+            ? summary.durationMs
+            : (summary.platformDurations?.[platform] ??
+              trackedElapsed ??
+              results.reduce((sum, r) => sum + r.durationMs, 0));
         console.log(
           `${label.padEnd(25)} ${symbols}  ${passed}/${totalCount} passed (${(duration / 1000).toFixed(1)}s)`,
         );
@@ -241,9 +275,10 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       }
 
       // Final summary
+      const skippedStr = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
       const flakyStr = summary.flaky > 0 ? `, ${summary.flaky} flaky` : "";
       console.log(
-        `\n${summary.passed}/${summary.total} passed, ${summary.failed} failed${flakyStr} (${(summary.durationMs / 1000).toFixed(1)}s)`,
+        `\n${summary.passed}/${summary.total} passed, ${summary.failed} failed${skippedStr}${flakyStr} (${(summary.durationMs / 1000).toFixed(1)}s)`,
       );
     },
 

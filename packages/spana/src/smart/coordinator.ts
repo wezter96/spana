@@ -13,6 +13,7 @@ import {
 } from "../channels/dom-channel.js";
 import type { WaitTimeoutError } from "../errors.js";
 import { DriverError, ElementNotFoundError, TextMismatchError } from "../errors.js";
+import { filterViolations, formatViolationSummary } from "../core/accessibility-audit.js";
 import { splitGraphemes } from "../core/graphemes.js";
 import { centerOf, findElements, formatSelector } from "./element-matcher.js";
 import {
@@ -60,14 +61,49 @@ export interface BackUntilVisibleOptions<_T extends string = string> extends Wai
 const DEFAULT_SCROLL_SEARCH_DIRECTION: Direction = "down";
 
 let cachedAxeSource: string | null = null;
-async function loadCachedAxeSource(): Promise<string> {
+export async function loadCachedAxeSource(): Promise<string> {
   if (cachedAxeSource !== null) return cachedAxeSource;
   const { readFileSync } = await import("node:fs");
   const { createRequire } = await import("node:module");
   const require = createRequire(import.meta.url);
-  const axePath: string = require.resolve("axe-core/axe.js");
+  let axePath: string;
+  try {
+    axePath = require.resolve("axe-core/axe.min.js");
+  } catch {
+    axePath = require.resolve("axe-core/axe.js");
+  }
   cachedAxeSource = readFileSync(axePath, "utf-8");
   return cachedAxeSource;
+}
+
+/** Recursively mark object/role/composite selectors with `includeHidden: true` when requested. */
+function withIncludeHiddenSelector<S extends ExtendedSelector>(selector: S): S {
+  if (typeof selector !== "object" || selector === null) return selector;
+  const obj = selector as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...obj };
+  if ("role" in next) next["includeHidden"] = true;
+  if ("includeHidden" in next || "role" in next) next["includeHidden"] = true;
+  if (next["within"] && typeof next["within"] === "object") {
+    next["within"] = withIncludeHiddenSelector(next["within"] as ExtendedSelector);
+  }
+  if (next["target"] && typeof next["target"] === "object") {
+    next["target"] = withIncludeHiddenSelector(next["target"] as ExtendedSelector);
+  }
+  if (next["has"] && typeof next["has"] === "object") {
+    next["has"] = withIncludeHiddenSelector(next["has"] as ExtendedSelector);
+  }
+  if (next["hasNot"] && typeof next["hasNot"] === "object") {
+    next["hasNot"] = withIncludeHiddenSelector(next["hasNot"] as ExtendedSelector);
+  }
+  if (Array.isArray(next["or"])) {
+    next["or"] = (next["or"] as ExtendedSelector[]).map((s) => withIncludeHiddenSelector(s));
+  }
+  if (Array.isArray(next["and"])) {
+    next["and"] = (next["and"] as ExtendedSelector[]).map((s) => withIncludeHiddenSelector(s));
+  }
+  // Always set top-level includeHidden so slicing/query paths skip hidden pruning
+  next["includeHidden"] = true;
+  return next as S;
 }
 const DEFAULT_MAX_SCROLLS = 5;
 const DEFAULT_DISMISS_KEYBOARD_STRATEGY: KeyboardDismissStrategy = "auto";
@@ -649,19 +685,22 @@ export function createCoordinator<T extends string = string, R extends string = 
 
     count: (
       selector: ExtendedSelector,
-      opts?: WaitOptions & { visible?: boolean },
+      opts?: WaitOptions & { visible?: boolean; includeHidden?: boolean },
     ): Effect.Effect<number, DriverError> =>
       Effect.gen(function* () {
         cache.invalidate();
-        const visibleOnly = Boolean(opts?.visible);
+        const includeHidden = opts?.includeHidden;
+        const visibleOnly = includeHidden === false || Boolean(opts?.visible);
+        const effectiveSelector =
+          includeHidden === true ? withIncludeHiddenSelector(selector) : selector;
         const domChannel = driver.domChannel;
         if (
-          !isSystemUISelector(selector) &&
-          !isRelativeSelectorLike(selector) &&
+          !isSystemUISelector(effectiveSelector) &&
+          !isRelativeSelectorLike(effectiveSelector) &&
           domChannel?.isConnected()
         ) {
           const matches = yield* Effect.tryPromise({
-            try: () => domChannel.query(selector as Selector),
+            try: () => domChannel.query(effectiveSelector as Selector),
             catch: (err) =>
               isInvalidSelectorError(err)
                 ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
@@ -677,22 +716,57 @@ export function createCoordinator<T extends string = string, R extends string = 
         }
         const raw = yield* driver.dumpHierarchy();
         const root = parse(raw);
-        if (isRelativeSelectorLike(selector)) {
-          const resolved = yield* resolveElementAcrossChannels(driver, selector, parse, cache, {
-            forAction: false,
-            platform: opts?.platform ?? config.platform,
-          });
+        if (isRelativeSelectorLike(effectiveSelector)) {
+          const resolved = yield* resolveElementAcrossChannels(
+            driver,
+            effectiveSelector,
+            parse,
+            cache,
+            {
+              forAction: false,
+              platform: opts?.platform ?? config.platform,
+            },
+          );
           return resolved ? 1 : 0;
         }
-        const matched = findElements(root, selector as Selector);
+        const matched = findElements(root, effectiveSelector as Selector);
         return visibleOnly ? matched.filter((el) => el.visible !== false).length : matched.length;
       }),
 
     isElementEnabled: (
       selector: ExtendedSelector,
-      opts?: WaitOptions,
+      opts?: WaitOptions & { includeHidden?: boolean },
     ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
+        if (
+          opts?.includeHidden &&
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          driver.domChannel?.isConnected()
+        ) {
+          const timeout = opts.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts.pollInterval ?? defaults?.pollInterval ?? 100;
+          const effectiveSelector = withIncludeHiddenSelector(selector);
+          const start = Date.now();
+          while (true) {
+            const matches = yield* Effect.tryPromise({
+              try: () => driver.domChannel!.query(effectiveSelector as Selector),
+              catch: () => null,
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
+            if (matches && matches.length > 0) {
+              const target = matches[matches.length - 1]!;
+              return target.enabled !== false;
+            }
+            if (Date.now() - start >= timeout) {
+              return yield* new ElementNotFoundError({
+                message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
+                selector,
+                timeoutMs: timeout,
+              });
+            }
+            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+          }
+        }
         const element = yield* waitForElement(
           driver,
           selector,
@@ -701,6 +775,60 @@ export function createCoordinator<T extends string = string, R extends string = 
           cache,
         );
         return element.enabled !== false;
+      }),
+
+    isChecked: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions & { includeHidden?: boolean },
+    ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.gen(function* () {
+        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+        const domChannel = driver.domChannel;
+        if (
+          !isSystemUISelector(selector) &&
+          !isRelativeSelectorLike(selector) &&
+          domChannel?.isConnected()
+        ) {
+          const effectiveSelector = opts?.includeHidden
+            ? withIncludeHiddenSelector(selector)
+            : selector;
+          const start = Date.now();
+          while (true) {
+            const matches = yield* Effect.tryPromise({
+              try: () => domChannel.query(effectiveSelector as Selector),
+              catch: () => null,
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
+            if (matches && matches.length > 0) {
+              const visibleMatches = matches.filter((m) => m.visible);
+              const target =
+                opts?.includeHidden === false
+                  ? visibleMatches[visibleMatches.length - 1]
+                  : (visibleMatches[visibleMatches.length - 1] ?? matches[matches.length - 1]);
+              if (target) {
+                return Boolean(
+                  target.checked === true || target.attributes?.["aria-checked"] === "true",
+                );
+              }
+            }
+            if (Date.now() - start >= timeout) {
+              return yield* new ElementNotFoundError({
+                message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
+                selector,
+                timeoutMs: timeout,
+              });
+            }
+            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+          }
+        }
+        const element = yield* waitForElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        );
+        return Boolean(element.checked === true || element.attributes?.["aria-checked"] === "true");
       }),
 
     assertValue: (
@@ -978,29 +1106,37 @@ export function createCoordinator<T extends string = string, R extends string = 
     getAttribute: (
       selector: ExtendedSelector,
       name: string,
-      opts?: WaitOptions,
+      opts?: WaitOptions & { includeHidden?: boolean },
     ): Effect.Effect<string | null, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
         const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
         const domChannel = driver.domChannel;
+        const effectiveSelector = opts?.includeHidden
+          ? withIncludeHiddenSelector(selector)
+          : selector;
 
         // On web/DOM channels, allow reading attributes from any attached element
         // (including display:none, <input type="hidden">, or zero-size elements without a layout box).
         if (
-          !isSystemUISelector(selector) &&
-          !isRelativeSelectorLike(selector) &&
+          !isSystemUISelector(effectiveSelector) &&
+          !isRelativeSelectorLike(effectiveSelector) &&
           domChannel?.isConnected()
         ) {
           const start = Date.now();
           while (true) {
             const matches = yield* Effect.tryPromise({
-              try: () => domChannel.query(selector as Selector),
+              try: () => domChannel.query(effectiveSelector as Selector),
               catch: () => null,
             }).pipe(Effect.catch(() => Effect.succeed(null)));
             if (matches && matches.length > 0) {
-              const target = matches[matches.length - 1]!;
-              return target.attributes?.[name] ?? null;
+              const target =
+                opts?.includeHidden === false
+                  ? matches.filter((m) => m.visible).at(-1)
+                  : matches[matches.length - 1];
+              if (target) {
+                return target.attributes?.[name] ?? null;
+              }
             }
             if (Date.now() - start >= timeout) {
               return yield* new ElementNotFoundError({
@@ -1015,7 +1151,7 @@ export function createCoordinator<T extends string = string, R extends string = 
 
         const element = yield* waitForElement(
           driver,
-          selector,
+          effectiveSelector,
           parse,
           { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
@@ -1904,16 +2040,6 @@ export function createCoordinator<T extends string = string, R extends string = 
           });
         }
 
-        const { readFileSync } = yield* Effect.promise(() => import("node:fs"));
-        const { createRequire } = yield* Effect.promise(() => import("node:module"));
-        const require = createRequire(import.meta.url);
-        const axePath: string = require.resolve("axe-core/axe.js");
-        const axeSource = readFileSync(axePath, "utf-8");
-
-        const { filterViolations, formatViolationSummary } = yield* Effect.promise(
-          () => import("../core/accessibility-audit.js"),
-        );
-
         const axeContext: Record<string, string[][]> = {};
         const includes = [
           ...(options.targetSelector ? [options.targetSelector] : []),
@@ -1939,15 +2065,6 @@ export function createCoordinator<T extends string = string, R extends string = 
           axeOptions["runOnly"] = { type: "tag", values: options.tags };
         }
 
-        const script = `
-          (function() {
-            if (typeof axe === "undefined") {
-              ${axeSource}
-            }
-            return axe.run(${serializedContext}, ${JSON.stringify(axeOptions)});
-          })()
-        `;
-
         type AxeResult = {
           violations: Array<{
             id: string;
@@ -1963,7 +2080,18 @@ export function createCoordinator<T extends string = string, R extends string = 
           }>;
         };
 
-        const axeResult = yield* driver.evaluate<AxeResult>(script);
+        // Fast path: check whether `window.axe` is already loaded in the current document before
+        // transmitting ~560 KB of axe-core source over CDP, and reuse the in-memory cached source
+        // from `loadCachedAxeSource()` on first injection per document.
+        const runExpr = `axe.run(${serializedContext}, ${JSON.stringify(axeOptions)})`;
+        const fastScript = `(function() { if (typeof axe === "undefined") return { __spanaNeedAxe: true }; return ${runExpr}; })()`;
+        let rawResult = yield* driver.evaluate<AxeResult | { __spanaNeedAxe: true }>(fastScript);
+        if (rawResult && typeof rawResult === "object" && "__spanaNeedAxe" in rawResult) {
+          const axeSource = yield* Effect.promise(() => loadCachedAxeSource());
+          const injectAndRunScript = `(function() { if (typeof axe === "undefined") { ${axeSource} } return ${runExpr}; })()`;
+          rawResult = yield* driver.evaluate<AxeResult>(injectAndRunScript);
+        }
+        const axeResult = rawResult as AxeResult;
 
         const violations = (axeResult?.violations ?? []).map((v) => ({
           ruleId: v.id,
@@ -2070,7 +2198,15 @@ export function createCoordinator<T extends string = string, R extends string = 
             return true;
           }
         }
-        const { x, y } = centerOf(resolved.element);
+        const { x, y } =
+          resolved.domMatch?.clickPoint &&
+          (!resolved.webViewFrame ||
+            (resolved.webViewFrame.x === 0 &&
+              resolved.webViewFrame.y === 0 &&
+              config.platform !== "ios" &&
+              config.platform !== "android"))
+            ? resolved.domMatch.clickPoint
+            : centerOf(resolved.element);
         const guardActive =
           !opts?.force &&
           resolved.channel === "dom" &&
@@ -2269,7 +2405,15 @@ export function createCoordinator<T extends string = string, R extends string = 
           mergedOpts,
           cache,
         );
-        const { x, y } = centerOf(resolved.element);
+        const { x, y } =
+          resolved.domMatch?.clickPoint &&
+          (!resolved.webViewFrame ||
+            (resolved.webViewFrame.x === 0 &&
+              resolved.webViewFrame.y === 0 &&
+              config.platform !== "ios" &&
+              config.platform !== "android"))
+            ? resolved.domMatch.clickPoint
+            : centerOf(resolved.element);
         if (driver.hoverAtCoordinate) {
           yield* driver.hoverAtCoordinate(x, y);
         } else if (config.platform === "web") {
@@ -2479,6 +2623,32 @@ export function createCoordinator<T extends string = string, R extends string = 
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
+        if (
+          !isRelativeSelectorLike(selector) &&
+          !isSystemUISelector(selector) &&
+          driver.domChannel?.isConnected()
+        ) {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const deadline = Date.now() + timeout;
+          const script = `(() => {
+            const el = ${buildDomFindElementScript(selector as Selector)};
+            if (el && typeof el.blur === "function") { el.blur(); return true; }
+            return false;
+          })()`;
+          while (true) {
+            const ok = yield* Effect.tryPromise({
+              try: () => driver.domChannel!.evaluate<boolean>(script),
+              catch: () => false,
+            }).pipe(Effect.catch(() => Effect.succeed(false)));
+            if (ok) {
+              yield* afterMutation();
+              return;
+            }
+            if (Date.now() >= deadline) break;
+            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+          }
+        }
         yield* waitForResolvedElementResult(
           driver,
           selector,
@@ -2497,14 +2667,7 @@ export function createCoordinator<T extends string = string, R extends string = 
             }
             return false;
           })()`;
-          if (driver.domChannel?.isConnected()) {
-            yield* Effect.tryPromise({
-              try: () => driver.domChannel!.evaluate<boolean>(script),
-              catch: () => false,
-            }).pipe(Effect.catch(() => Effect.succeed(false)));
-          } else {
-            yield* driver.evaluate<boolean>(script).pipe(Effect.catch(() => Effect.succeed(false)));
-          }
+          yield* driver.evaluate<boolean>(script).pipe(Effect.catch(() => Effect.succeed(false)));
         }
         yield* afterMutation();
       }),
@@ -2563,6 +2726,30 @@ export function createCoordinator<T extends string = string, R extends string = 
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
+        // Match Playwright's focus() semantics: on web DOM channels, focus requires the element
+        // to be attached (even if opacity:0 or hover-revealed) rather than strictly visible.
+        if (
+          !isRelativeSelectorLike(selector) &&
+          !isSystemUISelector(selector) &&
+          driver.domChannel?.isConnected()
+        ) {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const deadline = Date.now() + timeout;
+          const script = buildDomFocusScript(selector as Selector);
+          while (true) {
+            const ok = yield* Effect.tryPromise({
+              try: () => driver.domChannel!.evaluate<boolean>(script),
+              catch: () => false,
+            }).pipe(Effect.catch(() => Effect.succeed(false)));
+            if (ok) {
+              yield* afterMutation();
+              return;
+            }
+            if (Date.now() >= deadline) break;
+            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+          }
+        }
         const resolved = yield* waitForResolvedElementResult(
           driver,
           selector,
@@ -2573,20 +2760,23 @@ export function createCoordinator<T extends string = string, R extends string = 
         );
         if (!isRelativeSelectorLike(selector) && !isSystemUISelector(selector)) {
           const script = buildDomFocusScript(selector as Selector);
-          const ok = driver.domChannel?.isConnected()
-            ? yield* Effect.tryPromise({
-                try: () => driver.domChannel!.evaluate<boolean>(script),
-                catch: () => false,
-              }).pipe(Effect.catch(() => Effect.succeed(false)))
-            : yield* driver
-                .evaluate<boolean>(script)
-                .pipe(Effect.catch(() => Effect.succeed(false)));
+          const ok = yield* driver
+            .evaluate<boolean>(script)
+            .pipe(Effect.catch(() => Effect.succeed(false)));
           if (ok) {
             yield* afterMutation();
             return;
           }
         }
-        const { x, y } = centerOf(resolved.element);
+        const { x, y } =
+          resolved.domMatch?.clickPoint &&
+          (!resolved.webViewFrame ||
+            (resolved.webViewFrame.x === 0 &&
+              resolved.webViewFrame.y === 0 &&
+              config.platform !== "ios" &&
+              config.platform !== "android"))
+            ? resolved.domMatch.clickPoint
+            : centerOf(resolved.element);
         yield* driver.tapAtCoordinate(x, y);
         yield* afterMutation();
       }),

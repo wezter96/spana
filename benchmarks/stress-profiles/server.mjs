@@ -987,6 +987,126 @@ const primaryServer = http.createServer((req, res) => {
     );
   }
 
+  if (path === "/wave3-headers") {
+    const srvUa = String(req.headers["user-agent"] || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;");
+    const srvAl = String(req.headers["accept-language"] || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;");
+    return sendHtml(
+      res,
+      pageShell(
+        "Wave 3 Headers",
+        `<main>
+          <h1>Wave 3 Headers</h1>
+          <div id="w3-ua" data-testid="w3-ua">${srvUa}</div>
+          <div id="w3-al" data-testid="w3-al">${srvAl}</div>
+        </main>`,
+      ),
+    );
+  }
+
+  if (path === "/wave3-basic-auth") {
+    const expected = `Basic ${Buffer.from("stress:wave3").toString("base64")}`;
+    if (req.headers.authorization !== expected) {
+      return sendHtml(
+        res,
+        pageShell(
+          "Auth Required",
+          `<main><h1 data-testid="w3-auth-denied">Unauthorized</h1></main>`,
+        ),
+        401,
+        { "www-authenticate": 'Basic realm="StressWave3"' },
+      );
+    }
+    return sendHtml(
+      res,
+      pageShell("Auth Granted", `<main><h1 data-testid="w3-auth-ok">Wave 3 Authed</h1></main>`),
+      200,
+    );
+  }
+
+  if (path === "/wave3-status-404") {
+    return sendHtml(
+      res,
+      pageShell("Wave 3 404", `<main><h1 data-testid="w3-404">Not Found 404</h1></main>`),
+      404,
+    );
+  }
+
+  if (path === "/wave3-redirect") {
+    res.writeHead(302, { location: "/wave3" });
+    res.end();
+    return;
+  }
+
+  if (path === "/wave3") {
+    return sendHtml(
+      res,
+      pageShell(
+        "Wave 3 Polish & Bolagy Regressions",
+        `<style>
+          .w3-opacity-parent { opacity: 0; padding: 6px; }
+          .w3-opacity-parent:hover, .w3-opacity-parent:focus-within { opacity: 1; }
+          .w3-clip-shell { position: relative; width: 140px; height: 48px; overflow: hidden; border: 1px solid #9ca3af; }
+          .w3-clip-btn { position: absolute; left: 70px; top: 4px; width: 240px; height: 36px; background: #2563eb; color: #fff; border: 0; }
+          .w3-clip-blocker { position: absolute; left: 140px; top: 0; width: 220px; height: 56px; background: rgba(220,38,38,0.15); }
+        </style>
+        <main>
+          <h1>Wave 3 Zero-Bug Lab</h1>
+          <input type="checkbox" id="w3-vis-chk" data-testid="w3-vis-chk" checked aria-label="Visible Check" />
+          <input type="checkbox" id="w3-hid-chk" data-testid="w3-hid-chk" data-meta="w3-secret" checked aria-label="Hidden Check" style="display:none" />
+
+          <div class="w3-opacity-parent" data-testid="w3-opacity-parent">
+            <button type="button" id="w3-opacity-btn" data-testid="w3-opacity-btn"
+              onfocus="document.getElementById('w3-focus-out').textContent='focused-ok'">Reveal Menu Action</button>
+          </div>
+          <div id="w3-focus-out" data-testid="w3-focus-out">idle</div>
+
+          <button type="button" id="w3-vat-btn" data-testid="w3-vat-btn"
+            onclick="document.getElementById('w3-vat-out').textContent='vat-ok'">VAT return</button>
+          <div id="w3-vat-out" data-testid="w3-vat-out">idle</div>
+
+          <label for="w3-file-in">Upload Quarterly Receipt (PDF)</label>
+          <input id="w3-file-in" data-testid="w3-file-in" type="file"
+            onchange="document.getElementById('w3-file-out').textContent=this.files[0]?.name||'none'" />
+          <div id="w3-file-out" data-testid="w3-file-out">none</div>
+
+          <div style="position:relative; height:60px; margin-top:10px;">
+            <div class="w3-clip-shell">
+              <button type="button" class="w3-clip-btn" data-testid="w3-clip-btn"
+                onclick="document.getElementById('w3-clip-out').textContent='clip-ok'">Clipped Action</button>
+            </div>
+            <div class="w3-clip-blocker"
+              onclick="document.getElementById('w3-clip-out').textContent='blocker-hit'"></div>
+          </div>
+          <div id="w3-clip-out" data-testid="w3-clip-out">idle</div>
+
+          <table>
+            <caption>Accounting Summary</caption>
+            <thead><tr><th>Account</th></tr></thead>
+            <tbody><tr><td>1930</td></tr></tbody>
+          </table>
+          <figure>
+            <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="Balance Sheet" width="16" height="16" />
+            <figcaption>Annual Balance Figure</figcaption>
+          </figure>
+          <meter value="0.8" min="0" max="1" aria-label="Quota Used">80%</meter>
+          <output aria-label="Net Result">1200 kr</output>
+          <label for="w3-sel">Region</label>
+          <select id="w3-sel" data-testid="w3-sel">
+            <option value="se">Sweden</option>
+            <option value="dk">Denmark</option>
+          </select>
+          <button type="button" data-testid="w3-cors-trigger"
+            onclick="(async()=>{const r=await fetch('https://w3-cors.spana.test/api/ping',{method:'POST',headers:{'Content-Type':'application/json','X-Stress':'1'},body:'{}'});const j=await r.json();document.getElementById('w3-cors-out').textContent='cors:'+j.pong;})()">Run CORS Fetch</button>
+          <div id="w3-cors-out" data-testid="w3-cors-out">idle</div>
+        </main>`,
+      ),
+    );
+  }
+
   return sendHtml(
     res,
     pageShell("Spana Stress App", `<h1 data-testid="home-title">Stress Test Server Ready</h1>`),

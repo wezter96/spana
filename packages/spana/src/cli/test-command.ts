@@ -628,11 +628,25 @@ async function setupReporters(
         case "github":
           reporters.push(createGitHubPrReporter({ outputDir: resolvedOutputDir, filterSummaries }));
           break;
-        default:
+        default: {
+          let effectiveWebEngine = resolveWebEngine(config);
+          if (!config.execution?.web?.engine && config.projects?.length) {
+            const firstProjEngine = config.projects.find((p) => p.use?.engine)?.use?.engine;
+            if (firstProjEngine) {
+              effectiveWebEngine = resolveWebEngine({
+                ...config,
+                execution: {
+                  ...config.execution,
+                  web: { ...config.execution?.web, engine: firstProjEngine },
+                },
+              });
+            }
+          }
           reporters.push(
-            createConsoleReporter({ quiet: opts.quiet, webEngine: resolveWebEngine(config) }),
+            createConsoleReporter({ quiet: opts.quiet, webEngine: effectiveWebEngine }),
           );
           break;
+        }
       }
     } else {
       const configDir = resolve(resolveFromConfig("."));
@@ -1527,6 +1541,10 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           skipped: projSummary.skipped,
           flaky: projSummary.flaky,
           durationMs: projDurationMs,
+          platformDurations:
+            allProjectPlatforms.size === 1
+              ? { [[...allProjectPlatforms][0]!]: projDurationMs }
+              : undefined,
           results: allProjectResults,
           platforms: [...allProjectPlatforms],
         });
@@ -1854,6 +1872,10 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
               skipped: poolResult.skipped,
               flaky: poolResult.flaky,
               durationMs: poolResult.totalDurationMs,
+              platformDurations:
+                platforms.length === 1
+                  ? { [platforms[0]!]: poolResult.totalDurationMs }
+                  : undefined,
               results: redactedResults,
               platforms,
             });
@@ -2164,6 +2186,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         skipped: result.skipped,
         flaky: result.flaky,
         durationMs: result.totalDurationMs,
+        platformDurations: result.platformDurations,
         results: redactedResults,
         platforms,
         bailedOut: result.bailedOut,

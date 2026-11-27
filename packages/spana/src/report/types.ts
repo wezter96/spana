@@ -128,6 +128,8 @@ export interface RunSummary {
   flaky: number;
   /** Total wall-clock duration of the entire run in milliseconds. */
   durationMs: number;
+  /** Optional per-platform wall-clock durations in milliseconds. */
+  platformDurations?: Partial<Record<Platform, number>>;
   /** All individual flow results. */
   results: FlowResult[];
   /** Platforms included in this run. */

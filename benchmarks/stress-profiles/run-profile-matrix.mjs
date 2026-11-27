@@ -10,10 +10,16 @@ const configPath = resolve(here, "spana.config.ts");
 const resultsJsonOut = resolve(here, "results.json");
 const PRIMARY_PORT = Number(process.env.STRESS_PORT || 4410);
 const CROSS_ORIGIN_PORT = Number(process.env.STRESS_OOPIF_PORT || 4411);
+// Dedicated short (<40 chars) TMPDIR so our orphan-Chrome audit catches 100% of leaks
+// from this run without false-positives from concurrent Spana runs in sibling repos.
+const runTmpDir = `/tmp/spb-${process.pid}`;
+mkdirSync(runTmpDir, { recursive: true });
 
 function countOrphanSpanaChromes() {
   try {
-    const out = execFileSync("pgrep", ["-fa", "spana-cdp-"], { encoding: "utf8" }).trim();
+    const out = execFileSync("pgrep", ["-fa", `${runTmpDir}/spana-cdp-`], {
+      encoding: "utf8",
+    }).trim();
     if (!out) return 0;
     return out.split("\n").filter((line) => line.trim() && !line.includes("pgrep")).length;
   } catch {
@@ -70,7 +76,7 @@ function runCommandWithRss(cmd, args, opts = {}) {
 
     const child = spawn(spawnCmd, spawnArgs, {
       cwd: opts.cwd || here,
-      env: { ...process.env, ...opts.env },
+      env: { ...process.env, TMPDIR: runTmpDir, ...opts.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -156,7 +162,7 @@ async function runMatrixEntry(entry) {
     .map((r) => ({ name: r.name, error: r.error?.message || String(r.error || "unknown") }));
 
   const byProfile = {};
-  for (let p = 1; p <= 11; p++) {
+  for (let p = 1; p <= 12; p++) {
     const prefix = `P${p}-`;
     const profResults = results.filter((r) => r.name.includes(prefix));
     byProfile[`P${p}`] = {
@@ -306,8 +312,34 @@ async function runExtraChecks() {
     const valRes = await runCommandWithRss(bin, [cliPath, "validate"], { cwd: here });
     checks.push({
       name: `${label}: spana validate reads config.flowDir`,
-      ok: valRes.exitCode === 0 && valRes.stdout.includes("11 flow(s) valid"),
+      ok: valRes.exitCode === 0 && valRes.stdout.includes("12 flow(s) valid"),
       detail: `exit=${valRes.exitCode}, out=${valRes.stdout.trim()}`,
+    });
+
+    // 5b. Runtime ctx.skip() exits 0 and reports skipped flow cleanly
+    const skipFlowPath = resolve(here, `.tmp-skip-${label}.flow.ts`);
+    writeFileSync(
+      skipFlowPath,
+      `import { flow } from "../../packages/spana/dist/index.js";
+export default flow("runtime-skip-check", async (ctx) => {
+  ctx.skip("feature disabled in stress check");
+});
+`,
+    );
+    const skipRes = await runCommandWithRss(
+      bin,
+      [cliPath, "test", "--config", configPath, skipFlowPath],
+      { env: { STRESS_PORT: String(PRIMARY_PORT), STRESS_ISOLATION: "fresh" } },
+    );
+    rmSync(skipFlowPath, { force: true });
+    checks.push({
+      name: `${label}: runtime ctx.skip() exits 0 & reports skipped`,
+      ok:
+        skipRes.exitCode === 0 &&
+        skipRes.stdout.includes("1 skipped") &&
+        skipRes.stdout.includes("feature disabled in stress check"),
+      detail: `exit=${skipRes.exitCode}`,
+      errorLog: skipRes.stdout + "\n" + skipRes.stderr,
     });
 
     // 6. Multi-project wave concurrency cap: 5 projects in 1 wave with --workers 2 MUST cap peak <= 2
@@ -411,9 +443,10 @@ try {
 
   const anyFail =
     matrixResults.some(
-      (m) => m.exitCode !== 0 || m.failed > 0 || m.passed !== 110 || m.orphanChromes > 0,
+      (m) => m.exitCode !== 0 || m.failed > 0 || m.passed !== 120 || m.orphanChromes > 0,
     ) || extraChecks.some((c) => !c.ok);
   process.exitCode = anyFail ? 1 : 0;
 } finally {
   server.kill("SIGTERM");
+  rmSync(runTmpDir, { recursive: true, force: true });
 }

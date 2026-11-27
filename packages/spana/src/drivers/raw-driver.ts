@@ -295,6 +295,11 @@ export interface BrowserEmulationOptions {
   userAgent?: string;
 }
 
+export interface HttpCredentials {
+  username: string;
+  password: string;
+}
+
 export interface BrowserDownloadInfo {
   suggestedFilename: string;
   path: string;
@@ -387,6 +392,8 @@ export interface RawDriverService<_T extends string = string, R extends string =
     height: number;
     deviceScaleFactor?: number;
     mobile?: boolean;
+    isMobile?: boolean;
+    hasTouch?: boolean;
   }) => Effect.Effect<void, DriverError>;
   readonly setEmulation?: (opts: BrowserEmulationOptions) => Effect.Effect<void, DriverError>;
   readonly setDialogHandler?: (
@@ -435,6 +442,8 @@ export interface RawDriverService<_T extends string = string, R extends string =
   ) => Effect.Effect<void, DriverError>;
   readonly getUrl?: () => Effect.Effect<string, DriverError>;
   readonly getNavigationUrls?: () => string[];
+  /** HTTP status code of the most recent top-level document navigation (e.g. 200, 404, 500), or `null` for non-HTTP pages. */
+  readonly getLastNavigationStatus?: () => number | null;
   readonly waitForLoadState?: (
     state?: "load" | "domcontentloaded" | "networkidle",
     opts?: { timeout?: number },
@@ -513,7 +522,19 @@ export interface RawDriverService<_T extends string = string, R extends string =
     url?: string;
     locale?: string;
     userAgent?: string;
-    viewport?: { width: number; height: number };
+    httpCredentials?: HttpCredentials;
+    viewport?: {
+      width: number;
+      height: number;
+      deviceScaleFactor?: number;
+      mobile?: boolean;
+      isMobile?: boolean;
+      hasTouch?: boolean;
+    };
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+    isMobile?: boolean;
+    hasTouch?: boolean;
   }) => Effect.Effect<{ driver: RawDriverService; close: () => Promise<void> }, DriverError>;
   readonly newTab?: (url?: string) => Effect.Effect<string, DriverError>;
   readonly switchToTab?: (index: number) => Effect.Effect<void, DriverError>;
@@ -686,6 +707,7 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     hoverAtCoordinate: wrapOptionalMethod(logs, "hoverAtCoordinate", driver.hoverAtCoordinate),
     getUrl: wrapOptionalMethod(logs, "getUrl", driver.getUrl),
     getNavigationUrls: driver.getNavigationUrls,
+    getLastNavigationStatus: driver.getLastNavigationStatus,
     waitForLoadState: wrapOptionalMethod(logs, "waitForLoadState", driver.waitForLoadState),
     waitForPopup: wrapOptionalMethod(logs, "waitForPopup", driver.waitForPopup),
     evaluate: wrapLoggedMethod(logs, "evaluate", driver.evaluate),

@@ -17,6 +17,7 @@ import type {
   BrowserConsoleLog,
   BrowserJSError,
   CdpSessionHandle,
+  HttpCredentials,
   TouchSequence,
   UploadFileInput,
   VirtualAuthenticatorOptions,
@@ -227,11 +228,26 @@ export interface FrameScope<T extends string = string> {
   dragTo(source: Selector<T>, target: Selector<T>, opts?: WaitOptions): Promise<void>;
   uploadFile(selector: Selector<T>, path: UploadFileInput): Promise<void>;
   getText(selector: Selector<T>, opts?: WaitOptions): Promise<string>;
-  getAttribute(selector: Selector<T>, name: string, opts?: WaitOptions): Promise<string | null>;
+  getAttribute(
+    selector: Selector<T>,
+    name: string,
+    opts?: WaitOptions & { includeHidden?: boolean },
+  ): Promise<string | null>;
   isVisible(selector: Selector<T>, opts?: { timeout?: number }): Promise<boolean>;
-  isEnabled(selector: Selector<T>, opts?: WaitOptions): Promise<boolean>;
-  /** Count visible elements matching `selector` inside this frame (returns `0` when none exist). */
-  count(selector: Selector<T>, opts?: WaitOptions): Promise<number>;
+  isEnabled(
+    selector: Selector<T>,
+    opts?: WaitOptions & { includeHidden?: boolean },
+  ): Promise<boolean>;
+  /** Check whether a checkbox, radio button, or ARIA switch inside this frame is checked. */
+  isChecked(
+    selector: Selector<T>,
+    opts?: WaitOptions & { includeHidden?: boolean },
+  ): Promise<boolean>;
+  /** Count elements matching `selector` inside this frame (pass `{ includeHidden: true }` to include hidden nodes). */
+  count(
+    selector: Selector<T>,
+    opts?: WaitOptions & { visible?: boolean; includeHidden?: boolean },
+  ): Promise<number>;
   /**
    * Evaluate a function or expression inside this iframe.
    * For same-origin iframes (including `<iframe sandbox="allow-same-origin">` without `allow-scripts`),
@@ -293,12 +309,14 @@ export interface PromiseApp<T extends string = string, R extends string = string
     target: ExtendedSelector<T>,
     opts?: WaitOptions,
   ): Promise<void>;
-  /** Resize the active browser viewport dynamically mid-flow. */
+  /** Resize the active browser viewport (and optional DPR / mobile / touch flags) dynamically mid-flow. */
   setViewport(viewport: {
     width: number;
     height: number;
     deviceScaleFactor?: number;
     mobile?: boolean;
+    isMobile?: boolean;
+    hasTouch?: boolean;
   }): Promise<void>;
   /** Emulate CSS media (`colorScheme`, `reducedMotion`), locale, or timezone dynamically mid-flow. */
   setEmulation(options: BrowserEmulationOptions): Promise<void>;
@@ -332,6 +350,8 @@ export interface PromiseApp<T extends string = string, R extends string = string
   kill(): Promise<void>;
   clearState(): Promise<void>;
   openLink(url: R): Promise<void>;
+  /** Return the HTTP status code of the most recent top-level document navigation (e.g. 200, 404, 500), or `null` if unavailable. */
+  lastNavigationStatus(): number | null;
   openStory(storyId: string, opts?: StorybookOpenOptions): Promise<void>;
   back(): Promise<void>;
   /** Navigate forward in browser session history. */
@@ -430,7 +450,19 @@ export interface PromiseApp<T extends string = string, R extends string = string
     url?: string;
     locale?: string;
     userAgent?: string;
-    viewport?: { width: number; height: number };
+    httpCredentials?: HttpCredentials;
+    viewport?: {
+      width: number;
+      height: number;
+      deviceScaleFactor?: number;
+      mobile?: boolean;
+      isMobile?: boolean;
+      hasTouch?: boolean;
+    };
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+    isMobile?: boolean;
+    hasTouch?: boolean;
   }): Promise<IsolatedBrowserContext<T, R>>;
   /** Scope all subsequent selectors/actions/assertions inside a matching iframe (`frameLocator` equivalent). */
   frame(frameSelector: Selector<T>): FrameScope<T>;
@@ -463,12 +495,23 @@ export interface PromiseApp<T extends string = string, R extends string = string
   getAttribute(
     selector: ExtendedSelector<T>,
     name: string,
-    opts?: WaitOptions,
+    opts?: WaitOptions & { includeHidden?: boolean },
   ): Promise<string | null>;
   isVisible(selector: ExtendedSelector<T>, opts?: { timeout?: number }): Promise<boolean>;
-  isEnabled(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<boolean>;
-  /** Return the number of currently visible elements matching `selector` (returns `0` without throwing when none exist). */
-  count(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<number>;
+  isEnabled(
+    selector: ExtendedSelector<T>,
+    opts?: WaitOptions & { includeHidden?: boolean },
+  ): Promise<boolean>;
+  /** Check whether a checkbox, radio button, or ARIA switch is checked (supports `{ includeHidden: true }`). */
+  isChecked(
+    selector: ExtendedSelector<T>,
+    opts?: WaitOptions & { includeHidden?: boolean },
+  ): Promise<boolean>;
+  /** Return the number of elements matching `selector` (pass `{ includeHidden: true }` to include hidden nodes, `{ visible: true }` or `{ includeHidden: false }` for visible only). */
+  count(
+    selector: ExtendedSelector<T>,
+    opts?: WaitOptions & { visible?: boolean; includeHidden?: boolean },
+  ): Promise<number>;
 
   // Web-first bridge & fast state helpers (works across web, Capacitor, Electron, Electrobun)
   /** Wait for in-flight fetch/XHR, animations, and framework renders to settle via spana-bridge. */
@@ -542,6 +585,8 @@ export interface PromiseAppOptions<R extends string = string> {
   flowBaseUrl?: string;
   /** Register an automatic teardown hook executed when the owning flow finishes (used by `app.newContext()`). */
   onRegisterCleanup?: (fn: () => Promise<void>) => void;
+  /** Notify the owning runner which driver was most recently active so failure artifacts capture the failing context/tab. */
+  onActiveDriver?: (driver: RawDriverService<any, any>) => void;
   /** Flow metadata forwarded to `expect` inside `app.frame()` and `app.newContext()`. */
   flowContext?: ExpectFlowContext;
   visualRegression?: {
@@ -561,7 +606,7 @@ function formatEvaluateCommand(fn: ((...args: any[]) => unknown) | string): stri
   return `evaluate(${snippet})`;
 }
 
-function parseSetCookieHeader(headerValue: string, originUrl: URL): BrowserCookie | null {
+export function parseSetCookieHeader(headerValue: string, originUrl: URL): BrowserCookie | null {
   const parts = headerValue.split(";").map((p) => p.trim());
   const first = parts[0];
   if (!first) return null;
@@ -581,7 +626,11 @@ function parseSetCookieHeader(headerValue: string, originUrl: URL): BrowserCooki
     const v = rest.join("=").trim();
     if (k === "path" && v) cookie.path = v;
     else if (k === "domain" && v) {
-      cookie.domain = v;
+      // RFC 6265: any explicit Domain= attribute creates a domain-matching cookie across subdomains.
+      // Chrome CDP Network.setCookie requires a leading dot to match subdomains (without it, CDP treats
+      // it as host-only). Preserve subdomain matching by normalizing to a leading dot.
+      const bare = v.replace(/^\.+/, "");
+      cookie.domain = bare ? `.${bare}` : v;
       delete cookie.url;
     } else if (k === "httponly") cookie.httpOnly = true;
     else if (k === "secure") cookie.secure = true;
@@ -687,7 +736,10 @@ export function createPromiseApp<T extends string = string, R extends string = s
     command: string,
     action: () => Promise<A>,
     opts?: { selector?: unknown; captureScreenshot?: boolean },
-  ) => (recorder ? recorder.runStep(command, action, opts) : action());
+  ) => {
+    options.onActiveDriver?.(driver);
+    return recorder ? recorder.runStep(command, action, opts) : action();
+  };
 
   const runDeviceStep = <A extends unknown[]>(
     name: string,
@@ -1584,6 +1636,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
           captureScreenshot: true,
         },
       ),
+    lastNavigationStatus: () => driver.getLastNavigationStatus?.() ?? null,
     openStory: (storyId, opts) =>
       runStep(
         `openStory(${storyId})`,
@@ -1674,15 +1727,32 @@ export function createPromiseApp<T extends string = string, R extends string = s
         const timeout = opts?.timeout ?? config.defaults?.timeout ?? 5000;
         const pollInterval = opts?.pollInterval ?? 100;
         const deadline = Date.now() + timeout;
+        let lastTransientErr: unknown;
         while (Date.now() < deadline) {
-          const val =
-            arg === undefined
-              ? await run(driver.evaluate(fn as any))
-              : await run(driver.evaluate(fn as any, arg));
-          if (val) return val;
-          await new Promise((r) => setTimeout(r, pollInterval));
+          try {
+            const val =
+              arg === undefined
+                ? await run(driver.evaluate(fn as any))
+                : await run(driver.evaluate(fn as any, arg));
+            if (val) return val;
+            lastTransientErr = undefined;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const isNavContextDestroyed =
+              /Execution context was destroyed|Cannot find context with specified id|Inspected target navigated or closed/i.test(
+                msg,
+              );
+            if (!isNavContextDestroyed) throw err;
+            lastTransientErr = err;
+          }
+          await new Promise((r) =>
+            setTimeout(r, Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+          );
         }
-        throw new DriverError({ message: `waitForFunction() timed out after ${timeout}ms` });
+        const detail = lastTransientErr instanceof Error ? ` (${lastTransientErr.message})` : "";
+        throw new DriverError({
+          message: `waitForFunction() timed out after ${timeout}ms${detail}`,
+        });
       }) as Promise<Awaited<Result>>) as PromiseApp<T, R>["waitForFunction"],
     waitForPopup: (triggerFn, opts) =>
       runStep("waitForPopup", () =>
@@ -1974,6 +2044,7 @@ export function createPromiseApp<T extends string = string, R extends string = s
         getAttribute: (sel, name, opts) => appObj.getAttribute(scoped(sel), name, opts),
         isVisible: (sel, opts) => appObj.isVisible(scoped(sel), opts),
         isEnabled: (sel, opts) => appObj.isEnabled(scoped(sel), opts),
+        isChecked: (sel, opts) => appObj.isChecked(scoped(sel), opts),
         count: (sel, opts) => appObj.count(scoped(sel), opts),
         evaluate: <Res = unknown>(
           fn: string | ((doc: any, win: any, ...args: any[]) => Res),
@@ -2131,6 +2202,8 @@ export function createPromiseApp<T extends string = string, R extends string = s
     },
     isEnabled: (selector, opts) =>
       runStep("isEnabled", () => run(coord.isElementEnabled(selector, opts)), { selector }),
+    isChecked: (selector, opts) =>
+      runStep("isChecked", () => run(coord.isChecked(selector, opts)), { selector }),
     count: (selector, opts) =>
       runStep("count", () => run(coord.count(selector, opts)), { selector }),
 

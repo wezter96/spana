@@ -638,13 +638,13 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       expect(evalOutcome._tag).toBe("Failure");
       expect(cancelMs).toBeLessThan(2000);
 
-      // 2.25 + 2.26 + 2.29: below-the-fold visible, display:contents visible, ancestor opacity/inert/aria-hidden hidden
+      // 2.25 + 2.26 + 2.29: below-the-fold visible, display:contents visible, opacity:0 & inert visible (Playwright semantics), aria-hidden hidden
       await app.openLink(`${baseUrl}/visibility-edges`);
       await spanaExpect({ testID: "below-fold" }).toBeVisible();
       await spanaExpect({ testID: "below-fold" }).toHaveText(/Below The Fold.*\d+/);
       await spanaExpect({ testID: "contents-wrap" }).toBeVisible();
-      await spanaExpect({ testID: "opacity-child" }).toBeHidden();
-      await spanaExpect({ testID: "inert-child" }).toBeHidden();
+      await spanaExpect({ testID: "opacity-child" }).toBeVisible();
+      await spanaExpect({ testID: "inert-child" }).toBeVisible();
       await spanaExpect({ testID: "aria-hidden-child" }).toBeHidden();
 
       // 2.31: execution.web.readyExpression gates tap until dataset.ready === "yes"

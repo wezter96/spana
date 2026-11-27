@@ -243,4 +243,52 @@ describe("console reporter", () => {
     // Fail output shown
     expect(logs.some((line) => line.includes("Failing flow"))).toBe(true);
   });
+
+  test("uses true elapsed wall time for platform summary bar and prints skipped flows cleanly", () => {
+    const reporter = createConsoleReporter({ webEngine: "cdp" });
+
+    reporter.onFlowSkip?.({
+      name: "Conditional feature",
+      platform: "web",
+      status: "skipped",
+      durationMs: 12,
+      skipReason: "disabled in staging",
+    });
+
+    reporter.onRunComplete({
+      total: 3,
+      passed: 2,
+      failed: 0,
+      skipped: 1,
+      flaky: 0,
+      durationMs: 6200,
+      platformDurations: { web: 6200 },
+      platforms: ["web"],
+      results: [
+        { name: "Flow 1", platform: "web", status: "passed", durationMs: 3000 },
+        { name: "Flow 2", platform: "web", status: "passed", durationMs: 3100 },
+        {
+          name: "Conditional feature",
+          platform: "web",
+          status: "skipped",
+          durationMs: 12,
+          skipReason: "disabled in staging",
+        },
+      ],
+    });
+
+    expect(
+      logs.some(
+        (line) =>
+          line.includes("–") &&
+          line.includes("Conditional feature") &&
+          line.includes("disabled in staging"),
+      ),
+    ).toBe(true);
+    // Platform bar MUST show true elapsed 6.2s (not Math.max 3.1s) and label web (Direct CDP)
+    expect(logs.some((line) => line.includes("web (Direct CDP)") && line.includes("(6.2s)"))).toBe(
+      true,
+    );
+    expect(logs.some((line) => line.includes("2/3 passed, 0 failed, 1 skipped (6.2s)"))).toBe(true);
+  });
 });

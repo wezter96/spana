@@ -24,6 +24,7 @@ import type {
   BrowserRouteHandler,
   BrowserRouteMatcher,
   CdpSessionHandle,
+  HttpCredentials,
   NetworkConditions,
   RawDriverService,
   RawHierarchy,
@@ -545,8 +546,25 @@ export interface LightweightCdpDriverOptions {
   baseUrl?: string;
   /** Engine label reported in `getDeviceInfo()` (e.g. `"lightpanda"` or `"cdp"`). */
   engineLabel?: string;
-  /** Optional viewport dimensions reported to coordinator (default: 1280×720). */
-  viewport?: { width: number; height: number };
+  /** Optional viewport dimensions & mobile metrics reported to coordinator (default: 1280×720). */
+  viewport?: {
+    width: number;
+    height: number;
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+    isMobile?: boolean;
+    hasTouch?: boolean;
+  };
+  /** Device pixel ratio override (default: `viewport.deviceScaleFactor ?? 1`). */
+  deviceScaleFactor?: number;
+  /** Emulate mobile device metrics (`isMobile` alias also accepted). */
+  mobile?: boolean;
+  /** Playwright-compatible alias for `mobile`. */
+  isMobile?: boolean;
+  /** Enable touch event emulation (`Emulation.setTouchEmulationEnabled`). */
+  hasTouch?: boolean;
+  /** HTTP Basic/Digest authentication credentials answered via CDP `Fetch.authRequired`. */
+  httpCredentials?: HttpCredentials;
   /** Evaluation timeout in ms (default: 10_000). */
   evaluateTimeout?: number;
   /**
@@ -597,7 +615,7 @@ const CDP_DUMP_HIERARCHY_SCRIPT = `(() => {
   function walk(el) {
     const rect = el.getBoundingClientRect ? el.getBoundingClientRect() : { x: 0, y: 0, width: 0, height: 0 };
     const style = window.getComputedStyle ? window.getComputedStyle(el) : { display: "block", visibility: "visible", opacity: "1" };
-    const visible = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden" && parseFloat(style.opacity || "1") !== 0;
+    const visible = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
     const tag = (el.tagName || "").toLowerCase();
     return {
       id: el.getAttribute?.("data-testid") || el.getAttribute?.("testID") || el.id || undefined,
@@ -898,8 +916,29 @@ export function makeLightweightCdpDriver(
 
     const initialWidth = options.viewport?.width ?? 1280;
     const initialHeight = options.viewport?.height ?? 720;
+    const initialDeviceScaleFactor =
+      options.deviceScaleFactor ?? options.viewport?.deviceScaleFactor ?? 1;
+    const initialMobile = Boolean(
+      options.isMobile ??
+      options.mobile ??
+      options.viewport?.isMobile ??
+      options.viewport?.mobile ??
+      false,
+    );
+    const initialHasTouch = Boolean(
+      options.hasTouch ?? options.viewport?.hasTouch ?? initialMobile,
+    );
     let width = initialWidth;
     let height = initialHeight;
+    let currentDeviceScaleFactor = initialDeviceScaleFactor;
+    let currentMobile = initialMobile;
+    let currentHasTouch = initialHasTouch;
+    let activeUserAgent: string | undefined = options.emulation?.userAgent;
+    let activeLocale: string | undefined = options.emulation?.locale;
+    const activeHttpCredentials: HttpCredentials | undefined = options.httpCredentials;
+    let mainFrameId: string | null = null;
+    let lastNavigationStatus: number | null = null;
+    const authAttemptedRequestIds = new Set<string>();
     let emulationMutated = false;
     let viewportMutated = false;
     let geolocationMutated = false;
@@ -1088,31 +1127,63 @@ export function makeLightweightCdpDriver(
     const useInjectedRuntime = options.useInjectedRuntime ?? !options.createWebSocket;
     cdpChannel.enableInjectedRuntime(useInjectedRuntime);
 
-    const applyLocaleOverride = async (sessionId: string | null, locale: string) => {
-      await cdpChannel
-        .sendCommand("Emulation.setLocaleOverride", { locale }, sessionId)
-        .catch(() => {});
+    const buildAcceptLanguage = (locale: string | undefined): string | undefined => {
+      if (!locale) return undefined;
+      return locale.includes("-") ? `${locale},${locale.split("-")[0]};q=0.9` : locale;
+    };
+
+    const resolveEffectiveUserAgent = async (
+      sessionId: string | null,
+      explicitUserAgent?: string,
+    ): Promise<string> => {
+      if (explicitUserAgent) return explicitUserAgent;
+      if (activeUserAgent) return activeUserAgent;
+      if (options.emulation?.userAgent) return options.emulation.userAgent;
+      if (defaultCleanUserAgent) return defaultCleanUserAgent;
       if (!cachedUserAgent) {
         const ua = await cdpChannel
           .evaluateOnSession<string>(sessionId, "navigator.userAgent")
           .catch(() => "");
         if (ua) cachedUserAgent = sanitizeHeadlessUserAgent(ua);
       }
-      const acceptLanguage = locale.includes("-")
-        ? `${locale},${locale.split("-")[0]};q=0.9`
-        : locale;
-      const effectiveUa =
-        options.emulation?.userAgent || defaultCleanUserAgent || cachedUserAgent || "Mozilla/5.0";
+      return cachedUserAgent || "Mozilla/5.0";
+    };
+
+    const applyLocaleOverride = async (
+      sessionId: string | null,
+      locale: string,
+      explicitUserAgent?: string,
+    ) => {
+      await cdpChannel
+        .sendCommand("Emulation.setLocaleOverride", { locale }, sessionId)
+        .catch(() => {});
+      const acceptLanguage = buildAcceptLanguage(locale);
+      const effectiveUa = await resolveEffectiveUserAgent(sessionId, explicitUserAgent);
       await cdpChannel
         .sendCommand(
           "Emulation.setUserAgentOverride",
           {
             userAgent: effectiveUa,
-            acceptLanguage,
+            ...(acceptLanguage ? { acceptLanguage } : {}),
           },
           sessionId,
         )
         .catch(() => {});
+    };
+
+    const buildFetchEnableParams = (): Record<string, unknown> => {
+      const needsAllSchemes = routeRules.some((r) =>
+        typeof r.matcher === "string"
+          ? /^(?:file|data|blob):/i.test(r.matcher)
+          : /file:|data:|blob:/i.test(r.matcher.source),
+      );
+      const patterns = needsAllSchemes
+        ? [{ urlPattern: "*" }]
+        : [{ urlPattern: "http://*" }, { urlPattern: "https://*" }];
+      return {
+        patterns,
+        ...(activeHttpCredentials ? { handleAuthRequests: true } : {}),
+      };
     };
 
     const applyNetworkConditionsToSession = async (
@@ -1174,6 +1245,9 @@ export function makeLightweightCdpDriver(
       const state = await loadStorageStateFile(storageStatePath);
       const targetWidth = includeFlowState ? width : initialWidth;
       const targetHeight = includeFlowState ? height : initialHeight;
+      const targetDpr = includeFlowState ? currentDeviceScaleFactor : initialDeviceScaleFactor;
+      const targetMobile = includeFlowState ? currentMobile : initialMobile;
+      const targetHasTouch = includeFlowState ? currentHasTouch : initialHasTouch;
       await Promise.all([
         cdpChannel.sendCommand("Page.enable", {}, sessionId).catch(() => {}),
         cdpChannel.sendCommand("Runtime.enable", {}, sessionId).catch(() => {}),
@@ -1215,10 +1289,26 @@ export function makeLightweightCdpDriver(
         cdpChannel
           .sendCommand(
             "Emulation.setDeviceMetricsOverride",
-            { width: targetWidth, height: targetHeight, deviceScaleFactor: 1, mobile: false },
+            {
+              width: targetWidth,
+              height: targetHeight,
+              deviceScaleFactor: targetDpr,
+              mobile: targetMobile,
+            },
             sessionId,
           )
           .catch(() => {}),
+        ...(targetHasTouch
+          ? [
+              cdpChannel
+                .sendCommand(
+                  "Emulation.setTouchEmulationEnabled",
+                  { enabled: true, maxTouchPoints: 5 },
+                  sessionId,
+                )
+                .catch(() => {}),
+            ]
+          : []),
         ...(!options.emulation?.userAgent && !options.emulation?.locale && defaultCleanUserAgent
           ? [
               cdpChannel
@@ -1266,15 +1356,20 @@ export function makeLightweightCdpDriver(
         for (const fnName of flowExposedFunctions.keys()) {
           await installExposeFunctionOnSession(sessionId, fnName);
         }
-        if (routeRules.length > 0) {
+        if (routeRules.length > 0 || activeHttpCredentials) {
           fetchEnabledSessions.add(sessionId);
           await cdpChannel
-            .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sessionId)
+            .sendCommand("Fetch.enable", buildFetchEnableParams(), sessionId)
             .catch(() => {});
         }
         if (currentNetworkConditions) {
           await applyNetworkConditionsToSession(sessionId, currentNetworkConditions);
         }
+      } else if (activeHttpCredentials) {
+        fetchEnabledSessions.add(sessionId);
+        await cdpChannel
+          .sendCommand("Fetch.enable", buildFetchEnableParams(), sessionId)
+          .catch(() => {});
       }
 
       if (options.blockResources && options.blockResources.length > 0) {
@@ -1477,6 +1572,8 @@ export function makeLightweightCdpDriver(
       if (!activeSlot.tabs.some((t) => t.targetId === targetId)) {
         activeSlot.tabs.push({ tabId: newTabId, targetId, sessionId: childSid });
       }
+      const popupUa = activeUserAgent || options.emulation?.userAgent || defaultCleanUserAgent;
+      const popupAcceptLang = buildAcceptLanguage(activeLocale || options.emulation?.locale);
       const setupCalls: Array<Promise<unknown>> = [
         // Enable Network FIRST unconditionally so fast popup fetch/XHR bodies are buffered before requestWillBeSent
         cdpChannel.sendCommand("Network.enable", {}, childSid).catch(() => {}),
@@ -1485,12 +1582,15 @@ export function makeLightweightCdpDriver(
         cdpChannel
           .sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true }, childSid)
           .catch(() => {}),
-        ...(!options.emulation?.userAgent && !options.emulation?.locale && defaultCleanUserAgent
+        ...(popupUa
           ? [
               cdpChannel
                 .sendCommand(
                   "Emulation.setUserAgentOverride",
-                  { userAgent: defaultCleanUserAgent },
+                  {
+                    userAgent: popupUa,
+                    ...(popupAcceptLang ? { acceptLanguage: popupAcceptLang } : {}),
+                  },
                   childSid,
                 )
                 .catch(() => {}),
@@ -1500,11 +1600,11 @@ export function makeLightweightCdpDriver(
       if (currentNetworkConditions) {
         setupCalls.push(applyNetworkConditionsToSession(childSid, currentNetworkConditions));
       }
-      if (routeRules.length > 0) {
+      if (routeRules.length > 0 || activeHttpCredentials) {
         fetchEnabledSessions.add(childSid);
         setupCalls.push(
           cdpChannel
-            .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, childSid)
+            .sendCommand("Fetch.enable", buildFetchEnableParams(), childSid)
             .catch(() => {}),
         );
       }
@@ -1890,11 +1990,27 @@ export function makeLightweightCdpDriver(
     };
     cdpChannel.onEvent("Page.frameNavigated", (params, sid) => {
       if (!params?.frame?.parentId) {
+        if (
+          (!activeSlot || !sid || sid === activeSlot.sessionId) &&
+          typeof params?.frame?.id === "string"
+        ) {
+          mainFrameId = params.frame.id;
+        }
         recordNavUrl(params?.frame?.url, sid);
       }
     });
     cdpChannel.onEvent("Page.navigatedWithinDocument", (params, sid) => {
       recordNavUrl(params?.url, sid);
+    });
+    // Capture main-document HTTP navigation status (200, 404, 500, etc.) for app.lastNavigationStatus()
+    cdpChannel.onEvent("Network.responseReceived", (params, sid) => {
+      if (activeSlot && sid && sid !== activeSlot.sessionId) return;
+      if (params?.type !== "Document") return;
+      if (mainFrameId && params?.frameId && params.frameId !== mainFrameId) return;
+      const status = params?.response?.status;
+      if (typeof status === "number" && Number.isFinite(status)) {
+        lastNavigationStatus = status;
+      }
     });
 
     // Dispatch exposed Node bindings called from browser code (3.6)
@@ -1982,6 +2098,47 @@ export function makeLightweightCdpDriver(
       }
     });
 
+    cdpChannel.onEvent("Fetch.authRequired", (params, sid) => {
+      if (!activeHttpCredentials) return;
+      const sessionKey = sid ?? null;
+      if (!fetchEnabledSessions.has(sessionKey)) return;
+      const reqId = params?.requestId;
+      if (!reqId) return;
+      if (authAttemptedRequestIds.has(reqId)) {
+        authAttemptedRequestIds.delete(reqId);
+        void cdpChannel
+          .sendCommand(
+            "Fetch.continueWithAuth",
+            {
+              requestId: reqId,
+              authChallengeResponse: { response: "CancelAuth" },
+            },
+            sessionKey,
+          )
+          .catch(() => {});
+        return;
+      }
+      authAttemptedRequestIds.add(reqId);
+      if (authAttemptedRequestIds.size > 200) {
+        const oldest = authAttemptedRequestIds.values().next().value;
+        if (oldest !== undefined) authAttemptedRequestIds.delete(oldest);
+      }
+      void cdpChannel
+        .sendCommand(
+          "Fetch.continueWithAuth",
+          {
+            requestId: reqId,
+            authChallengeResponse: {
+              response: "ProvideCredentials",
+              username: activeHttpCredentials.username,
+              password: activeHttpCredentials.password,
+            },
+          },
+          sessionKey,
+        )
+        .catch(() => {});
+    });
+
     cdpChannel.onEvent("Fetch.requestPaused", (params, sid) => {
       // Only handle Fetch.requestPaused on sessions where Spana itself enabled Fetch interception;
       // otherwise leave pauses alone for user `app.cdp().send("Fetch.enable", ...)` handlers! (2.17)
@@ -2046,6 +2203,46 @@ export function makeLightweightCdpDriver(
       }
       let curPostData: string | null = typeof reqObj.postData === "string" ? reqObj.postData : null;
       let hasOverrides = false;
+
+      // Transparently answer CORS preflight OPTIONS requests on mocked/routed cross-origin fetches
+      // (e.g. `file://` → `https://` POST with custom headers) so route handlers receive the real
+      // request cleanly, matching Playwright `page.route()` semantics.
+      if (
+        curMethod.toUpperCase() === "OPTIONS" &&
+        Boolean(curHeaders["access-control-request-method"]) &&
+        matchingRules[0]?.kind !== "block"
+      ) {
+        const reqOrigin = curHeaders["origin"];
+        const allowOrigin = reqOrigin && reqOrigin !== "null" ? reqOrigin : "*";
+        const reqMethod =
+          curHeaders["access-control-request-method"] || "GET, POST, PUT, PATCH, DELETE, OPTIONS";
+        const reqHdrs = curHeaders["access-control-request-headers"] || "*";
+        const preflightHeaders = [
+          { name: "Access-Control-Allow-Origin", value: allowOrigin },
+          {
+            name: "Access-Control-Allow-Methods",
+            value: `${reqMethod}, GET, POST, PUT, PATCH, DELETE, OPTIONS`,
+          },
+          { name: "Access-Control-Allow-Headers", value: reqHdrs },
+          ...(allowOrigin !== "*"
+            ? [{ name: "Access-Control-Allow-Credentials", value: "true" }]
+            : []),
+        ];
+        void cdpChannel
+          .sendCommand(
+            "Fetch.fulfillRequest",
+            {
+              requestId: reqId,
+              responseCode: 204,
+              responsePhrase: "No Content",
+              responseHeaders: preflightHeaders,
+              body: "",
+            },
+            sessionKey,
+          )
+          .catch(() => {});
+        return;
+      }
 
       const continueRequest = async (overrides?: {
         url?: string;
@@ -2312,9 +2509,13 @@ export function makeLightweightCdpDriver(
 
     const navigate = async (rawUrl: string) => {
       const target = await resolveUrlAsync(rawUrl);
+      lastNavigationStatus = null;
       if (!useContexts) {
         await cdpChannel.sendCommand("Page.enable").catch(() => {});
-        await cdpChannel.sendCommand("Page.navigate", { url: target });
+        const navRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+          frameId?: string;
+        } | null;
+        if (navRes?.frameId) mainFrameId = navRes.frameId;
         return;
       }
 
@@ -2331,8 +2532,10 @@ export function makeLightweightCdpDriver(
       isAtBlank = false;
       if (waitUntil === "commit") {
         const commitRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+          frameId?: string;
           errorText?: string;
         } | null;
+        if (commitRes?.frameId) mainFrameId = commitRes.frameId;
         if (commitRes?.errorText && commitRes.errorText !== "net::ERR_ABORTED") {
           throw new Error(`Navigation to "${target}" failed: ${commitRes.errorText}`);
         }
@@ -2349,8 +2552,10 @@ export function makeLightweightCdpDriver(
       waiter.promise.catch(() => {});
       try {
         const navRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+          frameId?: string;
           errorText?: string;
         } | null;
+        if (navRes?.frameId) mainFrameId = navRes.frameId;
         if (navRes?.errorText && navRes.errorText !== "net::ERR_ABORTED") {
           throw new Error(`Navigation to "${target}" failed: ${navRes.errorText}`);
         }
@@ -2367,21 +2572,22 @@ export function makeLightweightCdpDriver(
       const sessions: Array<string | null> = activeSlot
         ? Array.from(new Set([activeSlot.sessionId, ...activeSlot.tabs.map((t) => t.sessionId)]))
         : [null];
-      const toEnable = sessions.filter((sid) => !fetchEnabledSessions.has(sid));
-      if (toEnable.length === 0) return;
-      for (const sid of toEnable) fetchEnabledSessions.add(sid);
+      const enableParams = buildFetchEnableParams();
+      for (const sid of sessions) fetchEnabledSessions.add(sid);
       await Promise.all(
-        toEnable.map((sid) =>
-          cdpChannel
-            .sendCommand("Fetch.enable", { patterns: [{ urlPattern: "*" }] }, sid)
-            .catch(() => {
-              fetchEnabledSessions.delete(sid);
-            }),
+        sessions.map((sid) =>
+          cdpChannel.sendCommand("Fetch.enable", enableParams, sid).catch(() => {
+            fetchEnabledSessions.delete(sid);
+          }),
         ),
       );
     };
 
     const disableAllFetchInterception = async () => {
+      if (activeHttpCredentials) {
+        // Keep Fetch enabled when httpCredentials is configured so authRequired keeps working across flows
+        return;
+      }
       if (fetchEnabledSessions.size === 0) return;
       const sessions = Array.from(fetchEnabledSessions);
       fetchEnabledSessions.clear();
@@ -2574,6 +2780,8 @@ export function makeLightweightCdpDriver(
             jsErrors.length = 0;
             wasmTraps.length = 0;
             navigationUrls.length = 0;
+            lastNavigationStatus = null;
+            authAttemptedRequestIds.clear();
             dialogHandler = null;
             routeRules.length = 0;
             currentNetworkConditions = undefined;
@@ -2583,6 +2791,11 @@ export function makeLightweightCdpDriver(
             lastMouseY = 0;
             width = initialWidth;
             height = initialHeight;
+            currentDeviceScaleFactor = initialDeviceScaleFactor;
+            currentMobile = initialMobile;
+            currentHasTouch = initialHasTouch;
+            activeUserAgent = options.emulation?.userAgent;
+            activeLocale = options.emulation?.locale;
 
             // Remove all flow-scoped init scripts, fake clock init script, and exposed bindings (1.19)
             await cleanupFlowScopedHooks();
@@ -2780,19 +2993,45 @@ export function makeLightweightCdpDriver(
                   }
                   if (viewportMutated) {
                     viewportMutated = false;
+                    width = initialWidth;
+                    height = initialHeight;
+                    currentDeviceScaleFactor = initialDeviceScaleFactor;
+                    currentMobile = initialMobile;
+                    currentHasTouch = initialHasTouch;
                     resetOps.push(
-                      cdpChannel
-                        .sendCommand("Emulation.setDeviceMetricsOverride", {
-                          width: initialWidth,
-                          height: initialHeight,
-                          deviceScaleFactor: 1,
-                          mobile: false,
-                        })
-                        .catch(() => {}),
+                      (async () => {
+                        await cdpChannel
+                          .sendCommand("Emulation.clearDeviceMetricsOverride", {})
+                          .catch(() => {});
+                        await cdpChannel
+                          .sendCommand("Emulation.setTouchEmulationEnabled", {
+                            enabled: initialHasTouch,
+                            ...(initialHasTouch ? { maxTouchPoints: 5 } : {}),
+                          })
+                          .catch(() => {});
+                        if (!initialHasTouch && !initialMobile) {
+                          await cdpChannel
+                            .sendCommand("Emulation.setEmitTouchEventsForMouse", {
+                              enabled: false,
+                              configuration: "desktop",
+                            })
+                            .catch(() => {});
+                        }
+                        await cdpChannel
+                          .sendCommand("Emulation.setDeviceMetricsOverride", {
+                            width: initialWidth,
+                            height: initialHeight,
+                            deviceScaleFactor: initialDeviceScaleFactor,
+                            mobile: initialMobile,
+                          })
+                          .catch(() => {});
+                      })(),
                     );
                   }
                   if (emulationMutated) {
                     emulationMutated = false;
+                    activeUserAgent = options.emulation?.userAgent;
+                    activeLocale = options.emulation?.locale;
                     const defaultLocale = options.emulation?.locale ?? "";
                     resetOps.push(
                       cdpChannel
@@ -2805,11 +3044,7 @@ export function makeLightweightCdpDriver(
                             defaultCleanUserAgent ||
                             cachedUserAgent ||
                             "Mozilla/5.0",
-                          acceptLanguage: defaultLocale
-                            ? defaultLocale.includes("-")
-                              ? `${defaultLocale},${defaultLocale.split("-")[0]};q=0.9`
-                              : defaultLocale
-                            : "",
+                          acceptLanguage: buildAcceptLanguage(defaultLocale) ?? "",
                         })
                         .catch(() => {}),
                       cdpChannel
@@ -2877,6 +3112,13 @@ export function makeLightweightCdpDriver(
                 viewportMutated = false;
                 permissionsMutated = false;
                 geolocationMutated = false;
+                width = initialWidth;
+                height = initialHeight;
+                currentDeviceScaleFactor = initialDeviceScaleFactor;
+                currentMobile = initialMobile;
+                currentHasTouch = initialHasTouch;
+                activeUserAgent = options.emulation?.userAgent;
+                activeLocale = options.emulation?.locale;
                 slotHasCustomStorageState = false;
                 isAtBlank = true;
                 const previousSlot = activeSlot;
@@ -3460,6 +3702,7 @@ export function makeLightweightCdpDriver(
         }),
 
       getNavigationUrls: () => [...navigationUrls],
+      getLastNavigationStatus: () => lastNavigationStatus,
 
       waitForLoadState: (state = "load", waitOpts) =>
         Effect.tryPromise({
@@ -3876,11 +4119,23 @@ export function makeLightweightCdpDriver(
       evaluate: (fn, ...args) =>
         Effect.tryPromise({
           try: async () => {
-            if (typeof fn === "string") {
-              return (await cdpChannel.evaluateOnce(fn)) as any;
+            const expr =
+              typeof fn === "string"
+                ? fn
+                : `(${fn.toString()})(${args.map((a) => serializeEvaluateArg(a)).join(", ")})`;
+            try {
+              return (await cdpChannel.evaluateOnce(expr)) as any;
+            } catch (firstErr) {
+              const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+              // If Chrome threw an immediate protocol error because the new document's execution
+              // context wasn't ready yet during a navigation, retry once on the fresh context.
+              // (Hung promises aborted by `contextDestroyedPromise` throw `Execution context was destroyed (...)` and are NOT retried.)
+              if (/Cannot find context with specified id/i.test(msg)) {
+                await new Promise((r) => setTimeout(r, 60));
+                return (await cdpChannel.evaluateOnce(expr)) as any;
+              }
+              throw firstErr;
             }
-            const serializedArgs = args.map((a) => serializeEvaluateArg(a)).join(", ");
-            return (await cdpChannel.evaluateOnce(`(${fn.toString()})(${serializedArgs})`)) as any;
           },
           catch: (e) => new DriverError({ message: `CDP evaluate failed: ${e}` }),
         }),
@@ -4303,6 +4558,13 @@ export function makeLightweightCdpDriver(
                 freshContextPerFlow: false,
                 _markClosedOnKill: true,
                 ...(ctxOpts?.viewport ? { viewport: ctxOpts.viewport } : {}),
+                ...(ctxOpts?.deviceScaleFactor !== undefined
+                  ? { deviceScaleFactor: ctxOpts.deviceScaleFactor }
+                  : {}),
+                ...(ctxOpts?.mobile !== undefined ? { mobile: ctxOpts.mobile } : {}),
+                ...(ctxOpts?.isMobile !== undefined ? { isMobile: ctxOpts.isMobile } : {}),
+                ...(ctxOpts?.hasTouch !== undefined ? { hasTouch: ctxOpts.hasTouch } : {}),
+                ...(ctxOpts?.httpCredentials ? { httpCredentials: ctxOpts.httpCredentials } : {}),
                 ...(childEmulation ? { emulation: childEmulation } : {}),
               }),
             );
@@ -4712,13 +4974,69 @@ export function makeLightweightCdpDriver(
           try: async () => {
             width = viewport.width;
             height = viewport.height;
+            const wasMobileOrTouch = currentMobile || currentHasTouch;
+            const nextDpr = viewport.deviceScaleFactor ?? currentDeviceScaleFactor;
+            const nextMobile = viewport.isMobile ?? viewport.mobile ?? currentMobile;
+            const nextHasTouch =
+              viewport.hasTouch ??
+              (viewport.isMobile !== undefined || viewport.mobile !== undefined
+                ? nextMobile
+                : currentHasTouch);
+            currentDeviceScaleFactor = nextDpr;
+            currentMobile = nextMobile;
+            currentHasTouch = nextHasTouch;
             viewportMutated = true;
+            if (wasMobileOrTouch && !nextMobile && !nextHasTouch) {
+              await cdpChannel
+                .sendCommand("Emulation.clearDeviceMetricsOverride", {})
+                .catch(() => {});
+              await cdpChannel
+                .sendCommand("Emulation.setTouchEmulationEnabled", {
+                  enabled: false,
+                })
+                .catch(() => {});
+              await cdpChannel
+                .sendCommand("Emulation.setEmitTouchEventsForMouse", {
+                  enabled: false,
+                  configuration: "desktop",
+                })
+                .catch(() => {});
+            }
             await cdpChannel.sendCommand("Emulation.setDeviceMetricsOverride", {
               width: viewport.width,
               height: viewport.height,
-              deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
-              mobile: viewport.mobile ?? false,
+              deviceScaleFactor: nextDpr,
+              mobile: nextMobile,
             });
+            if (nextHasTouch) {
+              await cdpChannel
+                .sendCommand("Emulation.setTouchEmulationEnabled", {
+                  enabled: true,
+                  maxTouchPoints: 5,
+                })
+                .catch(() => {});
+            } else if (!wasMobileOrTouch && viewport.hasTouch === false) {
+              await cdpChannel
+                .sendCommand("Emulation.clearDeviceMetricsOverride", {})
+                .catch(() => {});
+              await cdpChannel
+                .sendCommand("Emulation.setTouchEmulationEnabled", {
+                  enabled: false,
+                })
+                .catch(() => {});
+              await cdpChannel
+                .sendCommand("Emulation.setEmitTouchEventsForMouse", {
+                  enabled: false,
+                  configuration: "desktop",
+                })
+                .catch(() => {});
+              await cdpChannel.sendCommand("Emulation.setDeviceMetricsOverride", {
+                width: viewport.width,
+                height: viewport.height,
+                deviceScaleFactor: nextDpr,
+                mobile: nextMobile,
+              });
+            }
           },
           catch: (e) => new DriverError({ message: `CDP setViewport failed: ${e}` }),
         }),
@@ -4747,18 +5065,24 @@ export function makeLightweightCdpDriver(
             if (features.length > 0) {
               await cdpChannel.sendCommand("Emulation.setEmulatedMedia", { features });
             }
-            if (emulationOpts.locale !== undefined) {
-              await applyLocaleOverride(activeSlot?.sessionId ?? null, emulationOpts.locale);
-            }
             if (emulationOpts.userAgent !== undefined) {
-              const acceptLanguage = emulationOpts.locale
-                ? emulationOpts.locale.includes("-")
-                  ? `${emulationOpts.locale},${emulationOpts.locale.split("-")[0]};q=0.9`
-                  : emulationOpts.locale
-                : undefined;
+              activeUserAgent = emulationOpts.userAgent;
+            }
+            if (emulationOpts.locale !== undefined) {
+              activeLocale = emulationOpts.locale;
+              await cdpChannel
+                .sendCommand("Emulation.setLocaleOverride", { locale: emulationOpts.locale })
+                .catch(() => {});
+            }
+            if (emulationOpts.locale !== undefined || emulationOpts.userAgent !== undefined) {
+              const effectiveUa = await resolveEffectiveUserAgent(
+                activeSlot?.sessionId ?? null,
+                emulationOpts.userAgent,
+              );
+              const acceptLanguage = buildAcceptLanguage(activeLocale);
               await cdpChannel
                 .sendCommand("Emulation.setUserAgentOverride", {
-                  userAgent: emulationOpts.userAgent,
+                  userAgent: effectiveUa,
                   ...(acceptLanguage ? { acceptLanguage } : {}),
                 })
                 .catch(() => {});

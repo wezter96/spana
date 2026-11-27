@@ -1,5 +1,11 @@
 import type { FlowDefinition } from "../api/flow.js";
-import type { BrowserName, WebExecutionConfig } from "../schemas/config.js";
+import type {
+  BrowserName,
+  HttpCredentialsConfig,
+  WebDeviceConfig,
+  WebExecutionConfig,
+  WebViewportConfig,
+} from "../schemas/config.js";
 import type { Platform } from "../schemas/selector.js";
 
 export interface ProjectConfig {
@@ -29,11 +35,18 @@ export interface ProjectConfig {
   teardown?: string;
   /** Per-project retry override. */
   retries?: number;
-  /** Optional web execution overrides (e.g. headless, engine, colorScheme). */
+  /** Optional web execution overrides (e.g. headless, engine, colorScheme, viewport, userAgent, mobile/touch, httpCredentials). */
   use?: Partial<WebExecutionConfig> & {
-    viewport?: { width: number; height: number };
+    viewport?: WebViewportConfig;
     locale?: string;
     timezoneId?: string;
+    userAgent?: string;
+    deviceScaleFactor?: number;
+    mobile?: boolean;
+    isMobile?: boolean;
+    hasTouch?: boolean;
+    httpCredentials?: HttpCredentialsConfig;
+    device?: WebDeviceConfig;
   };
 }
 

@@ -151,6 +151,34 @@ export interface StorybookConfig {
   iframePath?: string;
 }
 
+export interface WebViewportConfig {
+  width: number;
+  height: number;
+  /** Device pixel ratio (e.g. `2` or `3` for Retina/mobile). */
+  deviceScaleFactor?: number;
+  /** Emulate mobile device metrics & viewport meta tag. */
+  mobile?: boolean;
+  /** Playwright-compatible alias for `mobile`. */
+  isMobile?: boolean;
+  /** Enable touch event emulation (`Emulation.setTouchEmulationEnabled`). */
+  hasTouch?: boolean;
+}
+
+export interface HttpCredentialsConfig {
+  username: string;
+  password: string;
+}
+
+export interface WebDeviceConfig {
+  name?: string;
+  viewport?: WebViewportConfig;
+  deviceScaleFactor?: number;
+  mobile?: boolean;
+  isMobile?: boolean;
+  hasTouch?: boolean;
+  userAgent?: string;
+}
+
 export interface WebExecutionConfig {
   browser?: BrowserName;
   /** Browser engine backend: "playwright" (default), "cdp" (direct CDP WebSocket — zero Playwright pipe), or "lightpanda". */
@@ -204,8 +232,22 @@ export interface WebExecutionConfig {
   timezoneId?: string;
   /** Emulate browser locale / Accept-Language (e.g. `"sv-SE"`, `"en-US"`). */
   locale?: string;
-  /** Default viewport dimensions applied before first navigation (default: 1280×720). */
-  viewport?: { width: number; height: number };
+  /** Explicit User-Agent header & `navigator.userAgent` override. */
+  userAgent?: string;
+  /** HTTP Basic/Digest authentication credentials for protected origins. */
+  httpCredentials?: HttpCredentialsConfig;
+  /** Default viewport dimensions & optional mobile metrics applied before first navigation (default: 1280×720). */
+  viewport?: WebViewportConfig;
+  /** Device pixel ratio override (e.g. `2` or `3`). */
+  deviceScaleFactor?: number;
+  /** Emulate a mobile device (meta viewport + mobile media features). */
+  mobile?: boolean;
+  /** Playwright-compatible alias for `mobile`. */
+  isMobile?: boolean;
+  /** Enable touch event emulation. */
+  hasTouch?: boolean;
+  /** Bundled device emulation descriptor (`viewport`, `deviceScaleFactor`, `isMobile`, `hasTouch`, `userAgent`). */
+  device?: WebDeviceConfig;
   /** Extra Chromium CLI arguments passed when launching the browser (e.g. `--use-fake-device-for-media-stream`). */
   args?: string[];
   /**
@@ -638,10 +680,48 @@ const webExecutionConfigSchema = z
     reducedMotion: z.enum(["reduce", "no-preference"]).optional(),
     timezoneId: z.string().min(1).optional(),
     locale: z.string().min(1).optional(),
+    userAgent: z.string().min(1).optional(),
+    httpCredentials: z
+      .object({
+        username: z.string(),
+        password: z.string(),
+      })
+      .strict()
+      .optional(),
     viewport: z
       .object({
         width: z.number().int().positive(),
         height: z.number().int().positive(),
+        deviceScaleFactor: z.number().positive().optional(),
+        mobile: z.boolean().optional(),
+        isMobile: z.boolean().optional(),
+        hasTouch: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    deviceScaleFactor: z.number().positive().optional(),
+    mobile: z.boolean().optional(),
+    isMobile: z.boolean().optional(),
+    hasTouch: z.boolean().optional(),
+    device: z
+      .object({
+        name: z.string().min(1).optional(),
+        viewport: z
+          .object({
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+            deviceScaleFactor: z.number().positive().optional(),
+            mobile: z.boolean().optional(),
+            isMobile: z.boolean().optional(),
+            hasTouch: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        deviceScaleFactor: z.number().positive().optional(),
+        mobile: z.boolean().optional(),
+        isMobile: z.boolean().optional(),
+        hasTouch: z.boolean().optional(),
+        userAgent: z.string().min(1).optional(),
       })
       .strict()
       .optional(),

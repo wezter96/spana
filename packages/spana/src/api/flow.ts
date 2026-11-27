@@ -1,10 +1,34 @@
 import type { Platform } from "../schemas/selector.js";
-import type { ArtifactConfig } from "../schemas/config.js";
+import type { ArtifactConfig, WebViewportConfig } from "../schemas/config.js";
 import type { LaunchOptions } from "../drivers/raw-driver.js";
 import type { PromiseApp } from "./app.js";
 import type { PromiseExpectFn } from "./expect.js";
 import type { FlowAgent } from "./agent-fixture.js";
 import type { Sessions } from "../core/session-manager.js";
+
+/**
+ * Thrown by runtime `ctx.skip(reason?)` / `flow.skip(reason?)` inside a flow body.
+ * Caught by the runner and reported cleanly as `status: "skipped"` (not failed or passed).
+ */
+export class FlowSkippedError extends Error {
+  readonly _tag = "FlowSkippedError" as const;
+  readonly reason?: string;
+
+  constructor(reason?: string) {
+    super(reason ? `Flow skipped: ${reason}` : "Flow skipped");
+    this.name = "FlowSkippedError";
+    this.reason = reason;
+  }
+}
+
+export function isFlowSkippedError(error: unknown): error is FlowSkippedError {
+  return (
+    error instanceof FlowSkippedError ||
+    (typeof error === "object" &&
+      error !== null &&
+      (error as { _tag?: unknown })._tag === "FlowSkippedError")
+  );
+}
 
 export interface WhenCondition {
   /** Only run on these platforms */
@@ -43,10 +67,18 @@ export interface FlowConfig<R extends string = string> {
   launchOptions?: LaunchOptions<R>;
   /** Per-flow base URL overriding `apps.web.url` for relative paths in this flow. */
   baseUrl?: string;
-  /** Per-flow viewport applied before the first navigation on web. */
-  viewport?: { width: number; height: number };
+  /** Per-flow viewport (with optional mobile/DPR/touch fields) applied before the first navigation on web. */
+  viewport?: WebViewportConfig;
+  /** Per-flow device pixel ratio override on web. */
+  deviceScaleFactor?: number;
+  /** Per-flow mobile emulation flag on web (`mobile` alias also supported in `viewport`). */
+  isMobile?: boolean;
+  /** Per-flow touch emulation flag on web. */
+  hasTouch?: boolean;
   /** Per-flow locale applied before the first navigation on web (e.g. `"sv-SE"`). */
   locale?: string;
+  /** Per-flow User-Agent override applied before the first navigation on web. */
+  userAgent?: string;
   artifacts?: ArtifactConfig;
   when?: WhenCondition;
   skip?: FlowSkipCondition;
@@ -74,6 +106,15 @@ export interface FlowContext<T extends string = string, R extends string = strin
   agent?: FlowAgent;
   /** Group related actions into a named nested step in reports and Trace Viewer. */
   step?: <A>(name: string, fn: () => Promise<A>) => Promise<A>;
+  /**
+   * Dynamically skip the current flow at runtime (reported cleanly as `skipped`, not failed or passed).
+   * - `ctx.skip("reason")` — skip immediately with an optional reason.
+   * - `ctx.skip(condition, "reason")` — skip only when `condition` is true (Playwright `test.skip` ergonomics).
+   */
+  skip: {
+    (reason?: string): never;
+    (condition: boolean, reason?: string): void;
+  };
 }
 
 export type FlowFn<T extends string = string, R extends string = string> = (
@@ -130,8 +171,47 @@ function modifyFlow(modifier: "skip" | "fixme" | "only" | "fail") {
   return modified;
 }
 
+function skipModifierOrRuntime<T extends string = string, R extends string = string>(
+  name: string,
+  fn: FlowFn<T, R>,
+): FlowDefinition<T, R>;
+function skipModifierOrRuntime<T extends string = string, R extends string = string>(
+  name: string,
+  config: FlowConfig<R>,
+  fn: FlowFn<T, R>,
+): FlowDefinition<T, R>;
+function skipModifierOrRuntime(reason?: string): never;
+function skipModifierOrRuntime(condition: boolean, reason?: string): void;
+function skipModifierOrRuntime<T extends string = string, R extends string = string>(
+  nameOrCondition?: string | boolean,
+  configOrFnOrReason?: FlowConfig<R> | FlowFn<T, R> | string,
+  maybeFn?: FlowFn<T, R>,
+): FlowDefinition<T, R> | void {
+  // Runtime call inside a flow body:
+  //   flow.skip()
+  //   flow.skip("reason")
+  //   flow.skip(condition, "reason")
+  if (typeof nameOrCondition === "boolean") {
+    if (nameOrCondition) {
+      throw new FlowSkippedError(
+        typeof configOrFnOrReason === "string" ? configOrFnOrReason : undefined,
+      );
+    }
+    return;
+  }
+  if (nameOrCondition === undefined || configOrFnOrReason === undefined) {
+    throw new FlowSkippedError(nameOrCondition);
+  }
+  // Static flow definition modifier: flow.skip(name, fn) or flow.skip(name, config, fn)
+  const config =
+    typeof configOrFnOrReason === "function" ? {} : (configOrFnOrReason as FlowConfig<R>);
+  const fn =
+    typeof configOrFnOrReason === "function" ? (configOrFnOrReason as FlowFn<T, R>) : maybeFn!;
+  return flow(nameOrCondition, { ...config, skip: config.skip ?? true }, fn);
+}
+
 export namespace flow {
-  export const skip = modifyFlow("skip");
+  export const skip = skipModifierOrRuntime;
   export const fixme = modifyFlow("fixme");
   export const only = modifyFlow("only");
   export const fail = modifyFlow("fail");

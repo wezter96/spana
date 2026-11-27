@@ -1,5 +1,5 @@
 import type { RawDriverService, LaunchOptions } from "../drivers/raw-driver.js";
-import type { FlowDefinition } from "../api/flow.js";
+import { FlowSkippedError, isFlowSkippedError, type FlowDefinition } from "../api/flow.js";
 import type { Platform } from "../schemas/selector.js";
 import { Effect } from "effect";
 import { createPromiseApp } from "../api/app.js";
@@ -190,12 +190,18 @@ export async function executeFlow(
   };
   const effectiveAppId = flow.config.baseUrl ?? appId;
   const extraCleanups: Array<() => Promise<void>> = [];
+  let lastActiveDriver: RawDriverService = driver;
+  const getArtifactDriver = (): RawDriverService =>
+    lastActiveDriver.domChannel?.isConnected?.() === false ? driver : lastActiveDriver;
   const app = createPromiseApp(driver, effectiveAppId, mergedCoordinatorConfig, stepRecorder, {
     platform,
     storybook: config.storybook,
     launchOptions,
     flowBaseUrl: flow.config.baseUrl,
     onRegisterCleanup: (fn) => extraCleanups.push(fn),
+    onActiveDriver: (active) => {
+      lastActiveDriver = active;
+    },
     flowContext: flowMeta,
     visualRegression: config.visualRegression,
   });
@@ -215,6 +221,15 @@ export async function executeFlow(
     cacheMode: config.strictCache ? "strict" : config.replayCache?.mode,
     provider: config.agent,
   });
+  const skipRuntime = (reasonOrCondition?: string | boolean, maybeReason?: string) => {
+    if (typeof reasonOrCondition === "boolean") {
+      if (reasonOrCondition) {
+        throw new FlowSkippedError(maybeReason);
+      }
+      return;
+    }
+    throw new FlowSkippedError(reasonOrCondition);
+  };
   const flowCtx: any = {
     app,
     expect,
@@ -223,6 +238,7 @@ export async function executeFlow(
     parallelIndex,
     agent,
     step: recordNamedStep,
+    skip: skipRuntime,
     updateBaselines: flowMeta.updateBaselines,
   };
   const sessionManager = new SessionManager();
@@ -432,22 +448,40 @@ export async function executeFlow(
     }
   }
 
-  // Apply per-flow viewport and locale overrides before first navigation
-  if (flow.config.viewport && driver.setViewport) {
+  // Apply per-flow viewport, locale, and userAgent overrides before first navigation
+  if (
+    (flow.config.viewport ||
+      flow.config.deviceScaleFactor !== undefined ||
+      flow.config.isMobile !== undefined ||
+      flow.config.hasTouch !== undefined) &&
+    driver.setViewport
+  ) {
     try {
+      const vp = flow.config.viewport;
+      const baseWidth = vp?.width ?? mergedCoordinatorConfig.screenWidth ?? 1280;
+      const baseHeight = vp?.height ?? mergedCoordinatorConfig.screenHeight ?? 720;
       await Effect.runPromise(
         driver.setViewport({
-          width: flow.config.viewport.width,
-          height: flow.config.viewport.height,
+          width: baseWidth,
+          height: baseHeight,
+          deviceScaleFactor: vp?.deviceScaleFactor ?? flow.config.deviceScaleFactor,
+          mobile: vp?.mobile ?? vp?.isMobile ?? flow.config.isMobile,
+          isMobile: vp?.isMobile ?? vp?.mobile ?? flow.config.isMobile,
+          hasTouch: vp?.hasTouch ?? flow.config.hasTouch,
         }),
       );
     } catch (error) {
       return buildFailureResult(error);
     }
   }
-  if (flow.config.locale && driver.setEmulation) {
+  if ((flow.config.locale || flow.config.userAgent) && driver.setEmulation) {
     try {
-      await Effect.runPromise(driver.setEmulation({ locale: flow.config.locale }));
+      await Effect.runPromise(
+        driver.setEmulation({
+          ...(flow.config.locale ? { locale: flow.config.locale } : {}),
+          ...(flow.config.userAgent ? { userAgent: flow.config.userAgent } : {}),
+        }),
+      );
     } catch (error) {
       return buildFailureResult(error);
     }
@@ -495,17 +529,46 @@ export async function executeFlow(
     }
   }
 
-  // beforeEach hook — if it throws, abort without running the flow
+  const buildRuntimeSkipResult = async (error: FlowSkippedError): Promise<TestResult> => {
+    const steps = stepRecorder.getSteps();
+    const durationMs = Date.now() - start;
+    await finalizeRecording("passed", [], steps, durationMs);
+    return {
+      name: flow.name,
+      platform,
+      status: "skipped",
+      modifier: "skip",
+      ...(error.reason ? { skipReason: error.reason } : {}),
+      durationMs,
+      steps,
+      scenarioSteps: flowCtx.__scenarioSteps,
+      ...(flowTags ? { tags: flowTags } : {}),
+      ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
+    };
+  };
+
+  // beforeEach hook — if it throws, abort without running the flow (unless runtime skip)
   if (config.hooks?.beforeEach) {
     try {
-      await config.hooks.beforeEach({ app, expect, platform, workerIndex, parallelIndex } as any);
+      await config.hooks.beforeEach({
+        app,
+        expect,
+        platform,
+        workerIndex,
+        parallelIndex,
+        skip: skipRuntime,
+      } as any);
     } catch (error) {
+      if (isFlowSkippedError(error)) {
+        return buildRuntimeSkipResult(error);
+      }
       return buildFailureResult(error);
     }
   }
 
   let result: TestResult;
   let softFailureError: Error | undefined;
+  let flowTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   try {
     if (autoLaunch) {
@@ -514,12 +577,12 @@ export async function executeFlow(
 
     await Promise.race([
       withActiveStepRecorder(stepRecorder, () => flow.fn(flowCtx)),
-      new Promise<never>((_, reject) =>
-        setTimeout(
+      new Promise<never>((_, reject) => {
+        flowTimeoutHandle = setTimeout(
           () => reject(new Error(`Flow "${flow.name}" timed out after ${timeout}ms`)),
           timeout,
-        ),
-      ),
+        );
+      }),
     ]);
     if (softFailures.length > 0) {
       softFailureError = aggregateFailures();
@@ -558,107 +621,116 @@ export async function executeFlow(
       ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
     };
   } catch (error) {
-    const isUnexpectedPass =
-      isExpectedToFail &&
-      error instanceof Error &&
-      error.message.includes("was marked as expected to fail (flow.fail)");
-    if (isExpectedToFail && !isUnexpectedPass) {
-      agent.finalize(true);
-      const steps = stepRecorder.getSteps();
-      const durationMs = Date.now() - start;
-      result = {
-        name: flow.name,
-        platform,
-        status: "passed",
-        durationMs,
-        steps,
-        scenarioSteps: flowCtx.__scenarioSteps,
-        ...(flowTags ? { tags: flowTags } : {}),
-        annotations: [
-          ...(flowAnnotations ?? []),
-          {
-            type: "fail",
-            description: error instanceof Error ? error.message : String(error),
-          },
-        ],
-      };
+    if (isFlowSkippedError(error)) {
+      result = await buildRuntimeSkipResult(error);
     } else {
-      agent.finalize(false);
-      const attachments = await captureArtifacts(
-        driver,
-        artifactConfig,
-        flow.name,
-        platform,
-        "failed",
-      );
-      await captureCoverage(attachments, "failed");
-      const steps = stepRecorder.getSteps();
-      const durationMs = Date.now() - start;
-      await finalizeRecording("failed", attachments, steps, durationMs);
+      const isUnexpectedPass =
+        isExpectedToFail &&
+        error instanceof Error &&
+        error.message.includes("was marked as expected to fail (flow.fail)");
+      if (isExpectedToFail && !isUnexpectedPass) {
+        agent.finalize(true);
+        const steps = stepRecorder.getSteps();
+        const durationMs = Date.now() - start;
+        result = {
+          name: flow.name,
+          platform,
+          status: "passed",
+          durationMs,
+          steps,
+          scenarioSteps: flowCtx.__scenarioSteps,
+          ...(flowTags ? { tags: flowTags } : {}),
+          annotations: [
+            ...(flowAnnotations ?? []),
+            {
+              type: "fail",
+              description: error instanceof Error ? error.message : String(error),
+            },
+          ],
+        };
+      } else {
+        agent.finalize(false);
+        const artifactDriver = getArtifactDriver();
+        const attachments = await captureArtifacts(
+          artifactDriver,
+          artifactConfig,
+          flow.name,
+          platform,
+          "failed",
+        );
+        await captureCoverage(attachments, "failed");
+        const steps = stepRecorder.getSteps();
+        const durationMs = Date.now() - start;
+        await finalizeRecording("failed", attachments, steps, durationMs);
 
-      const normalized = error instanceof Error ? error : new Error(String(error));
-      const flowError =
-        softFailures.length > 0 && error !== softFailureError
-          ? aggregateFailures(normalized)
-          : normalized;
-      await writeRichTraceIfEnabled("failed", attachments, steps, durationMs, {
-        message: flowError.message,
-        stack: flowError.stack,
-      });
-      result = {
-        name: flow.name,
-        platform,
-        status: "failed",
-        durationMs,
-        error: classifyError(flowError, {
-          flowFilePath: flow.sourcePath,
-          fallbackStack: stepRecorder.getLastFailureStack?.(),
-        }),
-        attachments,
-        steps,
-        scenarioSteps: flowCtx.__scenarioSteps,
-        ...(flowTags ? { tags: flowTags } : {}),
-        ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
-      };
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        const flowError =
+          softFailures.length > 0 && error !== softFailureError
+            ? aggregateFailures(normalized)
+            : normalized;
+        await writeRichTraceIfEnabled("failed", attachments, steps, durationMs, {
+          message: flowError.message,
+          stack: flowError.stack,
+        });
+        result = {
+          name: flow.name,
+          platform,
+          status: "failed",
+          durationMs,
+          error: classifyError(flowError, {
+            flowFilePath: flow.sourcePath,
+            fallbackStack: stepRecorder.getLastFailureStack?.(),
+          }),
+          attachments,
+          steps,
+          scenarioSteps: flowCtx.__scenarioSteps,
+          ...(flowTags ? { tags: flowTags } : {}),
+          ...(flowAnnotations ? { annotations: flowAnnotations } : {}),
+        };
 
-      // Write structured failure bundle alongside artifacts
-      if (artifactConfig.captureOnFailure && result.error) {
-        try {
-          const artDir = join(
-            artifactConfig.outputDir,
-            `${
-              flow.name
-                .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
-                .replaceAll(/_+/g, "_")
-                .slice(0, 80) || "artifact"
-            }-${platform}`,
-          );
-          const bundle = createFailureBundle(
-            flow.name,
+        // Write structured failure bundle alongside artifacts
+        if (artifactConfig.captureOnFailure && result.error) {
+          try {
+            const artDir = join(
+              artifactConfig.outputDir,
+              `${
+                flow.name
+                  .replaceAll(/[^a-zA-Z0-9-_]/g, "_")
+                  .replaceAll(/_+/g, "_")
+                  .slice(0, 80) || "artifact"
+              }-${platform}`,
+            );
+            const bundle = createFailureBundle(
+              flow.name,
+              platform,
+              stepRecorder.getSteps(),
+              result.error,
+              artDir,
+              attachments,
+              flow.sourcePath,
+            );
+            writeFailureBundle(bundle, artDir);
+          } catch {
+            // Bundle writing is best-effort — don't block test execution
+          }
+        }
+
+        if (config.debugOnFailure) {
+          await runDebugReplOnce({
+            app,
+            expect,
+            driver,
+            error: flowError,
+            flowName: flow.name,
             platform,
-            stepRecorder.getSteps(),
-            result.error,
-            artDir,
-            attachments,
-            flow.sourcePath,
-          );
-          writeFailureBundle(bundle, artDir);
-        } catch {
-          // Bundle writing is best-effort — don't block test execution
+            parseHierarchy: coordinatorConfig.parse,
+          });
         }
       }
-
-      if (config.debugOnFailure) {
-        await runDebugReplOnce({
-          app,
-          expect,
-          driver,
-          error: flowError,
-          flowName: flow.name,
-          platform,
-          parseHierarchy: coordinatorConfig.parse,
-        });
-      }
+    }
+  } finally {
+    if (flowTimeoutHandle !== undefined) {
+      clearTimeout(flowTimeoutHandle);
     }
   }
 
