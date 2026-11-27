@@ -545,6 +545,9 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
       isMobile: false,
       hasTouch: false,
     });
+    // Navigate to verify the restored desktop hover capability on the next document
+    // (Chrome 147 refreshes availableHoverTypes after disabling touch emulation on document load).
+    await app.openLink(`${server.url}/bolagy-lab`);
     const restoredHover = await app.evaluate<boolean>("matchMedia('(any-hover: hover)').matches");
     bunExpect(restoredHover).toBe(true);
 
