@@ -28,7 +28,7 @@ spana test --reporter console,junit,html
 ```
 
 - **`junit`** — writes a JUnit XML file to `spana-output/junit-report.xml`, understood by most CI systems.
-- **`json`** — prints one JSON event per line to stdout (`flowPass`, `flowFail`, `runComplete`), useful for piping to other tools.
+- **`json`** — prints one JSON event per line to stdout (`flowPass`, `flowFail`, `flowSkip`, `runComplete`), useful for piping to other tools.
 - **`html`** — writes an HTML report to `spana-output/report.html` with screenshots and step details.
 - **`allure`** — writes Allure result files for an Allure report.
 - **`github`** — writes a PR-ready Markdown summary (`spana-output/github-pr-summary.md`) and appends directly to `$GITHUB_STEP_SUMMARY` in GitHub Actions.
@@ -331,8 +331,8 @@ GitLab natively parses JUnit XML when declared under `artifacts.reports.junit`, 
 
 - **Combine reporters.** Use `--reporter console,junit,html` to get terminal output for logs, JUnit for CI dashboards, and HTML for manual review — all in one run.
 - **Upload `spana-output/` as artifacts.** This directory contains JUnit XML, HTML reports, and per-flow screenshots, hierarchies, and failure bundles. Always upload with `if: always()` (GitHub Actions) or `when: always` (GitLab) so artifacts are available even when tests fail.
-- **Headless web works out of the box.** Web runs are headless by default (`execution.web.headless`). No `xvfb` or display server setup needed. Install a browser on the runner first (`npx playwright install chromium`). The `playwright` engine needs it; the `cdp` engine uses it when present and otherwise falls back to a system Chrome.
-- **Pick a web engine.** `execution.web.engine` accepts `"playwright"` (default), `"cdp"`, `"lightpanda"`, or `"auto"`. `"auto"` uses the direct CDP engine for Chromium unless `wsEndpoint`, `channel`, or `artifacts.har` needs Playwright.
+- **Headless web & Ubuntu 23.10+ CI runners work out of the box.** Web runs are headless by default (`execution.web.headless`), and Direct CDP defaults to `execution.web.chromiumSandbox: false` (`--no-sandbox`, matching Playwright) so Ubuntu 23.10+ / GitHub Actions runners with AppArmor `unprivileged_userns` restrictions launch cleanly without extra flags. Set `chromiumSandbox: true` only if your host enables unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=0`). Install a browser on the runner first (`npx playwright install chromium`).
+- **Pick a web engine.** `execution.web.engine` accepts `"playwright"` (default), `"cdp"`, `"lightpanda"`, or `"auto"`. `"auto"` uses the direct CDP engine for Chromium unless `wsEndpoint`, `channel`, or `artifacts.har` needs Playwright. Note that Direct CDP browser-context mode defaults to `waitUntil: "domcontentloaded"` while Playwright defaults to `waitUntil: "load"`.
 - **Scale web workers.** `--workers <n>` runs `n` isolated browser contexts, spread over browser processes by `execution.web.maxContextsPerBrowser`.
 - **Split across jobs (duration-balanced).** `--shard <current>/<total>` distributes flows using Longest-Processing-Time-First (LPT) bin packing when historical timings exist. Pass `--timings <path>` (or set `defaults.timingsFile` to a committed/cached `spana-timings.json` or a directory of per-shard JSON files) and `--write-timings <path>` so every CI runner finishes at roughly the same wall time.
 - **Use tags to split pipelines.** Run `spana test --tag smoke` on every push and `spana test --tag regression` on a nightly schedule to balance speed and coverage.

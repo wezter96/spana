@@ -1,5 +1,7 @@
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { FlowDefinition } from "../api/flow.js";
+import { createPromiseApp } from "../api/app.js";
+import { createPromiseExpect } from "../api/expect.js";
 import type { Platform } from "../schemas/selector.js";
 import { executeFlow, type TestResult, type EngineConfig } from "./engine.js";
 import { classifyError } from "../report/classify-error.js";
@@ -25,6 +27,8 @@ export interface OrchestrateOptions {
   durationHintsMs?: Record<string, number>;
   /** Optional dynamic cross-process flow claimer (for `spana test --workers N --processes M`). */
   claimNextFlow?: () => Promise<FlowDefinition | null>;
+  /** Optional dynamic cross-process work-unit claimer preserving indivisible serial groups across `--processes M`. */
+  claimNextWorkUnit?: () => Promise<FlowDefinition[] | null>;
   /** Called before each flow starts executing. */
   onFlowStart?: (name: string, platform: Platform, workerName?: string) => void;
   /** Called after each flow finishes (pass, fail, or skip). */
@@ -69,14 +73,15 @@ async function runPlatform(
 
   if (shouldBail()) {
     for (const flow of platformFlows) {
-      results.push(
-        getFlowSkip(flow, platform) ?? {
-          name: flow.name,
-          platform,
-          status: "skipped",
-          durationMs: 0,
-        },
-      );
+      const skipped: TestResult = getFlowSkip(flow, platform) ?? {
+        name: flow.name,
+        platform,
+        status: "skipped",
+        skipReason: "Skipped due to bail limit",
+        durationMs: 0,
+      };
+      results.push(skipped);
+      options?.onResult?.(skipped);
     }
     return { results };
   }
@@ -85,11 +90,39 @@ async function runPlatform(
   const isChildWorkerProcess = process.env.SPANA_WORKER_PROCESS === "1";
   const workerOffset = Number.parseInt(process.env.SPANA_WORKER_INDEX_OFFSET ?? "0", 10) || 0;
   const workerIndex = engineConfig.workerIndex ?? workerOffset;
-  const parallelIndex = engineConfig.parallelIndex ?? 0;
+  const parallelIndex = engineConfig.parallelIndex ?? workerOffset;
+
+  const createHookContext = () => {
+    const app = createPromiseApp(
+      driver,
+      engineConfig.appId,
+      engineConfig.coordinatorConfig,
+      undefined,
+      {
+        platform,
+        storybook: engineConfig.storybook,
+        launchOptions: engineConfig.launchOptions,
+        visualRegression: engineConfig.visualRegression,
+      },
+    );
+    const expect = createPromiseExpect(
+      driver,
+      engineConfig.coordinatorConfig,
+      undefined,
+      {
+        flowFilePath: "",
+        flowName: "beforeAll/afterAll",
+        platform,
+        updateBaselines: engineConfig.updateBaselines ?? false,
+      },
+      engineConfig.visualRegression,
+    );
+    return { app, expect, platform, workerIndex, parallelIndex };
+  };
 
   if (hooks?.beforeAll && !isChildWorkerProcess) {
     try {
-      await hooks.beforeAll({ app: undefined, platform, workerIndex, parallelIndex } as any);
+      await hooks.beforeAll(createHookContext() as any);
     } catch (error) {
       for (const flow of platformFlows) {
         const result: TestResult = getFlowSkip(flow, platform) ?? {
@@ -128,6 +161,7 @@ async function runPlatform(
       bail: options?.bail,
       durationHintsMs: options?.durationHintsMs,
       claimNextFlow: options?.claimNextFlow,
+      claimNextWorkUnit: options?.claimNextWorkUnit,
       onFlowStart: (name, workerName) => {
         options?.onFlowStart?.(name, platform, workerName);
       },
@@ -142,10 +176,7 @@ async function runPlatform(
     if (hooks?.afterAll && !isChildWorkerProcess) {
       try {
         await hooks.afterAll({
-          app: undefined,
-          platform,
-          workerIndex,
-          parallelIndex,
+          ...createHookContext(),
           summary: { results: parallelResult.results },
         } as any);
       } catch (hookError) {
@@ -217,7 +248,18 @@ async function runPlatform(
     }
   };
 
-  if (options?.claimNextFlow) {
+  if (options?.claimNextWorkUnit) {
+    while (!shouldBail()) {
+      const unit = await options.claimNextWorkUnit();
+      if (!unit || unit.length === 0) break;
+      for (const flow of unit) {
+        if (shouldBail()) break;
+        const fp = flow.config.platforms;
+        if (fp && !fp.includes(platform)) continue;
+        await runSingleFlow(flow);
+      }
+    }
+  } else if (options?.claimNextFlow) {
     while (!shouldBail()) {
       const flow = await options.claimNextFlow();
       if (!flow) break;
@@ -230,15 +272,16 @@ async function runPlatform(
       const flow = platformFlows[index]!;
       if (shouldBail()) {
         for (const skippedFlow of platformFlows.slice(index)) {
-          results.push(
-            getFlowSkip(skippedFlow, platform) ?? {
-              name: skippedFlow.name,
-              platform,
-              status: "skipped",
-              durationMs: 0,
-              ...(skippedFlow.config.tags ? { tags: skippedFlow.config.tags } : {}),
-            },
-          );
+          const skipped: TestResult = getFlowSkip(skippedFlow, platform) ?? {
+            name: skippedFlow.name,
+            platform,
+            status: "skipped",
+            skipReason: "Skipped due to bail limit",
+            durationMs: 0,
+            ...(skippedFlow.config.tags ? { tags: skippedFlow.config.tags } : {}),
+          };
+          results.push(skipped);
+          options?.onResult?.(skipped);
         }
         break;
       }
@@ -249,10 +292,7 @@ async function runPlatform(
   if (hooks?.afterAll && !isChildWorkerProcess) {
     try {
       await hooks.afterAll({
-        app: undefined,
-        platform,
-        workerIndex,
-        parallelIndex,
+        ...createHookContext(),
         summary: { results },
       } as any);
     } catch (hookError) {

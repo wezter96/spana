@@ -165,6 +165,8 @@ export interface Reporter {
   onFlowPass?(result: FlowResult): void;
   /** Called when a flow fails (after all retry attempts are exhausted). */
   onFlowFail?(result: FlowResult): void;
+  /** Called when a flow is skipped (`skip`, `fixme`, conditional `when`, serial sibling skip, or bail). */
+  onFlowSkip?(result: FlowResult): void;
   /** Called once after all flows complete. Required. */
   onRunComplete(summary: RunSummary): void;
   /** Total number of flows to run (for progress display). */

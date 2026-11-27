@@ -16,6 +16,12 @@ export function createJsonReporter(outputPath?: string): Reporter {
       }
     },
 
+    onFlowSkip(result) {
+      if (!outputPath) {
+        console.log(JSON.stringify({ event: "flowSkip", ...result }));
+      }
+    },
+
     onRunComplete(summary) {
       if (outputPath) {
         mkdirSync(dirname(outputPath), { recursive: true });

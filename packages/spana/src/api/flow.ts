@@ -41,6 +41,8 @@ export interface FlowConfig<R extends string = string> {
   autoLaunch?: boolean; // default true
   /** Per-flow launch defaults. Merged with project launchOptions and manual app.launch() calls. */
   launchOptions?: LaunchOptions<R>;
+  /** Per-flow base URL overriding `apps.web.url` for relative paths in this flow. */
+  baseUrl?: string;
   /** Per-flow viewport applied before the first navigation on web. */
   viewport?: { width: number; height: number };
   /** Per-flow locale applied before the first navigation on web (e.g. `"sv-SE"`). */

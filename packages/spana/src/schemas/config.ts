@@ -49,8 +49,12 @@ export interface WarmDaemonConfig {
   stateFile?: string;
 }
 
+export type WebUrlResolver =
+  | string
+  | ((ctx: { workerIndex: number; parallelIndex: number }) => string);
+
 export interface AppConfig {
-  url?: string;
+  url?: WebUrlResolver;
   packageName?: string;
   bundleId?: string;
   /** Path to .app or .ipa for auto-install on device/simulator */
@@ -214,6 +218,18 @@ export interface WebExecutionConfig {
   gpu?: WebGpuMode;
   /** Enable WebGPU flags (`--enable-unsafe-webgpu`, plus deterministic SwiftShader in headless mode). */
   webgpu?: boolean;
+  /**
+   * Enable Chromium's OS sandbox for Direct CDP launches.
+   * Default: `false` (passes `--no-sandbox`, matching Playwright's default so headless Chromium works
+   * out-of-the-box on Ubuntu 23.10+ / GitHub Actions runners with AppArmor userns restrictions).
+   * Set `true` to keep Chromium's sandbox enabled.
+   */
+  chromiumSandbox?: boolean;
+  /**
+   * Optional JS expression evaluated inside `isAppReady()` (via `window.__SPANA_APP_READY__`)
+   * so SSR apps wait for client hydration before interactions without modifying app source code.
+   */
+  readyExpression?: string;
   /** Timeout in ms when waiting for the browser debugging endpoint to start (default: 30000). */
   launchTimeout?: number;
   /** Timeout in ms for `app.evaluate()` / CDP `Runtime.evaluate` calls (default: 10000). */
@@ -453,9 +469,17 @@ const warmDaemonConfigSchema = z
   })
   .strict();
 
+const webUrlResolverSchema = z.union([
+  z.string().url(),
+  z.custom<(ctx: { workerIndex: number; parallelIndex: number }) => string>(
+    (value) => typeof value === "function",
+    { message: "Expected URL string or ({ workerIndex, parallelIndex }) => string function" },
+  ),
+]);
+
 const appConfigSchema = z
   .object({
-    url: z.string().url().optional(),
+    url: webUrlResolverSchema.optional(),
     packageName: z.string().min(1).optional(),
     bundleId: z.string().min(1).optional(),
     appPath: z.string().min(1).optional(),
@@ -622,6 +646,8 @@ const webExecutionConfigSchema = z
       .strict()
       .optional(),
     args: z.array(z.string()).optional(),
+    chromiumSandbox: z.boolean().optional(),
+    readyExpression: z.string().min(1).optional(),
     launchTimeout: z.number().positive().optional(),
     evaluateTimeout: z.number().positive().optional(),
   })

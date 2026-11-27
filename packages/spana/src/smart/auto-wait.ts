@@ -123,6 +123,8 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
     // Single-round-trip web fast path: waitForSelector performs visibility, enabled,
     // scrollIntoView, hit-test, and 2-rAF stability checks inside ONE in-page evaluate,
     // returning the final DomElementMatch directly with zero extra query round trips.
+    // Never treat an early empty/failed answer (e.g. page reload/navigation mid-wait)
+    // as final before `timeout` expires unless `failFastWhenIdle` is enabled (2.28).
     const initialDomChannel = driver.domChannel;
     if (
       opts?.platform === "web" &&
@@ -131,79 +133,128 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
       initialDomChannel?.isConnected() &&
       initialDomChannel.waitForSelector
     ) {
-      const reactiveMatches = yield* Effect.tryPromise({
-        try: () =>
-          initialDomChannel.waitForSelector!(selector as Selector, {
+      let lastReactiveErrorMsg: string | undefined;
+      let sawEmptyArray = false;
+      let attemptIdx = 0;
+
+      while (attemptIdx === 0 || Date.now() - start < timeout) {
+        attemptIdx += 1;
+        const remaining = Math.max(10, timeout - (Date.now() - start));
+        const reactiveMatches = yield* Effect.tryPromise({
+          try: () =>
+            initialDomChannel.waitForSelector!(selector as Selector, {
+              timeoutMs: remaining,
+              forAction: opts?.force ? false : forAction,
+              checkHitTest: opts?.force ? false : undefined,
+              failFastWhenIdle: opts?.failFastWhenIdle,
+              idleQuietMs: opts?.idleQuietMs,
+              ...(opts?.force
+                ? { stableFrames: 0 }
+                : opts?.actionStableFrames !== undefined
+                  ? { stableFrames: opts.actionStableFrames }
+                  : {}),
+              ...(opts?.armTapGuard && !opts?.force ? { armTapGuard: true } : {}),
+            }),
+          catch: (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            lastReactiveErrorMsg = msg;
+            if (isInvalidSelectorError(err) || /context closed/i.test(msg)) {
+              return new DriverError({ message: msg });
+            }
+            return null;
+          },
+        }).pipe(
+          Effect.catch((err) =>
+            err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+          ),
+        );
+
+        if (Array.isArray(reactiveMatches) && reactiveMatches.length > 0) {
+          const match = reactiveMatches[reactiveMatches.length - 1]!;
+          return {
+            element: domMatchToElement(match),
+            channel: "dom" as const,
+            tapMode: opts?.tapMode ?? "native",
+            domMatch: match,
+          };
+        }
+        if (Array.isArray(reactiveMatches) && reactiveMatches.length === 0) {
+          sawEmptyArray = true;
+          if (opts?.failFastWhenIdle || Date.now() - start >= timeout) {
+            break;
+          }
+          // Page likely reloaded or document swapped mid-wait — retry in new document until deadline (2.28)
+          const waitMs = Math.min(50, Math.max(10, timeout - (Date.now() - start)));
+          yield* Effect.sleep(Duration.millis(waitMs));
+          continue;
+        }
+        if (lastReactiveErrorMsg && /Iframe matching .* not found/i.test(lastReactiveErrorMsg)) {
+          return yield* new ElementNotFoundError({
+            message: `${lastReactiveErrorMsg} — selector: ${formatSelector(selector)}`,
+            selector,
             timeoutMs: timeout,
-            forAction: opts?.force ? false : forAction,
-            checkHitTest: opts?.force ? false : undefined,
-            failFastWhenIdle: opts?.failFastWhenIdle,
-            idleQuietMs: opts?.idleQuietMs,
-            ...(opts?.force
-              ? { stableFrames: 0 }
-              : opts?.actionStableFrames !== undefined
-                ? { stableFrames: opts.actionStableFrames }
-                : {}),
-            ...(opts?.armTapGuard && !opts?.force ? { armTapGuard: true } : {}),
-          }),
-        catch: (err) =>
-          isInvalidSelectorError(err)
-            ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-            : null,
-      }).pipe(
-        Effect.catch((err) =>
-          err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-        ),
-      );
-
-      if (Array.isArray(reactiveMatches) && reactiveMatches.length > 0) {
-        const match = reactiveMatches[reactiveMatches.length - 1]!;
-        return {
-          element: domMatchToElement(match),
-          channel: "dom" as const,
-          tapMode: opts?.tapMode ?? "native",
-          domMatch: match,
-        };
+          });
+        }
+        if (Date.now() - start >= timeout) {
+          break;
+        }
+        // Transient navigation/execution context error before deadline — retry in new document
+        const retryWait = Math.min(60, Math.max(10, timeout - (Date.now() - start)));
+        yield* Effect.sleep(Duration.millis(retryWait));
       }
-      if (
-        Array.isArray(reactiveMatches) &&
-        reactiveMatches.length === 0 &&
-        (forAction || opts?.failFastWhenIdle || Date.now() - start >= timeout)
-      ) {
-        // Never silently fall back to an unobstructed click on web when forAction hit-test/stability failed!
-        if (forAction) {
-          const actionDiag = yield* Effect.tryPromise({
-            try: () =>
-              initialDomChannel.evaluate<{
-                found?: boolean;
-                visible?: boolean;
-                enabled?: boolean;
-                obstructedBy?: string;
-              }>(buildDomActionabilityDiagScript(selector as Selector)),
-            catch: () => null,
-          }).pipe(Effect.catch(() => Effect.succeed(null)));
 
-          if (actionDiag?.found && actionDiag.obstructedBy) {
-            return yield* new ElementNotFoundError({
-              message: `Element is covered by ${actionDiag.obstructedBy} (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
-              selector,
-              timeoutMs: timeout,
-            });
-          }
-          if (actionDiag?.found && actionDiag.visible && actionDiag.enabled === false) {
-            return yield* new ElementNotFoundError({
-              message: `Element is disabled (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
-              selector,
-              timeoutMs: timeout,
-            });
-          }
+      if (sawEmptyArray || forAction || Date.now() - start >= timeout) {
+        const actionDiag = yield* Effect.tryPromise({
+          try: () =>
+            initialDomChannel.evaluate<{
+              found?: boolean;
+              visible?: boolean;
+              enabled?: boolean;
+              obstructedBy?: string;
+              matchCount?: number;
+              visibleCount?: number;
+              detachedAfterScroll?: boolean;
+            }>(buildDomActionabilityDiagScript(selector as Selector)),
+          catch: () => null,
+        }).pipe(Effect.catch(() => Effect.succeed(null)));
+
+        if (forAction && actionDiag?.found && actionDiag.obstructedBy) {
+          return yield* new ElementNotFoundError({
+            message: `Element is covered by ${actionDiag.obstructedBy} (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+            selector,
+            timeoutMs: timeout,
+          });
+        }
+        if (forAction && actionDiag?.found && actionDiag.visible && actionDiag.enabled === false) {
+          return yield* new ElementNotFoundError({
+            message: `Element is disabled (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+            selector,
+            timeoutMs: timeout,
+          });
+        }
+        const extraHints: string[] = [];
+        if (actionDiag?.found && !actionDiag.visible && (actionDiag.matchCount ?? 0) > 0) {
+          extraHints.push(
+            `Matched ${actionDiag.matchCount} element(s) (${actionDiag.visibleCount ?? 0} visible); picked match is hidden`,
+          );
+        }
+        if (actionDiag?.detachedAfterScroll) {
+          extraHints.push("Element detached from the DOM after scrolling");
+        }
+        if (lastReactiveErrorMsg && !sawEmptyArray) {
+          extraHints.push(`Last error: ${lastReactiveErrorMsg}`);
         }
         if (cache) cache.invalidate();
-        const diagRoot = yield* getHierarchy(driver, parse, cache);
+        const diagRoot = yield* getHierarchy(driver, parse, cache).pipe(
+          Effect.catch(() =>
+            Effect.succeed({ bounds: { x: 0, y: 0, width: 0, height: 0 }, children: [] }),
+          ),
+        );
         const diagnostic = diagnoseElementNotFound(diagRoot, selector);
         const diagMessage = formatDiagnostic(diagnostic);
+        const hintSuffix = extraHints.length > 0 ? `\n${extraHints.join("\n")}` : "";
         return yield* new ElementNotFoundError({
-          message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}\n${diagMessage}`,
+          message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}${hintSuffix}\n${diagMessage}`,
           selector,
           timeoutMs: timeout,
         });
@@ -365,25 +416,36 @@ export function waitForNotVisible<T extends string = string, R extends string = 
       (opts?.platform === "web" || isTestIDSelector(selector) || isComposableDomSelector(selector));
 
     if (canReactiveHidden && domChannel?.isConnected() && domChannel.waitForHidden) {
-      const hidden = yield* Effect.tryPromise({
-        try: () => domChannel.waitForHidden!(selector as Selector, { timeoutMs: timeout }),
-        catch: (err) =>
-          isInvalidSelectorError(err)
-            ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-            : null,
-      }).pipe(
-        Effect.catch((err) =>
-          err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-        ),
-      );
+      let hiddenAttempt = 0;
+      while (hiddenAttempt === 0 || Date.now() - start < timeout) {
+        hiddenAttempt += 1;
+        const remaining = Math.max(10, timeout - (Date.now() - start));
+        const hidden = yield* Effect.tryPromise({
+          try: () => domChannel.waitForHidden!(selector as Selector, { timeoutMs: remaining }),
+          catch: (err) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            return isInvalidSelectorError(err) || /context closed/i.test(msg)
+              ? new DriverError({ message: msg })
+              : null;
+          },
+        }).pipe(
+          Effect.catch((err) =>
+            err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+          ),
+        );
 
-      if (hidden === true) return;
-      if (hidden === false) {
-        return yield* new WaitTimeoutError({
-          message: `Element still visible after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          selector,
-          timeoutMs: timeout,
-        });
+        if (hidden === true) return;
+        if (hidden === false && Date.now() - start >= timeout) {
+          return yield* new WaitTimeoutError({
+            message: `Element still visible after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            selector,
+            timeoutMs: timeout,
+          });
+        }
+        if (Date.now() - start >= timeout) break;
+        yield* Effect.sleep(
+          Duration.millis(Math.min(50, Math.max(10, timeout - (Date.now() - start)))),
+        );
       }
     }
 

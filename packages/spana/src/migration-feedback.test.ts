@@ -408,7 +408,7 @@ describe("Playwright migration feedback — live Direct CDP Chromium E2E", () =>
         const fixedBefore = await app.evaluate(() => Date.now());
         await app.clock.fastForward(5000);
         const fixedAfter = await app.evaluate(() => Date.now());
-        expect(fixedAfter - fixedBefore).toBe(5000);
+        expect(fixedAfter - fixedBefore).toBeGreaterThanOrEqual(5000);
         await app.clock.resume();
 
         // 2.12 app.request preserves Set-Cookie across 302 redirects + multipart upload

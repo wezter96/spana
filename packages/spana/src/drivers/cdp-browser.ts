@@ -52,6 +52,8 @@ export interface DirectCdpBrowserLaunchOptions {
   executablePath?: string;
   /** Run headless (default: true). */
   headless?: boolean;
+  /** Enable Chromium OS sandbox (default: false — passes `--no-sandbox` for Ubuntu 23.10+/CI compatibility). */
+  chromiumSandbox?: boolean;
   /** Reuse a detached warm Chromium daemon across CLI runs. */
   warmBrowser?: boolean;
   /** Isolation scope key for warm Chromium daemon (defaults to cwd hash). */
@@ -211,8 +213,11 @@ async function waitForDevToolsActivePort(
     const exit = getExitInfo();
     if (exit.exited) {
       const tail = getStderr().trim();
+      const sandboxHint = /no usable sandbox/i.test(tail)
+        ? '\nHint: Chromium\'s OS sandbox is blocked on this host (common on Ubuntu 23.10+ / GitHub Actions with AppArmor unprivileged userns restrictions). Either keep `execution.web.chromiumSandbox: false` (default), add `execution.web.args: ["--no-sandbox"]`, or allow unprivileged user namespaces via `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.'
+        : "";
       throw new Error(
-        `Direct CDP browser exited prematurely (code=${exit.code}, signal=${exit.signal})${tail ? `\nstderr:\n${tail}` : ""}`,
+        `Direct CDP browser exited prematurely (code=${exit.code}, signal=${exit.signal})${sandboxHint}${tail ? `\nstderr:\n${tail}` : ""}`,
       );
     }
 
@@ -257,6 +262,8 @@ export interface DirectChromiumLaunchArgsOptions {
   remoteDebuggingPort?: number;
   /** Run headless (default: true). */
   headless?: boolean;
+  /** Enable Chromium OS sandbox (default: false — passes `--no-sandbox`, matching Playwright's default). */
+  chromiumSandbox?: boolean;
   /** GPU rendering mode (`"auto" | "swiftshader" | "hardware" | "disabled"`). */
   gpu?: WebGpuMode;
   /** Enable WebGPU flags (`--enable-unsafe-webgpu`, deterministic SwiftShader when headless). */
@@ -273,8 +280,11 @@ export interface DirectChromiumLaunchArgsOptions {
  * KWallet when initializing cookie/credential storage for an ephemeral test profile.
  */
 export function buildDirectChromiumLaunchArgs(options: DirectChromiumLaunchArgsOptions): string[] {
+  const extraArgs = options.args ?? [];
+  const needNoSandbox = options.chromiumSandbox !== true && !extraArgs.includes("--no-sandbox");
   return [
     ...(options.headless !== false ? ["--headless=new"] : []),
+    ...(needNoSandbox ? ["--no-sandbox"] : []),
     `--remote-debugging-port=${options.remoteDebuggingPort ?? 0}`,
     "--remote-debugging-address=127.0.0.1",
     `--user-data-dir=${options.userDataDir}`,
@@ -301,7 +311,7 @@ export function buildDirectChromiumLaunchArgs(options: DirectChromiumLaunchArgsO
     }),
     "--metrics-recording-only",
     "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints",
-    ...(options.args ?? []),
+    ...extraArgs,
     "about:blank",
   ];
 }
@@ -356,11 +366,17 @@ export async function launchDirectCdpBrowser(
 
   // Fresh throwaway profile: never expose the user's real Chrome profile (cookies, logins) over CDP.
   // Use `--remote-debugging-port=0` so Chromium atomically claims an OS-assigned port (zero TOCTOU race!).
-  const userDataDir = mkdtempSync(join(tmpdir(), "spana-cdp-profile-"));
+  // On Linux, Chromium creates a `SingletonSocket` Unix domain socket under TMPDIR / userDataDir, which
+  // crashes with SIGABRT ("Socket path too long") if TMPDIR exceeds ~50 chars (Linux 108-byte sun_path limit).
+  const rawTmp = tmpdir();
+  const safeTmpDir =
+    process.platform === "linux" && rawTmp.length > 50 && existsSync("/tmp") ? "/tmp" : rawTmp;
+  const userDataDir = mkdtempSync(join(safeTmpDir, "spana-cdp-profile-"));
   const baseChromeArgs = buildDirectChromiumLaunchArgs({
     userDataDir,
     remoteDebuggingPort: 0,
     headless: options.headless,
+    chromiumSandbox: options.chromiumSandbox,
     gpu: options.gpu,
     webgpu: options.webgpu,
     args: options.args,
@@ -377,6 +393,7 @@ export async function launchDirectCdpBrowser(
   const child: ChildProcess = spawn(execPath, chromeArgs, {
     detached: Boolean(options.warmBrowser),
     stdio: ["ignore", "ignore", "pipe"],
+    ...(safeTmpDir !== rawTmp ? { env: { ...process.env, TMPDIR: safeTmpDir } } : {}),
   });
 
   let stderrBuf = "";
@@ -547,6 +564,10 @@ export interface LightweightCdpDriverOptions {
   storageState?: string;
   /** Emulate `prefers-color-scheme`, `prefers-reduced-motion`, `locale`, or `timezoneId` on every context. */
   emulation?: BrowserEmulationOptions;
+  /** Optional JS expression evaluated before fail-fast idle checks (sets `window.__SPANA_APP_READY__`). */
+  readyExpression?: string;
+  /** @internal Mark channel permanently closed on `killApp()` (used by `createIsolatedContext`). */
+  _markClosedOnKill?: boolean;
   /** Injectable fetch & WebSocket factory for tests. */
   fetchFn?: typeof fetch;
   createWebSocket?: WebSocketFactory;
@@ -756,9 +777,14 @@ export function makeLightweightCdpDriver(
     let height = initialHeight;
     let emulationMutated = false;
     let viewportMutated = false;
+    let geolocationMutated = false;
+    let permissionsMutated = false;
     let isAtBlank = true;
     const label = options.engineLabel ?? "cdp";
     const contextIsolation = options.contextIsolation ?? "hot-cache";
+    const readyInitScript = options.readyExpression
+      ? `(() => { window.__SPANA_APP_READY__ = () => { try { return Boolean(${options.readyExpression}); } catch { return false; } }; })();`
+      : undefined;
 
     let activeSlot: CdpContextSlot | undefined;
     let prefetchedSlotPromise: Promise<CdpContextSlot> | undefined;
@@ -769,11 +795,70 @@ export function makeLightweightCdpDriver(
     const consoleLogs: BrowserConsoleLog[] = [];
     const jsErrors: BrowserJSError[] = [];
     const routeRules: CdpRouteRule[] = [];
-    const initScripts: string[] = [];
-    const exposedFunctions = new Map<string, (...args: any[]) => any>();
+    // Flow-scoped init scripts, fake-clock init script, and exposed bindings (cleared in beginFlow — 1.19)
+    const flowInitScripts: string[] = [];
+    const flowInitScriptIds = new Map<string | null, string[]>();
+    let clockInitScript: string | null = null;
+    const clockInitScriptIds = new Map<string | null, string[]>();
+    const flowExposedFunctions = new Map<string, (...args: any[]) => any>();
+    const flowExposedBindingNames = new Map<string | null, Set<string>>();
+    const flowExposedScriptIds = new Map<string | null, string[]>();
     const requestListeners = new Set<(req: BrowserRequestInfo) => void>();
     const navigationUrls: string[] = [];
+    const observedOrigins = new Set<string>();
+    const observedStorageKeys = new Set<string>();
     const uploadTempDirs: string[] = [];
+
+    const recordScriptId = (
+      map: Map<string | null, string[]>,
+      sessionId: string | null,
+      res: unknown,
+    ) => {
+      const id = (res as { identifier?: unknown } | null)?.identifier;
+      if (typeof id === "string" && id.length > 0) {
+        const list = map.get(sessionId) ?? [];
+        list.push(id);
+        map.set(sessionId, list);
+      }
+    };
+
+    const removeTrackedScripts = async (map: Map<string | null, string[]>) => {
+      const ops: Array<Promise<unknown>> = [];
+      for (const [sid, ids] of map.entries()) {
+        for (const identifier of ids) {
+          ops.push(
+            cdpChannel
+              .sendCommand("Page.removeScriptToEvaluateOnNewDocument", { identifier }, sid)
+              .catch(() => {}),
+          );
+        }
+      }
+      map.clear();
+      if (ops.length > 0) {
+        await Promise.all(ops);
+      }
+    };
+
+    const cleanupFlowScopedHooks = async () => {
+      flowInitScripts.length = 0;
+      clockInitScript = null;
+      flowExposedFunctions.clear();
+      const bindingOps: Array<Promise<unknown>> = [];
+      for (const [sid, names] of flowExposedBindingNames.entries()) {
+        for (const name of names) {
+          bindingOps.push(
+            cdpChannel.sendCommand("Runtime.removeBinding", { name }, sid).catch(() => {}),
+          );
+        }
+      }
+      flowExposedBindingNames.clear();
+      await Promise.all([
+        removeTrackedScripts(flowInitScriptIds),
+        removeTrackedScripts(clockInitScriptIds),
+        removeTrackedScripts(flowExposedScriptIds),
+        ...bindingOps,
+      ]);
+    };
     let currentNetworkConditions: NetworkConditions | undefined;
     let cachedUserAgent: string | undefined;
     let fetchInterceptEnabled = false;
@@ -923,6 +1008,9 @@ export function makeLightweightCdpDriver(
       await cdpChannel
         .sendCommand("Runtime.addBinding", { name: bindingName }, sessionId)
         .catch(() => {});
+      const boundSet = flowExposedBindingNames.get(sessionId) ?? new Set<string>();
+      boundSet.add(bindingName);
+      flowExposedBindingNames.set(sessionId, boundSet);
       const wrapperSource = `(() => {
         if (window[${JSON.stringify(name)}]) return;
         let seq = 0;
@@ -933,13 +1021,18 @@ export function makeLightweightCdpDriver(
           window[${JSON.stringify(bindingName)}](JSON.stringify({ id, name: ${JSON.stringify(name)}, args }));
         });
       })();`;
-      await cdpChannel
+      const addRes = await cdpChannel
         .sendCommand("Page.addScriptToEvaluateOnNewDocument", { source: wrapperSource }, sessionId)
-        .catch(() => {});
+        .catch(() => null);
+      recordScriptId(flowExposedScriptIds, sessionId, addRes);
       await cdpChannel.evaluateOnSession(sessionId, wrapperSource).catch(() => {});
     };
 
-    const configureSession = async (sessionId: string | null, storageStatePath?: string) => {
+    const configureSession = async (
+      sessionId: string | null,
+      storageStatePath?: string,
+      includeFlowState = false,
+    ) => {
       const state = await loadStorageStateFile(storageStatePath);
       await Promise.all([
         cdpChannel.sendCommand("Page.enable", {}, sessionId).catch(() => {}),
@@ -952,6 +1045,17 @@ export function makeLightweightCdpDriver(
                 .sendCommand(
                   "Page.addScriptToEvaluateOnNewDocument",
                   { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+                  sessionId,
+                )
+                .catch(() => {}),
+            ]
+          : []),
+        ...(readyInitScript
+          ? [
+              cdpChannel
+                .sendCommand(
+                  "Page.addScriptToEvaluateOnNewDocument",
+                  { source: readyInitScript },
                   sessionId,
                 )
                 .catch(() => {}),
@@ -983,14 +1087,30 @@ export function makeLightweightCdpDriver(
           .catch(() => {});
       }
 
-      for (const scriptSource of initScripts) {
-        await cdpChannel
-          .sendCommand("Page.addScriptToEvaluateOnNewDocument", { source: scriptSource }, sessionId)
-          .catch(() => {});
-      }
-
-      for (const fnName of exposedFunctions.keys()) {
-        await installExposeFunctionOnSession(sessionId, fnName);
+      if (includeFlowState) {
+        for (const scriptSource of flowInitScripts) {
+          const res = await cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: scriptSource },
+              sessionId,
+            )
+            .catch(() => null);
+          recordScriptId(flowInitScriptIds, sessionId, res);
+        }
+        if (clockInitScript) {
+          const res = await cdpChannel
+            .sendCommand(
+              "Page.addScriptToEvaluateOnNewDocument",
+              { source: clockInitScript },
+              sessionId,
+            )
+            .catch(() => null);
+          recordScriptId(clockInitScriptIds, sessionId, res);
+        }
+        for (const fnName of flowExposedFunctions.keys()) {
+          await installExposeFunctionOnSession(sessionId, fnName);
+        }
       }
 
       if (options.blockResources && options.blockResources.length > 0) {
@@ -1158,68 +1278,35 @@ export function makeLightweightCdpDriver(
     const workerSessions = new Map<string, string>();
     const wasmTraps: WasmTrap[] = [];
 
-    // Auto-track cross-origin iframe (OOPIF) child targets, Web Workers, & popup/new tabs in the same browserContext
-    cdpChannel.onEvent("Target.attachedToTarget", (params) => {
+    // Discover popup pages in OUR OWN browserContextId without browser-level Target.setAutoAttach
+    // (browser-level setAutoAttach attaches to foreign contexts' pages, and detaching from them
+    // triggers Chromium's WebAuthnHandler::Disable() which wipes the other context's passkey! — 2.14, 1.26)
+    cdpChannel.onEvent("Target.targetCreated", (params) => {
       const targetInfo = params?.targetInfo;
-      const childSid = params?.sessionId;
-      const waiting = Boolean(params?.waitingForDebugger);
       if (
-        (targetInfo?.type === "worker" || targetInfo?.type === "service_worker") &&
-        typeof childSid === "string"
+        targetInfo?.type !== "page" ||
+        !targetInfo.targetId ||
+        !targetInfo.openerId ||
+        !activeSlot ||
+        targetInfo.browserContextId !== activeSlot.browserContextId
       ) {
-        workerSessions.set(childSid, typeof targetInfo.url === "string" ? targetInfo.url : "");
-        void (async () => {
-          await cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
-          await cdpChannel.evaluateOnSession(childSid, SPANA_WASM_HOOK_SCRIPT).catch(() => {});
-          if (waiting) {
-            await cdpChannel
-              .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
-              .catch(() => {});
-          }
-        })();
         return;
       }
-      if (targetInfo?.type === "iframe" && typeof childSid === "string") {
-        cdpChannel.addChildSession(childSid, {
-          targetId: typeof targetInfo.targetId === "string" ? targetInfo.targetId : undefined,
-          url: typeof targetInfo.url === "string" ? targetInfo.url : undefined,
-        });
-        void (async () => {
-          await cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
-          if (useInjectedRuntime) {
-            await cdpChannel
-              .sendCommand(
-                "Page.addScriptToEvaluateOnNewDocument",
-                { source: SPANA_INJECTED_RUNTIME_SCRIPT },
-                childSid,
-              )
-              .catch(() => {});
+      const targetId = String(targetInfo.targetId);
+      if (activeSlot.tabs.some((t) => t.targetId === targetId)) return;
+      void (async () => {
+        try {
+          const attachRes = (await cdpChannel.sendCommand(
+            "Target.attachToTarget",
+            { targetId, flatten: true },
+            null,
+          )) as { sessionId?: string };
+          const childSid = attachRes?.sessionId;
+          if (!childSid || !activeSlot) return;
+          const newTabId = `tab-${nextTabSeq++}`;
+          if (!activeSlot.tabs.some((t) => t.targetId === targetId)) {
+            activeSlot.tabs.push({ tabId: newTabId, targetId, sessionId: childSid });
           }
-          if (waiting) {
-            await cdpChannel
-              .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
-              .catch(() => {});
-          }
-        })();
-      } else if (
-        targetInfo?.type === "page" &&
-        typeof childSid === "string" &&
-        activeSlot &&
-        targetInfo.browserContextId === activeSlot.browserContextId
-      ) {
-        const alreadyTracked = activeSlot.tabs.some(
-          (t) => t.sessionId === childSid || t.targetId === targetInfo.targetId,
-        );
-        let newTabId: string | undefined;
-        if (!alreadyTracked) {
-          newTabId = `tab-${nextTabSeq++}`;
-          activeSlot.tabs.push({
-            tabId: newTabId,
-            targetId: String(targetInfo.targetId ?? ""),
-            sessionId: childSid,
-          });
-        }
-        void (async () => {
           const setupCalls: Array<Promise<unknown>> = [
             cdpChannel.sendCommand("Page.enable", {}, childSid).catch(() => {}),
             cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {}),
@@ -1248,7 +1335,18 @@ export function makeLightweightCdpDriver(
                 .catch(() => {}),
             );
           }
-          for (const scriptSource of initScripts) {
+          if (readyInitScript) {
+            setupCalls.push(
+              cdpChannel
+                .sendCommand(
+                  "Page.addScriptToEvaluateOnNewDocument",
+                  { source: readyInitScript },
+                  childSid,
+                )
+                .catch(() => {}),
+            );
+          }
+          for (const scriptSource of flowInitScripts) {
             setupCalls.push(
               cdpChannel
                 .sendCommand(
@@ -1256,18 +1354,95 @@ export function makeLightweightCdpDriver(
                   { source: scriptSource },
                   childSid,
                 )
+                .then((res) => recordScriptId(flowInitScriptIds, childSid, res))
                 .catch(() => {}),
             );
           }
+          if (clockInitScript) {
+            setupCalls.push(
+              cdpChannel
+                .sendCommand(
+                  "Page.addScriptToEvaluateOnNewDocument",
+                  { source: clockInitScript },
+                  childSid,
+                )
+                .then((res) => recordScriptId(clockInitScriptIds, childSid, res))
+                .catch(() => {}),
+            );
+          }
+          for (const fnName of flowExposedFunctions.keys()) {
+            setupCalls.push(installExposeFunctionOnSession(childSid, fnName).catch(() => {}));
+          }
           await Promise.all(setupCalls);
+          if (popupWaiters.length > 0) {
+            const waiter = popupWaiters.shift();
+            if (waiter) waiter.resolve(newTabId);
+          }
+        } catch {
+          // ignore popup attach errors if popup closed immediately
+        }
+      })();
+    });
+
+    // Auto-track cross-origin iframe (OOPIF) child targets & Web Workers attached to our own page sessions
+    cdpChannel.onEvent("Target.attachedToTarget", (params) => {
+      const targetInfo = params?.targetInfo;
+      const childSid = params?.sessionId;
+      const waiting = Boolean(params?.waitingForDebugger);
+      if (
+        (targetInfo?.type === "worker" || targetInfo?.type === "service_worker") &&
+        typeof childSid === "string"
+      ) {
+        workerSessions.set(childSid, typeof targetInfo.url === "string" ? targetInfo.url : "");
+        void (async () => {
+          await cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
+          await cdpChannel.evaluateOnSession(childSid, SPANA_WASM_HOOK_SCRIPT).catch(() => {});
           if (waiting) {
             await cdpChannel
               .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
               .catch(() => {});
           }
-          if (newTabId && popupWaiters.length > 0) {
-            const waiter = popupWaiters.shift();
-            if (waiter) waiter.resolve(newTabId);
+        })();
+        return;
+      }
+      if (targetInfo?.type === "iframe" && typeof childSid === "string") {
+        const frameTargetId =
+          typeof targetInfo.targetId === "string" ? targetInfo.targetId : undefined;
+        cdpChannel.addChildSession(childSid, {
+          targetId: frameTargetId,
+          url: typeof targetInfo.url === "string" ? targetInfo.url : undefined,
+        });
+        if (typeof targetInfo.url === "string") {
+          try {
+            const parsed = new URL(targetInfo.url);
+            if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+              observedOrigins.add(parsed.origin);
+            }
+          } catch {
+            // ignore
+          }
+        }
+        void (async () => {
+          await cdpChannel.sendCommand("Runtime.enable", {}, childSid).catch(() => {});
+          if (frameTargetId) {
+            const skRes = (await cdpChannel
+              .sendCommand("Storage.getStorageKeyForFrame", { frameId: frameTargetId }, childSid)
+              .catch(() => null)) as { storageKey?: string } | null;
+            if (skRes?.storageKey) observedStorageKeys.add(skRes.storageKey);
+          }
+          if (useInjectedRuntime) {
+            await cdpChannel
+              .sendCommand(
+                "Page.addScriptToEvaluateOnNewDocument",
+                { source: SPANA_INJECTED_RUNTIME_SCRIPT },
+                childSid,
+              )
+              .catch(() => {});
+          }
+          if (waiting) {
+            await cdpChannel
+              .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
+              .catch(() => {});
           }
         })();
       } else if (waiting && typeof childSid === "string") {
@@ -1281,7 +1456,14 @@ export function makeLightweightCdpDriver(
       if (typeof params?.sessionId === "string") {
         cdpChannel.removeChildSession(params.sessionId);
         if (activeSlot) {
+          const wasActive = activeSlot.sessionId === params.sessionId;
           activeSlot.tabs = activeSlot.tabs.filter((t) => t.sessionId !== params.sessionId);
+          if (wasActive && activeSlot.tabs.length > 0) {
+            const fallback = activeSlot.tabs[0]!;
+            activeSlot.targetId = fallback.targetId;
+            activeSlot.sessionId = fallback.sessionId;
+            cdpChannel.setSessionId(fallback.sessionId);
+          }
         }
       }
     });
@@ -1429,7 +1611,7 @@ export function makeLightweightCdpDriver(
         return;
       }
       if (!parsed.id || !parsed.name) return;
-      const fn = exposedFunctions.get(parsed.name);
+      const fn = flowExposedFunctions.get(parsed.name);
       if (!fn) return;
       void (async () => {
         try {
@@ -1452,8 +1634,8 @@ export function makeLightweightCdpDriver(
     });
 
     // Broadcast outgoing requests to app.onRequest / app.waitForRequest listeners (3.8, 3.25)
+    // and track visited origins (including iframe/fetch origins) for hot-cache storage reset (1.24).
     cdpChannel.onEvent("Network.requestWillBeSent", (params, sid) => {
-      if (requestListeners.size === 0) return;
       if (
         activeSlot &&
         sid &&
@@ -1464,6 +1646,15 @@ export function makeLightweightCdpDriver(
       }
       const req = params?.request;
       if (!req?.url) return;
+      try {
+        const parsed = new URL(String(req.url));
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          observedOrigins.add(parsed.origin);
+        }
+      } catch {
+        // ignore non-URL requests
+      }
+      if (requestListeners.size === 0) return;
       const rawHeaders = (req.headers ?? {}) as Record<string, unknown>;
       const headers: Record<string, string> = {};
       for (const [k, v] of Object.entries(rawHeaders)) {
@@ -1667,17 +1858,15 @@ export function makeLightweightCdpDriver(
         try: () =>
           cdpChannel
             .sendCommand(
-              "Target.setAutoAttach",
+              "Target.setDiscoverTargets",
               {
-                autoAttach: true,
-                waitForDebuggerOnStart: true,
-                flatten: true,
+                discover: true,
                 filter: [{ type: "page" }],
               },
               null,
             )
             .catch(() => {}),
-        catch: () => new DriverError({ message: "Failed to enable Target.setAutoAttach" }),
+        catch: () => new DriverError({ message: "Failed to enable Target.setDiscoverTargets" }),
       }).pipe(Effect.catch(() => Effect.void));
       activeSlot = yield* Effect.tryPromise({
         try: () => createContextSlot(options.storageState),
@@ -1688,15 +1877,40 @@ export function makeLightweightCdpDriver(
       activeAuthenticatorId = activeSlot.authenticatorId;
     }
 
-    const resolveUrl = (rawUrl: string): string =>
-      rawUrl.startsWith("http://") || rawUrl.startsWith("https://") || rawUrl === "about:blank"
-        ? rawUrl
-        : options.baseUrl
-          ? `${options.baseUrl.replace(/\/$/, "")}/${rawUrl.replace(/^\//, "")}`
-          : rawUrl;
+    const resolveUrlAsync = async (rawUrl: string): Promise<string> => {
+      if (
+        rawUrl.startsWith("http://") ||
+        rawUrl.startsWith("https://") ||
+        rawUrl === "about:blank" ||
+        rawUrl.startsWith("data:") ||
+        rawUrl.startsWith("file:")
+      ) {
+        return rawUrl;
+      }
+      if (options.baseUrl && options.baseUrl !== "about:blank") {
+        try {
+          return new URL(rawUrl, options.baseUrl).toString();
+        } catch {
+          return `${options.baseUrl.replace(/\/$/, "")}/${rawUrl.replace(/^\//, "")}`;
+        }
+      }
+      const cur = await cdpChannel
+        .evaluate<string>(
+          "typeof window !== 'undefined' && window.location ? String(window.location.href || '') : ''",
+        )
+        .catch(() => "");
+      if (cur && (cur.startsWith("http://") || cur.startsWith("https://"))) {
+        try {
+          return new URL(rawUrl, new URL(cur).origin).toString();
+        } catch {
+          // fall through
+        }
+      }
+      return rawUrl;
+    };
 
     const navigate = async (rawUrl: string) => {
-      const target = resolveUrl(rawUrl);
+      const target = await resolveUrlAsync(rawUrl);
       if (!useContexts) {
         await cdpChannel.sendCommand("Page.enable").catch(() => {});
         await cdpChannel.sendCommand("Page.navigate", { url: target });
@@ -1791,7 +2005,124 @@ export function makeLightweightCdpDriver(
       beginFlow: (_flowName) =>
         Effect.tryPromise({
           try: async () => {
-            const visitedOrigins = new Set<string>();
+            const ensureVirtualAuthenticatorForSlot = async (
+              slot: CdpContextSlot,
+              clearExisting: boolean,
+            ) => {
+              if (!options.virtualAuthenticator) {
+                activeAuthenticatorId = slot.authenticatorId;
+                return;
+              }
+              const authOpts =
+                typeof options.virtualAuthenticator === "object"
+                  ? options.virtualAuthenticator
+                  : undefined;
+              // Always ensure WebAuthn is enabled (idempotent in CDP) — 2.16
+              await cdpChannel
+                .sendCommand("WebAuthn.enable", { enableUI: false }, slot.sessionId)
+                .catch(() => {});
+              if (slot.authenticatorId) {
+                if (clearExisting) {
+                  try {
+                    await cdpChannel.sendCommand(
+                      "WebAuthn.clearCredentials",
+                      { authenticatorId: slot.authenticatorId },
+                      slot.sessionId,
+                    );
+                  } catch {
+                    // Authenticator or WebAuthn domain was reset — re-attach cleanly
+                    slot.authenticatorId = await attachVirtualAuthenticatorForSession(
+                      slot.sessionId,
+                      authOpts,
+                    ).catch(() => undefined);
+                  }
+                }
+              } else {
+                slot.authenticatorId = await attachVirtualAuthenticatorForSession(
+                  slot.sessionId,
+                  authOpts,
+                ).catch(() => undefined);
+              }
+              activeAuthenticatorId = slot.authenticatorId;
+            };
+
+            const ensureActiveSlotHealthy = async (): Promise<boolean> => {
+              if (!activeSlot) return false;
+              const checkSessionAlive = async (sid: string): Promise<boolean> => {
+                try {
+                  await cdpChannel.sendCommand(
+                    "Runtime.evaluate",
+                    { expression: "1", returnByValue: true },
+                    sid,
+                    2_000,
+                  );
+                  return true;
+                } catch {
+                  return false;
+                }
+              };
+              if (activeSlot.tabs.length > 0 && (await checkSessionAlive(activeSlot.sessionId))) {
+                return true;
+              }
+              // Try another surviving tab in the same slot first
+              const survivingTabs = activeSlot.tabs.slice();
+              for (const tab of survivingTabs) {
+                if (
+                  tab.sessionId !== activeSlot.sessionId &&
+                  (await checkSessionAlive(tab.sessionId))
+                ) {
+                  activeSlot.targetId = tab.targetId;
+                  activeSlot.sessionId = tab.sessionId;
+                  cdpChannel.setSessionId(tab.sessionId);
+                  return true;
+                }
+              }
+              // Recreate tab-0 inside the existing browserContextId
+              try {
+                const targetRes = (await cdpChannel.sendCommand(
+                  "Target.createTarget",
+                  {
+                    url: "about:blank",
+                    browserContextId: activeSlot.browserContextId,
+                    width: initialWidth,
+                    height: initialHeight,
+                  },
+                  null,
+                )) as { targetId: string };
+                const existing = activeSlot.tabs.find((t) => t.targetId === targetRes.targetId);
+                let sid = existing?.sessionId;
+                if (!sid) {
+                  const attachRes = (await cdpChannel.sendCommand(
+                    "Target.attachToTarget",
+                    { targetId: targetRes.targetId, flatten: true },
+                    null,
+                  )) as { sessionId: string };
+                  sid = attachRes.sessionId;
+                }
+                const authId = await configureSession(sid, options.storageState, false);
+                const tabId = existing?.tabId ?? `tab-${nextTabSeq++}`;
+                activeSlot.targetId = targetRes.targetId;
+                activeSlot.sessionId = sid;
+                activeSlot.authenticatorId = authId;
+                activeSlot.tabs = [{ tabId, targetId: targetRes.targetId, sessionId: sid }];
+                cdpChannel.setSessionId(sid);
+                isAtBlank = true;
+                return false;
+              } catch {
+                // Browser context itself is gone — recreate the full slot
+                activeSlot = await createContextSlot(options.storageState);
+                cdpChannel.setSessionId(activeSlot.sessionId);
+                activeAuthenticatorId = activeSlot.authenticatorId;
+                isAtBlank = true;
+                return false;
+              }
+            };
+
+            const visitedOrigins = new Set<string>(observedOrigins);
+            observedOrigins.clear();
+            const visitedStorageKeys = new Set<string>(observedStorageKeys);
+            observedStorageKeys.clear();
+            const activeChildSessions = cdpChannel.getChildSessions();
             for (const u of navigationUrls) {
               try {
                 const parsed = new URL(u);
@@ -1811,173 +2142,275 @@ export function makeLightweightCdpDriver(
             currentNetworkConditions = undefined;
             width = initialWidth;
             height = initialHeight;
-            cdpChannel.clearChildSessions();
+
+            // Remove all flow-scoped init scripts, fake clock init script, and exposed bindings (1.19)
+            await cleanupFlowScopedHooks();
+
             if (useContexts && options.freshContextPerFlow && hasRunFirstFlow) {
               if (contextIsolation === "hot-cache" && activeSlot) {
-                // 1. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
-                const preResetOps: Array<Promise<unknown>> = [];
-                if (activeSlot.tabs.length > 1) {
-                  const primaryTab = activeSlot.tabs[0]!;
-                  const extraTabs = activeSlot.tabs.slice(1);
-                  activeSlot.tabs = [primaryTab];
-                  activeSlot.targetId = primaryTab.targetId;
-                  activeSlot.sessionId = primaryTab.sessionId;
-                  cdpChannel.setSessionId(primaryTab.sessionId);
-                  for (const extra of extraTabs) {
+                const slotWasHealthy = await ensureActiveSlotHealthy();
+                if (slotWasHealthy && activeSlot) {
+                  // Collect origins + partitioned StorageKeys from main frame tree AND attached OOPIF child sessions (1.24)
+                  const frameIdsToQuery: Array<{ frameId: string; sid: string }> = [];
+                  const frameTreeRes = (await cdpChannel
+                    .sendCommand("Page.getFrameTree", {}, activeSlot.sessionId, 1_500)
+                    .catch(() => null)) as { frameTree?: any } | null;
+                  const collectFrameOrigins = (node: any) => {
+                    if (!node) return;
+                    const u = node.frame?.url;
+                    if (typeof node.frame?.id === "string") {
+                      frameIdsToQuery.push({ frameId: node.frame.id, sid: activeSlot!.sessionId });
+                    }
+                    if (typeof u === "string") {
+                      try {
+                        const parsed = new URL(u);
+                        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+                          visitedOrigins.add(parsed.origin);
+                        }
+                      } catch {
+                        // ignore
+                      }
+                    }
+                    if (Array.isArray(node.childFrames)) {
+                      for (const child of node.childFrames) collectFrameOrigins(child);
+                    }
+                  };
+                  collectFrameOrigins(frameTreeRes?.frameTree);
+                  for (const child of activeChildSessions) {
+                    if (child.targetId) {
+                      frameIdsToQuery.push({ frameId: child.targetId, sid: child.sessionId });
+                    }
+                    if (child.url) {
+                      try {
+                        const parsed = new URL(child.url);
+                        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+                          visitedOrigins.add(parsed.origin);
+                        }
+                      } catch {
+                        // ignore
+                      }
+                    }
+                  }
+                  if (frameIdsToQuery.length > 0) {
+                    const skResults = await Promise.all(
+                      frameIdsToQuery.map(({ frameId, sid }) =>
+                        cdpChannel
+                          .sendCommand("Storage.getStorageKeyForFrame", { frameId }, sid, 1_000)
+                          .catch(() => null),
+                      ),
+                    );
+                    for (const res of skResults) {
+                      const sk = (res as { storageKey?: string } | null)?.storageKey;
+                      if (sk) visitedStorageKeys.add(sk);
+                    }
+                  }
+
+                  // 1. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
+                  const preResetOps: Array<Promise<unknown>> = [];
+                  for (const child of activeChildSessions) {
                     preResetOps.push(
                       cdpChannel
-                        .sendCommand("Target.closeTarget", { targetId: extra.targetId }, null)
+                        .evaluateOnSession(
+                          child.sessionId,
+                          "try { localStorage.clear(); sessionStorage.clear(); } catch {}",
+                        )
                         .catch(() => {}),
                     );
                   }
-                }
-                if (!isAtBlank) {
-                  // Clear in-page localStorage/sessionStorage/OPFS first, then navigate to about:blank
-                  // BEFORE calling Storage.clearDataForOrigin so no JS handle contends with CDP storage deletion.
-                  preResetOps.push(
-                    cdpChannel
-                      .evaluateFast(
-                        `(async () => {
-                          try { localStorage.clear(); sessionStorage.clear(); } catch {}
-                          try {
-                            if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
-                              const root = await navigator.storage.getDirectory();
-                              if (root && typeof root.entries === "function") {
-                                for await (const [name] of root.entries()) {
-                                  await root.removeEntry(name, { recursive: true }).catch(() => {});
+                  if (activeSlot.tabs.length > 1) {
+                    const primaryTab = activeSlot.tabs[0]!;
+                    const extraTabs = activeSlot.tabs.slice(1);
+                    activeSlot.tabs = [primaryTab];
+                    activeSlot.targetId = primaryTab.targetId;
+                    activeSlot.sessionId = primaryTab.sessionId;
+                    cdpChannel.setSessionId(primaryTab.sessionId);
+                    for (const extra of extraTabs) {
+                      preResetOps.push(
+                        cdpChannel
+                          .sendCommand("Target.closeTarget", { targetId: extra.targetId }, null)
+                          .catch(() => {}),
+                      );
+                    }
+                  }
+                  if (!isAtBlank) {
+                    // Restore any installed fake clock and clear in-page storage/OPFS first, then navigate to about:blank
+                    // BEFORE calling Storage.clearDataForOrigin so no JS handle contends with CDP storage deletion.
+                    preResetOps.push(
+                      cdpChannel
+                        .evaluateFast(
+                          `(async () => {
+                            try { if (window.__spanaClock && typeof window.__spanaClock.resume === "function") window.__spanaClock.resume(); } catch {}
+                            try { localStorage.clear(); sessionStorage.clear(); } catch {}
+                            try {
+                              if (navigator.storage && typeof navigator.storage.getDirectory === "function") {
+                                const root = await navigator.storage.getDirectory();
+                                if (root && typeof root.entries === "function") {
+                                  for await (const [name] of root.entries()) {
+                                    await root.removeEntry(name, { recursive: true }).catch(() => {});
+                                  }
                                 }
                               }
-                            }
-                          } catch {}
-                        })()`,
-                      )
-                      .catch(() => {})
-                      .then(() =>
-                        cdpChannel
-                          .sendCommand("Page.navigate", { url: "about:blank" }, undefined, 4_000)
-                          .catch(() => {}),
-                      )
-                      .then(() => {
-                        isAtBlank = true;
-                      }),
-                  );
-                }
-                if (preResetOps.length > 0) {
-                  await Promise.all(preResetOps);
-                }
-                // 2. Now that the page is safely on about:blank (no active document holding storage locks),
-                // wipe cookies, per-origin storage, routes, viewport, emulation, and network conditions in parallel.
-                const resetOps: Array<Promise<unknown>> = [
-                  cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
-                ];
-                for (const origin of visitedOrigins) {
+                            } catch {}
+                          })()`,
+                        )
+                        .catch(() => {})
+                        .then(() =>
+                          cdpChannel
+                            .sendCommand("Page.navigate", { url: "about:blank" }, undefined, 4_000)
+                            .catch(() => {}),
+                        )
+                        .then(() => {
+                          isAtBlank = true;
+                        }),
+                    );
+                  }
+                  if (preResetOps.length > 0) {
+                    await Promise.all(preResetOps);
+                  }
+                  cdpChannel.clearChildSessions();
+                  // 2. Now that the page is safely on about:blank (no active document holding storage locks),
+                  // wipe cookies, per-origin & partitioned storage keys, permissions, geolocation, routes, viewport, emulation, and network conditions in parallel.
+                  const resetOps: Array<Promise<unknown>> = [
+                    cdpChannel.sendCommand("Network.clearBrowserCookies").catch(() => {}),
+                  ];
+                  const storageTypes =
+                    "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems";
+                  for (const origin of visitedOrigins) {
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Storage.clearDataForOrigin", { origin, storageTypes })
+                        .catch(() => {}),
+                    );
+                  }
+                  for (const storageKey of visitedStorageKeys) {
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Storage.clearDataForStorageKey", {
+                          storageKey,
+                          storageTypes,
+                        })
+                        .catch(() => {}),
+                    );
+                  }
+                  if (permissionsMutated) {
+                    permissionsMutated = false;
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand(
+                          "Browser.resetPermissions",
+                          { browserContextId: activeSlot.browserContextId },
+                          null,
+                        )
+                        .catch(() => {}),
+                    );
+                  }
+                  if (geolocationMutated) {
+                    geolocationMutated = false;
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Emulation.clearGeolocationOverride", {})
+                        .catch(() => {}),
+                    );
+                  }
+                  if (fetchInterceptEnabled) {
+                    fetchInterceptEnabled = false;
+                    resetOps.push(cdpChannel.sendCommand("Fetch.disable").catch(() => {}));
+                  }
+                  if (viewportMutated) {
+                    viewportMutated = false;
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Emulation.setDeviceMetricsOverride", {
+                          width: initialWidth,
+                          height: initialHeight,
+                          deviceScaleFactor: 1,
+                          mobile: false,
+                        })
+                        .catch(() => {}),
+                    );
+                  }
+                  if (emulationMutated) {
+                    emulationMutated = false;
+                    const defaultLocale = options.emulation?.locale ?? "";
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Emulation.setLocaleOverride", { locale: defaultLocale })
+                        .catch(() => {}),
+                      cdpChannel
+                        .sendCommand("Emulation.setUserAgentOverride", {
+                          userAgent: cachedUserAgent || "Mozilla/5.0",
+                          acceptLanguage: defaultLocale
+                            ? defaultLocale.includes("-")
+                              ? `${defaultLocale},${defaultLocale.split("-")[0]};q=0.9`
+                              : defaultLocale
+                            : "",
+                        })
+                        .catch(() => {}),
+                      cdpChannel
+                        .sendCommand("Emulation.setEmulatedMedia", {
+                          media: "",
+                          features: [
+                            {
+                              name: "prefers-color-scheme",
+                              value:
+                                options.emulation?.colorScheme &&
+                                options.emulation.colorScheme !== "no-preference"
+                                  ? options.emulation.colorScheme
+                                  : "",
+                            },
+                            {
+                              name: "prefers-reduced-motion",
+                              value:
+                                options.emulation?.reducedMotion &&
+                                options.emulation.reducedMotion !== "no-preference"
+                                  ? options.emulation.reducedMotion
+                                  : "",
+                            },
+                          ],
+                        })
+                        .catch(() => {}),
+                      cdpChannel
+                        .sendCommand("Emulation.setTimezoneOverride", {
+                          timezoneId: options.emulation?.timezoneId ?? "",
+                        })
+                        .catch(() => {}),
+                    );
+                  }
                   resetOps.push(
                     cdpChannel
-                      .sendCommand("Storage.clearDataForOrigin", {
-                        origin,
-                        storageTypes:
-                          "cookies,local_storage,session_storage,indexeddb,cache_storage,service_workers,file_systems",
+                      .sendCommand("Network.emulateNetworkConditions", {
+                        offline: false,
+                        latency: 0,
+                        downloadThroughput: -1,
+                        uploadThroughput: -1,
                       })
                       .catch(() => {}),
                   );
-                }
-                if (fetchInterceptEnabled) {
+                  await Promise.all(resetOps);
+                  const state = await loadStorageStateFile(options.storageState);
+                  if (state?.cookies && state.cookies.length > 0) {
+                    await cdpChannel
+                      .sendCommand("Network.setCookies", { cookies: state.cookies })
+                      .catch(() => {});
+                  }
+                } else {
+                  cdpChannel.clearChildSessions();
                   fetchInterceptEnabled = false;
-                  resetOps.push(cdpChannel.sendCommand("Fetch.disable").catch(() => {}));
-                }
-                if (viewportMutated) {
-                  viewportMutated = false;
-                  resetOps.push(
-                    cdpChannel
-                      .sendCommand("Emulation.setDeviceMetricsOverride", {
-                        width: initialWidth,
-                        height: initialHeight,
-                        deviceScaleFactor: 1,
-                        mobile: false,
-                      })
-                      .catch(() => {}),
-                  );
-                }
-                if (emulationMutated) {
                   emulationMutated = false;
-                  const defaultLocale = options.emulation?.locale ?? "";
-                  resetOps.push(
-                    cdpChannel
-                      .sendCommand("Emulation.setLocaleOverride", { locale: defaultLocale })
-                      .catch(() => {}),
-                    cdpChannel
-                      .sendCommand("Emulation.setUserAgentOverride", {
-                        userAgent: cachedUserAgent || "Mozilla/5.0",
-                        acceptLanguage: defaultLocale
-                          ? defaultLocale.includes("-")
-                            ? `${defaultLocale},${defaultLocale.split("-")[0]};q=0.9`
-                            : defaultLocale
-                          : "",
-                      })
-                      .catch(() => {}),
-                    cdpChannel
-                      .sendCommand("Emulation.setEmulatedMedia", {
-                        media: "",
-                        features: [
-                          {
-                            name: "prefers-color-scheme",
-                            value:
-                              options.emulation?.colorScheme &&
-                              options.emulation.colorScheme !== "no-preference"
-                                ? options.emulation.colorScheme
-                                : "",
-                          },
-                          {
-                            name: "prefers-reduced-motion",
-                            value:
-                              options.emulation?.reducedMotion &&
-                              options.emulation.reducedMotion !== "no-preference"
-                                ? options.emulation.reducedMotion
-                                : "",
-                          },
-                        ],
-                      })
-                      .catch(() => {}),
-                    cdpChannel
-                      .sendCommand("Emulation.setTimezoneOverride", {
-                        timezoneId: options.emulation?.timezoneId ?? "",
-                      })
-                      .catch(() => {}),
-                  );
+                  viewportMutated = false;
+                  permissionsMutated = false;
+                  geolocationMutated = false;
                 }
-                resetOps.push(
-                  cdpChannel
-                    .sendCommand("Network.emulateNetworkConditions", {
-                      offline: false,
-                      latency: 0,
-                      downloadThroughput: -1,
-                      uploadThroughput: -1,
-                    })
-                    .catch(() => {}),
-                );
-                await Promise.all(resetOps);
-                const state = await loadStorageStateFile(options.storageState);
-                if (state?.cookies && state.cookies.length > 0) {
-                  await cdpChannel
-                    .sendCommand("Network.setCookies", { cookies: state.cookies })
-                    .catch(() => {});
+                if (activeSlot) {
+                  await ensureVirtualAuthenticatorForSlot(activeSlot, true);
                 }
-                // Re-ensure virtual authenticator is present in hot-cache mode (2.16)
-                if (options.virtualAuthenticator && !activeSlot.authenticatorId) {
-                  const authOpts =
-                    typeof options.virtualAuthenticator === "object"
-                      ? options.virtualAuthenticator
-                      : undefined;
-                  activeSlot.authenticatorId = await attachVirtualAuthenticatorForSession(
-                    activeSlot.sessionId,
-                    authOpts,
-                  ).catch(() => undefined);
-                }
-                activeAuthenticatorId = activeSlot.authenticatorId;
               } else {
+                cdpChannel.clearChildSessions();
                 fetchInterceptEnabled = false;
                 emulationMutated = false;
                 viewportMutated = false;
+                permissionsMutated = false;
+                geolocationMutated = false;
                 isAtBlank = true;
                 const previousSlot = activeSlot;
                 const pending = prefetchedSlotPromise;
@@ -1986,34 +2419,17 @@ export function makeLightweightCdpDriver(
                   ? await pending
                   : await createContextSlot(options.storageState);
                 cdpChannel.setSessionId(activeSlot.sessionId);
-                if (options.virtualAuthenticator && !activeSlot.authenticatorId) {
-                  const authOpts =
-                    typeof options.virtualAuthenticator === "object"
-                      ? options.virtualAuthenticator
-                      : undefined;
-                  activeSlot.authenticatorId = await attachVirtualAuthenticatorForSession(
-                    activeSlot.sessionId,
-                    authOpts,
-                  ).catch(() => undefined);
-                }
-                activeAuthenticatorId = activeSlot.authenticatorId;
+                await ensureVirtualAuthenticatorForSlot(activeSlot, false);
                 if (previousSlot) {
                   disposeSlotInBackground(previousSlot);
                 }
               }
             } else if (activeSlot) {
-              // Ensure primary slot's virtual authenticator wasn't dropped between flows (2.16)
-              if (options.virtualAuthenticator && !activeSlot.authenticatorId) {
-                const authOpts =
-                  typeof options.virtualAuthenticator === "object"
-                    ? options.virtualAuthenticator
-                    : undefined;
-                activeSlot.authenticatorId = await attachVirtualAuthenticatorForSession(
-                  activeSlot.sessionId,
-                  authOpts,
-                ).catch(() => undefined);
+              cdpChannel.clearChildSessions();
+              await ensureActiveSlotHealthy();
+              if (activeSlot) {
+                await ensureVirtualAuthenticatorForSlot(activeSlot, false);
               }
-              activeAuthenticatorId = activeSlot.authenticatorId;
             }
             hasRunFirstFlow = true;
           },
@@ -2101,12 +2517,45 @@ export function makeLightweightCdpDriver(
           catch: (e) => new DriverError({ message: `CDP longPress failed: ${e}` }),
         }),
 
-      swipe: (startX, startY, endX, endY) =>
+      swipe: (startX, startY, endX, endY, duration = 300) =>
         Effect.tryPromise({
           try: async () => {
-            const dx = startX - endX;
-            const dy = startY - endY;
-            await cdpChannel.evaluate(`window.scrollBy(${dx}, ${dy})`);
+            const totalSteps = Math.max(4, Math.min(20, Math.round((duration || 300) / 20)));
+            const stepDelayMs = duration > 0 ? Math.max(0, Math.floor(duration / totalSteps)) : 0;
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x: startX,
+              y: startY,
+            });
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x: startX,
+              y: startY,
+              button: "left",
+              buttons: 1,
+              clickCount: 1,
+            });
+            for (let i = 1; i <= totalSteps; i++) {
+              const t = i / totalSteps;
+              await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+                type: "mouseMoved",
+                x: startX + (endX - startX) * t,
+                y: startY + (endY - startY) * t,
+                button: "left",
+                buttons: 1,
+              });
+              if (stepDelayMs > 0) {
+                await new Promise((r) => setTimeout(r, stepDelayMs));
+              }
+            }
+            await cdpChannel.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              x: endX,
+              y: endY,
+              button: "left",
+              buttons: 0,
+              clickCount: 1,
+            });
           },
           catch: (e) => new DriverError({ message: `CDP swipe failed: ${e}` }),
         }),
@@ -2525,6 +2974,7 @@ export function makeLightweightCdpDriver(
       setGeolocation: (point) =>
         Effect.tryPromise({
           try: async () => {
+            geolocationMutated = true;
             await cdpChannel.sendCommand("Emulation.setGeolocationOverride", {
               latitude: point.latitude,
               longitude: point.longitude,
@@ -2537,6 +2987,7 @@ export function makeLightweightCdpDriver(
       setPermission: (_appId, permission, state, permOpts) =>
         Effect.tryPromise({
           try: async () => {
+            permissionsMutated = true;
             const cdpName =
               permission === "clipboard-read"
                 ? "clipboardReadWrite"
@@ -2611,16 +3062,19 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             prefetchedSlotPromise = undefined;
-            // All contexts are created with disposeOnDetach: true, so disconnecting cleans up immediately
-            // without stalling teardown on pending prefetches or background disposal timers.
-            if (useContexts && activeSlot) {
-              void cdpChannel
-                .sendCommand(
-                  "Target.disposeBrowserContext",
-                  { browserContextId: activeSlot.browserContextId },
-                  null,
-                )
-                .catch(() => {});
+            const slotToDispose = activeSlot;
+            activeSlot = undefined;
+            if (useContexts && slotToDispose) {
+              await Promise.race([
+                cdpChannel
+                  .sendCommand(
+                    "Target.disposeBrowserContext",
+                    { browserContextId: slotToDispose.browserContextId },
+                    null,
+                  )
+                  .catch(() => {}),
+                new Promise<void>((r) => setTimeout(r, 1500)),
+              ]);
             }
             if (downloadDir) {
               try {
@@ -2636,6 +3090,9 @@ export function makeLightweightCdpDriver(
               } catch {
                 // ignore temp dir cleanup errors
               }
+            }
+            if (options._markClosedOnKill) {
+              cdpChannel.markClosed("Browser context closed");
             }
             await cdpChannel.disconnect();
           },
@@ -2692,6 +3149,19 @@ export function makeLightweightCdpDriver(
                 entryId: targetEntry.id,
               });
               await waiter.catch(() => {});
+              // Short non-fatal DOM-idle settle wait so back() layout/hydration settles (1.16)
+              await cdpChannel
+                .evaluateFast(
+                  `new Promise((resolve) => {
+                    let done = false;
+                    const finish = () => { if (!done) { done = true; clearTimeout(maxT); clearTimeout(idleT); obs.disconnect(); resolve(true); } };
+                    const maxT = setTimeout(finish, 400);
+                    let idleT = setTimeout(finish, 80);
+                    const obs = new MutationObserver(() => { clearTimeout(idleT); idleT = setTimeout(finish, 80); });
+                    try { obs.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true }); } catch { finish(); }
+                  })`,
+                )
+                .catch(() => {});
               return;
             }
             await cdpChannel.evaluate("window.history.back()");
@@ -2732,6 +3202,19 @@ export function makeLightweightCdpDriver(
                 entryId: targetEntry.id,
               });
               await waiter.catch(() => {});
+              // Short non-fatal DOM-idle settle wait so forward() layout/hydration settles (1.16)
+              await cdpChannel
+                .evaluateFast(
+                  `new Promise((resolve) => {
+                    let done = false;
+                    const finish = () => { if (!done) { done = true; clearTimeout(maxT); clearTimeout(idleT); obs.disconnect(); resolve(true); } };
+                    const maxT = setTimeout(finish, 400);
+                    let idleT = setTimeout(finish, 80);
+                    const obs = new MutationObserver(() => { clearTimeout(idleT); idleT = setTimeout(finish, 80); });
+                    try { obs.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true }); } catch { finish(); }
+                  })`,
+                )
+                .catch(() => {});
               return;
             }
             await cdpChannel.evaluate("window.history.forward()");
@@ -2743,12 +3226,12 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             if (typeof fn === "string") {
-              return (await cdpChannel.evaluate(fn)) as any;
+              return (await cdpChannel.evaluateOnce(fn)) as any;
             }
             const serializedArgs = args
               .map((a) => (a === undefined ? "undefined" : JSON.stringify(a)))
               .join(", ");
-            return (await cdpChannel.evaluate(`(${fn.toString()})(${serializedArgs})`)) as any;
+            return (await cdpChannel.evaluateOnce(`(${fn.toString()})(${serializedArgs})`)) as any;
           },
           catch: (e) => new DriverError({ message: `CDP evaluate failed: ${e}` }),
         }),
@@ -2760,7 +3243,7 @@ export function makeLightweightCdpDriver(
               typeof script === "string"
                 ? script
                 : `(${script.toString()})(${args.map((a) => (a === undefined ? "undefined" : JSON.stringify(a))).join(", ")});`;
-            initScripts.push(source);
+            flowInitScripts.push(source);
             const sessions = activeSlot
               ? activeSlot.tabs.map((t) => t.sessionId)
               : [null as string | null];
@@ -2768,6 +3251,7 @@ export function makeLightweightCdpDriver(
               sessions.map((sid) =>
                 cdpChannel
                   .sendCommand("Page.addScriptToEvaluateOnNewDocument", { source }, sid)
+                  .then((res) => recordScriptId(flowInitScriptIds, sid, res))
                   .catch(() => {}),
               ),
             );
@@ -2775,10 +3259,31 @@ export function makeLightweightCdpDriver(
           catch: (e) => new DriverError({ message: `CDP addInitScript failed: ${e}` }),
         }),
 
+      setClockInitScript: (script: string | null) =>
+        Effect.tryPromise({
+          try: async () => {
+            await removeTrackedScripts(clockInitScriptIds);
+            clockInitScript = script;
+            if (!script) return;
+            const sessions = activeSlot
+              ? activeSlot.tabs.map((t) => t.sessionId)
+              : [null as string | null];
+            await Promise.all(
+              sessions.map((sid) =>
+                cdpChannel
+                  .sendCommand("Page.addScriptToEvaluateOnNewDocument", { source: script }, sid)
+                  .then((res) => recordScriptId(clockInitScriptIds, sid, res))
+                  .catch(() => {}),
+              ),
+            );
+          },
+          catch: (e) => new DriverError({ message: `CDP setClockInitScript failed: ${e}` }),
+        }),
+
       exposeFunction: (name, fn) =>
         Effect.tryPromise({
           try: async () => {
-            exposedFunctions.set(name, fn);
+            flowExposedFunctions.set(name, fn);
             const sessions = activeSlot
               ? activeSlot.tabs.map((t) => t.sessionId)
               : [null as string | null];
@@ -3102,6 +3607,7 @@ export function makeLightweightCdpDriver(
                 cdpUrl: connectWsUrl ?? options.cdpUrl,
                 useBrowserContexts: true,
                 freshContextPerFlow: false,
+                _markClosedOnKill: true,
                 ...(ctxOpts?.viewport ? { viewport: ctxOpts.viewport } : {}),
                 ...(ctxOpts?.locale
                   ? { emulation: { ...options.emulation, locale: ctxOpts.locale } }
@@ -3284,22 +3790,7 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             const rawItems = Array.isArray(filePath) ? filePath : [filePath];
-            const files: string[] = [];
-            let batchTempDir: string | undefined;
-            for (const item of rawItems) {
-              if (typeof item === "string") {
-                files.push(item);
-              } else {
-                if (!batchTempDir) {
-                  batchTempDir = mkdtempSync(join(tmpdir(), "spana-cdp-upload-"));
-                  uploadTempDirs.push(batchTempDir);
-                }
-                const safeFileName = item.name.replaceAll(/[\\/]/g, "_") || "upload.bin";
-                const dest = join(batchTempDir, safeFileName);
-                await writeFile(dest, Buffer.from(item.buffer));
-                files.push(dest);
-              }
-            }
+            const hasInMemoryPayload = rawItems.some((item) => typeof item !== "string");
             const expr = buildDomFindElementScript(selector);
             await cdpChannel.sendCommand("DOM.enable");
             await cdpChannel.sendCommand("DOM.getDocument", { depth: 0 }).catch(() => {});
@@ -3325,6 +3816,48 @@ export function makeLightweightCdpDriver(
                 `No matching file input found within ${attachTimeout}ms for selector ${JSON.stringify(selector)}`,
               );
             }
+
+            if (hasInMemoryPayload) {
+              // Preserve explicit mimeType on in-memory UploadFilePayload items via DataTransfer + new File() (3.24)
+              const serializedItems: Array<{ name: string; mimeType: string; bytes: number[] }> =
+                [];
+              for (const item of rawItems) {
+                if (typeof item === "string") {
+                  const buf = await readFile(item);
+                  const base = item.split(/[\\/]/).pop() || "upload.bin";
+                  serializedItems.push({
+                    name: base,
+                    mimeType: "application/octet-stream",
+                    bytes: Array.from(new Uint8Array(buf)),
+                  });
+                } else {
+                  serializedItems.push({
+                    name: item.name || "upload.bin",
+                    mimeType: item.mimeType || "application/octet-stream",
+                    bytes: Array.from(new Uint8Array(item.buffer)),
+                  });
+                }
+              }
+              await cdpChannel.sendCommand("Runtime.callFunctionOn", {
+                objectId,
+                functionDeclaration: `function(items) {
+                  var dt = new DataTransfer();
+                  for (var i = 0; i < items.length; i++) {
+                    var it = items[i];
+                    var f = new File([new Uint8Array(it.bytes)], it.name, { type: it.mimeType });
+                    dt.items.add(f);
+                  }
+                  this.files = dt.files;
+                  this.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+                  this.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+                }`,
+                arguments: [{ value: serializedItems }],
+                returnByValue: true,
+              });
+              return;
+            }
+
+            const files = rawItems as string[];
             const nodeRes = (await cdpChannel
               .sendCommand("DOM.requestNode", { objectId })
               .catch(() => ({}))) as { nodeId?: number };
@@ -3507,6 +4040,7 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             if (activeSlot?.browserContextId) {
+              permissionsMutated = true;
               await cdpChannel
                 .sendCommand(
                   "Browser.grantPermissions",
@@ -3538,6 +4072,7 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             if (activeSlot?.browserContextId) {
+              permissionsMutated = true;
               await cdpChannel
                 .sendCommand(
                   "Browser.grantPermissions",
@@ -3621,29 +4156,37 @@ export function makeLightweightCdpDriver(
             if (!activeSlot) {
               throw new Error("newTab() requires browser-context mode (engine: 'cdp')");
             }
+            const targetUrl = url ? await resolveUrlAsync(url) : "about:blank";
             const targetRes = (await cdpChannel.sendCommand(
               "Target.createTarget",
               {
-                url: url ? resolveUrl(url) : "about:blank",
+                url: targetUrl,
                 browserContextId: activeSlot.browserContextId,
               },
               null,
             )) as { targetId: string };
-            const attachRes = (await cdpChannel.sendCommand(
-              "Target.attachToTarget",
-              { targetId: targetRes.targetId, flatten: true },
-              null,
-            )) as { sessionId: string };
-            await configureSession(attachRes.sessionId, options.storageState);
-            const tabId = `tab-${nextTabSeq++}`;
-            activeSlot.tabs.push({
-              tabId,
-              targetId: targetRes.targetId,
-              sessionId: attachRes.sessionId,
-            });
+            // Target.setAutoAttach may have already attached & pushed this targetId — reuse it instead of duplicating! (1.26)
+            const autoTracked = activeSlot.tabs.find((t) => t.targetId === targetRes.targetId);
+            let sessionId = autoTracked?.sessionId;
+            if (!sessionId) {
+              const attachRes = (await cdpChannel.sendCommand(
+                "Target.attachToTarget",
+                { targetId: targetRes.targetId, flatten: true },
+                null,
+              )) as { sessionId: string };
+              sessionId = attachRes.sessionId;
+            }
+            await configureSession(sessionId, options.storageState, true);
+            const existingAfter = activeSlot.tabs.find((t) => t.targetId === targetRes.targetId);
+            const tabId = existingAfter?.tabId ?? `tab-${nextTabSeq++}`;
+            // Deduplicate by targetId so closeTab() never picks a duplicate entry for the closing target
+            activeSlot.tabs = [
+              ...activeSlot.tabs.filter((t) => t.targetId !== targetRes.targetId),
+              { tabId, targetId: targetRes.targetId, sessionId },
+            ];
             activeSlot.targetId = targetRes.targetId;
-            activeSlot.sessionId = attachRes.sessionId;
-            cdpChannel.setSessionId(attachRes.sessionId);
+            activeSlot.sessionId = sessionId;
+            cdpChannel.setSessionId(sessionId);
             return tabId;
           },
           catch: (e) => new DriverError({ message: `CDP newTab failed: ${e}` }),
@@ -3676,7 +4219,35 @@ export function makeLightweightCdpDriver(
             }
             const idx = activeSlot.tabs.findIndex((t) => t.sessionId === activeSlot!.sessionId);
             const closing = activeSlot.tabs[idx >= 0 ? idx : activeSlot.tabs.length - 1]!;
-            activeSlot.tabs = activeSlot.tabs.filter((t) => t.sessionId !== closing.sessionId);
+            activeSlot.tabs = activeSlot.tabs.filter(
+              (t) => t.targetId !== closing.targetId && t.sessionId !== closing.sessionId,
+            );
+            if (activeSlot.tabs.length === 0) {
+              // Ensure tab-0 always exists if all entries pointed at the same targetId
+              const targetRes = (await cdpChannel.sendCommand(
+                "Target.createTarget",
+                {
+                  url: "about:blank",
+                  browserContextId: activeSlot.browserContextId,
+                  width: initialWidth,
+                  height: initialHeight,
+                },
+                null,
+              )) as { targetId: string };
+              const attachRes = (await cdpChannel.sendCommand(
+                "Target.attachToTarget",
+                { targetId: targetRes.targetId, flatten: true },
+                null,
+              )) as { sessionId: string };
+              await configureSession(attachRes.sessionId, options.storageState, true);
+              activeSlot.tabs = [
+                {
+                  tabId: `tab-${nextTabSeq++}`,
+                  targetId: targetRes.targetId,
+                  sessionId: attachRes.sessionId,
+                },
+              ];
+            }
             const fallback =
               activeSlot.tabs[Math.max(0, Math.min(idx - 1, activeSlot.tabs.length - 1))]!;
             activeSlot.targetId = fallback.targetId;

@@ -25,19 +25,25 @@ export interface SharedFlowQueueServer {
 
 /**
  * Start a lightweight local HTTP work-stealing queue serving an already-ordered
- * (longest-first) list of flow names to `M` isolated OS worker processes.
+ * (longest-first) list of flow names or indivisible serial-group work units to
+ * `M` isolated OS worker processes.
  * Eliminates static `--shard` tail stragglers when running `spana test --workers N --processes M`.
  */
 export async function startSharedFlowQueueServer(
-  orderedFlowNames: string[],
+  orderedItems: Array<string | string[]>,
 ): Promise<SharedFlowQueueServer> {
-  const queue = [...orderedFlowNames];
+  const queue: string[][] = orderedItems
+    .map((item) => (Array.isArray(item) ? [...item] : [item]))
+    .filter((unit) => unit.length > 0);
   let cursor = 0;
 
   const server = createServer((req, res) => {
     if (req.url === "/claim" && (req.method === "POST" || req.method === "GET")) {
-      const flowName = cursor < queue.length ? queue[cursor++]! : null;
-      const body = JSON.stringify({ flowName });
+      const unit = cursor < queue.length ? queue[cursor++]! : null;
+      const body = JSON.stringify({
+        flowName: unit ? unit[0]! : null,
+        flowNames: unit,
+      });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(body);
       return;
@@ -72,6 +78,23 @@ export function createRemoteFlowClaimer(queueUrl: string): () => Promise<string 
     if (!res.ok) return null;
     const data = (await res.json()) as { flowName?: string | null };
     return typeof data.flowName === "string" ? data.flowName : null;
+  };
+}
+
+/** Client helper for a worker process to claim the next indivisible work unit (single flow or serial group) from `SPANA_QUEUE_URL`. */
+export function createRemoteWorkUnitClaimer(queueUrl: string): () => Promise<string[] | null> {
+  const endpoint = `${queueUrl.replace(/\/+$/, "")}/claim`;
+  return async () => {
+    const res = await fetch(endpoint, { method: "POST" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { flowName?: string | null; flowNames?: string[] | null };
+    if (Array.isArray(data.flowNames) && data.flowNames.length > 0) {
+      return data.flowNames;
+    }
+    if (typeof data.flowName === "string") {
+      return [data.flowName];
+    }
+    return null;
   };
 }
 

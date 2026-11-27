@@ -74,6 +74,7 @@ export {
   defineConfig,
   type ProvConfig,
   type AppConfig,
+  type WebUrlResolver,
   type ElectronAppConfig,
   type ElectrobunAppConfig,
   type ElectrobunRenderer,
@@ -237,7 +238,7 @@ export {
   type DirectCdpBrowserHandle,
   type LightweightCdpDriverOptions,
 } from "./drivers/cdp-browser.js";
-export { orderFlowsLongestFirst } from "./core/parallel.js";
+export { buildOrderedWorkUnits, orderFlowsLongestFirst } from "./core/parallel.js";
 export { makeElectronDriver, type ElectronDriverOptions } from "./drivers/electron.js";
 export {
   makeElectrobunDriver,
@@ -393,6 +394,7 @@ export {
   writeWorkerProcessReport,
   startSharedFlowQueueServer,
   createRemoteFlowClaimer,
+  createRemoteWorkUnitClaimer,
   type SharedFlowQueueServer,
   type ProcessPartitionPlan,
   type ProcessShardCommand,
@@ -565,10 +567,16 @@ export type { WasmAppConfig } from "./schemas/config.js";
 
 // Programmatic in-process test runner & portable CI timings (lazy-loaded to keep `spana-test` import time minimal)
 export { readDurationHintsFile, writeDurationHintsFile } from "./cli/iteration.js";
-export type { TestCommandOptions } from "./cli/test-command.js";
+export type { TestCommandOptions, TestCommandResult } from "./cli/test-command.js";
 export async function runTestCommand(
   opts: import("./cli/test-command.js").TestCommandOptions,
 ): Promise<boolean> {
   const { runTestCommand: run } = await import("./cli/test-command.js");
+  return run(opts);
+}
+export async function runTestCommandWithResult(
+  opts: import("./cli/test-command.js").TestCommandOptions,
+): Promise<import("./cli/test-command.js").TestCommandResult> {
+  const { runTestCommandWithResult: run } = await import("./cli/test-command.js");
   return run(opts);
 }

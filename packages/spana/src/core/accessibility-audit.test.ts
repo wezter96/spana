@@ -59,9 +59,17 @@ describe("normalizeRole (web)", () => {
     expect(normalizeRole("web", "button", { role: "tab" })).toBe("tab");
   });
 
-  test("unknown tag returns raw elementType", () => {
+  test("WAI-ARIA implicit role accuracy: unnamed section, decorative img, th scope, unmapped elements", () => {
     expect(normalizeRole("web", "article")).toBe("article");
-    expect(normalizeRole("web", "custom-element")).toBe("custom-element");
+    expect(normalizeRole("web", "custom-element")).toBe("generic");
+    expect(normalizeRole("web", "div")).toBe("generic");
+    expect(normalizeRole("web", "span")).toBe("generic");
+    expect(normalizeRole("web", "section")).toBe("generic");
+    expect(normalizeRole("web", "section", { "aria-label": "Overview" })).toBe("region");
+    expect(normalizeRole("web", "img", { alt: "" })).toBe("presentation");
+    expect(normalizeRole("web", "img", { alt: "Logo" })).toBe("img");
+    expect(normalizeRole("web", "th")).toBe("columnheader");
+    expect(normalizeRole("web", "th", { scope: "row" })).toBe("rowheader");
   });
 });
 

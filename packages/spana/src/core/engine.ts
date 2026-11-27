@@ -188,11 +188,13 @@ export async function executeFlow(
       softFailures.push(error);
     },
   };
+  const effectiveAppId = flow.config.baseUrl ?? appId;
   const extraCleanups: Array<() => Promise<void>> = [];
-  const app = createPromiseApp(driver, appId, mergedCoordinatorConfig, stepRecorder, {
+  const app = createPromiseApp(driver, effectiveAppId, mergedCoordinatorConfig, stepRecorder, {
     platform,
     storybook: config.storybook,
     launchOptions,
+    flowBaseUrl: flow.config.baseUrl,
     onRegisterCleanup: (fn) => extraCleanups.push(fn),
     flowContext: flowMeta,
     visualRegression: config.visualRegression,

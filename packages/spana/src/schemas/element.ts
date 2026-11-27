@@ -17,6 +17,7 @@ export const Element = Schema.Struct({
   accessibleDescription: Schema.optional(Schema.String),
   resourceId: Schema.optional(Schema.String),
   elementType: Schema.optional(Schema.String),
+  role: Schema.optional(Schema.String),
   bounds: Bounds,
   enabled: Schema.optional(Schema.Boolean),
   visible: Schema.optional(Schema.Boolean),

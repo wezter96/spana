@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import { PNG } from "pngjs";
-import sharp from "sharp";
 import { applyMask, compareScreenshots, cropToElement } from "./screenshot-compare.js";
 
 // ---------------------------------------------------------------------------
@@ -141,7 +140,7 @@ describe("cropToElement", () => {
       width: 40,
       height: 30,
     });
-    const meta = await sharp(cropped).metadata();
+    const meta = PNG.sync.read(cropped);
     expect(meta.width).toBe(40);
     expect(meta.height).toBe(30);
   });
@@ -154,7 +153,7 @@ describe("cropToElement", () => {
       width: 50,
       height: 50,
     });
-    const meta = await sharp(cropped).metadata();
+    const meta = PNG.sync.read(cropped);
     expect(meta.width).toBe(50);
     expect(meta.height).toBe(50);
   });
@@ -168,7 +167,7 @@ describe("applyMask", () => {
   it("empty regions returns original image unchanged (same dimensions)", async () => {
     const base = makePng(20, 20, { r: 255, g: 0, b: 0 });
     const result = await applyMask(base, []);
-    const meta = await sharp(result).metadata();
+    const meta = PNG.sync.read(result);
     expect(meta.width).toBe(20);
     expect(meta.height).toBe(20);
   });
@@ -187,7 +186,7 @@ describe("applyMask", () => {
     const cmpResult = compareScreenshots(base, result);
     expect(cmpResult.match).toBe(false);
     // Dimensions should be preserved
-    const meta = await sharp(result).metadata();
+    const meta = PNG.sync.read(result);
     expect(meta.width).toBe(20);
     expect(meta.height).toBe(20);
   });

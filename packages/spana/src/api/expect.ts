@@ -33,7 +33,7 @@ export interface NegatedPromiseExpectation {
   toBeHidden(opts?: WaitOptions): Promise<void>;
   toBeAttached(opts?: WaitOptions): Promise<void>;
   toBeInViewport(opts?: WaitOptions): Promise<void>;
-  toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
+  toHaveText(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   toMatchText(pattern: RegExp, opts?: WaitOptions): Promise<void>;
   toHaveValue(expected: string | number | RegExp, opts?: WaitOptions): Promise<void>;
   toHaveAttribute(name: string, value?: string | RegExp, opts?: WaitOptions): Promise<void>;
@@ -61,7 +61,7 @@ export interface PromiseExpectation<T extends string = string> {
   toBeAttached(opts?: WaitOptions): Promise<void>;
   /** Assert that the matched element intersects the current viewport. */
   toBeInViewport(opts?: WaitOptions): Promise<void>;
-  toHaveText(expected: string, opts?: WaitOptions): Promise<void>;
+  toHaveText(expected: string | RegExp, opts?: WaitOptions): Promise<void>;
   toMatchText(pattern: RegExp, opts?: WaitOptions): Promise<void>;
   toHaveValue(expected: string | number | RegExp, opts?: WaitOptions): Promise<void>;
   toHaveAttribute(name: string, value?: string | RegExp, opts?: WaitOptions): Promise<void>;
@@ -372,8 +372,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
         run(coord.assertInViewport(selector, opts, true)),
       ),
     toHaveText: (expected, opts) =>
-      runStep(`expect.not.toHaveText(${JSON.stringify(expected)})`, selector, () =>
-        run(coord.assertText(selector, expected, opts, true)),
+      runStep(
+        `expect.not.toHaveText(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertText(selector, expected, opts, true)),
       ),
     toMatchText: (pattern, opts) =>
       runStep(`expect.not.toMatchText(${pattern})`, selector, () =>
@@ -624,8 +626,10 @@ export function createPromiseExpect<T extends string = string, R extends string 
     toBeInViewport: (opts) =>
       runStep("expect.toBeInViewport", selector, () => run(coord.assertInViewport(selector, opts))),
     toHaveText: (expected, opts) =>
-      runStep(`expect.toHaveText(${JSON.stringify(expected)})`, selector, () =>
-        run(coord.assertText(selector, expected, opts)),
+      runStep(
+        `expect.toHaveText(${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)})`,
+        selector,
+        () => run(coord.assertText(selector, expected, opts)),
       ),
     toMatchText: (pattern, opts) =>
       runStep(`expect.toMatchText(${pattern})`, selector, () =>

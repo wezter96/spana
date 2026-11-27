@@ -556,7 +556,7 @@ describe("promise app", () => {
     const role = await app.getAttribute({ text: "Submit" }, "role");
     expect(role).toBe("button");
     const missing = await app.getAttribute({ text: "Submit" }, "nonexistent");
-    expect(missing).toBeUndefined();
+    expect(missing).toBeNull();
   });
 
   test("isVisible returns true for visible elements and false for missing ones", async () => {

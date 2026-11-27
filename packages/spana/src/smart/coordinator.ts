@@ -176,15 +176,24 @@ export function createCoordinator<T extends string = string, R extends string = 
       const w = config.screenWidth ?? 1080;
       const h = config.screenHeight ?? 1920;
       const coords = computeSwipeCoords(direction, w, h, 0.3);
-      yield* driver.swipe(
-        coords.startX,
-        clampY(coords.startY),
-        coords.endX,
-        clampY(coords.endY),
-        500,
-      );
+      if (config.platform === "web" && driver.mouseWheel) {
+        yield* driver.mouseWheel(
+          w / 2,
+          h / 2,
+          coords.startX - coords.endX,
+          coords.startY - coords.endY,
+        );
+      } else {
+        yield* driver.swipe(
+          coords.startX,
+          clampY(coords.startY),
+          coords.endX,
+          clampY(coords.endY),
+          500,
+        );
+      }
       // On mobile, settle scroll momentum reactively when a DOM channel is live,
-      // otherwise use a compact 100ms settle instead of a long fixed sleep; web scrollBy is synchronous.
+      // otherwise use a compact 100ms settle instead of a long fixed sleep; web scroll is immediate.
       if (config.platform !== "web") {
         if (driver.domChannel?.isConnected() && driver.domChannel.waitForIdle) {
           yield* Effect.tryPromise({
@@ -222,7 +231,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           ),
         );
         if (matches) {
-          return matches.some((m) => m.visible && m.rect.width > 0 && m.rect.height > 0);
+          return matches.some((m) => m.visible);
         }
       }
       const probeTimeout = opts?.probeTimeout ?? 1;
@@ -301,9 +310,13 @@ export function createCoordinator<T extends string = string, R extends string = 
       const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
       const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
       const start = Date.now();
+      const deadline = start + timeout;
       let lastActual: string | undefined;
+      let lastReactiveError: string | undefined;
 
-      // Single-round-trip MutationObserver assertion wait on web/DOM channels (0 runner polling)
+      // Single-round-trip MutationObserver assertion wait on web/DOM channels (0 runner polling).
+      // Never treat an early `{ matched: false }` (e.g. empty/undefined actual or document swap)
+      // as final before `deadline` expires (2.13, 2.30).
       const domChannel = driver.domChannel;
       if (
         domMatchSpec &&
@@ -313,29 +326,69 @@ export function createCoordinator<T extends string = string, R extends string = 
         domChannel?.isConnected() &&
         domChannel.waitForMatch
       ) {
-        const reactive = yield* Effect.tryPromise({
-          try: () =>
-            domChannel.waitForMatch!(selector as Selector, {
-              ...domMatchSpec,
-              ...(negate ? { negate: true } : {}),
-              timeoutMs: timeout,
-            }),
-          catch: (err) =>
-            isInvalidSelectorError(err)
-              ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-              : null,
-        }).pipe(
-          Effect.catch((err) =>
-            err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-          ),
-        );
+        let sawReactiveResult = false;
+        let attemptIdx = 0;
+        while (attemptIdx === 0 || Date.now() < deadline) {
+          attemptIdx += 1;
+          const remaining = Math.max(10, deadline - Date.now());
+          const reactive = yield* Effect.tryPromise({
+            try: () =>
+              domChannel.waitForMatch!(selector as Selector, {
+                ...domMatchSpec,
+                ...(negate ? { negate: true } : {}),
+                timeoutMs: remaining,
+              }),
+            catch: (err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              lastReactiveError = msg;
+              if (isInvalidSelectorError(err) || /context closed/i.test(msg)) {
+                return new DriverError({ message: msg });
+              }
+              return null;
+            },
+          }).pipe(
+            Effect.catch((err) =>
+              err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+            ),
+          );
 
-        if (reactive) {
-          if (reactive.matched) return;
-          lastActual = reactive.actual;
+          if (reactive) {
+            sawReactiveResult = true;
+            if (reactive.matched) return;
+            if (reactive.actual !== undefined) {
+              lastActual = reactive.actual;
+            }
+            const earlyEmptyOrTransient =
+              Date.now() < deadline - 30 &&
+              (reactive.actual === undefined ||
+                reactive.actual === "" ||
+                Date.now() - start < Math.min(timeout, 250));
+            if (Date.now() >= deadline || !earlyEmptyOrTransient) {
+              if (Date.now() >= deadline) break;
+            }
+            yield* Effect.sleep(Duration.millis(Math.min(60, Math.max(10, deadline - Date.now()))));
+            continue;
+          }
+
+          if (lastReactiveError && /Iframe matching .* not found/i.test(lastReactiveError)) {
+            const err = formatError(lastActual, timeout);
+            return yield* new TextMismatchError({
+              message: `${err.message} (${lastReactiveError})`,
+              expected: err.expected,
+              actual: lastActual,
+              selector,
+            });
+          }
+          if (Date.now() >= deadline) break;
+          yield* Effect.sleep(Duration.millis(Math.min(60, Math.max(10, deadline - Date.now()))));
+        }
+
+        if (sawReactiveResult || Date.now() >= deadline) {
           const err = formatError(lastActual, timeout);
+          const detail =
+            lastActual === undefined && lastReactiveError ? ` (${lastReactiveError})` : "";
           return yield* new TextMismatchError({
-            message: err.message,
+            message: `${err.message}${detail}`,
             expected: err.expected,
             actual: lastActual,
             selector,
@@ -446,26 +499,27 @@ export function createCoordinator<T extends string = string, R extends string = 
     void,
     ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
   > =>
-    Effect.gen(function* () {
-      const element = yield* waitForElement(
-        driver,
-        selector,
-        parse,
-        { ...defaults, ...opts },
-        cache,
-      );
-      const isEnabled = element.enabled !== false;
-      if (isEnabled !== expectedEnabled) {
+    pollUntilMatch(
+      selector,
+      opts,
+      (el) => {
+        const isEnabled = el.enabled !== false;
+        return {
+          matched: isEnabled,
+          actual: isEnabled ? "enabled" : "disabled",
+        };
+      },
+      (actual, timeout) => {
         const state = expectedEnabled ? "enabled" : "disabled";
-        const actual = expectedEnabled ? "disabled" : "enabled";
-        return yield* new TextMismatchError({
-          message: `Expected element to be ${state} but it is ${actual} — selector: ${formatSelector(selector)}`,
+        const got = actual ?? (expectedEnabled ? "disabled" : "enabled");
+        return {
+          message: `Expected element to be ${state} but it is ${got} after ${timeout}ms — selector: ${formatSelector(selector)}`,
           expected: state,
-          actual,
-          selector,
-        });
-      }
-    });
+        };
+      },
+      { kind: "enabled" },
+      !expectedEnabled,
+    );
 
   const createAssertions = () => ({
     assertVisible: (
@@ -482,13 +536,31 @@ export function createCoordinator<T extends string = string, R extends string = 
 
     assertText: (
       selector: ExtendedSelector,
-      expected: string,
+      expected: string | RegExp,
       opts?: WaitOptions,
       negate: boolean = false,
     ): Effect.Effect<
       void,
       ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
     > => {
+      if (expected instanceof RegExp) {
+        return pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = normalizeWhitespace(el.textContent ?? el.text ?? "");
+            return { matched: expected.test(actual), actual };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected text NOT to match ${expected} but got "${actual ?? "(no text)"}" after ${timeout}ms`
+              : `Expected text to match ${expected} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
+          }),
+          { kind: "matchesText", patternSource: expected.source, patternFlags: expected.flags },
+          negate,
+        );
+      }
       const normalizedExpected = normalizeWhitespace(expected);
       return pollUntilMatch(
         selector,
@@ -728,44 +800,46 @@ export function createCoordinator<T extends string = string, R extends string = 
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
         const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
         const start = Date.now();
-        const domChannel = driver.domChannel;
-        if (
-          (config.platform === "web" || !config.platform) &&
-          !isSystemUISelector(selector) &&
-          !isRelativeSelectorLike(selector) &&
-          domChannel?.isConnected() &&
-          domChannel.waitForMatch
-        ) {
-          const reactive = yield* Effect.tryPromise({
-            try: () =>
-              domChannel.waitForMatch!(selector as Selector, {
-                kind: "attached",
-                ...(negate ? { negate: true } : {}),
-                timeoutMs: timeout,
-              }),
-            catch: (err) =>
-              isInvalidSelectorError(err)
-                ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                : null,
-          }).pipe(
-            Effect.catch((err) =>
-              err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-            ),
-          );
-          if (reactive) {
-            if (reactive.matched) return;
-            return yield* new TextMismatchError({
-              message: negate
-                ? `Expected element NOT to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`
-                : `Expected element to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`,
-              expected: negate ? "detached" : "attached",
-              actual: reactive.actual ?? (negate ? "attached" : "detached"),
-              selector,
-            });
-          }
-        }
+        const deadline = start + timeout;
+        let lastActual: string | undefined;
 
-        while (Date.now() - start < timeout) {
+        while (true) {
+          const domChannel = driver.domChannel;
+          if (
+            (config.platform === "web" || !config.platform) &&
+            !isSystemUISelector(selector) &&
+            !isRelativeSelectorLike(selector) &&
+            domChannel?.isConnected() &&
+            domChannel.waitForMatch
+          ) {
+            const remaining = Math.max(50, deadline - Date.now());
+            const reactive = yield* Effect.tryPromise({
+              try: () =>
+                domChannel.waitForMatch!(selector as Selector, {
+                  kind: "attached",
+                  ...(negate ? { negate: true } : {}),
+                  timeoutMs: remaining,
+                }),
+              catch: (err) =>
+                isInvalidSelectorError(err)
+                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                  : null,
+            }).pipe(
+              Effect.catch((err) =>
+                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+              ),
+            );
+            if (reactive) {
+              if (reactive.matched) return;
+              if (reactive.actual !== undefined) lastActual = reactive.actual;
+              if (Date.now() >= deadline) break;
+              yield* Effect.sleep(
+                Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
+              );
+              continue;
+            }
+          }
+
           cache.invalidate();
           let attached = false;
           if (
@@ -792,8 +866,12 @@ export function createCoordinator<T extends string = string, R extends string = 
             const root = parse(raw);
             attached = findElements(root, selector as Selector).length > 0;
           }
+          lastActual = attached ? "attached" : "detached";
           if (negate ? !attached : attached) return;
-          yield* Effect.sleep(Duration.millis(pollInterval));
+          if (Date.now() >= deadline) break;
+          yield* Effect.sleep(
+            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+          );
         }
 
         return yield* new TextMismatchError({
@@ -801,7 +879,7 @@ export function createCoordinator<T extends string = string, R extends string = 
             ? `Expected element NOT to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`
             : `Expected element to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`,
           expected: negate ? "detached" : "attached",
-          actual: negate ? "attached" : "detached",
+          actual: lastActual ?? (negate ? "attached" : "detached"),
           selector,
         });
       }),
@@ -901,7 +979,7 @@ export function createCoordinator<T extends string = string, R extends string = 
       selector: ExtendedSelector,
       name: string,
       opts?: WaitOptions,
-    ): Effect.Effect<string | undefined, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+    ): Effect.Effect<string | null, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
         const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
@@ -922,7 +1000,7 @@ export function createCoordinator<T extends string = string, R extends string = 
             }).pipe(Effect.catch(() => Effect.succeed(null)));
             if (matches && matches.length > 0) {
               const target = matches[matches.length - 1]!;
-              return target.attributes?.[name];
+              return target.attributes?.[name] ?? null;
             }
             if (Date.now() - start >= timeout) {
               return yield* new ElementNotFoundError({
@@ -942,7 +1020,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
           cache,
         );
-        return element.attributes?.[name];
+        return element.attributes?.[name] ?? null;
       }),
 
     assertScreenshot: (
@@ -1371,49 +1449,52 @@ export function createCoordinator<T extends string = string, R extends string = 
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
         const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
         const start = Date.now();
+        const deadline = start + timeout;
         let lastTitle = "";
         const matchesTitle = (t: string): boolean =>
           expected instanceof RegExp ? expected.test(t) : t === expected;
 
-        const domChannel = driver.domChannel;
-        if (
-          (config.platform === "web" || !config.platform) &&
-          domChannel?.isConnected() &&
-          domChannel.waitForMatch
-        ) {
-          const reactive = yield* Effect.tryPromise({
-            try: () =>
-              domChannel.waitForMatch!("", {
-                kind: "title",
-                ...(expected instanceof RegExp
-                  ? { patternSource: expected.source, patternFlags: expected.flags }
-                  : { expected }),
-                ...(negate ? { negate: true } : {}),
-                timeoutMs: timeout,
-              }),
-            catch: () => null,
-          }).pipe(Effect.catch(() => Effect.succeed(null)));
+        while (true) {
+          const domChannel = driver.domChannel;
+          if (
+            (config.platform === "web" || !config.platform) &&
+            domChannel?.isConnected() &&
+            domChannel.waitForMatch
+          ) {
+            const remaining = Math.max(50, deadline - Date.now());
+            const reactive = yield* Effect.tryPromise({
+              try: () =>
+                domChannel.waitForMatch!("", {
+                  kind: "title",
+                  ...(expected instanceof RegExp
+                    ? { patternSource: expected.source, patternFlags: expected.flags }
+                    : { expected }),
+                  ...(negate ? { negate: true } : {}),
+                  timeoutMs: remaining,
+                }),
+              catch: () => null,
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
 
-          if (reactive) {
-            if (reactive.matched) return;
-            return yield* new TextMismatchError({
-              message: negate
-                ? `Expected title NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`
-                : `Expected title ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`,
-              expected: negate ? `not ${String(expected)}` : String(expected),
-              actual: reactive.actual ?? "",
-              selector: "title",
-            });
+            if (reactive) {
+              if (reactive.matched) return;
+              if (reactive.actual !== undefined) lastTitle = reactive.actual;
+              if (Date.now() >= deadline) break;
+              yield* Effect.sleep(
+                Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
+              );
+              continue;
+            }
           }
-        }
 
-        while (Date.now() - start < timeout) {
           const title = yield* driver
             .evaluate<string>("typeof document !== 'undefined' ? String(document.title || '') : ''")
             .pipe(Effect.catch(() => Effect.succeed("")));
           lastTitle = title;
           if (negate ? !matchesTitle(title) : matchesTitle(title)) return;
-          yield* Effect.sleep(Duration.millis(pollInterval));
+          if (Date.now() >= deadline) break;
+          yield* Effect.sleep(
+            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+          );
         }
 
         return yield* new TextMismatchError({
@@ -1437,49 +1518,50 @@ export function createCoordinator<T extends string = string, R extends string = 
         const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
         const visibleOnly = Boolean(opts?.visible);
         const start = Date.now();
+        const deadline = start + timeout;
         let lastCount = -1;
+        let lastActualStr: string | undefined;
 
-        const domChannel = driver.domChannel;
-        if (
-          config.platform === "web" &&
-          !isSystemUISelector(selector) &&
-          !isRelativeSelectorLike(selector) &&
-          domChannel?.isConnected() &&
-          domChannel.waitForMatch
-        ) {
-          const reactive = yield* Effect.tryPromise({
-            try: () =>
-              domChannel.waitForMatch!(selector as Selector, {
-                kind: "count",
-                expectedCount,
-                ...(visibleOnly ? { visibleOnly: true } : {}),
-                ...(negate ? { negate: true } : {}),
-                timeoutMs: timeout,
-              }),
-            catch: (err) =>
-              isInvalidSelectorError(err)
-                ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                : null,
-          }).pipe(
-            Effect.catch((err) =>
-              err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-            ),
-          );
+        while (true) {
+          const domChannel = driver.domChannel;
+          if (
+            (config.platform === "web" || !config.platform) &&
+            !isSystemUISelector(selector) &&
+            !isRelativeSelectorLike(selector) &&
+            domChannel?.isConnected() &&
+            domChannel.waitForMatch
+          ) {
+            const remaining = Math.max(50, deadline - Date.now());
+            const reactive = yield* Effect.tryPromise({
+              try: () =>
+                domChannel.waitForMatch!(selector as Selector, {
+                  kind: "count",
+                  expectedCount,
+                  ...(visibleOnly ? { visibleOnly: true } : {}),
+                  ...(negate ? { negate: true } : {}),
+                  timeoutMs: remaining,
+                }),
+              catch: (err) =>
+                isInvalidSelectorError(err)
+                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                  : null,
+            }).pipe(
+              Effect.catch((err) =>
+                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+              ),
+            );
 
-          if (reactive) {
-            if (reactive.matched) return;
-            return yield* new TextMismatchError({
-              message: negate
-                ? `Expected count NOT to be ${expectedCount} after ${timeout}ms — selector: ${formatSelector(selector)}`
-                : `Expected count ${expectedCount} but got ${reactive.actual ?? "0"} after ${timeout}ms — selector: ${formatSelector(selector)}`,
-              expected: negate ? `not ${expectedCount}` : String(expectedCount),
-              actual: reactive.actual ?? "0",
-              selector,
-            });
+            if (reactive) {
+              if (reactive.matched) return;
+              if (reactive.actual !== undefined) lastActualStr = reactive.actual;
+              if (Date.now() >= deadline) break;
+              yield* Effect.sleep(
+                Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
+              );
+              continue;
+            }
           }
-        }
 
-        while (Date.now() - start < timeout) {
           cache.invalidate();
           if (
             !isSystemUISelector(selector) &&
@@ -1500,8 +1582,12 @@ export function createCoordinator<T extends string = string, R extends string = 
             if (matches) {
               const count = visibleOnly ? matches.filter((m) => m.visible).length : matches.length;
               lastCount = count;
+              lastActualStr = String(count);
               if (negate ? count !== expectedCount : count === expectedCount) return;
-              yield* Effect.sleep(Duration.millis(pollInterval));
+              if (Date.now() >= deadline) break;
+              yield* Effect.sleep(
+                Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+              );
               continue;
             }
           }
@@ -1513,16 +1599,21 @@ export function createCoordinator<T extends string = string, R extends string = 
             ? matched.filter((el) => el.visible !== false).length
             : matched.length;
           lastCount = count;
+          lastActualStr = String(count);
           if (negate ? count !== expectedCount : count === expectedCount) return;
-          yield* Effect.sleep(Duration.millis(pollInterval));
+          if (Date.now() >= deadline) break;
+          yield* Effect.sleep(
+            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+          );
         }
 
+        const finalActual = lastActualStr ?? String(lastCount >= 0 ? lastCount : 0);
         return yield* new TextMismatchError({
           message: negate
             ? `Expected count NOT to be ${expectedCount} after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected count ${expectedCount} but got ${lastCount >= 0 ? lastCount : 0} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            : `Expected count ${expectedCount} but got ${finalActual} after ${timeout}ms — selector: ${formatSelector(selector)}`,
           expected: negate ? `not ${expectedCount}` : String(expectedCount),
-          actual: String(lastCount >= 0 ? lastCount : 0),
+          actual: finalActual,
           selector,
         });
       }),
@@ -1536,6 +1627,7 @@ export function createCoordinator<T extends string = string, R extends string = 
         const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
         const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
         const start = Date.now();
+        const deadline = start + timeout;
         let lastUrl = "";
 
         const matchesUrl = (url: string): boolean =>
@@ -1543,53 +1635,70 @@ export function createCoordinator<T extends string = string, R extends string = 
             ? expected.test(url)
             : url === expected || url.includes(expected);
 
-        const domChannel = driver.domChannel;
-        if (
-          (config.platform === "web" || !config.platform) &&
-          domChannel?.isConnected() &&
-          domChannel.waitForMatch
-        ) {
-          const reactive = yield* Effect.tryPromise({
-            try: () =>
-              domChannel.waitForMatch!("", {
-                kind: "url",
-                ...(expected instanceof RegExp
-                  ? { patternSource: expected.source, patternFlags: expected.flags }
-                  : { expected }),
-                ...(negate ? { negate: true } : {}),
-                timeoutMs: timeout,
-              }),
-            catch: () => null,
-          }).pipe(Effect.catch(() => Effect.succeed(null)));
+        const initialNavUrls = driver.getNavigationUrls ? driver.getNavigationUrls() : [];
+        const navMark = initialNavUrls.length;
+        const lastPreMarkUrl = navMark > 0 ? initialNavUrls[navMark - 1] : undefined;
 
-          if (reactive) {
-            if (reactive.matched) return;
-            return yield* new TextMismatchError({
-              message: negate
-                ? `Expected URL NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`
-                : `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(reactive.actual ?? "")} after ${timeout}ms`,
-              expected: negate ? `not ${String(expected)}` : String(expected),
-              actual: reactive.actual ?? "",
-              selector: "url",
-            });
-          }
-        }
+        const checkRecentNavUrls = (): boolean => {
+          if (negate || !driver.getNavigationUrls) return false;
+          const all = driver.getNavigationUrls();
+          const sinceMark = all.slice(Math.min(navMark, all.length));
+          if (sinceMark.some((u) => matchesUrl(u))) return true;
+          // Also check the latest committed URL right before waitForURL started (redirect right before call)
+          if (lastPreMarkUrl && matchesUrl(lastPreMarkUrl)) return true;
+          return false;
+        };
 
-        while (Date.now() - start < timeout) {
-          if (!negate && driver.getNavigationUrls) {
-            const recentUrls = driver.getNavigationUrls();
-            if (recentUrls.some((u) => matchesUrl(u))) return;
-          }
-          const url = driver.getUrl
-            ? yield* driver.getUrl()
-            : yield* driver
+        const readCurrentUrl = () =>
+          driver.getUrl
+            ? driver.getUrl().pipe(Effect.catch(() => Effect.succeed("")))
+            : driver
                 .evaluate<string>(
                   "typeof window !== 'undefined' && window.location ? window.location.href : ''",
                 )
                 .pipe(Effect.catch(() => Effect.succeed("")));
-          lastUrl = url;
-          if (negate ? !matchesUrl(url) : matchesUrl(url)) return;
-          yield* Effect.sleep(Duration.millis(pollInterval));
+
+        // Immediate check before invoking reactive DOM wait (catches rapid redirect & current URL)
+        const initialUrl = yield* readCurrentUrl();
+        lastUrl = initialUrl;
+        if (negate ? !matchesUrl(initialUrl) : matchesUrl(initialUrl) || checkRecentNavUrls()) {
+          return;
+        }
+
+        while (Date.now() < deadline) {
+          if (checkRecentNavUrls()) return;
+          const domChannel = driver.domChannel;
+          if (
+            (config.platform === "web" || !config.platform) &&
+            domChannel?.isConnected() &&
+            domChannel.waitForMatch
+          ) {
+            const remaining = Math.max(50, deadline - Date.now());
+            const reactive = yield* Effect.tryPromise({
+              try: () =>
+                domChannel.waitForMatch!("", {
+                  kind: "url",
+                  ...(expected instanceof RegExp
+                    ? { patternSource: expected.source, patternFlags: expected.flags }
+                    : { expected }),
+                  ...(negate ? { negate: true } : {}),
+                  timeoutMs: Math.min(remaining, 300),
+                }),
+              catch: () => null,
+            }).pipe(Effect.catch(() => Effect.succeed(null)));
+
+            if (reactive?.matched) return;
+            if (reactive?.actual) lastUrl = reactive.actual;
+            if (checkRecentNavUrls()) return;
+          }
+
+          const url = yield* readCurrentUrl();
+          if (url) lastUrl = url;
+          if (negate ? !matchesUrl(url) : matchesUrl(url) || checkRecentNavUrls()) return;
+          if (Date.now() >= deadline) break;
+          yield* Effect.sleep(
+            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+          );
         }
 
         return yield* new TextMismatchError({
@@ -1648,11 +1757,13 @@ export function createCoordinator<T extends string = string, R extends string = 
           selector,
           opts,
           (el) => {
-            const actual = normalizeRole(
-              platform as import("../schemas/selector.js").Platform,
-              el.elementType ?? "",
-              el.attributes ?? {},
-            );
+            const actual =
+              el.role ??
+              normalizeRole(
+                platform as import("../schemas/selector.js").Platform,
+                el.elementType ?? "",
+                el.attributes ?? {},
+              );
             return { matched: actual === expectedRole, actual };
           },
           (actual, timeout) => ({
@@ -1661,7 +1772,7 @@ export function createCoordinator<T extends string = string, R extends string = 
               : `Expected role "${expectedRole}" but got "${actual ?? "(unknown)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
             expected: negate ? `not ${expectedRole}` : expectedRole,
           }),
-          undefined,
+          { kind: "role", expected: expectedRole },
           negate,
         );
       }),
@@ -1877,27 +1988,92 @@ export function createCoordinator<T extends string = string, R extends string = 
       }),
   });
 
-  return {
-    tap: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const effectiveTapMode: TapMode = opts?.tapMode ?? config.tapMode ?? "native";
-        const totalTimeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const deadline = Date.now() + totalTimeout;
-        const mergedOpts: WaitOptions = {
-          ...defaults,
-          ...opts,
-          tapMode: effectiveTapMode,
-          platform: opts?.platform ?? config.platform,
-        };
-        let attempts = 0;
-        const canInlineTapGuard =
+  const assertions = createAssertions();
+
+  const runGuardedPointerAction = (
+    selector: ExtendedSelector,
+    opts: WaitOptions | undefined,
+    actionLabel: string,
+    performPointer: (
+      x: number,
+      y: number,
+      resolved: { channel: string; element: Element },
+    ) => Effect.Effect<void, DriverError>,
+    options?: {
+      allowDomTap?: boolean;
+      shouldSkip?: (element: Element) => boolean;
+    },
+  ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+    Effect.gen(function* () {
+      const effectiveTapMode: TapMode = opts?.tapMode ?? config.tapMode ?? "native";
+      const totalTimeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+      const deadline = Date.now() + totalTimeout;
+      const mergedOpts: WaitOptions = {
+        ...defaults,
+        ...opts,
+        tapMode: effectiveTapMode,
+        platform: opts?.platform ?? config.platform,
+      };
+      let attempts = 0;
+      const canInlineTapGuard =
+        !opts?.force &&
+        !(options?.allowDomTap && effectiveTapMode === "dom") &&
+        (mergedOpts.platform === "web" || !mergedOpts.platform) &&
+        (mergedOpts.settleTimeout ?? 0) === 0 &&
+        !isRelativeSelectorLike(selector) &&
+        !isSystemUISelector(selector) &&
+        !(
+          typeof selector === "object" &&
+          selector !== null &&
+          "frame" in selector &&
+          selector.frame
+        ) &&
+        Boolean(driver.domChannel?.isConnected()) &&
+        Boolean(driver.domChannel?.supportsInlineTapGuard?.());
+
+      while (true) {
+        attempts += 1;
+        const remaining = Math.max(50, deadline - Date.now());
+        const resolved = yield* waitForResolvedElementResult(
+          driver,
+          selector,
+          parse,
+          true,
+          {
+            ...mergedOpts,
+            timeout: remaining,
+            ...(canInlineTapGuard ? { armTapGuard: true } : {}),
+          },
+          cache,
+        );
+        if (options?.shouldSkip?.(resolved.element)) {
+          if (canInlineTapGuard && driver.domChannel?.checkTapGuard) {
+            yield* Effect.tryPromise({
+              try: () => driver.domChannel!.checkTapGuard!(),
+              catch: () => false,
+            }).pipe(Effect.catch(() => Effect.succeed(false)));
+          }
+          return false;
+        }
+        if (
+          options?.allowDomTap &&
+          resolved.channel === "dom" &&
+          effectiveTapMode === "dom" &&
+          driver.domChannel
+        ) {
+          const tapped = yield* Effect.tryPromise({
+            try: () => driver.domChannel!.tapDom(selector as Selector),
+            catch: (e) => new DriverError({ message: `DOM tap failed: ${e}` }),
+          });
+          if (tapped) {
+            yield* afterMutation();
+            return true;
+          }
+        }
+        const { x, y } = centerOf(resolved.element);
+        const guardActive =
           !opts?.force &&
-          effectiveTapMode !== "dom" &&
-          (mergedOpts.platform === "web" || !mergedOpts.platform) &&
-          (mergedOpts.settleTimeout ?? 0) === 0 &&
+          resolved.channel === "dom" &&
           !isRelativeSelectorLike(selector) &&
           !isSystemUISelector(selector) &&
           !(
@@ -1906,142 +2082,114 @@ export function createCoordinator<T extends string = string, R extends string = 
             "frame" in selector &&
             selector.frame
           ) &&
-          Boolean(driver.domChannel?.isConnected()) &&
-          Boolean(driver.domChannel?.supportsInlineTapGuard?.());
+          driver.domChannel?.isConnected();
 
-        while (true) {
-          attempts += 1;
-          const remaining = Math.max(50, deadline - Date.now());
-          const resolved = yield* waitForResolvedElementResult(
-            driver,
-            selector,
-            parse,
-            true,
-            {
-              ...mergedOpts,
-              timeout: remaining,
-              ...(canInlineTapGuard ? { armTapGuard: true } : {}),
-            },
-            cache,
-          );
-          if (resolved.channel === "dom" && effectiveTapMode === "dom" && driver.domChannel) {
-            const tapped = yield* Effect.tryPromise({
-              try: () => driver.domChannel!.tapDom(selector as Selector),
-              catch: (e) => new DriverError({ message: `DOM tap failed: ${e}` }),
-            });
-            if (tapped) {
-              yield* afterMutation();
-              return;
+        if (guardActive && canInlineTapGuard) {
+          yield* performPointer(x, y, resolved);
+          const missed = yield* Effect.tryPromise({
+            try: () => driver.domChannel!.checkTapGuard!(),
+            catch: () => false,
+          }).pipe(Effect.catch(() => Effect.succeed(false)));
+          if (missed) {
+            if (Date.now() < deadline && attempts < 20) {
+              yield* Effect.sleep(Duration.millis(25));
+              continue;
             }
+            return yield* new DriverError({
+              message: `Element moved before ${actionLabel} could land (suppressed misdirected click after ${attempts} attempt(s) within ${totalTimeout}ms) — selector: ${formatSelector(selector)}`,
+            });
           }
-          const { x, y } = centerOf(resolved.element);
-          const guardActive =
-            !opts?.force &&
-            resolved.channel === "dom" &&
-            !isRelativeSelectorLike(selector) &&
-            !isSystemUISelector(selector) &&
-            !(
-              typeof selector === "object" &&
-              selector !== null &&
-              "frame" in selector &&
-              selector.frame
-            ) &&
-            driver.domChannel?.isConnected();
+        } else if (guardActive) {
+          const armed = yield* Effect.tryPromise({
+            try: () =>
+              driver.domChannel!.evaluate<boolean>(
+                `((tx, ty) => {
+                  try {
+                    const expected = document.elementFromPoint(tx, ty);
+                    if (!expected) return false;
+                    if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+                    window.__spanaTapMissed = false;
+                    const match = (t) => {
+                      if (!t) return false;
+                      if (t === expected) return true;
+                      if (expected.contains && expected.contains(t)) return true;
+                      if (expected.tagName === "INPUT" && t.tagName === "LABEL" && t.control === expected) return true;
+                      if (expected.tagName === "LABEL" && expected.control && (t === expected.control || (expected.control.contains && expected.control.contains(t)))) return true;
+                      return false;
+                    };
+                    const onEvt = (e) => {
+                      if (!e.isTrusted) return;
+                      const hit = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+                      if (!match(hit) && !match(e.target)) {
+                        e.stopImmediatePropagation();
+                        e.preventDefault();
+                        window.__spanaTapMissed = true;
+                      }
+                    };
+                    window.addEventListener("pointerdown", onEvt, true);
+                    window.addEventListener("mousedown", onEvt, true);
+                    window.addEventListener("click", onEvt, true);
+                    window.__spanaTapGuardCleanup = () => {
+                      window.removeEventListener("pointerdown", onEvt, true);
+                      window.removeEventListener("mousedown", onEvt, true);
+                      window.removeEventListener("click", onEvt, true);
+                      delete window.__spanaTapGuardCleanup;
+                    };
+                    return true;
+                  } catch { return false; }
+                })(${x}, ${y})`,
+              ),
+            catch: () => false,
+          }).pipe(Effect.catch(() => Effect.succeed(false)));
 
-          if (guardActive && canInlineTapGuard) {
-            // Inline moving-target guard (v0.14): already armed inside waitForSelector()
-            // with 0 pre-tap eval RTTs, self-cleans on mouseup/click, and verifies
-            // deterministically on the Renderer main thread via pre-JIT'd checkTapGuard().
-            yield* driver.tapAtCoordinate(x, y);
+          yield* performPointer(x, y, resolved);
+
+          if (armed) {
+            const fastEval = (
+              driver.domChannel as { evaluateFast?: <T>(script: string) => Promise<T> }
+            ).evaluateFast;
+            const checkScript = `(() => {
+                    const m = Boolean(window.__spanaTapMissed);
+                    if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+                    delete window.__spanaTapMissed;
+                    return m;
+                  })()`;
             const missed = yield* Effect.tryPromise({
-              try: () => driver.domChannel!.checkTapGuard!(),
+              try: () =>
+                fastEval
+                  ? fastEval.call(driver.domChannel, checkScript)
+                  : driver.domChannel!.evaluate<boolean>(checkScript),
               catch: () => false,
             }).pipe(Effect.catch(() => Effect.succeed(false)));
+
             if (missed) {
               if (Date.now() < deadline && attempts < 20) {
                 yield* Effect.sleep(Duration.millis(25));
                 continue;
               }
               return yield* new DriverError({
-                message: `Element moved before tap could land (suppressed misdirected click after ${attempts} attempt(s) within ${totalTimeout}ms) — selector: ${formatSelector(selector)}`,
+                message: `Element moved before ${actionLabel} could land (suppressed misdirected click after ${attempts} attempt(s) within ${totalTimeout}ms) — selector: ${formatSelector(selector)}`,
               });
             }
-          } else if (guardActive) {
-            // Moving-target protection (1.11): arm a capture-phase click/pointerdown guard
-            // targeting the resolved element at (x, y). If the element shifts before the native
-            // mouse event lands, suppress the misdirected click and retry!
-            const armed = yield* Effect.tryPromise({
-              try: () =>
-                driver.domChannel!.evaluate<boolean>(
-                  `((tx, ty) => {
-                    try {
-                      const expected = document.elementFromPoint(tx, ty);
-                      if (!expected) return false;
-                      if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
-                      window.__spanaTapMissed = false;
-                      const match = (t) => t === expected || (expected.contains && expected.contains(t)) || (t && t.contains && t.contains(expected));
-                      const onEvt = (e) => {
-                        if (!e.isTrusted) return;
-                        const hit = document.elementFromPoint(e.clientX, e.clientY) || e.target;
-                        if (!match(hit) && !match(e.target)) {
-                          e.stopImmediatePropagation();
-                          e.preventDefault();
-                          window.__spanaTapMissed = true;
-                        }
-                      };
-                      window.addEventListener("pointerdown", onEvt, true);
-                      window.addEventListener("mousedown", onEvt, true);
-                      window.addEventListener("click", onEvt, true);
-                      window.__spanaTapGuardCleanup = () => {
-                        window.removeEventListener("pointerdown", onEvt, true);
-                        window.removeEventListener("mousedown", onEvt, true);
-                        window.removeEventListener("click", onEvt, true);
-                        delete window.__spanaTapGuardCleanup;
-                      };
-                      return true;
-                    } catch { return false; }
-                  })(${x}, ${y})`,
-                ),
-              catch: () => false,
-            }).pipe(Effect.catch(() => Effect.succeed(false)));
-
-            yield* driver.tapAtCoordinate(x, y);
-
-            if (armed) {
-              const fastEval = (
-                driver.domChannel as { evaluateFast?: <T>(script: string) => Promise<T> }
-              ).evaluateFast;
-              const checkScript = `(() => {
-                      const m = Boolean(window.__spanaTapMissed);
-                      if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
-                      delete window.__spanaTapMissed;
-                      return m;
-                    })()`;
-              const missed = yield* Effect.tryPromise({
-                try: () =>
-                  fastEval
-                    ? fastEval.call(driver.domChannel, checkScript)
-                    : driver.domChannel!.evaluate<boolean>(checkScript),
-                catch: () => false,
-              }).pipe(Effect.catch(() => Effect.succeed(false)));
-
-              if (missed) {
-                if (Date.now() < deadline && attempts < 20) {
-                  yield* Effect.sleep(Duration.millis(25));
-                  continue;
-                }
-                return yield* new DriverError({
-                  message: `Element moved before tap could land (suppressed misdirected click after ${attempts} attempt(s) within ${totalTimeout}ms) — selector: ${formatSelector(selector)}`,
-                });
-              }
-            }
-          } else {
-            yield* driver.tapAtCoordinate(x, y);
           }
-          yield* afterMutation();
-          return;
+        } else {
+          yield* performPointer(x, y, resolved);
         }
-      }),
+        yield* afterMutation();
+        return true;
+      }
+    });
+
+  return {
+    tap: (
+      selector: ExtendedSelector,
+      opts?: WaitOptions,
+    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+      Effect.asVoid(
+        runGuardedPointerAction(selector, opts, "tap", (x, y) => driver.tapAtCoordinate(x, y), {
+          allowDomTap: true,
+        }),
+      ),
 
     tapXY: (x: number, y: number): Effect.Effect<void, DriverError> =>
       Effect.gen(function* () {
@@ -2053,38 +2201,26 @@ export function createCoordinator<T extends string = string, R extends string = 
       selector: ExtendedSelector,
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const element = yield* waitForActionElement(
-          driver,
-          selector,
-          parse,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
-        );
-        const { x, y } = centerOf(element);
-        yield* driver.tapAtCoordinate(x, y);
-        yield* Effect.promise(() => new Promise((r) => setTimeout(r, 200)));
-        yield* driver.tapAtCoordinate(x, y);
-        yield* afterMutation();
-      }),
+      Effect.asVoid(
+        runGuardedPointerAction(selector, opts, "doubleTap", (x, y) =>
+          Effect.gen(function* () {
+            yield* driver.tapAtCoordinate(x, y);
+            yield* Effect.promise(() => new Promise((r) => setTimeout(r, 200)));
+            yield* driver.tapAtCoordinate(x, y);
+          }),
+        ),
+      ),
 
     longPress: (
       selector: ExtendedSelector,
       duration: number = 1000,
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const element = yield* waitForActionElement(
-          driver,
-          selector,
-          parse,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
-        );
-        const { x, y } = centerOf(element);
-        yield* driver.longPressAtCoordinate(x, y, duration);
-        yield* afterMutation();
-      }),
+      Effect.asVoid(
+        runGuardedPointerAction(selector, opts, "longPress", (x, y) =>
+          driver.longPressAtCoordinate(x, y, duration),
+        ),
+      ),
 
     longPressXY: (
       x: number,
@@ -2282,21 +2418,28 @@ export function createCoordinator<T extends string = string, R extends string = 
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
-        const resolved = yield* waitForResolvedElementResult(
-          driver,
+        const totalTimeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const deadline = Date.now() + totalTimeout;
+        const clicked = yield* runGuardedPointerAction(
           selector,
-          parse,
-          true,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
+          opts,
+          "check",
+          (x, y) => driver.tapAtCoordinate(x, y),
+          {
+            shouldSkip: (el) => el.checked === true || el.attributes?.["aria-checked"] === "true",
+          },
         );
-        const alreadyChecked =
-          resolved.element.checked === true ||
-          resolved.element.attributes?.["aria-checked"] === "true";
-        if (alreadyChecked) return;
-        const { x, y } = centerOf(resolved.element);
-        yield* driver.tapAtCoordinate(x, y);
-        yield* afterMutation();
+        if (!clicked) return;
+        const verifyTimeout = Math.max(500, deadline - Date.now());
+        yield* assertions.assertChecked(selector, { ...opts, timeout: verifyTimeout }, false).pipe(
+          Effect.catchTag("TextMismatchError", () =>
+            Effect.fail(
+              new DriverError({
+                message: `check() clicked element but it did not become checked within ${verifyTimeout}ms — selector: ${formatSelector(selector)}`,
+              }),
+            ),
+          ),
+        );
       }),
 
     uncheck: (
@@ -2304,21 +2447,29 @@ export function createCoordinator<T extends string = string, R extends string = 
       opts?: WaitOptions,
     ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
       Effect.gen(function* () {
-        const resolved = yield* waitForResolvedElementResult(
-          driver,
+        const totalTimeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+        const deadline = Date.now() + totalTimeout;
+        const clicked = yield* runGuardedPointerAction(
           selector,
-          parse,
-          true,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
+          opts,
+          "uncheck",
+          (x, y) => driver.tapAtCoordinate(x, y),
+          {
+            shouldSkip: (el) =>
+              !(el.checked === true || el.attributes?.["aria-checked"] === "true"),
+          },
         );
-        const currentlyChecked =
-          resolved.element.checked === true ||
-          resolved.element.attributes?.["aria-checked"] === "true";
-        if (!currentlyChecked) return;
-        const { x, y } = centerOf(resolved.element);
-        yield* driver.tapAtCoordinate(x, y);
-        yield* afterMutation();
+        if (!clicked) return;
+        const verifyTimeout = Math.max(500, deadline - Date.now());
+        yield* assertions.assertChecked(selector, { ...opts, timeout: verifyTimeout }, true).pipe(
+          Effect.catchTag("TextMismatchError", () =>
+            Effect.fail(
+              new DriverError({
+                message: `uncheck() clicked element but it remained checked after ${verifyTimeout}ms — selector: ${formatSelector(selector)}`,
+              }),
+            ),
+          ),
+        );
       }),
 
     blur: (
@@ -2598,6 +2749,6 @@ export function createCoordinator<T extends string = string, R extends string = 
         yield* afterMutation();
       }),
 
-    ...createAssertions(),
+    ...assertions,
   };
 }

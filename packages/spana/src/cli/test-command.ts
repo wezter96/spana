@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   discoverFlows,
   loadTestSource,
@@ -42,13 +44,13 @@ import {
 } from "./iteration.js";
 import { collectWatchRoots } from "./watch-mode.js";
 import {
-  createRemoteFlowClaimer,
+  createRemoteWorkUnitClaimer,
   planProcessPool,
   runMultiProcessPool,
   startSharedFlowQueueServer,
   writeWorkerProcessReport,
 } from "../core/worker-pool.js";
-import { orderFlowsLongestFirst } from "../core/parallel.js";
+import { buildOrderedWorkUnits } from "../core/parallel.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startWebServers } from "../runtime/web-server.js";
@@ -109,6 +111,75 @@ export interface TestCommandOptions {
   json?: boolean;
   /** Working directory for config discovery, relative paths, and git filters (defaults to `process.cwd()`). */
   cwd?: string;
+}
+
+/** Structured result returned by `runTestCommandWithResult()`. */
+export interface TestCommandResult {
+  success: boolean;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  flaky: number;
+  durationMs: number;
+  results: import("../core/engine.js").TestResult[];
+}
+
+/**
+ * Resolve Spana's own CLI entrypoint independent of `process.argv[1]` so calling
+ * `runTestCommand({ processes: N })` in-process from Vitest / Bun test / Node scripts
+ * spawns Spana's CLI rather than re-invoking the host test runner (1.23).
+ */
+export function resolveSpanaCliEntrypoint(): string | undefined {
+  const candidates = [
+    new URL("./cli.js", import.meta.url),
+    new URL("../cli.js", import.meta.url),
+    new URL("./index.ts", import.meta.url),
+    new URL("../cli/index.ts", import.meta.url),
+  ];
+  for (const url of candidates) {
+    try {
+      const candidatePath = fileURLToPath(url);
+      if (existsSync(candidatePath)) return candidatePath;
+    } catch {
+      // ignore invalid URL
+    }
+  }
+  return process.argv[1];
+}
+
+function emptyTestCommandResult(success: boolean, durationMs = 0): TestCommandResult {
+  return {
+    success,
+    total: 0,
+    passed: 0,
+    failed: 0,
+    skipped: 0,
+    flaky: 0,
+    durationMs,
+    results: [],
+  };
+}
+
+function summarizeTestResults(
+  results: import("../core/engine.js").TestResult[],
+  durationMs: number,
+  successOverride?: boolean,
+): TestCommandResult {
+  const passed = results.filter((r) => r.status === "passed").length;
+  const failed = results.filter((r) => r.status === "failed").length;
+  const skipped = results.filter((r) => r.status === "skipped").length;
+  const flaky = results.filter((r) => r.flaky).length;
+  return {
+    success: successOverride ?? failed === 0,
+    total: results.length,
+    passed,
+    failed,
+    skipped,
+    flaky,
+    durationMs,
+    results,
+  };
 }
 
 function validateOptions(opts: TestCommandOptions): string | null {
@@ -947,6 +1018,8 @@ function createResultHandler(
     for (const reporter of reporters) {
       if (redacted.status === "passed") {
         reporter.onFlowPass?.(redacted);
+      } else if (redacted.status === "skipped") {
+        reporter.onFlowSkip?.(redacted);
       } else if (redacted.status === "failed") {
         reporter.onFlowFail?.(redacted);
         if (opts.verbose && redacted.error) {
@@ -1014,18 +1087,30 @@ async function reportToCloudProvider(
 interface RunTestCommandOnceResult {
   success: boolean;
   watchRoots: string[];
+  summary: TestCommandResult;
 }
 
 async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestCommandOnceResult> {
+  const runStartedAt = Date.now();
   const validationError = validateOptions(opts);
   if (validationError) {
     console.log(validationError);
-    return { success: false, watchRoots: [] };
+    return {
+      success: false,
+      watchRoots: [],
+      summary: emptyTestCommandResult(false, Date.now() - runStartedAt),
+    };
   }
 
   // 1. Load config and resolve execution context
   const ctxResult = await resolveExecutionContext(opts);
-  if (!ctxResult.ok) return { success: ctxResult.success, watchRoots: [] };
+  if (!ctxResult.ok) {
+    return {
+      success: ctxResult.success,
+      watchRoots: [],
+      summary: emptyTestCommandResult(ctxResult.success, Date.now() - runStartedAt),
+    };
+  }
   const { config, configPath, configDir, executionMode, resolveFromConfig } = ctxResult.context;
 
   // Named projects DAG execution (`config.projects` or `--project <name>`)
@@ -1035,10 +1120,16 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       plan = resolveProjectExecutionPlan(config.projects, opts.projects);
     } catch (error) {
       console.log(error instanceof Error ? error.message : String(error));
-      return { success: false, watchRoots: [] };
+      return {
+        success: false,
+        watchRoots: [],
+        summary: emptyTestCommandResult(false, Date.now() - runStartedAt),
+      };
     }
 
-    const webServers = await startWebServers(config.webServer, { cwd: configDir });
+    const webServers = process.env.SPANA_WORKER_PROCESS
+      ? { stopAll: async () => {} }
+      : await startWebServers(config.webServer, { cwd: configDir });
     const projReporterNames = opts.reporter?.trim()
       ? opts.reporter
       : config.reporters && config.reporters.length > 0
@@ -1055,6 +1146,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     const allProjectPlatforms = new Set<Platform>();
     const projectsStart = Date.now();
     let allPassed = true;
+    const cliEntry = resolveSpanaCliEntrypoint();
     try {
       const executeProject = async (project: import("../core/projects.js").ProjectConfig) => {
         const projFlowDir = opts.flowPath
@@ -1086,7 +1178,6 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           console.log(`[project:${project.name}] No matching flows, skipping.`);
           return true;
         }
-        console.log(`\n[project:${project.name}] Running ${matched.length} flow(s)...`);
         const projConfig: ProvConfig = {
           ...config,
           projects: undefined,
@@ -1111,6 +1202,107 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
             ...(project.retries !== undefined ? { retries: project.retries } : {}),
           },
         };
+
+        // Honor --processes / defaults.processes inside project runs too (3.12)
+        const projMaxWorkersPerProc = projConfig.defaults?.maxWorkersPerProcess;
+        const projRequestedProcesses = opts.processes ?? projConfig.defaults?.processes;
+        const projRequestedWorkers =
+          opts.workers ?? projConfig.defaults?.workers ?? projRequestedProcesses;
+        if (
+          projRequestedWorkers &&
+          !opts.shard &&
+          !opts.watch &&
+          !opts.device &&
+          !process.env.SPANA_WORKER_PROCESS &&
+          cliEntry
+        ) {
+          const orderedProjUnits = buildOrderedWorkUnits(matched);
+          const projPlan = planProcessPool(
+            projRequestedWorkers,
+            projMaxWorkersPerProc,
+            projRequestedProcesses,
+          );
+          const effectiveProjProcs = Math.min(
+            projPlan.processCount,
+            Math.max(1, orderedProjUnits.length),
+          );
+          const effectiveProjPlan = planProcessPool(
+            projRequestedWorkers,
+            projMaxWorkersPerProc,
+            effectiveProjProcs,
+          );
+          if (effectiveProjPlan.processCount > 1) {
+            console.log(
+              `\n[project:${project.name}] Running ${matched.length} flow(s) across ${effectiveProjPlan.processCount} OS processes (${effectiveProjPlan.workersPerProcess.join("+")} workers)...`,
+            );
+            const queueServer = await startSharedFlowQueueServer(
+              orderedProjUnits.map((u) => u.map((f) => f.name)),
+            );
+            const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
+            const baseWarmScope =
+              projConfig.execution?.web?.warmBrowserScope ?? `mp-proj-${project.name}-${runTag}`;
+            let offsetCursor = 0;
+            try {
+              const poolResult = await runMultiProcessPool({
+                totalWorkers: projRequestedWorkers,
+                maxWorkersPerProcess: projMaxWorkersPerProc,
+                processes: effectiveProjPlan.processCount,
+                buildShardCommand: (shardIndex, _shardTotal, workerCount) => {
+                  const shardOutDir = join(tmpdir(), `spana-mp-proj-${runTag}-p${shardIndex}`);
+                  const reportPath = join(shardOutDir, "results.json");
+                  const myOffset = offsetCursor;
+                  offsetCursor += workerCount;
+                  const args = [
+                    cliEntry,
+                    "test",
+                    ...(opts.flowPath ? [opts.flowPath] : []),
+                    "--project",
+                    project.name,
+                    "--platform",
+                    projPlatforms.join(","),
+                    "--workers",
+                    String(workerCount),
+                    "--reporter",
+                    "json",
+                    "--pass-with-no-tests",
+                    ...(opts.browser ? ["--browser", opts.browser] : []),
+                    ...(configPath ? ["--config", configPath] : []),
+                    ...(opts.tags?.flatMap((t) => ["--tag", t]) ?? []),
+                    ...(opts.grep ? ["--grep", opts.grep] : []),
+                    ...(opts.grepInvert ? ["--grep-invert", opts.grepInvert] : []),
+                    ...(opts.retries !== undefined ? ["--retries", String(opts.retries)] : []),
+                    ...(opts.jsCoverage ? ["--js-coverage"] : []),
+                    ...(opts.trace ? ["--trace"] : []),
+                    ...(opts.headed ? ["--headed"] : []),
+                    ...(opts.bail !== undefined ? ["--bail", String(opts.bail)] : []),
+                  ];
+                  return {
+                    command: process.execPath,
+                    args,
+                    env: {
+                      SPANA_WORKER_PROCESS: "1",
+                      SPANA_QUEUE_URL: queueServer.url,
+                      SPANA_OUTPUT_DIR: shardOutDir,
+                      SPANA_WORKER_REPORT_PATH: reportPath,
+                      SPANA_WORKER_INDEX_OFFSET: String(myOffset),
+                      SPANA_WARM_SCOPE: `${baseWarmScope}-p${shardIndex}`,
+                    },
+                    reportJsonPath: reportPath,
+                  };
+                },
+              });
+              allProjectResults.push(...poolResult.results);
+              console.log(
+                `[project:${project.name}] ${poolResult.passed} passed, ${poolResult.failed} failed, ${poolResult.skipped} skipped`,
+              );
+              return poolResult.failed === 0;
+            } finally {
+              await queueServer.close();
+            }
+          }
+        }
+
+        console.log(`\n[project:${project.name}] Running ${matched.length} flow(s)...`);
         const runtimes: RuntimeHandle[] = [];
         const useParallelWorkers = Boolean(
           opts.parallel ||
@@ -1156,10 +1348,35 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
               },
             };
           };
+          let claimNextWorkUnit:
+            | (() => Promise<import("../api/flow.js").FlowDefinition[] | null>)
+            | undefined;
+          if (process.env.SPANA_QUEUE_URL) {
+            const flowByName = new Map<string, import("../api/flow.js").FlowDefinition[]>();
+            for (const f of matched) {
+              const list = flowByName.get(f.name) ?? [];
+              list.push(f);
+              flowByName.set(f.name, list);
+            }
+            const remoteClaim = createRemoteWorkUnitClaimer(process.env.SPANA_QUEUE_URL);
+            claimNextWorkUnit = async () => {
+              while (true) {
+                const names = await remoteClaim();
+                if (!names) return null;
+                const unit: import("../api/flow.js").FlowDefinition[] = [];
+                for (const name of names) {
+                  const bucket = flowByName.get(name);
+                  if (bucket && bucket.length > 0) unit.push(bucket.shift()!);
+                }
+                if (unit.length > 0) return unit;
+              }
+            };
+          }
           const onResult = createResultHandler(projReporters, redactProjResult, projRedactor, opts);
           const orchResult = await orchestrate(matched, platformConfigs, {
             retries: opts.retries ?? projConfig.defaults?.retries ?? 0,
             bail: opts.bail,
+            claimNextWorkUnit,
             parallelPlatforms: useParallelWorkers || projConfig.parallelPlatforms,
             onFlowStart(name, platform, workerName) {
               for (const reporter of projReporters) {
@@ -1192,25 +1409,29 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         if (!tdOk) allPassed = false;
       }
 
+      const projDurationMs = Date.now() - projectsStart;
+      const projSummary = summarizeTestResults(allProjectResults, projDurationMs, allPassed);
       for (const reporter of projReporters) {
         reporter.onRunComplete({
-          total: allProjectResults.length,
-          passed: allProjectResults.filter((r) => r.status === "passed").length,
-          failed: allProjectResults.filter((r) => r.status === "failed").length,
-          skipped: allProjectResults.filter((r) => r.status === "skipped").length,
-          flaky: allProjectResults.filter((r) => r.flaky).length,
-          durationMs: Date.now() - projectsStart,
+          total: projSummary.total,
+          passed: projSummary.passed,
+          failed: projSummary.failed,
+          skipped: projSummary.skipped,
+          flaky: projSummary.flaky,
+          durationMs: projDurationMs,
           results: allProjectResults,
           platforms: [...allProjectPlatforms],
         });
       }
+      await writeWorkerProcessReport(allProjectResults);
+      return {
+        success: allPassed,
+        watchRoots: collectWatchRoots(resolveFromConfig(config.flowDir ?? "./flows"), configPath),
+        summary: projSummary,
+      };
     } finally {
       await webServers.stopAll();
     }
-    return {
-      success: allPassed,
-      watchRoots: collectWatchRoots(resolveFromConfig(config.flowDir ?? "./flows"), configPath),
-    };
   }
 
   const platforms: Platform[] =
@@ -1250,7 +1471,11 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       outputDir: config.artifacts?.outputDir ?? resolveFromConfig("./spana-output"),
     });
     if (!listed.ok) {
-      return { success: listed.success, watchRoots: listed.watchRoots };
+      return {
+        success: listed.success,
+        watchRoots: listed.watchRoots,
+        summary: emptyTestCommandResult(listed.success, Date.now() - runStartedAt),
+      };
     }
     const items = listed.selectedLoadedFlows.map((item) => ({
       name: item.flow.name,
@@ -1274,7 +1499,11 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         console.log(`  • ${item.name}${tagsText}${flagText} — ${item.sourcePath}`);
       }
     }
-    return { success: true, watchRoots: listed.watchRoots };
+    return {
+      success: true,
+      watchRoots: listed.watchRoots,
+      summary: emptyTestCommandResult(true, Date.now() - runStartedAt),
+    };
   }
 
   // Resolve explicit device targeting
@@ -1285,6 +1514,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       return {
         success: deviceResult.success,
         watchRoots: collectWatchRoots(flowDir, configPath),
+        summary: emptyTestCommandResult(deviceResult.success, Date.now() - runStartedAt),
       };
     }
     targetDevice = deviceResult.device;
@@ -1309,6 +1539,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   const maxWorkersPerProcess = config.defaults?.maxWorkersPerProcess;
   const requestedProcesses = opts.processes ?? config.defaults?.processes;
   const requestedWorkers = opts.workers ?? config.defaults?.workers ?? requestedProcesses;
+  const cliEntrypoint = resolveSpanaCliEntrypoint();
   if (
     requestedWorkers &&
     !opts.shard &&
@@ -1316,7 +1547,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
     !opts.validateConfigOnly &&
     !opts.device &&
     !process.env.SPANA_WORKER_PROCESS &&
-    process.argv[1]
+    cliEntrypoint
   ) {
     const plan = planProcessPool(requestedWorkers, maxWorkersPerProcess, requestedProcesses);
     if (plan.processCount > 1) {
@@ -1341,15 +1572,21 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         resolvedTimingsFile ? readDurationHintsFile(resolvedTimingsFile) : Promise.resolve({}),
       ]);
       if (!mpFlowResult.ok) {
-        return { success: mpFlowResult.success, watchRoots: mpFlowResult.watchRoots };
+        return {
+          success: mpFlowResult.success,
+          watchRoots: mpFlowResult.watchRoots,
+          summary: emptyTestCommandResult(mpFlowResult.success, Date.now() - runStartedAt),
+        };
       }
 
       const mpDurationHints = {
         ...mpTimingsHints,
         ...extractDurationHints(mpPriorRunState),
       };
-      const orderedFlows = orderFlowsLongestFirst(mpFlowResult.selectedFlows, mpDurationHints);
-      const effectiveProcesses = Math.min(plan.processCount, Math.max(1, orderedFlows.length));
+      // Group serial suites FIRST before sorting units by duration hints so serial groups stay intact across --processes (2.5)
+      const orderedUnits = buildOrderedWorkUnits(mpFlowResult.selectedFlows, mpDurationHints);
+      const totalFlowCountMp = orderedUnits.reduce((acc, u) => acc + u.length, 0);
+      const effectiveProcesses = Math.min(plan.processCount, Math.max(1, orderedUnits.length));
       const effectivePlan = planProcessPool(
         requestedWorkers,
         maxWorkersPerProcess,
@@ -1358,7 +1595,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
 
       if (effectivePlan.processCount > 1) {
         console.log(
-          `Running ${orderedFlows.length} flow(s) across ${effectivePlan.processCount} OS processes (${effectivePlan.workersPerProcess.join("+")} workers, dynamic longest-first queue)...\n`,
+          `Running ${totalFlowCountMp} flow(s) across ${effectivePlan.processCount} OS processes (${effectivePlan.workersPerProcess.join("+")} workers, dynamic longest-first queue)...\n`,
         );
         const { redactor, reporters } = await setupReporters(
           reporterNames,
@@ -1368,7 +1605,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           opts,
           mpFlowResult.filterSummaries,
         );
-        const queueServer = await startSharedFlowQueueServer(orderedFlows.map((f) => f.name));
+        const queueServer = await startSharedFlowQueueServer(
+          orderedUnits.map((unit) => unit.map((f) => f.name)),
+        );
         const runTag = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
         const baseWarmScope = config.execution?.web?.warmBrowserScope ?? `mp-${runTag}`;
         const shardOutDirs: string[] = [];
@@ -1391,7 +1630,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
               workerIndexOffsetCursor += workerCount;
               shardOutDirs.push(shardOutDir);
               const args = [
-                process.argv[1]!,
+                cliEntrypoint,
                 "test",
                 ...(opts.flowPath ? [opts.flowPath] : []),
                 "--platform",
@@ -1536,6 +1775,11 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
           return {
             success: poolResult.failed === 0,
             watchRoots: mpFlowResult.watchRoots,
+            summary: summarizeTestResults(
+              redactedResults,
+              poolResult.totalDurationMs,
+              poolResult.failed === 0,
+            ),
           };
         } finally {
           await queueServer.close();
@@ -1585,7 +1829,11 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   }
   if (!flowResult.ok) {
     await closePrelaunchedWeb();
-    return { success: flowResult.success, watchRoots: flowResult.watchRoots };
+    return {
+      success: flowResult.success,
+      watchRoots: flowResult.watchRoots,
+      summary: emptyTestCommandResult(flowResult.success, Date.now() - runStartedAt),
+    };
   }
   const { selectedLoadedFlows, selectedFlows, watchRoots, filterSummaries } = flowResult;
   const durationHintsMs: Record<string, number> = {
@@ -1740,8 +1988,10 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       };
     };
 
-    // 5. Run with real-time reporter callbacks (pull from dynamic shared queue if spawned by multi-process pool)
-    let claimNextFlow: (() => Promise<import("../api/flow.js").FlowDefinition | null>) | undefined;
+    // 5. Run with real-time reporter callbacks (pull indivisible work units from dynamic shared queue if spawned by multi-process pool)
+    let claimNextWorkUnit:
+      | (() => Promise<import("../api/flow.js").FlowDefinition[] | null>)
+      | undefined;
     if (process.env.SPANA_QUEUE_URL) {
       const flowByName = new Map<string, import("../api/flow.js").FlowDefinition[]>();
       for (const f of selectedFlows) {
@@ -1749,15 +1999,19 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         list.push(f);
         flowByName.set(f.name, list);
       }
-      const remoteClaim = createRemoteFlowClaimer(process.env.SPANA_QUEUE_URL);
-      claimNextFlow = async () => {
+      const remoteClaim = createRemoteWorkUnitClaimer(process.env.SPANA_QUEUE_URL);
+      claimNextWorkUnit = async () => {
         while (true) {
-          const name = await remoteClaim();
-          if (!name) return null;
-          const bucket = flowByName.get(name);
-          if (bucket && bucket.length > 0) {
-            return bucket.shift()!;
+          const names = await remoteClaim();
+          if (!names) return null;
+          const unit: import("../api/flow.js").FlowDefinition[] = [];
+          for (const name of names) {
+            const bucket = flowByName.get(name);
+            if (bucket && bucket.length > 0) {
+              unit.push(bucket.shift()!);
+            }
           }
+          if (unit.length > 0) return unit;
         }
       };
     }
@@ -1770,7 +2024,7 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       retryDelay,
       bail: opts.bail,
       durationHintsMs: Object.keys(durationHintsMs).length > 0 ? durationHintsMs : undefined,
-      claimNextFlow,
+      claimNextWorkUnit,
       parallelPlatforms:
         opts.parallel || config.parallelPlatforms || !!opts.workers || !!opts.devices,
       onFlowStart(name, platform, workerName) {
@@ -1837,7 +2091,11 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
       await reportToCloudProvider(runtimes, appiumUrl, result, platforms);
     }
 
-    return { success: result.failed === 0, watchRoots };
+    return {
+      success: result.failed === 0,
+      watchRoots,
+      summary: summarizeTestResults(redactedResults, result.totalDurationMs, result.failed === 0),
+    };
   } finally {
     // 7. Cleanup — always runs in parallel even if orchestration/reporting fails
     await Promise.allSettled(runtimes.map((rt) => rt.cleanup()));
@@ -1847,14 +2105,16 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
   }
 }
 
-export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
+export async function runTestCommandWithResult(
+  opts: TestCommandOptions,
+): Promise<TestCommandResult> {
   if (!opts.watch) {
-    return (await runTestCommandOnce(opts)).success;
+    return (await runTestCommandOnce(opts)).summary;
   }
 
   let lastResult = await runTestCommandOnce({ ...opts, watch: false });
   if (lastResult.watchRoots.length === 0) {
-    return lastResult.success;
+    return lastResult.summary;
   }
 
   console.log(
@@ -1869,5 +2129,9 @@ export async function runTestCommand(opts: TestCommandOptions): Promise<boolean>
     },
   });
 
-  return lastResult.success;
+  return lastResult.summary;
+}
+
+export async function runTestCommand(opts: TestCommandOptions): Promise<boolean> {
+  return (await runTestCommandWithResult(opts)).success;
 }

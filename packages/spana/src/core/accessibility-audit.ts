@@ -110,11 +110,24 @@ export function normalizeRole(
     case "web":
     case "electron":
     case "electrobun": {
-      if (attributes["role"]) return attributes["role"].trim().split(/\s+/)[0]!;
+      if (attributes["role"]) return attributes["role"].trim().split(/\s+/)[0]!.toLowerCase();
       const tag = elementType.toLowerCase();
       if (tag === "input") return resolveHtmlInputRole(attributes);
       if (tag === "a" && !("href" in attributes) && Object.keys(attributes).length > 0) {
         return "generic";
+      }
+      if (tag === "img") {
+        return attributes["alt"] === "" ? "presentation" : "img";
+      }
+      if (tag === "section") {
+        return attributes["aria-label"] || attributes["aria-labelledby"] || attributes["title"]
+          ? "region"
+          : "generic";
+      }
+      if (tag === "th") {
+        const scope = (attributes["scope"] ?? "").toLowerCase();
+        if (scope === "row" || scope === "rowgroup") return "rowheader";
+        return "columnheader";
       }
       if (
         tag === "select" &&
@@ -122,7 +135,7 @@ export function normalizeRole(
       ) {
         return "listbox";
       }
-      return WEB_TAG_ROLE_MAP[tag] ?? elementType;
+      return WEB_TAG_ROLE_MAP[tag] ?? "generic";
     }
     case "android": {
       return ANDROID_CLASS_ROLE_MAP[elementType] ?? elementType;

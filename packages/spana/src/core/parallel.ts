@@ -23,19 +23,54 @@ export interface ParallelRunnerConfig {
   durationHintsMs?: Record<string, number>;
   /** Optional dynamic cross-process queue claimer (used by `spana test --workers N --processes M`). */
   claimNextFlow?: () => Promise<FlowDefinition | null>;
+  /** Optional dynamic cross-process work-unit claimer preserving indivisible serial groups across `--processes M`. */
+  claimNextWorkUnit?: () => Promise<FlowDefinition[] | null>;
   onFlowStart?: (name: string, workerName: string) => void;
   onFlowComplete?: (result: TestResult, workerName: string) => void;
 }
 
-/** Order flows descending by known duration (longest first) while preserving order on ties. */
+/**
+ * Group flows by `serialGroup` FIRST (preserving definition order inside each serial group),
+ * then order work units descending by total known duration hint (longest first, preserving
+ * original unit order on ties).
+ */
+export function buildOrderedWorkUnits(
+  flows: FlowDefinition[],
+  durationHintsMs?: Record<string, number>,
+): FlowDefinition[][] {
+  const units: FlowDefinition[][] = [];
+  const serialIndexByGroup = new Map<string, number>();
+  for (const f of flows) {
+    const sg = f.config.serialGroup;
+    if (sg) {
+      const existingIdx = serialIndexByGroup.get(sg);
+      if (existingIdx !== undefined) {
+        units[existingIdx]!.push(f);
+      } else {
+        serialIndexByGroup.set(sg, units.length);
+        units.push([f]);
+      }
+    } else {
+      units.push([f]);
+    }
+  }
+  if (!durationHintsMs || Object.keys(durationHintsMs).length === 0) {
+    return units;
+  }
+  const unitWeight = (unit: FlowDefinition[]): number =>
+    unit.reduce((sum, f) => sum + (durationHintsMs[f.name] ?? 0), 0);
+  return units
+    .map((unit, idx) => ({ unit, idx, weight: unitWeight(unit) }))
+    .toSorted((a, b) => b.weight - a.weight || a.idx - b.idx)
+    .map((entry) => entry.unit);
+}
+
+/** Order flows descending by known duration (longest first) while preserving serial group order and tie order. */
 export function orderFlowsLongestFirst(
   flows: FlowDefinition[],
   durationHintsMs?: Record<string, number>,
 ): FlowDefinition[] {
-  if (!durationHintsMs || Object.keys(durationHintsMs).length === 0) {
-    return flows;
-  }
-  return flows.toSorted((a, b) => (durationHintsMs[b.name] ?? 0) - (durationHintsMs[a.name] ?? 0));
+  return buildOrderedWorkUnits(flows, durationHintsMs).flat();
 }
 
 export interface ParallelResult {
@@ -60,29 +95,14 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
     bail,
     durationHintsMs,
     claimNextFlow,
+    claimNextWorkUnit,
   } = config;
-  const orderedFlows = orderFlowsLongestFirst(focusFlows(rawFlows), durationHintsMs);
-  // Group serial suites into indivisible work units so serial flows run in order on one worker
-  // and skip the remaining flows in that serial suite after the first failure.
-  type WorkUnit = FlowDefinition[];
-  const workUnits: WorkUnit[] = [];
-  if (!claimNextFlow) {
-    const serialIndexByGroup = new Map<string, number>();
-    for (const f of orderedFlows) {
-      const sg = f.config.serialGroup;
-      if (sg) {
-        const existingIdx = serialIndexByGroup.get(sg);
-        if (existingIdx !== undefined) {
-          workUnits[existingIdx]!.push(f);
-        } else {
-          serialIndexByGroup.set(sg, workUnits.length);
-          workUnits.push([f]);
-        }
-      } else {
-        workUnits.push([f]);
-      }
-    }
-  }
+  const focusedFlows = focusFlows(rawFlows);
+  const hasRemoteQueue = Boolean(claimNextWorkUnit || claimNextFlow);
+  // Group serial suites into indivisible work units BEFORE sorting by duration hints (2.5)
+  const workUnits: FlowDefinition[][] = hasRemoteQueue
+    ? []
+    : buildOrderedWorkUnits(focusedFlows, durationHintsMs);
   const start = Date.now();
   const results: TestResult[] = [];
   let nextUnitIndex = 0;
@@ -96,7 +116,7 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
     const workerEngineConfig: EngineConfig = {
       ...worker.engineConfig,
       workerIndex: worker.engineConfig.workerIndex ?? workerOffset + localIdx,
-      parallelIndex: worker.engineConfig.parallelIndex ?? localIdx,
+      parallelIndex: worker.engineConfig.parallelIndex ?? workerOffset + localIdx,
     };
 
     const runOne = async (flow: FlowDefinition): Promise<TestResult> => {
@@ -137,20 +157,7 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
       return result;
     };
 
-    while (true) {
-      // Check bail before picking up a new unit
-      if (bail !== undefined && failureCount >= bail) break;
-
-      if (claimNextFlow) {
-        const claimed = await claimNextFlow();
-        if (!claimed) break;
-        await runOne(claimed);
-        continue;
-      }
-
-      const unitIdx = nextUnitIndex++;
-      if (unitIdx >= workUnits.length) break;
-      const unit = workUnits[unitIdx]!;
+    const runWorkUnit = async (unit: FlowDefinition[]) => {
       let serialFailed = false;
       for (const flow of unit) {
         if (serialFailed) {
@@ -173,6 +180,29 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
           serialFailed = true;
         }
       }
+    };
+
+    while (true) {
+      // Check bail before picking up a new unit
+      if (bail !== undefined && failureCount >= bail) break;
+
+      if (claimNextWorkUnit) {
+        const claimedUnit = await claimNextWorkUnit();
+        if (!claimedUnit || claimedUnit.length === 0) break;
+        await runWorkUnit(claimedUnit);
+        continue;
+      }
+
+      if (claimNextFlow) {
+        const claimed = await claimNextFlow();
+        if (!claimed) break;
+        await runOne(claimed);
+        continue;
+      }
+
+      const unitIdx = nextUnitIndex++;
+      if (unitIdx >= workUnits.length) break;
+      await runWorkUnit(workUnits[unitIdx]!);
     }
 
     return { workerId: worker.id, stats };
@@ -181,21 +211,22 @@ export async function runParallel(config: ParallelRunnerConfig): Promise<Paralle
   const workerResults = await Promise.all(workerPromises);
 
   // Mark remaining un-processed flows as skipped if bailed out (local queue only)
-  if (!claimNextFlow && bail !== undefined && failureCount >= bail) {
+  if (!hasRemoteQueue && bail !== undefined && failureCount >= bail) {
     bailedOut = true;
     while (nextUnitIndex < workUnits.length) {
       const unit = workUnits[nextUnitIndex++]!;
       for (const flow of unit) {
-        results.push(
-          getFlowSkip(flow, workers[0]!.engineConfig.platform) ?? {
-            name: flow.name,
-            platform: workers[0]!.engineConfig.platform,
-            status: "skipped",
-            durationMs: 0,
-            attempts: 0,
-            ...(flow.config.tags ? { tags: flow.config.tags } : {}),
-          },
-        );
+        const skipped: TestResult = getFlowSkip(flow, workers[0]!.engineConfig.platform) ?? {
+          name: flow.name,
+          platform: workers[0]!.engineConfig.platform,
+          status: "skipped",
+          skipReason: "Skipped due to bail limit",
+          durationMs: 0,
+          attempts: 0,
+          ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+        };
+        results.push(skipped);
+        onFlowComplete?.(skipped, workers[0]!.name);
       }
     }
   }

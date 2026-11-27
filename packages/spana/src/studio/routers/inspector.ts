@@ -17,7 +17,11 @@ function connectOptsFromConfig(
 ): ConnectOptions {
   const opts: ConnectOptions = { platform, device: deviceId };
   if (platform === "web") {
-    opts.baseUrl = config.apps?.web?.url ?? "http://localhost:3000";
+    const rawUrl = config.apps?.web?.url;
+    opts.baseUrl =
+      typeof rawUrl === "function"
+        ? rawUrl({ workerIndex: 0, parallelIndex: 0 })
+        : (rawUrl ?? "http://localhost:3000");
     opts.browser = config.execution?.web?.browser;
     opts.storageState = config.execution?.web?.storageState;
     opts.headless = false; // Studio needs visible browser for screenshots

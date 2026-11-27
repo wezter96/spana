@@ -677,7 +677,7 @@ describe("Playwright driver adapter", () => {
     });
   });
 
-  test("dumpHierarchy script treats offscreen elements as not visible", async () => {
+  test("dumpHierarchy script treats below-the-fold elements with layout boxes as visible", async () => {
     const { makePlaywrightDriver } = await importFreshDriver();
     const driver = await Effect.runPromise(makePlaywrightDriver({}));
 
@@ -691,18 +691,8 @@ describe("Playwright driver adapter", () => {
     )?.[1];
 
     expect(dumpScript).toEqual(expect.any(String));
-    expect(dumpScript).toContain(
-      "var viewportWidth = window.innerWidth || document.documentElement.clientWidth;",
-    );
-    expect(dumpScript).toContain(
-      "var viewportHeight = window.innerHeight || document.documentElement.clientHeight;",
-    );
-    expect(dumpScript).toContain(
-      "var intersectsViewport = rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;",
-    );
-    expect(dumpScript).toContain(
-      "visible: isVisible && rect.width > 0 && rect.height > 0 && intersectsViewport,",
-    );
+    expect(dumpScript).not.toContain("intersectsViewport");
+    expect(dumpScript).toContain("visible: isVisible && rect.width > 0 && rect.height > 0,");
   });
 
   test("swipe scrolls the nearest scrollable container on web", async () => {

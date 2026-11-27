@@ -104,10 +104,12 @@ bun run benchmarks/mcp-agent-bench/benchmark.ts --base-url http://127.0.0.1:8000
 ## Quick Start
 
 ```bash
-npm install spana-test
+npm install spana-test effect
 # or
-bun add spana-test
+bun add spana-test effect
 ```
+
+> **Lean install:** `effect` is a peer dependency (`>=4.1.0 <5.0.0`). Direct CDP Chromium launches with `chromiumSandbox: false` by default (matching Playwright) so Ubuntu 23.10+ and GitHub Actions runners work out of the box. Optional mobile Appium server packages (`appium-uiautomator2-server`, `appium-webdriveragent`) are not bundled by default — install them only when using local Android/iOS device drivers.
 
 Create `spana.config.ts`:
 

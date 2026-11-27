@@ -424,6 +424,8 @@ export class CdpDomChannel implements DomChannel {
 
   private ws: MinimalWebSocket | null = null;
   private connected = false;
+  private permanentlyClosed = false;
+  private closedReason = "Browser context closed";
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
   private eventListeners = new Map<string, Set<(params: any, sessionId?: string) => void>>();
@@ -443,7 +445,25 @@ export class CdpDomChannel implements DomChannel {
   }
 
   isConnected(): boolean {
-    return this.connected && this.ws !== null && this.ws.readyState === WS_OPEN;
+    return (
+      !this.permanentlyClosed &&
+      this.connected &&
+      this.ws !== null &&
+      this.ws.readyState === WS_OPEN
+    );
+  }
+
+  /** Permanently close this channel so subsequent commands reject immediately instead of auto-reconnecting. */
+  markClosed(reason = "Browser context closed"): void {
+    this.permanentlyClosed = true;
+    this.closedReason = reason;
+    this.connected = false;
+    this.inProcessFrameWorlds.clear();
+    this.rejectAllPending(new Error(reason));
+  }
+
+  isPermanentlyClosed(): boolean {
+    return this.permanentlyClosed;
   }
 
   async listTargets(): Promise<DomTargetInfo[]> {
@@ -484,6 +504,9 @@ export class CdpDomChannel implements DomChannel {
   }
 
   async connect(): Promise<void> {
+    if (this.permanentlyClosed) {
+      throw new Error(this.closedReason);
+    }
     if (this.isConnected()) return;
 
     let wsUrl = this.explicitWsUrl;
@@ -729,6 +752,9 @@ export class CdpDomChannel implements DomChannel {
     sessionId?: string | null,
     timeoutMs?: number,
   ): Promise<T> {
+    if (this.permanentlyClosed) {
+      throw new Error(this.closedReason);
+    }
     if (!this.isConnected()) {
       await this.connect();
     }
@@ -769,8 +795,13 @@ export class CdpDomChannel implements DomChannel {
     const deadline = Date.now() + effectiveTimeout;
     let lastError: Error | undefined;
 
+    const targetSid = sessionId === undefined ? this.activeSessionId : sessionId;
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const remaining = Math.max(250, deadline - Date.now());
+      let offDestroyed: (() => void) | undefined;
+      let offCleared: (() => void) | undefined;
+      let offNavigated: (() => void) | undefined;
       try {
         const evalParams: Record<string, unknown> = {
           expression,
@@ -780,11 +811,40 @@ export class CdpDomChannel implements DomChannel {
         if (contextId !== undefined) {
           evalParams["contextId"] = contextId;
         }
-        const response = await this.sendCommand<{
+        const evalPromise = this.sendCommand<{
           result?: { type?: string; value?: T; description?: string };
           exceptionDetails?: { text?: string; exception?: { description?: string } };
           wasThrown?: boolean;
         }>("Runtime.evaluate", evalParams, sessionId, remaining);
+
+        // Cancel a hung Runtime.evaluate immediately when navigation/reload destroys its execution context (2.21)
+        const contextDestroyedPromise = new Promise<never>((_resolve, reject) => {
+          const matchesTargetSession = (sid?: string) =>
+            (sid ?? null) === (targetSid ?? null) || (!targetSid && !sid);
+          const triggerAbort = (reason: string) => {
+            reject(new Error(`Execution context was destroyed (${reason})`));
+          };
+          offCleared = this.onEvent("Runtime.executionContextsCleared", (_p, sid) => {
+            if (matchesTargetSession(sid)) triggerAbort("executionContextsCleared");
+          });
+          if (contextId !== undefined) {
+            offDestroyed = this.onEvent("Runtime.executionContextDestroyed", (p, sid) => {
+              if (matchesTargetSession(sid) && p?.executionContextId === contextId) {
+                triggerAbort("executionContextDestroyed");
+              }
+            });
+          } else {
+            offNavigated = this.onEvent("Page.frameNavigated", (p, sid) => {
+              if (matchesTargetSession(sid) && p?.frame && !p.frame.parentId) {
+                triggerAbort("mainFrameNavigated");
+              }
+            });
+          }
+        });
+        // Prevent unhandled rejection if evalPromise settles first
+        contextDestroyedPromise.catch(() => {});
+
+        const response = await Promise.race([evalPromise, contextDestroyedPromise]);
 
         if (response?.exceptionDetails) {
           const detail =
@@ -814,6 +874,10 @@ export class CdpDomChannel implements DomChannel {
           continue;
         }
         throw err;
+      } finally {
+        offDestroyed?.();
+        offCleared?.();
+        offNavigated?.();
       }
     }
 
@@ -828,12 +892,20 @@ export class CdpDomChannel implements DomChannel {
     return this.evaluateOnSessionWithTimeout<T>(undefined, script, 2_000, args, undefined, 1);
   }
 
+  /** Single-attempt evaluate with the default command timeout — used for user `app.evaluate()` so navigation aborts immediately instead of re-executing user code in the new document. */
+  async evaluateOnce<T = unknown>(
+    script: string | ((...args: any[]) => T),
+    ...args: any[]
+  ): Promise<T> {
+    return this.evaluateOnSessionWithTimeout<T>(undefined, script, undefined, args, undefined, 1);
+  }
+
   async evaluateOnSession<T = unknown>(
     sessionId: string | null | undefined,
     script: string | ((...args: any[]) => T),
     ...args: any[]
   ): Promise<T> {
-    return this.evaluateOnSessionWithTimeout<T>(sessionId, script, undefined, args);
+    return this.evaluateOnSessionWithTimeout<T>(sessionId, script, undefined, args, undefined, 3);
   }
 
   async evaluate<T = unknown>(
@@ -893,12 +965,126 @@ export class CdpDomChannel implements DomChannel {
     }));
   }
 
+  private async inspectMatchingIframes(
+    frameSel: unknown,
+    contextId?: number,
+    sessionId?: string | null,
+  ): Promise<
+    Array<{
+      frameId?: string;
+      src: string;
+      name: string;
+      x: number;
+      y: number;
+      sameOriginAccessible: boolean;
+    }>
+  > {
+    const matcherFn = `function __matchIframes(fSel) {
+      var iframes = Array.from(document.querySelectorAll("iframe"));
+      var matched = [];
+      for (var i = 0; i < iframes.length; i++) {
+        var el = iframes[i];
+        var ok = false;
+        if (typeof fSel === "string") {
+          if (el.getAttribute("title") === fSel || el.getAttribute("aria-label") === fSel || el.getAttribute("name") === fSel) ok = true;
+          else { try { if (el.matches(fSel)) ok = true; } catch (e) {} }
+        } else if (fSel && typeof fSel === "object") {
+          if (fSel.css) {
+            try { if (el.matches(fSel.css)) ok = true; } catch (e) {}
+          } else if (fSel.testID && (el.getAttribute("data-testid") === fSel.testID || el.getAttribute("testID") === fSel.testID)) {
+            ok = true;
+          } else if (fSel.accessibilityLabel && (el.getAttribute("aria-label") === fSel.accessibilityLabel || el.getAttribute("title") === fSel.accessibilityLabel)) {
+            ok = true;
+          } else if (fSel.text && (el.getAttribute("title") === fSel.text || el.getAttribute("aria-label") === fSel.text)) {
+            ok = true;
+          }
+        }
+        if (ok) matched.push(el);
+      }
+      return matched;
+    }`;
+
+    const metaList = await this.evaluateOnSessionWithTimeout<
+      Array<{ src: string; name: string; x: number; y: number; sameOriginAccessible: boolean }>
+    >(
+      sessionId,
+      `((fSel) => {
+        try {
+          ${matcherFn}
+          return __matchIframes(fSel).map((el) => {
+            var r = el.getBoundingClientRect();
+            var accessible = false;
+            try {
+              var srcAttr = el.getAttribute("src") || "";
+              var crossOriginSrc = false;
+              if (srcAttr && !srcAttr.startsWith("about:") && !srcAttr.startsWith("javascript:")) {
+                try {
+                  var parsedSrc = new URL(srcAttr, window.location.href);
+                  if (parsedSrc.origin !== window.location.origin) crossOriginSrc = true;
+                } catch (e2) {}
+              }
+              accessible = !crossOriginSrc && Boolean(el.contentDocument && el.contentDocument.documentElement);
+            } catch (e) {}
+            return { src: el.src || "", name: el.getAttribute("name") || "", x: r.left, y: r.top, sameOriginAccessible: accessible };
+          });
+        } catch (e) { return []; }
+      })(${JSON.stringify(frameSel)})`,
+      3_000,
+      [],
+      contextId,
+      1,
+    ).catch(() => []);
+
+    if (!Array.isArray(metaList) || metaList.length === 0) return [];
+
+    // Resolve exact CDP frameId for each matched <iframe> via DOM.describeNode so multiple
+    // iframes sharing an origin never collide (2.18d).
+    const enriched: Array<{
+      frameId?: string;
+      src: string;
+      name: string;
+      x: number;
+      y: number;
+      sameOriginAccessible: boolean;
+    }> = [];
+    for (let idx = 0; idx < metaList.length; idx++) {
+      const info = metaList[idx]!;
+      let frameId: string | undefined;
+      try {
+        const evalParams: Record<string, unknown> = {
+          expression: `((fSel, idx) => { ${matcherFn} return __matchIframes(fSel)[idx] || null; })(${JSON.stringify(frameSel)}, ${idx})`,
+          returnByValue: false,
+        };
+        if (contextId !== undefined) evalParams["contextId"] = contextId;
+        const evalRes = await this.sendCommand<{ result?: { objectId?: string } }>(
+          "Runtime.evaluate",
+          evalParams,
+          sessionId,
+          2_000,
+        );
+        const objectId = evalRes?.result?.objectId;
+        if (objectId) {
+          const desc = await this.sendCommand<{
+            node?: { frameId?: string; contentDocument?: { frameId?: string } };
+          }>("DOM.describeNode", { objectId, depth: 1 }, sessionId, 2_000).catch(() => null);
+          frameId = desc?.node?.contentDocument?.frameId ?? desc?.node?.frameId;
+          void this.sendCommand("Runtime.releaseObject", { objectId }, sessionId, 1_000).catch(
+            () => {},
+          );
+        }
+      } catch {
+        // Fall back to src/name matching if DOM.describeNode is unavailable
+      }
+      enriched.push({ ...info, ...(frameId ? { frameId } : {}) });
+    }
+    return enriched;
+  }
+
   /**
    * Resolve in-process cross-origin child frames (e.g. same-site subdomains such as
-   * `notes.app.localhost` embedded in `studio.app.localhost`). Chromium places same-site
-   * iframes in the same renderer process (so no OOPIF target/session is created), while
-   * Same-Origin Policy still blocks `iframe.contentDocument` from JS in the top document.
-   * Using `Page.getFrameTree` + `Page.createIsolatedWorld` accesses them cleanly via CDP.
+   * `notes.app.localhost` embedded in `studio.app.localhost`), including nested iframes.
+   * Uses `DOM.describeNode` for exact `frameId` resolution + `Page.getFrameTree` +
+   * `Page.createIsolatedWorld` so multiple iframes sharing an origin never collide.
    */
   private async resolveInProcessChildFrames(
     selector: Selector,
@@ -914,64 +1100,34 @@ export class CdpDomChannel implements DomChannel {
     }>("Page.getFrameTree").catch(() => null);
     if (!treeRes?.frameTree?.childFrames?.length) return [];
 
-    const flatFrames: Array<{ id: string; url: string; name: string }> = [];
-    const walk = (nodes: Array<any> | undefined) => {
+    const flatFrames: Array<{ id: string; parentId?: string; url: string; name: string }> = [];
+    const walk = (nodes: Array<any> | undefined, parentId?: string) => {
       if (!Array.isArray(nodes)) return;
       for (const n of nodes) {
         if (n?.frame?.id) {
           flatFrames.push({
             id: n.frame.id,
+            parentId: n.frame.parentId ?? parentId,
             url: n.frame.url ?? "",
             name: n.frame.name ?? "",
           });
         }
-        if (n?.childFrames) walk(n.childFrames);
+        if (n?.childFrames) walk(n.childFrames, n?.frame?.id);
       }
     };
-    walk(treeRes.frameTree.childFrames);
+    walk(treeRes.frameTree.childFrames, treeRes.frameTree.frame?.id);
     if (flatFrames.length === 0) return [];
 
-    // Locate matching <iframe> elements in the main document to read their `src` and viewport offset
-    const iframeInfos = await this.evaluateOnSession<
-      Array<{ src: string; name: string; x: number; y: number }>
-    >(
-      undefined,
-      `((fSel) => {
-        try {
-          const iframes = Array.from(document.querySelectorAll("iframe"));
-          const matched = [];
-          for (const el of iframes) {
-            let ok = false;
-            if (typeof fSel === "string") {
-              if (el.getAttribute("title") === fSel || el.getAttribute("aria-label") === fSel || el.getAttribute("name") === fSel) ok = true;
-              else { try { if (el.matches(fSel)) ok = true; } catch {} }
-            } else if (fSel && typeof fSel === "object") {
-              if (fSel.css) {
-                try { if (el.matches(fSel.css)) ok = true; } catch {}
-              } else if (fSel.testID && (el.getAttribute("data-testid") === fSel.testID || el.getAttribute("testID") === fSel.testID)) {
-                ok = true;
-              } else if (fSel.accessibilityLabel && (el.getAttribute("aria-label") === fSel.accessibilityLabel || el.getAttribute("title") === fSel.accessibilityLabel)) {
-                ok = true;
-              } else if (fSel.text && (el.getAttribute("title") === fSel.text || el.getAttribute("aria-label") === fSel.text)) {
-                ok = true;
-              }
-            }
-            if (ok) {
-              const r = el.getBoundingClientRect();
-              matched.push({ src: el.src || "", name: el.getAttribute("name") || "", x: r.left, y: r.top });
-            }
-          }
-          return matched;
-        } catch { return []; }
-      })(${JSON.stringify(frameSel)})`,
-    ).catch(() => [] as Array<{ src: string; name: string; x: number; y: number }>);
-
-    if (iframeInfos.length === 0) return [];
-
-    const out: Array<{ frameId: string; url: string; offset: { x: number; y: number } }> = [];
-    for (const info of iframeInfos) {
-      const match =
-        flatFrames.find((f) => {
+    const matchInfoToFrame = (
+      info: { frameId?: string; src: string; name: string },
+      pool: Array<{ id: string; url: string; name: string }>,
+    ) => {
+      if (info.frameId) {
+        const exact = pool.find((f) => f.id === info.frameId);
+        if (exact) return exact;
+      }
+      return (
+        pool.find((f) => {
           if (info.name && f.name && f.name === info.name) return true;
           if (!info.src || !f.url) return false;
           try {
@@ -984,18 +1140,94 @@ export class CdpDomChannel implements DomChannel {
             return f.url === info.src || f.url.startsWith(info.src);
           }
         }) ??
-        flatFrames.find((f) => {
+        pool.find((f) => {
           if (!info.src || !f.url) return false;
           try {
             return new URL(info.src).origin === new URL(f.url).origin;
           } catch {
             return false;
           }
-        });
+        })
+      );
+    };
+
+    const out: Array<{ frameId: string; url: string; offset: { x: number; y: number } }> = [];
+    const topInfos = await this.inspectMatchingIframes(frameSel);
+    for (const info of topInfos) {
+      const match = matchInfoToFrame(info, flatFrames);
       if (match && !out.some((x) => x.frameId === match.id)) {
         out.push({ frameId: match.id, url: match.url, offset: { x: info.x, y: info.y } });
       }
     }
+
+    // Support nested iframes: if not matched directly in the top document, walk child frames recursively (2.18c)
+    if (out.length === 0) {
+      const topFrameId = treeRes.frameTree.frame?.id;
+      const visited = new Set<string>();
+      const searchChildrenOf = async (
+        parentFrameId: string,
+        parentOffset: { x: number; y: number },
+        depth: number,
+      ) => {
+        if (depth > 4 || visited.has(parentFrameId)) return;
+        visited.add(parentFrameId);
+        const directChildren = flatFrames.filter((f) => f.parentId === parentFrameId);
+        if (directChildren.length === 0) return;
+
+        // First collect offsets of direct child iframes inside parentFrameId
+        const childIframeRects = await (async () => {
+          if (parentFrameId === topFrameId) {
+            return this.inspectMatchingIframes("iframe");
+          }
+          try {
+            const ctxId = await this.getOrCreateFrameWorld(parentFrameId);
+            return await this.inspectMatchingIframes("iframe", ctxId);
+          } catch {
+            return [];
+          }
+        })();
+
+        for (const childFrame of directChildren) {
+          const rectInfo = childIframeRects.find(
+            (r) =>
+              r.frameId === childFrame.id ||
+              (r.name && childFrame.name && r.name === childFrame.name) ||
+              (r.src && childFrame.url && childFrame.url.startsWith(r.src)),
+          );
+          const childOffset = {
+            x: parentOffset.x + (rectInfo?.x ?? 0),
+            y: parentOffset.y + (rectInfo?.y ?? 0),
+          };
+          try {
+            const ctxId = await this.getOrCreateFrameWorld(childFrame.id);
+            const nestedInfos = await this.inspectMatchingIframes(frameSel, ctxId);
+            for (const nInfo of nestedInfos) {
+              const grandChildren = flatFrames.filter((f) => f.parentId === childFrame.id);
+              const match = matchInfoToFrame(
+                nInfo,
+                grandChildren.length > 0 ? grandChildren : flatFrames,
+              );
+              if (match && !out.some((x) => x.frameId === match.id)) {
+                out.push({
+                  frameId: match.id,
+                  url: match.url,
+                  offset: { x: childOffset.x + nInfo.x, y: childOffset.y + nInfo.y },
+                });
+              }
+            }
+          } catch {
+            // child frame may be out-of-process or detached
+          }
+          if (out.length === 0) {
+            await searchChildrenOf(childFrame.id, childOffset, depth + 1);
+          }
+        }
+      };
+      if (topFrameId) {
+        await searchChildrenOf(topFrameId, { x: 0, y: 0 }, 0);
+      }
+    }
+
     return out;
   }
 
@@ -1094,33 +1326,17 @@ export class CdpDomChannel implements DomChannel {
       }
       if ("text" in frameSel && frameSel.text) hints.push(frameSel.text);
     }
-    // Try to read the matching iframe's `src` attribute from the main document so we pick the exact OOPIF session
-    const iframeSrcs = await this.evaluateOnSession<string[]>(
-      undefined,
-      `((fSel) => {
-        try {
-          const iframes = Array.from(document.querySelectorAll("iframe"));
-          const matched = [];
-          for (const el of iframes) {
-            if (typeof fSel === "string") {
-              if (el.getAttribute("title") === fSel || el.getAttribute("aria-label") === fSel || el.getAttribute("name") === fSel || el.matches(fSel)) {
-                if (el.src) matched.push(el.src);
-              }
-            } else if (fSel && typeof fSel === "object") {
-              if (fSel.css) {
-                try { if (el.matches(fSel.css) && el.src) matched.push(el.src); } catch {}
-              } else if (fSel.testID && (el.getAttribute("data-testid") === fSel.testID || el.getAttribute("testID") === fSel.testID)) {
-                if (el.src) matched.push(el.src);
-              } else if (fSel.accessibilityLabel && (el.getAttribute("aria-label") === fSel.accessibilityLabel || el.getAttribute("title") === fSel.accessibilityLabel)) {
-                if (el.src) matched.push(el.src);
-              }
-            }
-          }
-          return matched;
-        } catch { return []; }
-      })(${JSON.stringify(frameSel)})`,
-    ).catch(() => [] as string[]);
+    // Prefer exact CDP frameId matching via DOM.describeNode so multiple iframes sharing an origin never collide (2.18d)
+    const inspected = await this.inspectMatchingIframes(frameSel);
+    const exactFrameIds = new Set(
+      inspected.map((i) => i.frameId).filter((id): id is string => Boolean(id)),
+    );
+    if (exactFrameIds.size > 0) {
+      const byExactId = all.filter((c) => c.targetId && exactFrameIds.has(c.targetId));
+      if (byExactId.length > 0) return byExactId;
+    }
 
+    const iframeSrcs = inspected.map((i) => i.src).filter(Boolean);
     if (iframeSrcs.length > 0) {
       const matched = all.filter(
         (c) =>
@@ -1142,7 +1358,7 @@ export class CdpDomChannel implements DomChannel {
       const byHint = all.filter((c) => c.url && hints.some((h) => c.url!.includes(h)));
       if (byHint.length > 0) return byHint;
     }
-    return all;
+    return inspected.length === 0 ? [] : all;
   }
 
   async query(selector: Selector): Promise<DomElementMatch[]> {
@@ -1280,7 +1496,7 @@ export class CdpDomChannel implements DomChannel {
       );
     }
 
-    return new Promise<DomElementMatch[]>((resolve) => {
+    const finalMatches = await new Promise<DomElementMatch[]>((resolve) => {
       let remaining = racers.length;
       let resolved = false;
       for (const p of racers) {
@@ -1299,6 +1515,19 @@ export class CdpDomChannel implements DomChannel {
         });
       }
     });
+    if (finalMatches.length === 0 && explicitFrame) {
+      const frameSel = (selector as { frame?: unknown }).frame;
+      const stillMissing =
+        (await this.inspectMatchingIframes(frameSel)).length === 0 &&
+        (await this.resolveInProcessChildFrames(selector)).length === 0 &&
+        (await this.resolveMatchingChildSessions(selector)).length === 0;
+      if (stillMissing) {
+        throw new Error(
+          `Iframe matching ${JSON.stringify(frameSel)} not found within ${opts?.timeoutMs ?? 5000}ms`,
+        );
+      }
+    }
+    return finalMatches;
   }
 
   async waitForHidden(selector: Selector, opts?: DomWaitForHiddenOptions): Promise<boolean> {
@@ -1357,49 +1586,95 @@ export class CdpDomChannel implements DomChannel {
     selector: Selector,
     opts: DomWaitForMatchOptions,
   ): Promise<DomWaitForMatchResult> {
-    const rpcTimeout = Math.max((opts?.timeoutMs ?? 5000) + 5000, this.timeoutMs);
+    const timeoutMs = opts?.timeoutMs ?? 5000;
+    const deadline = Date.now() + timeoutMs;
+    const rpcTimeout = Math.max(timeoutMs + 5000, this.timeoutMs);
     const fallback = () => buildDomWaitForMatchScript(selector, opts);
     const explicitFrame = this.hasExplicitFrame(selector);
     const innerSel = this.stripFrameFromSelector(selector);
-    const childFallback = () => buildDomWaitForMatchScript(innerSel, opts);
+    const childFallback = (remOpts: DomWaitForMatchOptions) =>
+      buildDomWaitForMatchScript(innerSel, remOpts);
 
-    // If an explicit frame resolves to an in-process cross-origin frame (where main-frame SOP blocks
-    // iframe.contentDocument), evaluate directly inside that frame instead of burning timeoutMs on main first!
+    // Explicit frame handling with late-mounting frame polling & clear missing-frame diagnostic (2.18a, 2.18b)
     if (explicitFrame) {
-      const inProcessFrames = await this.resolveInProcessChildFrames(selector);
-      if (inProcessFrames.length > 0) {
-        let lastRes: DomWaitForMatchResult = { matched: false };
-        for (const frame of inProcessFrames) {
-          const frameRes = await this.invokeInProcessFrame<DomWaitForMatchResult>(
-            frame.frameId,
-            "waitForMatch",
-            [innerSel, opts],
-            childFallback,
-            rpcTimeout,
-          ).catch(() => ({ matched: false }) as DomWaitForMatchResult);
-          if (frameRes?.matched) return frameRes;
-          lastRes = frameRes;
-        }
-        return lastRes;
-      }
-    }
+      const frameSel = (selector as { frame?: unknown }).frame;
+      let frameEverFound = false;
+      let lastRes: DomWaitForMatchResult = { matched: false };
 
-    if (this.childSessions.size > 0) {
-      const candidates = await this.resolveMatchingChildSessions(selector);
-      if (explicitFrame && candidates.length > 0) {
-        let lastRes: DomWaitForMatchResult = { matched: false };
-        for (const child of candidates) {
-          const childRes = await this.invokeDom<DomWaitForMatchResult>(
-            child.sessionId,
+      while (true) {
+        const remaining = Math.max(10, deadline - Date.now());
+        const remOpts: DomWaitForMatchOptions = { ...opts, timeoutMs: remaining };
+        const remRpc = Math.max(remaining + 5000, this.timeoutMs);
+
+        // 1. Check same-origin accessible iframe on main document
+        const inspected = await this.inspectMatchingIframes(frameSel);
+        if (inspected.some((i) => i.sameOriginAccessible)) {
+          frameEverFound = true;
+          const mainRes = await this.invokeDom<DomWaitForMatchResult>(
+            undefined,
             "waitForMatch",
-            [innerSel, opts],
-            childFallback,
-            rpcTimeout,
+            [selector, remOpts],
+            () => buildDomWaitForMatchScript(selector, remOpts),
+            remRpc,
           ).catch(() => ({ matched: false }) as DomWaitForMatchResult);
-          if (childRes?.matched) return childRes;
-          lastRes = childRes;
+          if (mainRes?.matched) return mainRes;
+          lastRes = mainRes;
+          if (Date.now() >= deadline) return lastRes;
+          await new Promise((r) => setTimeout(r, 50));
+          continue;
         }
-        return lastRes;
+
+        // 2. Check in-process cross-origin child frames (Page.getFrameTree + createIsolatedWorld)
+        const inProcessFrames = await this.resolveInProcessChildFrames(selector);
+        if (inProcessFrames.length > 0) {
+          frameEverFound = true;
+          for (const frame of inProcessFrames) {
+            const frameRes = await this.invokeInProcessFrame<DomWaitForMatchResult>(
+              frame.frameId,
+              "waitForMatch",
+              [innerSel, remOpts],
+              () => childFallback(remOpts),
+              remRpc,
+            ).catch(() => ({ matched: false }) as DomWaitForMatchResult);
+            if (frameRes?.matched) return frameRes;
+            lastRes = frameRes;
+          }
+          if (Date.now() >= deadline) return lastRes;
+          await new Promise((r) => setTimeout(r, 50));
+          continue;
+        }
+
+        // 3. Check attached OOPIF child sessions
+        const candidates =
+          this.childSessions.size > 0 ? await this.resolveMatchingChildSessions(selector) : [];
+        if (candidates.length > 0) {
+          frameEverFound = true;
+          for (const child of candidates) {
+            const childRes = await this.invokeDom<DomWaitForMatchResult>(
+              child.sessionId,
+              "waitForMatch",
+              [innerSel, remOpts],
+              () => childFallback(remOpts),
+              remRpc,
+            ).catch(() => ({ matched: false }) as DomWaitForMatchResult);
+            if (childRes?.matched) return childRes;
+            lastRes = childRes;
+          }
+          if (Date.now() >= deadline) return lastRes;
+          await new Promise((r) => setTimeout(r, 50));
+          continue;
+        }
+
+        // Frame not mounted yet — poll until deadline
+        if (Date.now() >= deadline) {
+          if (!frameEverFound) {
+            throw new Error(
+              `Iframe matching ${JSON.stringify(frameSel)} not found within ${timeoutMs}ms`,
+            );
+          }
+          return lastRes;
+        }
+        await new Promise((r) => setTimeout(r, 60));
       }
     }
 
@@ -1418,7 +1693,7 @@ export class CdpDomChannel implements DomChannel {
           child.sessionId,
           "waitForMatch",
           [innerSel, opts],
-          childFallback,
+          () => childFallback(opts),
           rpcTimeout,
         ).catch(() => ({ matched: false }));
         if (childRes?.matched) return childRes;

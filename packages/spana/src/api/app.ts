@@ -129,12 +129,19 @@ export interface BrowserMouse {
 }
 
 export interface BrowserClock {
+  /** Install fake clock starting at `opts.time` (running in real time, matching Playwright `page.clock.install()`). */
   install(opts?: { time?: Date | number | string }): Promise<void>;
+  /** Freeze `Date.now()` / `new Date()` at `time` (timers remain controllable via `fastForward` / `runFor`). */
   setFixedTime(time: Date | number | string): Promise<void>;
+  /** Pause both time and timers at `time` until `fastForward`, `runFor`, `nextFrame`, or `resume` is called. */
+  pauseAt(time: Date | number | string): Promise<void>;
+  /** Jump forward by `ticks` ms, firing each due timer at most once. */
   fastForward(ticks: number): Promise<void>;
+  /** Advance by `ticks` ms, firing recurring `setInterval` timers on every due tick. */
   runFor(ticks: number): Promise<void>;
   /** Advance `count` animation frames (16ms fake-clock ticks when installed, or real `requestAnimationFrame` ticks). */
   nextFrame(count?: number): Promise<void>;
+  /** Resume real-time progression (or restore native clock when not paused). */
   resume(): Promise<void>;
 }
 
@@ -216,11 +223,7 @@ export interface FrameScope<T extends string = string> {
   dragTo(source: Selector<T>, target: Selector<T>, opts?: WaitOptions): Promise<void>;
   uploadFile(selector: Selector<T>, path: UploadFileInput): Promise<void>;
   getText(selector: Selector<T>, opts?: WaitOptions): Promise<string>;
-  getAttribute(
-    selector: Selector<T>,
-    name: string,
-    opts?: WaitOptions,
-  ): Promise<string | undefined>;
+  getAttribute(selector: Selector<T>, name: string, opts?: WaitOptions): Promise<string | null>;
   isVisible(selector: Selector<T>, opts?: { timeout?: number }): Promise<boolean>;
   isEnabled(selector: Selector<T>, opts?: WaitOptions): Promise<boolean>;
   /** Count visible elements matching `selector` inside this frame (returns `0` when none exist). */
@@ -439,7 +442,7 @@ export interface PromiseApp<T extends string = string, R extends string = string
     selector: ExtendedSelector<T>,
     name: string,
     opts?: WaitOptions,
-  ): Promise<string | undefined>;
+  ): Promise<string | null>;
   isVisible(selector: ExtendedSelector<T>, opts?: { timeout?: number }): Promise<boolean>;
   isEnabled(selector: ExtendedSelector<T>, opts?: WaitOptions): Promise<boolean>;
   /** Return the number of currently visible elements matching `selector` (returns `0` without throwing when none exist). */
@@ -513,6 +516,8 @@ export interface PromiseAppOptions<R extends string = string> {
   platform?: Platform;
   storybook?: StorybookConfig;
   launchOptions?: LaunchOptions<R>;
+  /** Optional per-flow base URL override (from `flow({ baseUrl })`) for resolving relative URLs. */
+  flowBaseUrl?: string;
   /** Register an automatic teardown hook executed when the owning flow finishes (used by `app.newContext()`). */
   onRegisterCleanup?: (fn: () => Promise<void>) => void;
   /** Flow metadata forwarded to `expect` inside `app.frame()` and `app.newContext()`. */
@@ -880,39 +885,110 @@ export function createPromiseApp<T extends string = string, R extends string = s
       runStep(`request.DELETE(${url})`, () => performBrowserRequest<Res>("DELETE", url, opts)),
   };
 
-  const buildFakeClockScript = (initialMs: number) => `(() => {
+  type ClockMode = "running" | "fixed" | "paused";
+  let clockInitVersion = 0;
+
+  const buildFakeClockScript = (
+    initialMs: number,
+    mode: ClockMode,
+    version: number,
+  ): string => `(() => {
+    if (window.__spanaClockInitVersion && window.__spanaClockInitVersion > ${version}) return;
+    window.__spanaClockInitVersion = ${version};
     if (window.__spanaClock) {
-      window.__spanaClock.setFixedTime(${initialMs});
+      window.__spanaClock.configure(${initialMs}, ${JSON.stringify(mode)});
       return;
     }
     const OrigDate = window.Date;
+    const origDateNow = OrigDate.now.bind(OrigDate);
     const origSetTimeout = window.setTimeout.bind(window);
     const origClearTimeout = window.clearTimeout.bind(window);
     const origSetInterval = window.setInterval.bind(window);
     const origClearInterval = window.clearInterval.bind(window);
-    const origPerfNow = window.performance && window.performance.now ? window.performance.now.bind(window.performance) : null;
-    let fakeNow = ${initialMs};
+    const origRAF = typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame.bind(window) : null;
+    const origCancelRAF = typeof window.cancelAnimationFrame === "function" ? window.cancelAnimationFrame.bind(window) : null;
+    const origPerfNow = window.performance && typeof window.performance.now === "function"
+      ? window.performance.now.bind(window.performance)
+      : null;
+
     let installed = true;
+    let clockMode = ${JSON.stringify(mode)};
+    let fakeNow = ${initialMs};
+    let realAnchor = origDateNow();
     let nextTimerId = 100000;
     const timers = new Map();
+    const basePerf = origPerfNow ? origPerfNow() : 0;
+    const baseEpoch = ${initialMs};
+
+    const currentNow = () => {
+      if (!installed) return origDateNow();
+      if (clockMode === "running") {
+        return fakeNow + Math.max(0, origDateNow() - realAnchor);
+      }
+      return fakeNow;
+    };
+
+    const currentPerfNow = () => {
+      if (!installed) return origPerfNow ? origPerfNow() : 0;
+      return basePerf + (currentNow() - baseEpoch);
+    };
+
+    const syncFakeNow = () => {
+      if (clockMode === "running") {
+        const now = origDateNow();
+        fakeNow += Math.max(0, now - realAnchor);
+        realAnchor = now;
+      }
+      return fakeNow;
+    };
+
+    const clearNativeHandle = (entry) => {
+      if (entry.nativeHandle !== null) {
+        origClearTimeout(entry.nativeHandle);
+        entry.nativeHandle = null;
+      }
+    };
+
+    const scheduleNativeIfRunning = (entry) => {
+      clearNativeHandle(entry);
+      if (!installed || clockMode !== "running") return;
+      const delay = Math.max(0, entry.due - currentNow());
+      entry.nativeHandle = origSetTimeout(() => {
+        entry.nativeHandle = null;
+        if (!installed || !timers.has(entry.id) || clockMode !== "running") return;
+        syncFakeNow();
+        if (entry.interval !== null) {
+          entry.due = currentNow() + entry.interval;
+          scheduleNativeIfRunning(entry);
+        } else {
+          timers.delete(entry.id);
+        }
+        try {
+          if (typeof entry.fn === "function") {
+            if (entry.isRaf) entry.fn(currentPerfNow());
+            else entry.fn(...entry.args);
+          }
+        } catch {}
+      }, delay);
+    };
 
     function FakeDate(...args) {
-      if (!(this instanceof FakeDate)) return new OrigDate(fakeNow).toString();
-      if (args.length === 0) return new OrigDate(fakeNow);
+      if (!(this instanceof FakeDate)) {
+        return new OrigDate(currentNow()).toString();
+      }
+      if (args.length === 0) return new OrigDate(currentNow());
       return new OrigDate(...args);
     }
     FakeDate.prototype = OrigDate.prototype;
-    FakeDate.now = () => (installed ? fakeNow : OrigDate.now());
+    FakeDate.now = () => currentNow();
     FakeDate.parse = OrigDate.parse;
     FakeDate.UTC = OrigDate.UTC;
     Object.setPrototypeOf(FakeDate, OrigDate);
     window.Date = FakeDate;
 
-    const basePerf = origPerfNow ? origPerfNow() : 0;
-    const baseEpoch = fakeNow;
     if (window.performance) {
       try {
-        window.performance.now = () => (installed ? basePerf + (fakeNow - baseEpoch) : (origPerfNow ? origPerfNow() : 0));
+        window.performance.now = () => currentPerfNow();
       } catch {}
     }
 
@@ -920,69 +996,155 @@ export function createPromiseApp<T extends string = string, R extends string = s
       if (!installed) return origSetTimeout(fn, delay, ...args);
       const id = nextTimerId++;
       const d = Math.max(0, Number(delay) || 0);
-      timers.set(id, { id, fn, args, due: fakeNow + d, interval: null });
+      const entry = { id, fn, args, due: currentNow() + d, interval: null, isRaf: false, nativeHandle: null };
+      timers.set(id, entry);
+      scheduleNativeIfRunning(entry);
       return id;
     };
     window.clearTimeout = (id) => {
-      timers.delete(id);
+      const entry = timers.get(id);
+      if (entry) {
+        clearNativeHandle(entry);
+        timers.delete(id);
+      }
       origClearTimeout(id);
     };
     window.setInterval = (fn, delay = 0, ...args) => {
       if (!installed) return origSetInterval(fn, delay, ...args);
       const id = nextTimerId++;
       const d = Math.max(1, Number(delay) || 1);
-      timers.set(id, { id, fn, args, due: fakeNow + d, interval: d });
+      const entry = { id, fn, args, due: currentNow() + d, interval: d, isRaf: false, nativeHandle: null };
+      timers.set(id, entry);
+      scheduleNativeIfRunning(entry);
       return id;
     };
     window.clearInterval = (id) => {
-      timers.delete(id);
+      const entry = timers.get(id);
+      if (entry) {
+        clearNativeHandle(entry);
+        timers.delete(id);
+      }
       origClearInterval(id);
     };
+    if (origRAF) {
+      window.requestAnimationFrame = (cb) => {
+        if (!installed) return origRAF(cb);
+        const id = nextTimerId++;
+        const entry = { id, fn: cb, args: [], due: currentNow() + 16, interval: null, isRaf: true, nativeHandle: null };
+        timers.set(id, entry);
+        scheduleNativeIfRunning(entry);
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        const entry = timers.get(id);
+        if (entry) {
+          clearNativeHandle(entry);
+          timers.delete(id);
+        }
+        if (origCancelRAF) origCancelRAF(id);
+      };
+    }
 
-    const runDue = (targetTime, fireTimers) => {
+    const advance = (deltaMs, oncePerTimer) => {
+      const startNow = syncFakeNow();
+      const targetTime = startNow + Math.max(0, Number(deltaMs) || 0);
+      const prevMode = clockMode;
+      clockMode = prevMode === "running" ? "paused" : prevMode;
+      const firedOnce = oncePerTimer ? new Set() : null;
+
       while (true) {
         let next = null;
         for (const t of timers.values()) {
+          if (firedOnce && firedOnce.has(t.id)) continue;
           if (t.due <= targetTime && (!next || t.due < next.due)) next = t;
         }
         if (!next) break;
+        clearNativeHandle(next);
         fakeNow = next.due;
         if (next.interval !== null) {
-          next.due += next.interval;
+          if (oncePerTimer) {
+            firedOnce.add(next.id);
+            const steps = Math.floor((targetTime - next.due) / next.interval) + 1;
+            next.due += steps * next.interval;
+          } else {
+            next.due += next.interval;
+          }
         } else {
           timers.delete(next.id);
         }
-        if (fireTimers) {
-          try {
-            if (typeof next.fn === "function") next.fn(...next.args);
-          } catch {}
+        try {
+          if (typeof next.fn === "function") {
+            if (next.isRaf) next.fn(currentPerfNow());
+            else next.fn(...next.args);
+          }
+        } catch {}
+      }
+
+      fakeNow = targetTime;
+      realAnchor = origDateNow();
+      clockMode = prevMode;
+      if (clockMode === "running") {
+        for (const t of timers.values()) {
+          scheduleNativeIfRunning(t);
         }
       }
-      fakeNow = targetTime;
+      return fakeNow;
     };
 
     window.__spanaClock = {
-      setFixedTime(ms) {
+      configure(ms, nextMode) {
         fakeNow = ms;
+        realAnchor = origDateNow();
+        clockMode = nextMode;
+        for (const t of timers.values()) {
+          if (clockMode === "running") scheduleNativeIfRunning(t);
+          else clearNativeHandle(t);
+        }
+      },
+      now() {
+        return currentNow();
+      },
+      mode() {
+        return clockMode;
+      },
+      setFixedTime(ms) {
+        this.configure(ms, "fixed");
+        return fakeNow;
+      },
+      pauseAt(ms) {
+        this.configure(ms, "paused");
+        return fakeNow;
       },
       fastForward(ms) {
-        runDue(fakeNow + Math.max(0, Number(ms) || 0), true);
+        return advance(ms, true);
       },
       runFor(ms) {
-        runDue(fakeNow + Math.max(0, Number(ms) || 0), true);
+        return advance(ms, false);
       },
       resume() {
+        if (clockMode === "paused" || clockMode === "fixed") {
+          realAnchor = origDateNow();
+          clockMode = "running";
+          for (const t of timers.values()) {
+            scheduleNativeIfRunning(t);
+          }
+          return { restored: false, now: fakeNow };
+        }
         installed = false;
+        for (const t of timers.values()) clearNativeHandle(t);
+        timers.clear();
         window.Date = OrigDate;
         window.setTimeout = origSetTimeout;
         window.clearTimeout = origClearTimeout;
         window.setInterval = origSetInterval;
         window.clearInterval = origClearInterval;
+        if (origRAF) window.requestAnimationFrame = origRAF;
+        if (origCancelRAF) window.cancelAnimationFrame = origCancelRAF;
         if (window.performance && origPerfNow) {
           try { window.performance.now = origPerfNow; } catch {}
         }
-        timers.clear();
         delete window.__spanaClock;
+        return { restored: true, now: origDateNow() };
       },
     };
   })();`;
@@ -995,67 +1157,100 @@ export function createPromiseApp<T extends string = string, R extends string = s
     return Number.isFinite(parsed) ? parsed : Date.now();
   };
 
+  const persistClockInitScript = async (ms: number, mode: ClockMode | null) => {
+    const script = mode === null ? null : buildFakeClockScript(ms, mode, ++clockInitVersion);
+    if (driver.setClockInitScript) {
+      await run(driver.setClockInitScript(script));
+    } else if (script && driver.addInitScript) {
+      await run(driver.addInitScript(script));
+    }
+    return script;
+  };
+
   const clockClient: BrowserClock = {
     install: (opts) =>
       runStep("clock.install", async () => {
         const initialMs = parseClockTime(opts?.time);
-        const script = buildFakeClockScript(initialMs);
-        if (driver.addInitScript) {
-          await run(driver.addInitScript(script));
-        }
-        await run(driver.evaluate(script)).catch(() => {});
+        const script = await persistClockInitScript(initialMs, "running");
+        await run(
+          driver.evaluate(script ?? buildFakeClockScript(initialMs, "running", ++clockInitVersion)),
+        ).catch(() => {});
       }),
     setFixedTime: (time) =>
       runStep("clock.setFixedTime", async () => {
         const ms = parseClockTime(time);
-        const script = buildFakeClockScript(ms);
-        if (driver.addInitScript) {
-          await run(driver.addInitScript(script));
-        }
-        await run(driver.evaluate(script)).catch(() => {});
+        const script = await persistClockInitScript(ms, "fixed");
+        await run(
+          driver.evaluate(script ?? buildFakeClockScript(ms, "fixed", ++clockInitVersion)),
+        ).catch(() => {});
+      }),
+    pauseAt: (time) =>
+      runStep("clock.pauseAt", async () => {
+        const ms = parseClockTime(time);
+        const script = await persistClockInitScript(ms, "paused");
+        await run(
+          driver.evaluate(script ?? buildFakeClockScript(ms, "paused", ++clockInitVersion)),
+        ).catch(() => {});
       }),
     fastForward: (ticks) =>
       runStep(`clock.fastForward(${ticks})`, async () => {
-        await run(
-          driver.evaluate(
-            `(() => { if (!window.__spanaClock) throw new Error("Call app.clock.install() before app.clock.fastForward()"); window.__spanaClock.fastForward(${Number(ticks) || 0}); })()`,
+        const nextState = await run(
+          driver.evaluate<{ now: number; mode: ClockMode }>(
+            `(() => { if (!window.__spanaClock) throw new Error("Call app.clock.install() before app.clock.fastForward()"); const now = window.__spanaClock.fastForward(${Number(ticks) || 0}); return { now, mode: window.__spanaClock.mode() }; })()`,
           ),
         );
+        if (nextState && typeof nextState.now === "number") {
+          await persistClockInitScript(nextState.now, nextState.mode);
+        }
       }),
     runFor: (ticks) =>
       runStep(`clock.runFor(${ticks})`, async () => {
-        await run(
-          driver.evaluate(
-            `(() => { if (!window.__spanaClock) throw new Error("Call app.clock.install() before app.clock.runFor()"); window.__spanaClock.runFor(${Number(ticks) || 0}); })()`,
+        const nextState = await run(
+          driver.evaluate<{ now: number; mode: ClockMode }>(
+            `(() => { if (!window.__spanaClock) throw new Error("Call app.clock.install() before app.clock.runFor()"); const now = window.__spanaClock.runFor(${Number(ticks) || 0}); return { now, mode: window.__spanaClock.mode() }; })()`,
           ),
         );
+        if (nextState && typeof nextState.now === "number") {
+          await persistClockInitScript(nextState.now, nextState.mode);
+        }
       }),
     nextFrame: (count = 1) =>
       runStep(`clock.nextFrame(${count})`, async () => {
         const frames = Math.max(1, Math.round(count));
-        await run(
-          driver.evaluate(
+        const nextState = await run(
+          driver.evaluate<{ now: number; mode: ClockMode } | null>(
             `(async () => {
               if (window.__spanaClock) {
                 for (let i = 0; i < ${frames}; i++) {
                   window.__spanaClock.runFor(16);
                 }
-                return;
+                return { now: window.__spanaClock.now(), mode: window.__spanaClock.mode() };
               }
               if (typeof requestAnimationFrame === "function") {
                 for (let i = 0; i < ${frames}; i++) {
                   await new Promise((r) => requestAnimationFrame(() => r()));
                 }
               }
+              return null;
             })()`,
           ),
         );
+        if (nextState && typeof nextState.now === "number") {
+          await persistClockInitScript(nextState.now, nextState.mode);
+        }
       }),
     resume: () =>
       runStep("clock.resume", async () => {
-        await run(
-          driver.evaluate(`(() => { if (window.__spanaClock) window.__spanaClock.resume(); })()`),
-        );
+        const res = await run(
+          driver.evaluate<{ restored: boolean; now: number } | null>(
+            `(() => { if (!window.__spanaClock) return null; return window.__spanaClock.resume(); })()`,
+          ),
+        ).catch(() => null);
+        if (!res || res.restored) {
+          await persistClockInitScript(0, null);
+        } else {
+          await persistClockInitScript(res.now, "running");
+        }
       }),
   };
 
@@ -1334,10 +1529,31 @@ export function createPromiseApp<T extends string = string, R extends string = s
     clearState: () =>
       runStep("clearState", () => run(driver.clearAppState(appId)), { captureScreenshot: true }),
     openLink: (url) =>
-      runStep("openLink", () => run(driver.openLink(url)), {
-        selector: { url },
-        captureScreenshot: true,
-      }),
+      runStep(
+        "openLink",
+        () => {
+          let resolved = url as string;
+          if (
+            options.flowBaseUrl &&
+            !resolved.startsWith("http://") &&
+            !resolved.startsWith("https://") &&
+            resolved !== "about:blank" &&
+            !resolved.startsWith("data:") &&
+            !resolved.startsWith("file:")
+          ) {
+            try {
+              resolved = new URL(resolved, options.flowBaseUrl).toString();
+            } catch {
+              resolved = `${options.flowBaseUrl.replace(/\/$/, "")}/${resolved.replace(/^\//, "")}`;
+            }
+          }
+          return run(driver.openLink(resolved as R));
+        },
+        {
+          selector: { url },
+          captureScreenshot: true,
+        },
+      ),
     openStory: (storyId, opts) =>
       runStep(
         `openStory(${storyId})`,
@@ -1586,21 +1802,92 @@ export function createPromiseApp<T extends string = string, R extends string = s
             optionalMethod("newContext", driver.createIsolatedContext)(ctxOpts),
           );
           let closed = false;
+          const closedError = () => new DriverError({ message: "Browser context closed" });
           const safeClose = async () => {
             if (closed) return;
             closed = true;
             await created.close();
           };
           options.onRegisterCleanup?.(safeClose);
-          const childDriver = created.driver as RawDriverService<T, R>;
-          const childApp = createPromiseApp<T, R>(childDriver, appId, config, recorder, options);
-          const childExpect = createPromiseExpect<T, R>(
+          const rawChildDriver = created.driver as RawDriverService<T, R>;
+          // Guard every driver & DOM channel call so a closed context rejects immediately (2.27)
+          const guardedDomChannel = rawChildDriver.domChannel
+            ? new Proxy(rawChildDriver.domChannel, {
+                get(target, prop, receiver) {
+                  if (prop === "isConnected") return () => !closed && target.isConnected();
+                  const val = Reflect.get(target, prop, receiver);
+                  if (typeof val !== "function") return val;
+                  return (...args: unknown[]) => {
+                    if (closed) return Promise.reject(closedError());
+                    return val.apply(target, args);
+                  };
+                },
+              })
+            : undefined;
+          const childDriver = new Proxy(rawChildDriver, {
+            get(target, prop, receiver) {
+              if (prop === "domChannel") return guardedDomChannel;
+              const val = Reflect.get(target, prop, receiver);
+              if (typeof val !== "function") return val;
+              return (...args: unknown[]) => {
+                if (closed) {
+                  if (prop === "getRawPage" || prop === "getCdpSession" || prop === "onRequest") {
+                    throw closedError();
+                  }
+                  if (prop === "getNavigationUrls") return [];
+                  return Effect.fail(closedError());
+                }
+                return val.apply(target, args);
+              };
+            },
+          }) as RawDriverService<T, R>;
+          const rawChildApp = createPromiseApp<T, R>(childDriver, appId, config, recorder, options);
+          const wrapClosedProxy = <Obj extends object>(obj: Obj): Obj =>
+            new Proxy(obj, {
+              get(target, prop, receiver) {
+                if (prop === "then") return undefined;
+                const val = Reflect.get(target, prop, receiver);
+                if (
+                  val &&
+                  typeof val === "object" &&
+                  (prop === "request" ||
+                    prop === "clock" ||
+                    prop === "keyboard" ||
+                    prop === "mouse")
+                ) {
+                  return wrapClosedProxy(val as object);
+                }
+                if (typeof val !== "function") return val;
+                return (...args: unknown[]) => {
+                  if (closed) {
+                    if (
+                      prop === "getPage" ||
+                      prop === "cdp" ||
+                      prop === "onRequest" ||
+                      prop === "frame"
+                    ) {
+                      throw closedError();
+                    }
+                    return Promise.reject(closedError());
+                  }
+                  return val.apply(target, args);
+                };
+              },
+            });
+          const childApp = wrapClosedProxy(rawChildApp);
+          const rawChildExpect = createPromiseExpect<T, R>(
             childDriver,
             config,
             recorder,
             options.flowContext,
             options.visualRegression,
           );
+          const childExpect = new Proxy(rawChildExpect, {
+            apply(target, thisArg, argArray) {
+              if (closed) throw closedError();
+              return Reflect.apply(target, thisArg, argArray);
+            },
+          });
           return { app: childApp, expect: childExpect, close: safeClose };
         },
         { selector: ctxOpts },

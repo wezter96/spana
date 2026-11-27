@@ -339,7 +339,11 @@ if (command === "test") {
       },
     );
     if (url || config.apps?.web?.url) {
-      await app.openLink(url ?? config.apps!.web!.url!);
+      const cfgUrl = config.apps?.web?.url;
+      const resolvedUrl =
+        url ??
+        (typeof cfgUrl === "function" ? cfgUrl({ workerIndex: 0, parallelIndex: 0 }) : cfgUrl!);
+      await app.openLink(resolvedUrl);
     }
     const result = await runExploreSession({ goal, app, provider: config.agent });
     if (outputFile) {

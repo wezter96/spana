@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,6 +120,8 @@ export interface PlaywrightConfig {
   freshContextPerFlow?: boolean;
   /** Automatically attach a CDP WebAuthn virtual authenticator (passkey) to every fresh context. */
   virtualAuthenticator?: boolean | VirtualAuthenticatorOptions;
+  /** Optional JS expression evaluated before fail-fast idle checks (sets `window.__SPANA_APP_READY__`). */
+  readyExpression?: string;
   /** Attach a built-in zero-setup Playwright DOM channel for ~1ms `{ testID }` queries without full DOM dumps. Default: true. */
   enableDomChannel?: boolean;
 }
@@ -206,7 +208,10 @@ export async function ensureWarmBrowserDaemon(
   }
 
   const port = await allocateFreePort(9322);
-  const userDataDir = mkdtempSync(join(tmpdir(), "spana-warm-chrome-"));
+  const rawTmp = tmpdir();
+  const safeTmpDir =
+    process.platform === "linux" && rawTmp.length > 50 && existsSync("/tmp") ? "/tmp" : rawTmp;
+  const userDataDir = mkdtempSync(join(safeTmpDir, "spana-warm-chrome-"));
   const execPath = config.executablePath ?? chromium.executablePath();
   const child = spawn(
     execPath,
@@ -215,7 +220,11 @@ export async function ensureWarmBrowserDaemon(
       remoteDebuggingPort: port,
       headless: config.headless,
     }),
-    { detached: true, stdio: "ignore" },
+    {
+      detached: true,
+      stdio: "ignore",
+      ...(safeTmpDir !== rawTmp ? { env: { ...process.env, TMPDIR: safeTmpDir } } : {}),
+    },
   );
   child.unref();
 
@@ -1080,6 +1089,12 @@ export function makePlaywrightDriver(
       if (config.instantAnimations && typeof ctx.addInitScript === "function") {
         await ctx.addInitScript(INSTANT_ANIMATIONS_INIT_SCRIPT);
       }
+      if (config.readyExpression && typeof ctx.addInitScript === "function") {
+        const expr = config.readyExpression;
+        await ctx.addInitScript(
+          `(() => { window.__SPANA_APP_READY__ = () => { try { return Boolean(${expr}); } catch { return false; } }; })();`,
+        );
+      }
       if (
         config.blockResources &&
         config.blockResources.length > 0 &&
@@ -1349,11 +1364,24 @@ export function makePlaywrightDriver(
               const res = await page.evaluate(buildDomWaitForHiddenScript(selector, opts));
               return Boolean(res);
             },
-            waitForMatch: async (selector, opts) => {
-              const res = await page.evaluate(buildDomWaitForMatchScript(selector, opts));
-              if (res && typeof res === "object" && (res as DomWaitForMatchResult).matched) {
-                return res as DomWaitForMatchResult;
+            supportsInlineTapGuard: () => true,
+            checkTapGuard: async () => {
+              try {
+                return Boolean(
+                  await page.evaluate(
+                    `(() => {
+                      const missed = Boolean(window.__spanaTapMissed);
+                      if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+                      delete window.__spanaTapMissed;
+                      return missed;
+                    })()`,
+                  ),
+                );
+              } catch {
+                return false;
               }
+            },
+            waitForMatch: async (selector, opts) => {
               if (
                 typeof selector === "object" &&
                 selector !== null &&
@@ -1364,23 +1392,40 @@ export function makePlaywrightDriver(
                   string,
                   unknown
                 >;
-                const iframeHandle = await page
-                  .locator(selectorToFrameCss(frameSel as Selector))
-                  .first()
-                  .elementHandle()
-                  .catch(() => null);
-                const cf = iframeHandle
-                  ? await iframeHandle.contentFrame().catch(() => null)
-                  : null;
-                if (cf) {
-                  const frameRes = await cf
-                    .evaluate(buildDomWaitForMatchScript(innerRest as Selector, opts))
+                const frameCss = selectorToFrameCss(frameSel as Selector);
+                const timeoutMs = opts?.timeoutMs ?? 5000;
+                const deadline = Date.now() + timeoutMs;
+                let cf: import("playwright-core").Frame | null = null;
+                while (Date.now() < deadline) {
+                  const iframeHandle = await page
+                    .locator(frameCss)
+                    .first()
+                    .elementHandle()
                     .catch(() => null);
-                  if (frameRes && typeof frameRes === "object") {
-                    return frameRes as DomWaitForMatchResult;
-                  }
+                  cf = iframeHandle ? await iframeHandle.contentFrame().catch(() => null) : null;
+                  if (cf) break;
+                  await new Promise((r) => setTimeout(r, 40));
                 }
+                if (!cf) {
+                  throw new Error(
+                    `Iframe matching ${JSON.stringify(frameSel)} not found within ${timeoutMs}ms`,
+                  );
+                }
+                const remaining = Math.max(50, deadline - Date.now());
+                const frameRes = await cf
+                  .evaluate(
+                    buildDomWaitForMatchScript(innerRest as Selector, {
+                      ...opts,
+                      timeoutMs: remaining,
+                    }),
+                  )
+                  .catch(() => null);
+                if (frameRes && typeof frameRes === "object") {
+                  return frameRes as DomWaitForMatchResult;
+                }
+                return { matched: false };
               }
+              const res = await page.evaluate(buildDomWaitForMatchScript(selector, opts));
               return res && typeof res === "object"
                 ? (res as DomWaitForMatchResult)
                 : { matched: false };
@@ -1469,10 +1514,7 @@ export function makePlaywrightDriver(
                 function walk(el) {
                   var rect = el.getBoundingClientRect();
                   var style = window.getComputedStyle(el);
-                  var viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-                  var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
                   var isVisible = style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
-                  var intersectsViewport = rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
                   return {
                     tag: el.tagName.toLowerCase(),
                     id: el.getAttribute("data-testid") || el.getAttribute("testID") || undefined,
@@ -1484,7 +1526,7 @@ export function makePlaywrightDriver(
                     role: el.getAttribute("role") || undefined,
                     bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
                     enabled: !el.hasAttribute("disabled"),
-                    visible: isVisible && rect.width > 0 && rect.height > 0 && intersectsViewport,
+                    visible: isVisible && rect.width > 0 && rect.height > 0,
                     clickable: el.tagName === "BUTTON" || el.tagName === "A" || el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.getAttribute("role") === "button" || el.onclick !== null,
                     attributes: (function() { var a = {}; for (var i = 0; i < el.attributes.length; i++) { var attr = el.attributes[i]; a[attr.name] = attr.value; } return Object.keys(a).length > 0 ? a : undefined; })(),
                     children: Array.from(el.children).map(walk),
@@ -1662,7 +1704,35 @@ export function makePlaywrightDriver(
       launchApp: (url, opts?: LaunchOptions) =>
         Effect.tryPromise({
           try: async () => {
-            const targetUrl = opts?.deepLink || url || config.baseUrl || "about:blank";
+            const rawTarget = opts?.deepLink || url || config.baseUrl || "about:blank";
+            const resolveTargetUrl = (raw: string): string => {
+              if (
+                raw.startsWith("http://") ||
+                raw.startsWith("https://") ||
+                raw === "about:blank" ||
+                raw.startsWith("data:") ||
+                raw.startsWith("file:")
+              ) {
+                return raw;
+              }
+              if (config.baseUrl && config.baseUrl !== "about:blank") {
+                try {
+                  return new URL(raw, config.baseUrl).toString();
+                } catch {
+                  return `${config.baseUrl.replace(/\/$/, "")}/${raw.replace(/^\//, "")}`;
+                }
+              }
+              const cur = currentPageUrl(page);
+              if (cur.startsWith("http://") || cur.startsWith("https://")) {
+                try {
+                  return new URL(raw, new URL(cur).origin).toString();
+                } catch {
+                  // fall through
+                }
+              }
+              return raw;
+            };
+            const targetUrl = resolveTargetUrl(rawTarget);
             if (opts?.clearState) {
               await clearStorage();
             }
@@ -1733,10 +1803,38 @@ export function makePlaywrightDriver(
       openLink: (url) =>
         Effect.tryPromise({
           try: async () => {
-            await page.goto(url, config.waitUntil ? { waitUntil: config.waitUntil } : undefined);
+            let targetUrl = url;
+            if (
+              !url.startsWith("http://") &&
+              !url.startsWith("https://") &&
+              url !== "about:blank" &&
+              !url.startsWith("data:") &&
+              !url.startsWith("file:")
+            ) {
+              if (config.baseUrl && config.baseUrl !== "about:blank") {
+                try {
+                  targetUrl = new URL(url, config.baseUrl).toString();
+                } catch {
+                  targetUrl = `${config.baseUrl.replace(/\/$/, "")}/${url.replace(/^\//, "")}`;
+                }
+              } else {
+                const cur = currentPageUrl(page);
+                if (cur.startsWith("http://") || cur.startsWith("https://")) {
+                  try {
+                    targetUrl = new URL(url, new URL(cur).origin).toString();
+                  } catch {
+                    // keep raw url
+                  }
+                }
+              }
+            }
+            await page.goto(
+              targetUrl,
+              config.waitUntil ? { waitUntil: config.waitUntil } : undefined,
+            );
             updateHarPage(page);
             schedulePrefetchNextContext();
-            debugLog("openLink", url);
+            debugLog("openLink", targetUrl);
           },
           catch: (e) => new DriverError({ message: `Failed to open link ${url}: ${e}` }),
         }),

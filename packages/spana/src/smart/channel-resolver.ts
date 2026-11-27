@@ -166,7 +166,7 @@ export function isOffscreenInViewport(match: DomElementMatch): boolean {
  * Mirrors Spana's native matcher: prefer visible, in-bounds, clickable, deepest.
  */
 export function pickBestDomMatch(matches: DomElementMatch[]): DomElementMatch | undefined {
-  const visible = matches.filter((m) => m.visible && m.rect.width > 0 && m.rect.height > 0);
+  const visible = matches.filter((m) => m.visible);
   if (visible.length === 0) return undefined;
 
   const clickable = visible.filter((m) => m.clickable);

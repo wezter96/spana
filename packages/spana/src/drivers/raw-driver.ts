@@ -441,6 +441,8 @@ export interface RawDriverService<_T extends string = string, R extends string =
     script: string | ((...args: any[]) => unknown),
     ...args: unknown[]
   ) => Effect.Effect<void, DriverError>;
+  /** Replace or clear the flow-scoped fake clock init script so clock state persists across reloads and cleans up on beginFlow. */
+  readonly setClockInitScript?: (script: string | null) => Effect.Effect<void, DriverError>;
   readonly exposeFunction?: (
     name: string,
     fn: (...args: any[]) => any,
@@ -671,6 +673,7 @@ export function withBufferedDriverLogs(driver: RawDriverService): RawDriverServi
     waitForPopup: wrapOptionalMethod(logs, "waitForPopup", driver.waitForPopup),
     evaluate: wrapLoggedMethod(logs, "evaluate", driver.evaluate),
     addInitScript: wrapOptionalMethod(logs, "addInitScript", driver.addInitScript),
+    setClockInitScript: wrapOptionalMethod(logs, "setClockInitScript", driver.setClockInitScript),
     exposeFunction: wrapOptionalMethod(logs, "exposeFunction", driver.exposeFunction),
     getContexts: wrapOptionalMethod(logs, "getContexts", driver.getContexts),
     getCurrentContext: wrapOptionalMethod(logs, "getCurrentContext", driver.getCurrentContext),

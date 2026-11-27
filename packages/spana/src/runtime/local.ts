@@ -126,6 +126,21 @@ export interface PrelaunchedWebBrowser {
  * Start launching (or connecting to a warm/CDP) browser immediately
  * so browser boot overlaps with flow discovery and TypeScript imports.
  */
+function resolveWebAppUrl(
+  url: string | ((ctx: { workerIndex: number; parallelIndex: number }) => string) | undefined,
+  workerIndex: number,
+  parallelIndex: number,
+): string {
+  if (typeof url === "function") {
+    return url({ workerIndex, parallelIndex });
+  }
+  return url ?? "http://localhost:3000";
+}
+
+function getWorkerOffset(): number {
+  return Number.parseInt(process.env.SPANA_WORKER_INDEX_OFFSET ?? "0", 10) || 0;
+}
+
 export function speculativelyPrelaunchWebBrowser(
   config: ProvConfig,
 ): PrelaunchedWebBrowser | undefined {
@@ -141,6 +156,7 @@ export function speculativelyPrelaunchWebBrowser(
     const cdpBrowserPromise = launchDirectCdpBrowser({
       executablePath: webExecution?.executablePath,
       headless: webExecution?.headless ?? true,
+      chromiumSandbox: webExecution?.chromiumSandbox,
       gpu: webExecution?.gpu,
       webgpu: webExecution?.webgpu,
       extensions: webExecution?.extensions,
@@ -208,7 +224,8 @@ export async function buildWebRuntime(
   config: ProvConfig,
   prelaunched?: PrelaunchedWebBrowser,
 ): Promise<RuntimeResult> {
-  const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
+  const workerOffset = getWorkerOffset();
+  const webUrl = resolveWebAppUrl(config.apps?.web?.url, workerOffset, workerOffset);
   const webExecution = config.execution?.web;
   const bridge = await maybeStartBridge(config.apps?.web?.bridge, config.execution?.bridge);
 
@@ -272,6 +289,7 @@ export async function buildWebRuntime(
         : await launchDirectCdpBrowser({
             executablePath: webExecution?.executablePath,
             headless: webExecution?.headless ?? true,
+            chromiumSandbox: webExecution?.chromiumSandbox,
             gpu: webExecution?.gpu,
             webgpu: webExecution?.webgpu,
             extensions: webExecution?.extensions,
@@ -315,6 +333,7 @@ export async function buildWebRuntime(
         virtualAuthenticator: webExecution?.virtualAuthenticator,
         storageState: webExecution?.storageState,
         emulation: cdpEmulation,
+        readyExpression: webExecution?.readyExpression,
       }),
     );
   } else {
@@ -340,6 +359,7 @@ export async function buildWebRuntime(
         blockResources: webExecution?.blockResources,
         freshContextPerFlow: webExecution?.freshContextPerFlow,
         virtualAuthenticator: webExecution?.virtualAuthenticator,
+        readyExpression: webExecution?.readyExpression,
         warmBrowserScope: webExecution?.warmBrowserScope,
         sharedBrowser: prelaunchedBrowser,
         cdpEndpoint: prelaunchedBrowser ? undefined : webExecution?.cdpUrl,
@@ -396,7 +416,7 @@ export async function buildWebRuntimePool(
     return [await buildWebRuntime(config, prelaunched)];
   }
 
-  const webUrl = config.apps?.web?.url ?? "http://localhost:3000";
+  const workerOffset = getWorkerOffset();
   const maxPerBrowser = Math.max(
     1,
     webExecution?.maxContextsPerBrowser ?? (engine === "cdp" ? 4 : 2),
@@ -426,6 +446,7 @@ export async function buildWebRuntimePool(
             : launchDirectCdpBrowser({
                 executablePath: webExecution?.executablePath,
                 headless: webExecution?.headless ?? true,
+                chromiumSandbox: webExecution?.chromiumSandbox,
                 gpu: webExecution?.gpu,
                 webgpu: webExecution?.webgpu,
                 extensions: webExecution?.extensions,
@@ -471,10 +492,15 @@ export async function buildWebRuntimePool(
     const results: RuntimeResult[] = await Promise.all(
       Array.from({ length: workerCount }, async (_v, i) => {
         const bucket = handles[i % handles.length]!;
+        const workerWebUrl = resolveWebAppUrl(
+          config.apps?.web?.url,
+          workerOffset + i,
+          workerOffset + i,
+        );
         const driver = await Effect.runPromise(
           makeLightweightCdpDriver({
             cdpUrl: bucket.cdpUrl,
-            baseUrl: webUrl,
+            baseUrl: workerWebUrl,
             engineLabel: "cdp",
             viewport: webExecution?.viewport,
             evaluateTimeout: webExecution?.evaluateTimeout,
@@ -489,6 +515,7 @@ export async function buildWebRuntimePool(
             virtualAuthenticator: webExecution?.virtualAuthenticator,
             storageState: webExecution?.storageState,
             emulation: poolEmulation,
+            readyExpression: webExecution?.readyExpression,
           }),
         );
         const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
@@ -512,7 +539,7 @@ export async function buildWebRuntimePool(
               deviceId: `cdp-context-${i + 1}`,
             },
           },
-          engineConfig: buildEngineConfig(webUrl, "web", parseWebHierarchy, config, {
+          engineConfig: buildEngineConfig(workerWebUrl, "web", parseWebHierarchy, config, {
             width: deviceInfo.screenWidth,
             height: deviceInfo.screenHeight,
           }),
@@ -591,6 +618,11 @@ export async function buildWebRuntimePool(
   const results: RuntimeResult[] = [];
   for (let i = 0; i < workerCount; i++) {
     const bucket = browserBuckets[i % browserBuckets.length]!;
+    const workerWebUrl = resolveWebAppUrl(
+      config.apps?.web?.url,
+      workerOffset + i,
+      workerOffset + i,
+    );
     const driver = await Effect.runPromise(
       makePlaywrightDriver({
         browser: webExecution?.browser,
@@ -603,7 +635,7 @@ export async function buildWebRuntimePool(
         timezoneId: webExecution?.timezoneId,
         colorScheme: webExecution?.colorScheme,
         reducedMotion: webExecution?.reducedMotion,
-        baseUrl: webUrl,
+        baseUrl: workerWebUrl,
         storageState: webExecution?.storageState,
         verboseLogging: webExecution?.verboseLogging,
         sharedBrowser: bucket.browser,
@@ -613,6 +645,7 @@ export async function buildWebRuntimePool(
         blockResources: webExecution?.blockResources,
         freshContextPerFlow: webExecution?.freshContextPerFlow,
         virtualAuthenticator: webExecution?.virtualAuthenticator,
+        readyExpression: webExecution?.readyExpression,
         warmBrowserScope: webExecution?.warmBrowserScope,
       }),
     );
@@ -638,7 +671,7 @@ export async function buildWebRuntimePool(
           deviceId: `playwright-context-${i + 1}`,
         },
       },
-      engineConfig: buildEngineConfig(webUrl, "web", parseWebHierarchy, config, {
+      engineConfig: buildEngineConfig(workerWebUrl, "web", parseWebHierarchy, config, {
         width: deviceInfo.screenWidth,
         height: deviceInfo.screenHeight,
       }),

@@ -98,6 +98,8 @@ export interface DomWaitForMatchOptions {
     | "accessibleDescription"
     | "focused"
     | "checked"
+    | "enabled"
+    | "role"
     | "class"
     | "css"
     | "editable"
@@ -232,6 +234,7 @@ export function domMatchToElement(match: DomElementMatch, screenBounds?: Bounds)
       ? { accessibleDescription: match.accessibleDescription }
       : {}),
     ...(match.tag !== undefined ? { elementType: match.tag } : {}),
+    ...(match.role !== undefined ? { role: match.role } : {}),
     bounds: screenBounds ?? {
       x: Math.round(match.rect.x),
       y: Math.round(match.rect.y),
@@ -313,13 +316,30 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (exact) return str.trim() === needle.trim();
     return str.toLowerCase().indexOf(needle.toLowerCase()) !== -1;
   }
+  function isInsideSectioningContent(el) {
+    var cur = el && el.parentElement;
+    var guard = 0;
+    while (cur && guard++ < 32) {
+      var ptag = cur.tagName ? cur.tagName.toUpperCase() : "";
+      if (ptag === "ARTICLE" || ptag === "ASIDE" || ptag === "MAIN" || ptag === "NAV" || ptag === "SECTION") {
+        return true;
+      }
+      var prole = (cur.getAttribute && cur.getAttribute("role") || "").trim().toLowerCase().split(/\\s+/)[0] || "";
+      if (prole === "article" || prole === "complementary" || prole === "main" || prole === "navigation" || prole === "region") {
+        return true;
+      }
+      var root = typeof cur.getRootNode === "function" ? cur.getRootNode() : null;
+      cur = cur.parentElement || (root && root.host) || null;
+    }
+    return false;
+  }
   function getImplicitRole(el) {
-    if (!el || !el.getAttribute) return "";
+    if (!el || !el.getAttribute) return "generic";
     var explicit = (el.getAttribute("role") || "").trim().toLowerCase();
-    if (explicit) return explicit.split(/\\s+/)[0] || "";
+    if (explicit) return explicit.split(/\\s+/)[0] || "generic";
     var tag = el.tagName ? el.tagName.toUpperCase() : "";
     if (tag === "BUTTON") return "button";
-    if (tag === "A") return el.hasAttribute("href") ? "link" : "";
+    if (tag === "A") return el.hasAttribute("href") ? "link" : "generic";
     if (tag === "TEXTAREA") return "textbox";
     if (tag === "SELECT") return (el.hasAttribute("multiple") || Number(el.getAttribute("size") || 0) > 1) ? "listbox" : "combobox";
     if (tag === "OPTION") return "option";
@@ -327,33 +347,44 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (tag === "DIALOG") return "dialog";
     if (tag === "NAV") return "navigation";
     if (tag === "MAIN") return "main";
-    if (tag === "HEADER") return "banner";
-    if (tag === "FOOTER") return "contentinfo";
+    if (tag === "HEADER") return isInsideSectioningContent(el) ? "generic" : "banner";
+    if (tag === "FOOTER") return isInsideSectioningContent(el) ? "generic" : "contentinfo";
     if (tag === "ASIDE") return "complementary";
     if (tag === "UL" || tag === "OL") return "list";
     if (tag === "LI") return "listitem";
     if (tag === "TABLE") return "table";
     if (tag === "TR") return "row";
     if (tag === "TD") return "cell";
-    if (tag === "TH") return "columnheader";
+    if (tag === "TH") {
+      var scope = (el.getAttribute("scope") || "").trim().toLowerCase();
+      if (scope === "row" || scope === "rowgroup") return "rowheader";
+      if (scope === "col" || scope === "colgroup") return "columnheader";
+      var tr = el.parentElement;
+      if (tr && tr.tagName && tr.tagName.toUpperCase() === "TR" && !(el.closest && el.closest("thead"))) {
+        if (tr.querySelector && tr.querySelector("td")) return "rowheader";
+      }
+      return "columnheader";
+    }
     if (tag === "ARTICLE") return "article";
     if (tag === "FORM") return "form";
     if (tag === "PROGRESS") return "progressbar";
     if (tag === "HR") return "separator";
-    if (tag === "SECTION") return (el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby")) ? "region" : "";
+    if (tag === "SECTION") {
+      return (el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby") || Boolean((el.getAttribute("title") || "").trim())) ? "region" : "generic";
+    }
     if (/^H[1-6]$/.test(tag)) return "heading";
     if (tag === "INPUT") {
       var t = (el.getAttribute("type") || "text").toLowerCase();
       if (t === "button" || t === "submit" || t === "reset" || t === "image") return "button";
       if (t === "checkbox") return "checkbox";
       if (t === "radio") return "radio";
-      if (t === "search") return "searchbox";
+      if (t === "search") return el.hasAttribute("list") ? "combobox" : "searchbox";
       if (t === "number") return "spinbutton";
       if (t === "range") return "slider";
-      if (t === "hidden") return "";
-      return "textbox";
+      if (t === "hidden") return "generic";
+      return el.hasAttribute("list") ? "combobox" : "textbox";
     }
-    return "";
+    return "generic";
   }
   function visibleTextOf(node, allowHiddenRoot, skipControl) {
     if (!node) return "";
@@ -387,32 +418,92 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return out.join(" ").replace(/\\s+/g, " ").trim();
   }
-  function isAriaHidden(el) {
+  function isHiddenInAncestorChain(el) {
     if (!el) return true;
     var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
     var cur = el;
     var guard = 0;
-    while (cur && guard++ < 32) {
+    while (cur && guard++ < 48) {
       if (cur.getAttribute) {
         if (cur.getAttribute("aria-hidden") === "true") return true;
         if (cur.hasAttribute && cur.hasAttribute("inert")) return true;
       }
       if (cur.nodeType === 1 && win && win.getComputedStyle) {
         var cs = win.getComputedStyle(cur);
-        if (cs && cs.display === "none") return true;
+        if (cs) {
+          if (cs.display === "none") return true;
+          if (parseFloat(cs.opacity || "1") === 0) return true;
+          if (cs.contentVisibility === "hidden") return true;
+        }
       }
       var root = typeof cur.getRootNode === "function" ? cur.getRootNode() : null;
       cur = cur.parentElement || (root && root.host) || null;
     }
-    if (typeof el.checkVisibility === "function") {
-      try {
-        if (!el.checkVisibility({ visibilityProperty: true })) return true;
-      } catch (e) {}
-    } else if (win && win.getComputedStyle) {
+    if (el.nodeType === 1 && win && win.getComputedStyle) {
       var selfCs = win.getComputedStyle(el);
       if (selfCs && (selfCs.visibility === "hidden" || selfCs.visibility === "collapse")) return true;
     }
     return false;
+  }
+  function isAriaHidden(el) {
+    if (isHiddenInAncestorChain(el)) return true;
+    if (el && el.nodeType === 1) {
+      var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      var st = win && win.getComputedStyle ? win.getComputedStyle(el) : null;
+      if (st && st.display === "contents") {
+        return !hasVisibleDescendant(el, 0);
+      }
+    }
+    return false;
+  }
+  function hasVisibleDescendant(el, depth) {
+    if (!el || depth > 8) return false;
+    var kids = el.children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var child = kids[i];
+      if (!child || child.nodeType !== 1) continue;
+      var cr = child.getBoundingClientRect ? child.getBoundingClientRect() : { width: 0, height: 0 };
+      if (isVisible(child, cr, depth + 1)) return true;
+    }
+    if (el.shadowRoot && el.shadowRoot.children) {
+      var skids = el.shadowRoot.children;
+      for (var j = 0; j < skids.length; j++) {
+        var sc = skids[j];
+        if (!sc || sc.nodeType !== 1) continue;
+        var sr = sc.getBoundingClientRect ? sc.getBoundingClientRect() : { width: 0, height: 0 };
+        if (isVisible(sc, sr, depth + 1)) return true;
+      }
+    }
+    return false;
+  }
+  function getContentsUnionRect(el, depth) {
+    if (!el || depth > 8) return null;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    var found = false;
+    var visit = function(list) {
+      for (var i = 0; i < list.length; i++) {
+        var child = list[i];
+        if (!child || child.nodeType !== 1) continue;
+        var win = (child.ownerDocument && child.ownerDocument.defaultView) || window;
+        var cst = win && win.getComputedStyle ? win.getComputedStyle(child) : null;
+        if (cst && (cst.display === "none" || cst.visibility === "hidden" || cst.visibility === "collapse" || parseFloat(cst.opacity || "1") === 0)) continue;
+        if (child.getAttribute && (child.getAttribute("aria-hidden") === "true" || child.hasAttribute("inert"))) continue;
+        var r = cst && cst.display === "contents"
+          ? getContentsUnionRect(child, depth + 1)
+          : (child.getBoundingClientRect ? child.getBoundingClientRect() : null);
+        if (r && r.width > 0 && r.height > 0) {
+          found = true;
+          if (r.x < minX) minX = r.x;
+          if (r.y < minY) minY = r.y;
+          if (r.x + r.width > maxX) maxX = r.x + r.width;
+          if (r.y + r.height > maxY) maxY = r.y + r.height;
+        }
+      }
+    };
+    if (el.children) visit(el.children);
+    if (el.shadowRoot && el.shadowRoot.children) visit(el.shadowRoot.children);
+    if (!found) return null;
+    return { x: minX, y: minY, left: minX, top: minY, width: maxX - minX, height: maxY - minY, right: maxX, bottom: maxY };
   }
   function headingLevelOf(el) {
     if (!el) return null;
@@ -1069,6 +1160,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     var el = hit.el;
     var rect = el.getBoundingClientRect();
+    var winForRect = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var styleForRect = winForRect && winForRect.getComputedStyle ? winForRect.getComputedStyle(el) : null;
+    if (styleForRect && styleForRect.display === "contents") {
+      var contentsRect = getContentsUnionRect(el, 0);
+      if (contentsRect) rect = contentsRect;
+    }
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
     var cx = rect.left + hit.offsetX + rect.width / 2;
@@ -1087,6 +1184,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     var el = hit.el;
     var rect = el.getBoundingClientRect();
+    var winForRect = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var styleForRect = winForRect && winForRect.getComputedStyle ? winForRect.getComputedStyle(el) : null;
+    if (styleForRect && styleForRect.display === "contents") {
+      var contentsRect = getContentsUnionRect(el, 0);
+      if (contentsRect) rect = contentsRect;
+    }
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
     var cx = rect.left + hit.offsetX + rect.width / 2;
@@ -1098,9 +1201,32 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (!topEl) return true;
     return isSameOrDescendant(el, topEl);
   }
+  function isFullyInViewport(hit) {
+    if (hit.wasmNode) return true;
+    var el = hit.el;
+    var rect = el.getBoundingClientRect();
+    var winForRect = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var styleForRect = winForRect && winForRect.getComputedStyle ? winForRect.getComputedStyle(el) : null;
+    if (styleForRect && styleForRect.display === "contents") {
+      var contentsRect = getContentsUnionRect(el, 0);
+      if (contentsRect) rect = contentsRect;
+    }
+    var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
+    var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
+    if (vw <= 0 || vh <= 0 || rect.width <= 0 || rect.height <= 0) return false;
+    var left = rect.left + hit.offsetX;
+    var top = rect.top + hit.offsetY;
+    return left >= 0 && top >= 0 && (left + rect.width) <= vw && (top + rect.height) <= vh;
+  }
   function ensureInViewport(hit) {
     var el = hit.el;
     var rect = el.getBoundingClientRect();
+    var winForRect = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var styleForRect = winForRect && winForRect.getComputedStyle ? winForRect.getComputedStyle(el) : null;
+    if (styleForRect && styleForRect.display === "contents") {
+      var contentsRect = getContentsUnionRect(el, 0);
+      if (contentsRect) rect = contentsRect;
+    }
     var vw = (window.visualViewport && window.visualViewport.width) || window.innerWidth || document.documentElement.clientWidth || 0;
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
     var cx = rect.left + hit.offsetX + rect.width / 2;
@@ -1114,6 +1240,36 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return false;
   }
+  function canScrollToUnobscure(hit) {
+    if (!hit || !hit.el || hit.wasmNode) return false;
+    var el = hit.el;
+    var doc = el.ownerDocument || document;
+    var win = doc.defaultView || window;
+    var cur = el;
+    while (cur && cur.nodeType === 1) {
+      var cs = win && win.getComputedStyle ? win.getComputedStyle(cur) : null;
+      if (cs && cs.position === "fixed") return false;
+      cur = cur.parentElement;
+    }
+    var rect = el.getBoundingClientRect();
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var topEl = deepElementFromPoint(doc, cx, cy);
+    if (!topEl) return false;
+    var vpW = win.innerWidth || doc.documentElement.clientWidth || 1280;
+    var vpH = win.innerHeight || doc.documentElement.clientHeight || 720;
+    var b = topEl;
+    while (b && b.nodeType === 1) {
+      var bs = win && win.getComputedStyle ? win.getComputedStyle(b) : null;
+      if (bs && (bs.position === "fixed" || bs.position === "sticky")) {
+        var br = b.getBoundingClientRect();
+        if (br.width >= vpW * 0.8 && br.height >= vpH * 0.8) return false;
+        return true;
+      }
+      b = b.parentElement;
+    }
+    return false;
+  }
   function scrollToUnobscure(hit) {
     var el = hit.el;
     if (typeof el.scrollIntoView !== "function") return false;
@@ -1123,6 +1279,10 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         el.scrollIntoView({ block: blocks[i], inline: "center", behavior: "instant" });
       } catch (e) {
         try { el.scrollIntoView(true); } catch (e2) {}
+      }
+      if (!el.isConnected) {
+        try { window.__spanaLastScrollDetached = true; } catch (e3) {}
+        return false;
       }
       if (isHitTestClear(hit)) return true;
     }
@@ -1144,11 +1304,15 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return false;
   }
-  function isVisible(el, rect) {
-    if (rect.width <= 0 || rect.height <= 0) return false;
+  function isVisible(el, rect, depth) {
+    if (!el) return false;
+    if (isHiddenInAncestorChain(el)) return false;
     var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
-    var style = win.getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) return false;
+    var style = win && win.getComputedStyle ? win.getComputedStyle(el) : null;
+    if (style && style.display === "contents") {
+      return hasVisibleDescendant(el, depth || 0);
+    }
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
     return true;
   }
   function toMatch(hit) {
@@ -1185,6 +1349,12 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     var el = hit.el;
     var rect = el.getBoundingClientRect();
+    var winForRect = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var styleForRect = winForRect && winForRect.getComputedStyle ? winForRect.getComputedStyle(el) : null;
+    if (styleForRect && styleForRect.display === "contents") {
+      var contentsRect = getContentsUnionRect(el, 0);
+      if (contentsRect) rect = contentsRect;
+    }
     var attrs = {};
     if (el.attributes) {
       for (var i = 0; i < el.attributes.length; i++) {
@@ -1370,7 +1540,7 @@ export function buildDomWaitForSelectorScript(
         if (win.__spanaTapGuardCleanup) win.__spanaTapGuardCleanup();
         win.__spanaTapMissed = false;
         var matchTarget = function(t) {
-          return isSameOrDescendant(el, t) || (t && typeof t.contains === "function" && t.contains(el));
+          return isSameOrDescendant(el, t);
         };
         var cleanup = function() {
           win.removeEventListener("pointerdown", onEvt, true);
@@ -1422,10 +1592,14 @@ export function buildDomWaitForSelectorScript(
       if (!ready) return null;
       if (!forAction) return ready.map(function(r) { return r.match; });
       var target = ready[ready.length - 1];
-      var didScroll = ensureInViewport(target.hit);
+      var alreadyInViewport = isFullyInViewport(target.hit);
+      var didScroll = alreadyInViewport ? false : ensureInViewport(target.hit);
       if (checkHitTest && !isHitTestClear(target.hit)) {
-        if (scrollToUnobscure(target.hit)) {
-          didScroll = true;
+        if (!alreadyInViewport || canScrollToUnobscure(target.hit)) {
+          if (scrollToUnobscure(target.hit)) {
+            didScroll = true;
+          }
+          if (!target.hit.el.isConnected) return null;
         }
         if (!isHitTestClear(target.hit)) return null;
       }
@@ -1480,7 +1654,12 @@ export function buildDomWaitForSelectorScript(
         if (!failFastWhenIdle) return;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(function() {
-          if (document.readyState === "complete" && (!waitForAppReady || isAppReady())) {
+          var rootEl = document.body || document.documentElement;
+          if (
+            document.readyState === "complete" &&
+            (!waitForAppReady || isAppReady()) &&
+            !hasActiveAnimation(rootEl)
+          ) {
             var hit = checkActionableNow();
             if (hit) {
               if (forAction) armTapGuardOnEl(hit.target.hit.el);
@@ -1553,12 +1732,13 @@ export function buildDomWaitForSelectorScript(
           }
           return;
         }
-        armIdleTimer();
       }
 
       var scheduled = false;
       function scheduleAttempt() {
-        if (done || scheduled || checkingStability) return;
+        if (done || checkingStability) return;
+        armIdleTimer();
+        if (scheduled) return;
         scheduled = true;
         Promise.resolve().then(function() {
           scheduled = false;
@@ -1587,6 +1767,7 @@ export function buildDomWaitForSelectorScript(
         }
       }
 
+      armIdleTimer();
       attempt();
     });
   })(${serialized}, ${timeoutMs}, ${forAction}, ${failFastWhenIdle}, ${idleQuietMs}, ${stableFrames}, ${checkHitTest}, ${waitForAppReady}, ${armTapGuard})`;
@@ -1738,6 +1919,14 @@ export function buildDomWaitForMatchScript(
           var isChk = Boolean(m.checked);
           actualVal = isChk ? "checked" : "unchecked";
           matched = isChk;
+        } else if (kind === "enabled") {
+          var isEn = m.enabled !== false;
+          actualVal = isEn ? "enabled" : "disabled";
+          matched = isEn;
+        } else if (kind === "role") {
+          var elRole = m.role || getImplicitRole(hits[i].el) || "generic";
+          actualVal = elRole;
+          matched = expected !== null && elRole.toLowerCase() === String(expected).toLowerCase();
         } else if (kind === "editable") {
           var isEd = Boolean(m.editable);
           actualVal = isEd ? "editable" : "not editable";
@@ -1948,10 +2137,11 @@ export function buildDomFillScript(
         var h = hits[i];
         var m = toMatch(h);
         if (!m.visible || !m.enabled) continue;
-        ensureInViewport(h);
+        var alreadyInVp = isFullyInViewport(h);
+        if (!alreadyInVp) ensureInViewport(h);
         if (checkHitTest && !isHitTestClear(h)) {
-          scrollToUnobscure(h);
-          if (!isHitTestClear(h)) continue;
+          if (!alreadyInVp || canScrollToUnobscure(h)) scrollToUnobscure(h);
+          if (!h.el.isConnected || !isHitTestClear(h)) continue;
         }
         return h.el;
       }
@@ -2126,7 +2316,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         if (win.__spanaTapGuardCleanup) win.__spanaTapGuardCleanup();
         win.__spanaTapMissed = false;
         var matchTarget = function(t) {
-          return isSameOrDescendant(el, t) || (t && typeof t.contains === "function" && t.contains(el));
+          return isSameOrDescendant(el, t);
         };
         var cleanup = function() {
           win.removeEventListener("pointerdown", onEvt, true);
@@ -2178,10 +2368,14 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       if (!ready) return null;
       if (!forAction) return ready.map(function(r) { return r.match; });
       var target = ready[ready.length - 1];
-      var didScroll = ensureInViewport(target.hit);
+      var alreadyInViewport = isFullyInViewport(target.hit);
+      var didScroll = alreadyInViewport ? false : ensureInViewport(target.hit);
       if (checkHitTest && !isHitTestClear(target.hit)) {
-        if (scrollToUnobscure(target.hit)) {
-          didScroll = true;
+        if (!alreadyInViewport || canScrollToUnobscure(target.hit)) {
+          if (scrollToUnobscure(target.hit)) {
+            didScroll = true;
+          }
+          if (!target.hit.el.isConnected) return null;
         }
         if (!isHitTestClear(target.hit)) return null;
       }
@@ -2233,7 +2427,12 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         if (!failFastWhenIdle) return;
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(function() {
-          if (document.readyState === "complete" && (!waitForAppReady || isAppReady())) {
+          var rootEl = document.body || document.documentElement;
+          if (
+            document.readyState === "complete" &&
+            (!waitForAppReady || isAppReady()) &&
+            !hasActiveAnimation(rootEl)
+          ) {
             var hit = checkActionableNow();
             if (hit && forAction) armTapGuardOnEl(hit.target.hit.el);
             finish(hit ? (forAction ? [hit.match] : hit) : []);
@@ -2286,12 +2485,13 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           else finish(hit);
           return;
         }
-        armIdleTimer();
       }
 
       var scheduled = false;
       function scheduleAttempt() {
-        if (done || scheduled || checkingStability) return;
+        if (done || checkingStability) return;
+        armIdleTimer();
+        if (scheduled) return;
         scheduled = true;
         Promise.resolve().then(function() { scheduled = false; attempt(); });
       }
@@ -2309,6 +2509,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
         }
       }
+      armIdleTimer();
       attempt();
     });
   }
@@ -2460,6 +2661,14 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         } else if (kind === "checked") {
           actualVal = m.checked ? "checked" : "unchecked";
           matched = Boolean(m.checked);
+        } else if (kind === "enabled") {
+          var isEn2 = m.enabled !== false;
+          actualVal = isEn2 ? "enabled" : "disabled";
+          matched = isEn2;
+        } else if (kind === "role") {
+          var elRole2 = m.role || getImplicitRole(hits[i].el) || "generic";
+          actualVal = elRole2;
+          matched = expected !== null && elRole2.toLowerCase() === String(expected).toLowerCase();
         } else if (kind === "editable") {
           actualVal = m.editable ? "editable" : "not editable";
           matched = Boolean(m.editable);
@@ -2600,10 +2809,11 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         var h = hits[i];
         var m = toMatch(h);
         if (!m.visible || !m.enabled) continue;
-        ensureInViewport(h);
+        var alreadyInVp = isFullyInViewport(h);
+        if (!alreadyInVp) ensureInViewport(h);
         if (checkHitTest && !isHitTestClear(h)) {
-          scrollToUnobscure(h);
-          if (!isHitTestClear(h)) continue;
+          if (!alreadyInVp || canScrollToUnobscure(h)) scrollToUnobscure(h);
+          if (!h.el.isConnected || !isHitTestClear(h)) continue;
         }
         return h.el;
       }
@@ -2789,14 +2999,20 @@ export function buildDomActionabilityDiagScript(selector: Selector): string {
   const serialized = JSON.stringify(serializeSelectorForDom(selector));
   return `(function(sel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
+    var detachedAfterScroll = Boolean(typeof window !== "undefined" && window.__spanaLastScrollDetached);
+    if (typeof window !== "undefined") { try { delete window.__spanaLastScrollDetached; } catch (e) {} }
     var hits = findAcrossRoots(sel);
-    if (hits.length === 0) return { found: false };
+    if (hits.length === 0) return { found: false, matchCount: 0, visibleCount: 0, detachedAfterScroll: detachedAfterScroll || undefined };
+    var visibleCount = 0;
+    for (var i = 0; i < hits.length; i++) {
+      if (toMatch(hits[i]).visible) visibleCount += 1;
+    }
     var target = hits[hits.length - 1];
     var m = toMatch(target);
-    if (!m.visible) return { found: true, visible: false, enabled: m.enabled };
-    if (!m.enabled) return { found: true, visible: true, enabled: false };
+    if (!m.visible) return { found: true, visible: false, enabled: m.enabled, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined };
+    if (!m.enabled) return { found: true, visible: true, enabled: false, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined };
     var blocker = getHitTestBlocker(target);
-    return { found: true, visible: true, enabled: true, obstructedBy: blocker || undefined };
+    return { found: true, visible: true, enabled: true, obstructedBy: blocker || undefined, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined };
   })(${serialized})`;
 }
 

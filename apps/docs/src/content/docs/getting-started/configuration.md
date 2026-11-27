@@ -65,10 +65,12 @@ export default defineConfig({
       cdpUrl: undefined, // e.g. "http://127.0.0.1:9222" for Lightpanda or an existing CDP browser
       wsEndpoint: undefined, // e.g. BrowserStack Automate Web Playwright wsEndpoint
       headless: true,
+      chromiumSandbox: false, // default false (passes --no-sandbox for Ubuntu 23.10+ / CI runners)
       warmBrowser: true, // keep warm headless Chromium daemon alive across runs
       instantAnimations: true, // collapse CSS transitions/animations to 0.001ms
       blockResources: ["image", "font", "media"], // optional heavy asset abort
-      waitUntil: "load", // "domcontentloaded" | "load" | "networkidle" | "commit"
+      waitUntil: "domcontentloaded", // default "domcontentloaded" on Direct CDP, "load" on Playwright
+      readyExpression: undefined, // optional JS expression setting window.__SPANA_APP_READY__
       verboseLogging: false,
       storybook: { url: "http://localhost:6006" },
     },
@@ -83,8 +85,8 @@ export default defineConfig({
     baselinesDir: "./visual-baselines",
   },
   hooks: {
-    beforeAll: async ({ platform }) => {
-      /* global setup — no app instance yet */
+    beforeAll: async ({ app, platform }) => {
+      /* global setup — app is available in single-process runs */
     },
     beforeEach: async ({ app }) => {
       /* reset state */
@@ -92,7 +94,7 @@ export default defineConfig({
     afterEach: async ({ app, result }) => {
       /* teardown */
     },
-    afterAll: async ({ platform, summary }) => {
+    afterAll: async ({ app, platform, summary }) => {
       /* cleanup */
     },
   },
@@ -105,7 +107,7 @@ Defines the app targets for each platform.
 
 ```ts
 apps: {
-  web?:        { url?: string; bridge?: BridgeConfig };
+  web?:        { url?: string | ((ctx: { workerIndex: number; parallelIndex: number }) => string); bridge?: BridgeConfig };
   android?:    { packageName?: string; appPath?: string; cdpPort?: number; bridge?: BridgeConfig };
   ios?:        {
     bundleId?: string;
@@ -120,17 +122,17 @@ apps: {
 }
 ```
 
-| Field                     | Platform    | Description                                                   |
-| ------------------------- | ----------- | ------------------------------------------------------------- |
-| `web.url`                 | Web         | Base URL the browser navigates to on launch                   |
-| `android.packageName`     | Android     | Android application ID (e.g. `com.example.app`)               |
-| `ios.bundleId`            | iOS         | iOS bundle identifier (e.g. `com.example.app`)                |
-| `appPath`                 | Android/iOS | Path to `.app`, `.ipa`, or `.apk` for auto-install            |
-| `signing.teamId`          | iOS         | Apple Development Team ID (required for physical devices)     |
-| `signing.signingIdentity` | iOS         | Code signing identity (default: `"Apple Development"`)        |
-| `cdpPort`                 | Android     | Explicit CDP port for Android WebView DOM access              |
-| `webkitInspectorUrl/Port` | iOS         | Explicit WebKit Inspector target for WKWebView DOM access     |
-| `bridge`                  | All         | Per-app `spana-bridge` override (replaces `execution.bridge`) |
+| Field                     | Platform    | Description                                                                                                                                    |
+| ------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `web.url`                 | Web         | Base URL string or per-worker resolver `({ workerIndex, parallelIndex }) => string` (can also be overridden per flow via `FlowConfig.baseUrl`) |
+| `android.packageName`     | Android     | Android application ID (e.g. `com.example.app`)                                                                                                |
+| `ios.bundleId`            | iOS         | iOS bundle identifier (e.g. `com.example.app`)                                                                                                 |
+| `appPath`                 | Android/iOS | Path to `.app`, `.ipa`, or `.apk` for auto-install                                                                                             |
+| `signing.teamId`          | iOS         | Apple Development Team ID (required for physical devices)                                                                                      |
+| `signing.signingIdentity` | iOS         | Code signing identity (default: `"Apple Development"`)                                                                                         |
+| `cdpPort`                 | Android     | Explicit CDP port for Android WebView DOM access                                                                                               |
+| `webkitInspectorUrl/Port` | iOS         | Explicit WebKit Inspector target for WKWebView DOM access                                                                                      |
+| `bridge`                  | All         | Per-app `spana-bridge` override (replaces `execution.bridge`)                                                                                  |
 
 `apps.electron` launches an Electron app (`entry` or `executablePath`, plus `args`, `cwd`, `env`, `url`) or attaches to a running one with `cdpUrl` / `cdpPort`. `apps.electrobun` takes `executablePath` or `appDir`, `args`, `cwd`, `env`, `renderer` (`"native"` or `"cef"`), `cdpUrl` / `cdpPort`, `webkitInspectorPort`, and `url`. Both accept `bridge`.
 
@@ -204,7 +206,9 @@ execution?: {
     executablePath?: string;
     channel?: string;
     headless?: boolean;
+    chromiumSandbox?: boolean;
     waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+    readyExpression?: string;
     instantAnimations?: boolean;
     blockResources?: Array<"image" | "font" | "media" | "stylesheet">;
     warmBrowser?: boolean;
@@ -261,30 +265,38 @@ execution?: {
 
 Use `execution.web` to configure the local browser runtime for web flows.
 
-| Field                   | Description                                                                                                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `browser`               | Browser for local web runs: `chromium` (default), `firefox`, or `webkit`                                                                                                        |
-| `engine`                | `"playwright"` (default), `"cdp"` (direct CDP to Chromium, no Playwright pipe), `"lightpanda"` (connects to `cdpUrl`, default `http://127.0.0.1:9222`), or `"auto"` (see below) |
-| `cdpUrl`                | Connect to an existing CDP browser or Lightpanda endpoint instead of launching one                                                                                              |
-| `wsEndpoint`            | Connect to a remote Playwright server (e.g. BrowserStack Automate)                                                                                                              |
-| `executablePath`        | Explicit browser binary                                                                                                                                                         |
-| `channel`               | Playwright browser channel such as `"chrome"` or `"msedge"`                                                                                                                     |
-| `headless`              | Run without a visible browser window (default `true`)                                                                                                                           |
-| `waitUntil`             | Navigation readiness event for launch / `openLink` (default `"load"`)                                                                                                           |
-| `instantAnimations`     | Collapse CSS transitions and animations for faster, deterministic runs                                                                                                          |
-| `blockResources`        | Abort `image`, `font`, `media`, or `stylesheet` requests                                                                                                                        |
-| `warmBrowser`           | Reuse a persistent warm Chromium process across runs (Chromium only; falls back to `warmDaemons.enabled`)                                                                       |
-| `warmBrowserScope`      | Key that isolates warm browsers between concurrent repos or runs                                                                                                                |
-| `freshContextPerFlow`   | Isolate browser state between flows; defaults to `"hot-cache"` on Direct CDP (wipes cookies/storage/OPFS/IDB while keeping HTTP/V8 caches warm)                                 |
-| `contextIsolation`      | Direct CDP isolation strategy when `freshContextPerFlow` is enabled: `"hot-cache"` (default, ~4 ms reset) or `"fresh"` (brand-new `Target.createBrowserContext` per flow)       |
-| `maxContextsPerBrowser` | Max worker contexts sharing one browser process under `--parallel` (default `4` for `cdp` with multiplexed WebSocket, `2` otherwise)                                            |
-| `virtualAuthenticator`  | Attach a WebAuthn virtual authenticator (passkeys) to each new context; `true` or an options object                                                                             |
-| `storageState`          | Preload Playwright cookies and storage state from a JSON file                                                                                                                   |
-| `verboseLogging`        | Print verbose Playwright browser/page diagnostics to stdout                                                                                                                     |
-| `storybook.url`         | Dedicated Storybook origin for `app.openStory()` / `Session.openStory()`                                                                                                        |
-| `storybook.iframePath`  | Override Storybook's preview iframe path, default `/iframe.html`                                                                                                                |
+| Field                   | Description                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `browser`               | Browser for local web runs: `chromium` (default), `firefox`, or `webkit`                                                                                                                                                                                                                                              |
+| `engine`                | `"playwright"` (default), `"cdp"` (direct CDP to Chromium, no Playwright pipe), `"lightpanda"` (connects to `cdpUrl`, default `http://127.0.0.1:9222`), or `"auto"` (see below)                                                                                                                                       |
+| `cdpUrl`                | Connect to an existing CDP browser or Lightpanda endpoint instead of launching one                                                                                                                                                                                                                                    |
+| `wsEndpoint`            | Connect to a remote Playwright server (e.g. BrowserStack Automate)                                                                                                                                                                                                                                                    |
+| `executablePath`        | Explicit browser binary                                                                                                                                                                                                                                                                                               |
+| `channel`               | Playwright browser channel such as `"chrome"` or `"msedge"`                                                                                                                                                                                                                                                           |
+| `headless`              | Run without a visible browser window (default `true`)                                                                                                                                                                                                                                                                 |
+| `chromiumSandbox`       | Enable Chromium's OS sandbox in Direct CDP mode (default `false`, passing `--no-sandbox` like Playwright so Ubuntu 23.10+ and GitHub Actions AppArmor userns runners work out of the box)                                                                                                                             |
+| `waitUntil`             | Navigation readiness event for launch / `openLink` — defaults to `"domcontentloaded"` in Direct CDP browser-context mode and `"load"` on Playwright                                                                                                                                                                   |
+| `readyExpression`       | Optional JS expression injected before page load to set `window.__SPANA_APP_READY__` (evaluated before fail-fast idle checks and DOM actions, e.g. `"document.documentElement.dataset.hydrated === '1'"`)                                                                                                             |
+| `instantAnimations`     | Collapse CSS transitions and animations for faster, deterministic runs                                                                                                                                                                                                                                                |
+| `blockResources`        | Abort `image`, `font`, `media`, or `stylesheet` requests                                                                                                                                                                                                                                                              |
+| `warmBrowser`           | Reuse a persistent warm Chromium process across runs (Chromium only; falls back to `warmDaemons.enabled`)                                                                                                                                                                                                             |
+| `warmBrowserScope`      | Key that isolates warm browsers between concurrent repos or runs                                                                                                                                                                                                                                                      |
+| `freshContextPerFlow`   | Isolate browser state between flows; defaults to `"hot-cache"` on Direct CDP (resets cookies, storage, OPFS, IDB, CacheStorage, service workers, permissions, geolocation, WebAuthn credentials, and flow-scoped init scripts/clock/bindings across visited & iframe/fetch origins while keeping HTTP/V8 caches warm) |
+| `contextIsolation`      | Direct CDP isolation strategy when `freshContextPerFlow` is enabled: `"hot-cache"` (default, ~4 ms reset) or `"fresh"` (brand-new `Target.createBrowserContext` per flow for strict cold caches)                                                                                                                      |
+| `maxContextsPerBrowser` | Max worker contexts sharing one browser process under `--parallel` (default `4` for `cdp` with multiplexed WebSocket, `2` otherwise)                                                                                                                                                                                  |
+| `virtualAuthenticator`  | Attach a WebAuthn virtual authenticator (passkeys) to each new context; `true` or an options object                                                                                                                                                                                                                   |
+| `storageState`          | Preload Playwright cookies and storage state from a JSON file                                                                                                                                                                                                                                                         |
+| `verboseLogging`        | Print verbose Playwright browser/page diagnostics to stdout                                                                                                                                                                                                                                                           |
+| `storybook.url`         | Dedicated Storybook origin for `app.openStory()` / `Session.openStory()`                                                                                                                                                                                                                                              |
+| `storybook.iframePath`  | Override Storybook's preview iframe path, default `/iframe.html`                                                                                                                                                                                                                                                      |
 
 `engine: "auto"` uses the direct CDP engine when `browser` is `chromium` and you have not set `wsEndpoint`, `channel`, or `artifacts.har`; otherwise it uses Playwright. The direct CDP engine does not support `app.getHAR()`.
+
+### Multi-context (`app.newContext()`) and network scope notes
+
+- Child contexts created with `app.newContext()` have independent browser contexts, cookies, storage, and WebAuthn authenticators. They are automatically closed when the owning flow exits (pass or fail). Calling any method on a closed context immediately rejects with an error containing `"Browser context closed"`.
+- `app.setNetworkConditions()` and `app.setOffline()` apply across all tabs in the active browser context (both Direct CDP and Playwright).
+- `contextIsolation: "hot-cache"` vs `"fresh"`: `"hot-cache"` keeps Chromium's HTTP and V8 bytecode caches warm (~4 ms between flows) while resetting cookies, `localStorage`, `sessionStorage`, OPFS, IndexedDB, CacheStorage, service workers, granted permissions, geolocation overrides, WebAuthn credentials, and flow-scoped `addInitScript` / `clock` / `exposeFunction` bindings across all visited, iframe, and fetch origins. Use `contextIsolation: "fresh"` when your suite requires brand-new browser contexts with cold HTTP/V8 caches.
 
 `storageState` is resolved relative to `spana.config.ts`. Storybook uses URLs instead of filesystem paths, so it stays portable by pointing at the right origin for each environment.
 
