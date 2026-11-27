@@ -57,7 +57,7 @@ describe("v0.16.0 runner, scheduling, reporting & packaging regressions", () => 
       peerDependencies?: Record<string, string>;
       optionalDependencies?: Record<string, string>;
     };
-    expect(pkg.version).toBe("0.16.0");
+    expect(pkg.version).toMatch(/^0\.(1[6-9]|[2-9]\d)\.\d+/);
     expect(pkg.dependencies?.effect).toBeUndefined();
     expect(pkg.peerDependencies?.effect).toBeDefined();
     expect(pkg.optionalDependencies?.sharp).toBeUndefined();
