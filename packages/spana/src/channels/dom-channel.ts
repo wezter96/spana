@@ -1639,6 +1639,42 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     hit._clickPoint = null;
     return false;
   }
+  function isScrollableOverflow(val) {
+    return val === "auto" || val === "scroll" || val === "overlay";
+  }
+  function isClippedByScrollableAncestor(hit, rect) {
+    var el = hit.el;
+    var doc = el.ownerDocument || document;
+    var win = doc.defaultView || window;
+    var cur = el.parentElement;
+    var guard = 0;
+    while (cur && cur.nodeType === 1 && guard++ < 32) {
+      if (cur === doc.documentElement || cur === doc.body) break;
+      var cs = win && win.getComputedStyle ? win.getComputedStyle(cur) : null;
+      if (cs) {
+        var ox = cs.overflowX || cs.overflow || "";
+        var oy = cs.overflowY || cs.overflow || "";
+        var canScrollX = isScrollableOverflow(ox) && cur.scrollWidth > cur.clientWidth + 1;
+        var canScrollY = isScrollableOverflow(oy) && cur.scrollHeight > cur.clientHeight + 1;
+        if (canScrollX || canScrollY) {
+          var cr = cur.getBoundingClientRect();
+          if (cr.width > 0 && cr.height > 0) {
+            if (canScrollX && (rect.left < cr.left - 0.5 || rect.right > cr.right + 0.5)) {
+              return true;
+            }
+            if (canScrollY && (rect.top < cr.top - 0.5 || rect.bottom > cr.bottom + 0.5)) {
+              return true;
+            }
+          }
+        }
+        // Inspect a position: fixed ancestor itself FIRST (it may be scrollable),
+        // then stop walking above its fixed containing boundary.
+        if (cs.position === "fixed") break;
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  }
   function isFullyInViewport(hit) {
     if (hit.wasmNode) return true;
     var el = hit.el;
@@ -1656,7 +1692,11 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     if (vw <= 0 || vh <= 0 || rect.width <= 0 || rect.height <= 0) return false;
     var left = hit.offsetX + rect.left * sx;
     var top = hit.offsetY + rect.top * sy;
-    return left >= 0 && top >= 0 && (left + rect.width * sx) <= vw && (top + rect.height * sy) <= vh;
+    if (!(left >= 0 && top >= 0 && (left + rect.width * sx) <= vw && (top + rect.height * sy) <= vh)) {
+      return false;
+    }
+    if (isClippedByScrollableAncestor(hit, rect)) return false;
+    return true;
   }
   function ensureInViewport(hit) {
     var el = hit.el;
@@ -1673,7 +1713,8 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight || 0;
     var cx = hit.offsetX + (rect.left + rect.width / 2) * sx;
     var cy = hit.offsetY + (rect.top + rect.height / 2) * sy;
-    if (vw > 0 && vh > 0 && (cx < 1 || cy < 1 || cx > vw - 1 || cy > vh - 1)) {
+    var outsideWindow = vw > 0 && vh > 0 && (cx < 1 || cy < 1 || cx > vw - 1 || cy > vh - 1);
+    if (outsideWindow || isClippedByScrollableAncestor(hit, rect)) {
       if (typeof el.scrollIntoView === "function") {
         try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); }
         catch (e) { try { el.scrollIntoView(true); } catch (e2) {} }
@@ -1687,13 +1728,35 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     var el = hit.el;
     var doc = el.ownerDocument || document;
     var win = doc.defaultView || window;
+    var hasScrollableAncestor = false;
+    var hitFixedBoundary = false;
     var cur = el;
-    while (cur && cur.nodeType === 1) {
+    var guard = 0;
+    while (cur && cur.nodeType === 1 && guard++ < 32) {
       var cs = win && win.getComputedStyle ? win.getComputedStyle(cur) : null;
-      if (cs && cs.position === "fixed") return false;
+      if (cs) {
+        if (cur !== el && cur !== doc.documentElement && cur !== doc.body) {
+          var ox = cs.overflowX || cs.overflow || "";
+          var oy = cs.overflowY || cs.overflow || "";
+          if ((isScrollableOverflow(ox) && cur.scrollWidth > cur.clientWidth + 1) ||
+              (isScrollableOverflow(oy) && cur.scrollHeight > cur.clientHeight + 1)) {
+            hasScrollableAncestor = true;
+          }
+        }
+        if (cs.position === "fixed") {
+          hitFixedBoundary = true;
+          break;
+        }
+      }
       cur = cur.parentElement;
     }
     var rect = el.getBoundingClientRect();
+    // If clipped outside a scrollable ancestor (including inside/on a position: fixed dialog),
+    // scrolling that ancestor brings the target into view even if the clipped point hits a backdrop.
+    if (hasScrollableAncestor && isClippedByScrollableAncestor(hit, rect)) {
+      return true;
+    }
+    if (hitFixedBoundary && !hasScrollableAncestor) return false;
     var cx = rect.left + rect.width / 2;
     var cy = rect.top + rect.height / 2;
     var topEl = deepElementFromPoint(doc, cx, cy);

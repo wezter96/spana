@@ -453,6 +453,240 @@ export async function buildWebRuntime(
   };
 }
 
+export function getWebLaunchGroupKey(config: ProvConfig): string {
+  const web = config.execution?.web;
+  const engine = resolveWebEngine(config);
+  return JSON.stringify({
+    engine,
+    browser: web?.browser ?? "chromium",
+    executablePath: web?.executablePath ?? null,
+    headless: web?.headless ?? true,
+    chromiumSandbox: web?.chromiumSandbox ?? null,
+    gpu: web?.gpu ?? null,
+    webgpu: web?.webgpu ?? null,
+    extensions: web?.extensions ?? null,
+    args: web?.args ?? null,
+    cdpUrl: web?.cdpUrl ?? null,
+    wsEndpoint: web?.wsEndpoint ?? null,
+    warmBrowser: web?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false,
+    warmBrowserScope: web?.warmBrowserScope ?? null,
+    maxContextsPerBrowser: web?.maxContextsPerBrowser ?? null,
+  });
+}
+
+export function getWebDriverReuseKey(config: ProvConfig, workerIndex: number): string {
+  const web = config.execution?.web;
+  const deviceOpts = resolveWebDeviceOptions(web);
+  return JSON.stringify({
+    launch: getWebLaunchGroupKey(config),
+    baseUrl: resolveWebAppUrl(config.apps?.web?.url, workerIndex, workerIndex),
+    viewport: deviceOpts.viewport ?? null,
+    deviceScaleFactor: deviceOpts.deviceScaleFactor ?? null,
+    mobile: deviceOpts.mobile ?? null,
+    isMobile: deviceOpts.isMobile ?? null,
+    hasTouch: deviceOpts.hasTouch ?? null,
+    userAgent: deviceOpts.userAgent ?? null,
+    httpCredentials: deviceOpts.httpCredentials ?? null,
+    locale: web?.locale ?? config.defaults?.locale ?? null,
+    colorScheme: web?.colorScheme ?? null,
+    reducedMotion: web?.reducedMotion ?? null,
+    timezoneId: web?.timezoneId ?? null,
+    storageState: web?.storageState ?? null,
+    virtualAuthenticator: web?.virtualAuthenticator ?? null,
+    instantAnimations: web?.instantAnimations ?? null,
+    blockResources: web?.blockResources ?? null,
+    waitUntil: web?.waitUntil ?? null,
+    freshContextPerFlow: web?.freshContextPerFlow ?? null,
+    contextIsolation: web?.contextIsolation ?? null,
+    evaluateTimeout: web?.evaluateTimeout ?? null,
+    readyExpression: web?.readyExpression ?? null,
+    channel: web?.channel ?? null,
+    recordHar: Boolean(config.artifacts?.har),
+  });
+}
+
+export interface SharedWebWavePool {
+  acquireRuntime(slotIdx: number, config: ProvConfig, workerIndex: number): Promise<RuntimeResult>;
+  closeAll(): Promise<void>;
+}
+
+/**
+ * Shared browser-process pool across all web projects in the same dependency wave.
+ * Projects sharing the same Chromium launch configuration share warm browser processes
+ * and multiplexed CDP WebSockets, while individual worker slots dynamically switch
+ * BrowserContext drivers when moving between projects with different viewports/emulation.
+ */
+export function createSharedWebWavePool(maxWorkers: number): SharedWebWavePool {
+  interface SharedCdpGroup {
+    buckets: Array<{
+      cdpUrl: string;
+      handle?: DirectCdpBrowserHandle;
+      mux?: CdpWebSocketMultiplexer;
+    }>;
+  }
+
+  const cdpGroups = new Map<string, Promise<SharedCdpGroup>>();
+
+  const getOrCreateCdpGroup = (config: ProvConfig): Promise<SharedCdpGroup> => {
+    const launchKey = getWebLaunchGroupKey(config);
+    const existing = cdpGroups.get(launchKey);
+    if (existing) return existing;
+
+    const creation = (async (): Promise<SharedCdpGroup> => {
+      const webExecution = config.execution?.web;
+      const maxPerBrowser = Math.max(1, webExecution?.maxContextsPerBrowser ?? 4);
+      const useExternalCdp = Boolean(webExecution?.cdpUrl);
+      const browserCount = useExternalCdp ? 1 : Math.ceil(Math.max(1, maxWorkers) / maxPerBrowser);
+      const buckets: SharedCdpGroup["buckets"] = [];
+
+      if (useExternalCdp) {
+        buckets.push({ cdpUrl: webExecution!.cdpUrl! });
+      } else {
+        const useWarm =
+          webExecution?.warmBrowser ?? config.execution?.warmDaemons?.enabled ?? false;
+        const baseScope = webExecution?.warmBrowserScope ?? "wave-pool";
+        const launched = await Promise.all(
+          Array.from({ length: browserCount }, (_v, bIdx) =>
+            launchDirectCdpBrowser({
+              executablePath: webExecution?.executablePath,
+              headless: webExecution?.headless ?? true,
+              chromiumSandbox: webExecution?.chromiumSandbox,
+              gpu: webExecution?.gpu,
+              webgpu: webExecution?.webgpu,
+              extensions: webExecution?.extensions,
+              args: webExecution?.args,
+              launchTimeout: webExecution?.launchTimeout,
+              warmBrowser: useWarm,
+              warmBrowserScope: `${baseScope}-w${bIdx}`,
+              daemonStateFile: config.execution?.warmDaemons?.stateFile,
+            }),
+          ),
+        );
+        for (const h of launched) {
+          buckets.push({ cdpUrl: h.browserWsUrl, handle: h });
+        }
+      }
+
+      if (maxWorkers > 1) {
+        for (const bucket of buckets) {
+          if (bucket.cdpUrl.startsWith("ws://") || bucket.cdpUrl.startsWith("wss://")) {
+            bucket.mux = new CdpWebSocketMultiplexer(bucket.cdpUrl);
+          }
+        }
+      }
+
+      return { buckets };
+    })();
+
+    creation.catch(() => {
+      cdpGroups.delete(launchKey);
+    });
+    cdpGroups.set(launchKey, creation);
+    return creation;
+  };
+
+  return {
+    async acquireRuntime(
+      slotIdx: number,
+      config: ProvConfig,
+      workerIndex: number,
+    ): Promise<RuntimeResult> {
+      const engine = resolveWebEngine(config);
+      if (engine !== "cdp") {
+        return buildWebRuntime(config);
+      }
+
+      const group = await getOrCreateCdpGroup(config);
+      const bucket = group.buckets[slotIdx % group.buckets.length]!;
+      const webExecution = config.execution?.web;
+      const effectiveLocale = webExecution?.locale ?? config.defaults?.locale;
+      const webDeviceOpts = resolveWebDeviceOptions(webExecution);
+      const cdpEmulation =
+        webExecution?.colorScheme ||
+        webExecution?.reducedMotion ||
+        webExecution?.timezoneId ||
+        effectiveLocale ||
+        webDeviceOpts.userAgent
+          ? {
+              colorScheme: webExecution?.colorScheme,
+              reducedMotion: webExecution?.reducedMotion,
+              timezoneId: webExecution?.timezoneId,
+              locale: effectiveLocale,
+              userAgent: webDeviceOpts.userAgent,
+            }
+          : undefined;
+      const workerWebUrl = resolveWebAppUrl(config.apps?.web?.url, workerIndex, workerIndex);
+      const driver = await Effect.runPromise(
+        makeLightweightCdpDriver({
+          cdpUrl: bucket.cdpUrl,
+          baseUrl: workerWebUrl,
+          engineLabel: "cdp",
+          viewport: webDeviceOpts.viewport,
+          deviceScaleFactor: webDeviceOpts.deviceScaleFactor,
+          mobile: webDeviceOpts.mobile,
+          isMobile: webDeviceOpts.isMobile,
+          hasTouch: webDeviceOpts.hasTouch,
+          httpCredentials: webDeviceOpts.httpCredentials,
+          evaluateTimeout: webExecution?.evaluateTimeout,
+          useBrowserContexts: true,
+          useInjectedRuntime: true,
+          ...(bucket.mux ? { createWebSocket: () => bucket.mux!.createVirtualSocket() } : {}),
+          freshContextPerFlow: webExecution?.freshContextPerFlow,
+          contextIsolation: webExecution?.contextIsolation,
+          waitUntil: webExecution?.waitUntil,
+          instantAnimations: webExecution?.instantAnimations,
+          blockResources: webExecution?.blockResources,
+          virtualAuthenticator: webExecution?.virtualAuthenticator,
+          storageState: webExecution?.storageState,
+          emulation: cdpEmulation,
+          sanitizeHeadlessUserAgent: !(
+            webExecution?.headless === false ||
+            Boolean(webDeviceOpts.userAgent) ||
+            webExecution?.args?.some((a) => /^--user-agent(?:=|$)/i.test(a))
+          ),
+          readyExpression: webExecution?.readyExpression,
+        }),
+      );
+      const deviceInfo = await Effect.runPromise(driver.getDeviceInfo());
+      let cleaned = false;
+      return {
+        runtime: {
+          driver,
+          cleanup: () =>
+            safeCleanup(async () => {
+              if (cleaned) return;
+              cleaned = true;
+              await Effect.runPromise(driver.killApp(""));
+            }),
+          metadata: {
+            platform: "web",
+            mode: "local",
+            deviceId: `cdp-wave-slot-${slotIdx + 1}`,
+          },
+        },
+        engineConfig: buildEngineConfig(workerWebUrl, "web", parseWebHierarchy, config, {
+          width: deviceInfo.screenWidth,
+          height: deviceInfo.screenHeight,
+        }),
+      } satisfies RuntimeResult;
+    },
+
+    async closeAll(): Promise<void> {
+      const groups = await Promise.all(
+        Array.from(cdpGroups.values()).map((p) => p.catch(() => null)),
+      );
+      cdpGroups.clear();
+      await Promise.all(
+        groups.flatMap((g) =>
+          (g?.buckets ?? []).map((b) =>
+            b.handle ? b.handle.close().catch(() => {}) : Promise.resolve(),
+          ),
+        ),
+      );
+    },
+  };
+}
+
 /**
  * Create `workerCount` isolated web runtimes sharded across
  * `Math.ceil(workerCount / maxContextsPerBrowser)` browser processes

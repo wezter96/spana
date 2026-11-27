@@ -557,1564 +557,1593 @@ export function createCoordinator<T extends string = string, R extends string = 
       !expectedEnabled,
     );
 
-  const createAssertions = () => ({
-    assertVisible: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-    ): Effect.Effect<Element, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      waitForElement(driver, selector, parse, { ...defaults, ...opts }, cache),
+  const createAssertions = () => {
+    let hasInjectedAxe = false;
+    return {
+      assertVisible: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+      ): Effect.Effect<Element, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+        waitForElement(driver, selector, parse, { ...defaults, ...opts }, cache),
 
-    assertHidden: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-    ): Effect.Effect<void, WaitTimeoutError | DriverError> =>
-      waitForNotVisible(driver, selector, parse, { ...defaults, ...opts }, cache),
+      assertHidden: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+      ): Effect.Effect<void, WaitTimeoutError | DriverError> =>
+        waitForNotVisible(driver, selector, parse, { ...defaults, ...opts }, cache),
 
-    assertText: (
-      selector: ExtendedSelector,
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > => {
-      if (expected instanceof RegExp) {
+      assertText: (
+        selector: ExtendedSelector,
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > => {
+        if (expected instanceof RegExp) {
+          return pollUntilMatch(
+            selector,
+            opts,
+            (el) => {
+              const actual = normalizeWhitespace(el.textContent ?? el.text ?? "");
+              return { matched: expected.test(actual), actual };
+            },
+            (actual, timeout) => ({
+              message: negate
+                ? `Expected text NOT to match ${expected} but got "${actual ?? "(no text)"}" after ${timeout}ms`
+                : `Expected text to match ${expected} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+              expected: negate ? `not ${String(expected)}` : String(expected),
+            }),
+            { kind: "matchesText", patternSource: expected.source, patternFlags: expected.flags },
+            negate,
+          );
+        }
+        const normalizedExpected = normalizeWhitespace(expected);
         return pollUntilMatch(
           selector,
           opts,
           (el) => {
-            const actual = normalizeWhitespace(el.textContent ?? el.text ?? "");
-            return { matched: expected.test(actual), actual };
+            const raw = el.textContent ?? el.text;
+            const actual = raw !== undefined ? normalizeWhitespace(raw) : undefined;
+            return { matched: actual === normalizedExpected, actual };
           },
           (actual, timeout) => ({
             message: negate
-              ? `Expected text NOT to match ${expected} but got "${actual ?? "(no text)"}" after ${timeout}ms`
-              : `Expected text to match ${expected} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-            expected: negate ? `not ${String(expected)}` : String(expected),
+              ? `Expected text NOT to be "${expected}" after ${timeout}ms`
+              : `Expected text "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+            expected: negate ? `not ${expected}` : expected,
           }),
-          { kind: "matchesText", patternSource: expected.source, patternFlags: expected.flags },
+          { kind: "text", expected },
           negate,
         );
-      }
-      const normalizedExpected = normalizeWhitespace(expected);
-      return pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const raw = el.textContent ?? el.text;
-          const actual = raw !== undefined ? normalizeWhitespace(raw) : undefined;
-          return { matched: actual === normalizedExpected, actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected text NOT to be "${expected}" after ${timeout}ms`
-            : `Expected text "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-          expected: negate ? `not ${expected}` : expected,
-        }),
-        { kind: "text", expected },
-        negate,
-      );
-    },
+      },
 
-    assertContainsText: (
-      selector: ExtendedSelector,
-      expected: string,
-      opts?: WaitOptions & { ignoreCase?: boolean },
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > => {
-      const ignoreCase = Boolean(opts?.ignoreCase);
-      const normalizedExpected = ignoreCase
-        ? normalizeWhitespace(expected).toLowerCase()
-        : normalizeWhitespace(expected);
-      return pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const raw = el.textContent ?? el.text ?? "";
-          const actual = normalizeWhitespace(raw);
-          const matched = ignoreCase
-            ? actual.toLowerCase().includes(normalizedExpected)
-            : actual.includes(normalizedExpected);
-          return { matched, actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected text NOT to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`
-            : `Expected text to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-          expected: negate ? `not containing ${expected}` : expected,
-        }),
-        { kind: "containsText", expected, ...(ignoreCase ? { ignoreCase: true } : {}) },
-        negate,
-      );
-    },
-
-    assertEnabled: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > => assertEnabledState(selector, true, opts),
-
-    assertDisabled: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > => assertEnabledState(selector, false, opts),
-
-    getText: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-    ): Effect.Effect<string, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const element = yield* waitForElement(
-          driver,
+      assertContainsText: (
+        selector: ExtendedSelector,
+        expected: string,
+        opts?: WaitOptions & { ignoreCase?: boolean },
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > => {
+        const ignoreCase = Boolean(opts?.ignoreCase);
+        const normalizedExpected = ignoreCase
+          ? normalizeWhitespace(expected).toLowerCase()
+          : normalizeWhitespace(expected);
+        return pollUntilMatch(
           selector,
-          parse,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
+          opts,
+          (el) => {
+            const raw = el.textContent ?? el.text ?? "";
+            const actual = normalizeWhitespace(raw);
+            const matched = ignoreCase
+              ? actual.toLowerCase().includes(normalizedExpected)
+              : actual.includes(normalizedExpected);
+            return { matched, actual };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected text NOT to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`
+              : `Expected text to contain "${expected}" but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+            expected: negate ? `not containing ${expected}` : expected,
+          }),
+          { kind: "containsText", expected, ...(ignoreCase ? { ignoreCase: true } : {}) },
+          negate,
         );
-        return collectContainerText(element);
-      }),
+      },
 
-    count: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions & { visible?: boolean; includeHidden?: boolean },
-    ): Effect.Effect<number, DriverError> =>
-      Effect.gen(function* () {
-        cache.invalidate();
-        const includeHidden = opts?.includeHidden;
-        const visibleOnly = includeHidden === false || Boolean(opts?.visible);
-        const effectiveSelector =
-          includeHidden === true ? withIncludeHiddenSelector(selector) : selector;
-        const domChannel = driver.domChannel;
-        if (
-          !isSystemUISelector(effectiveSelector) &&
-          !isRelativeSelectorLike(effectiveSelector) &&
-          domChannel?.isConnected()
-        ) {
-          const matches = yield* Effect.tryPromise({
-            try: () => domChannel.query(effectiveSelector as Selector),
-            catch: (err) =>
-              isInvalidSelectorError(err)
-                ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                : null,
-          }).pipe(
-            Effect.catch((err) =>
-              err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-            ),
-          );
-          if (matches) {
-            return visibleOnly ? matches.filter((m) => m.visible).length : matches.length;
-          }
-        }
-        const raw = yield* driver.dumpHierarchy();
-        const root = parse(raw);
-        if (isRelativeSelectorLike(effectiveSelector)) {
-          const resolved = yield* resolveElementAcrossChannels(
+      assertEnabled: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > => assertEnabledState(selector, true, opts),
+
+      assertDisabled: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > => assertEnabledState(selector, false, opts),
+
+      getText: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+      ): Effect.Effect<string, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+        Effect.gen(function* () {
+          const element = yield* waitForElement(
             driver,
-            effectiveSelector,
+            selector,
             parse,
+            { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
             cache,
-            {
-              forAction: false,
-              platform: opts?.platform ?? config.platform,
-            },
           );
-          return resolved ? 1 : 0;
-        }
-        const matched = findElements(root, effectiveSelector as Selector);
-        return visibleOnly ? matched.filter((el) => el.visible !== false).length : matched.length;
-      }),
+          return collectContainerText(element);
+        }),
 
-    isElementEnabled: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions & { includeHidden?: boolean },
-    ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        if (
-          opts?.includeHidden &&
-          !isSystemUISelector(selector) &&
-          !isRelativeSelectorLike(selector) &&
-          driver.domChannel?.isConnected()
-        ) {
-          const timeout = opts.timeout ?? defaults?.timeout ?? 5000;
-          const pollInterval = opts.pollInterval ?? defaults?.pollInterval ?? 100;
-          const effectiveSelector = withIncludeHiddenSelector(selector);
-          const start = Date.now();
-          while (true) {
+      count: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions & { visible?: boolean; includeHidden?: boolean },
+      ): Effect.Effect<number, DriverError> =>
+        Effect.gen(function* () {
+          cache.invalidate();
+          const includeHidden = opts?.includeHidden;
+          const visibleOnly = includeHidden === false || Boolean(opts?.visible);
+          const effectiveSelector =
+            includeHidden === true ? withIncludeHiddenSelector(selector) : selector;
+          const domChannel = driver.domChannel;
+          if (
+            !isSystemUISelector(effectiveSelector) &&
+            !isRelativeSelectorLike(effectiveSelector) &&
+            domChannel?.isConnected()
+          ) {
             const matches = yield* Effect.tryPromise({
-              try: () => driver.domChannel!.query(effectiveSelector as Selector),
-              catch: () => null,
-            }).pipe(Effect.catch(() => Effect.succeed(null)));
-            if (matches && matches.length > 0) {
-              const target = matches[matches.length - 1]!;
-              return target.enabled !== false;
+              try: () => domChannel.query(effectiveSelector as Selector),
+              catch: (err) =>
+                isInvalidSelectorError(err)
+                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                  : null,
+            }).pipe(
+              Effect.catch((err) =>
+                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+              ),
+            );
+            if (matches) {
+              return visibleOnly ? matches.filter((m) => m.visible).length : matches.length;
             }
-            if (Date.now() - start >= timeout) {
-              return yield* new ElementNotFoundError({
-                message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
-                selector,
-                timeoutMs: timeout,
-              });
-            }
-            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
           }
-        }
-        const element = yield* waitForElement(
-          driver,
-          selector,
-          parse,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
-        );
-        return element.enabled !== false;
-      }),
+          const raw = yield* driver.dumpHierarchy();
+          const root = parse(raw);
+          if (isRelativeSelectorLike(effectiveSelector)) {
+            const resolved = yield* resolveElementAcrossChannels(
+              driver,
+              effectiveSelector,
+              parse,
+              cache,
+              {
+                forAction: false,
+                platform: opts?.platform ?? config.platform,
+              },
+            );
+            return resolved ? 1 : 0;
+          }
+          const matched = findElements(root, effectiveSelector as Selector);
+          return visibleOnly ? matched.filter((el) => el.visible !== false).length : matched.length;
+        }),
 
-    isChecked: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions & { includeHidden?: boolean },
-    ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
-        const domChannel = driver.domChannel;
-        if (
-          !isSystemUISelector(selector) &&
-          !isRelativeSelectorLike(selector) &&
-          domChannel?.isConnected()
-        ) {
+      isElementEnabled: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions & { includeHidden?: boolean },
+      ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+        Effect.gen(function* () {
+          if (
+            opts?.includeHidden &&
+            !isSystemUISelector(selector) &&
+            !isRelativeSelectorLike(selector) &&
+            driver.domChannel?.isConnected()
+          ) {
+            const timeout = opts.timeout ?? defaults?.timeout ?? 5000;
+            const pollInterval = opts.pollInterval ?? defaults?.pollInterval ?? 100;
+            const effectiveSelector = withIncludeHiddenSelector(selector);
+            const start = Date.now();
+            while (true) {
+              const matches = yield* Effect.tryPromise({
+                try: () => driver.domChannel!.query(effectiveSelector as Selector),
+                catch: () => null,
+              }).pipe(Effect.catch(() => Effect.succeed(null)));
+              if (matches && matches.length > 0) {
+                const target = matches[matches.length - 1]!;
+                return target.enabled !== false;
+              }
+              if (Date.now() - start >= timeout) {
+                return yield* new ElementNotFoundError({
+                  message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
+                  selector,
+                  timeoutMs: timeout,
+                });
+              }
+              yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+            }
+          }
+          const element = yield* waitForElement(
+            driver,
+            selector,
+            parse,
+            { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+            cache,
+          );
+          return element.enabled !== false;
+        }),
+
+      isChecked: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions & { includeHidden?: boolean },
+      ): Effect.Effect<boolean, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+        Effect.gen(function* () {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const domChannel = driver.domChannel;
+          if (
+            !isSystemUISelector(selector) &&
+            !isRelativeSelectorLike(selector) &&
+            domChannel?.isConnected()
+          ) {
+            const effectiveSelector = opts?.includeHidden
+              ? withIncludeHiddenSelector(selector)
+              : selector;
+            const start = Date.now();
+            while (true) {
+              const matches = yield* Effect.tryPromise({
+                try: () => domChannel.query(effectiveSelector as Selector),
+                catch: () => null,
+              }).pipe(Effect.catch(() => Effect.succeed(null)));
+              if (matches && matches.length > 0) {
+                const visibleMatches = matches.filter((m) => m.visible);
+                const target =
+                  opts?.includeHidden === false
+                    ? visibleMatches[visibleMatches.length - 1]
+                    : (visibleMatches[visibleMatches.length - 1] ?? matches[matches.length - 1]);
+                if (target) {
+                  return Boolean(
+                    target.checked === true || target.attributes?.["aria-checked"] === "true",
+                  );
+                }
+              }
+              if (Date.now() - start >= timeout) {
+                return yield* new ElementNotFoundError({
+                  message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
+                  selector,
+                  timeoutMs: timeout,
+                });
+              }
+              yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+            }
+          }
+          const element = yield* waitForElement(
+            driver,
+            selector,
+            parse,
+            { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+            cache,
+          );
+          return Boolean(
+            element.checked === true || element.attributes?.["aria-checked"] === "true",
+          );
+        }),
+
+      assertValue: (
+        selector: ExtendedSelector,
+        expected: string | number | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > => {
+        const isRe = expected instanceof RegExp;
+        const expectedStr = isRe ? String(expected) : String(expected);
+        return pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = el.value ?? "";
+            const matched = isRe ? expected.test(actual) : actual === expectedStr;
+            return { matched, actual };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected value NOT to ${isRe ? "match" : "be"} ${isRe ? expectedStr : JSON.stringify(expectedStr)} after ${timeout}ms`
+              : `Expected value ${isRe ? expectedStr : JSON.stringify(expectedStr)} but got "${actual ?? "(no value)"}" after ${timeout}ms`,
+            expected: negate ? `not ${expectedStr}` : expectedStr,
+          }),
+          isRe
+            ? { kind: "value", patternSource: expected.source, patternFlags: expected.flags }
+            : { kind: "value", expected: expectedStr },
+          negate,
+        );
+      },
+
+      assertAttribute: (
+        selector: ExtendedSelector,
+        name: string,
+        expectedValue?: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > => {
+        const isRe = expectedValue instanceof RegExp;
+        return pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = el.attributes?.[name];
+            if (expectedValue === undefined) {
+              return { matched: actual !== undefined, actual };
+            }
+            const matched = isRe
+              ? actual !== undefined && expectedValue.test(actual)
+              : actual === expectedValue;
+            return { matched, actual };
+          },
+          (actual, timeout) =>
+            negate
+              ? expectedValue === undefined
+                ? {
+                    message: `Expected attribute "${name}" NOT to exist but got "${actual ?? ""}" after ${timeout}ms`,
+                    expected: `not ${name}`,
+                  }
+                : {
+                    message: `Expected attribute "${name}" NOT to ${isRe ? "match" : "be"} ${isRe ? String(expectedValue) : JSON.stringify(expectedValue)} after ${timeout}ms`,
+                    expected: `not ${String(expectedValue)}`,
+                  }
+              : expectedValue === undefined
+                ? {
+                    message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
+                    expected: name,
+                  }
+                : {
+                    message: `Expected attribute "${name}" to ${isRe ? "match" : "be"} ${isRe ? String(expectedValue) : JSON.stringify(expectedValue)} but got "${actual ?? "(not found)"}" after ${timeout}ms`,
+                    expected: String(expectedValue),
+                  },
+          isRe
+            ? {
+                kind: "attribute",
+                attributeName: name,
+                patternSource: expectedValue.source,
+                patternFlags: expectedValue.flags,
+              }
+            : { kind: "attribute", attributeName: name, expected: expectedValue },
+          negate,
+        );
+      },
+
+      assertAttached: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<void, TextMismatchError | DriverError> =>
+        Effect.gen(function* () {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const start = Date.now();
+          const deadline = start + timeout;
+          let lastActual: string | undefined;
+
+          while (true) {
+            const domChannel = driver.domChannel;
+            if (
+              (config.platform === "web" || !config.platform) &&
+              !isSystemUISelector(selector) &&
+              !isRelativeSelectorLike(selector) &&
+              domChannel?.isConnected() &&
+              domChannel.waitForMatch
+            ) {
+              const remaining = Math.max(50, deadline - Date.now());
+              const reactive = yield* Effect.tryPromise({
+                try: () =>
+                  domChannel.waitForMatch!(selector as Selector, {
+                    kind: "attached",
+                    ...(negate ? { negate: true } : {}),
+                    timeoutMs: remaining,
+                  }),
+                catch: (err) =>
+                  isInvalidSelectorError(err)
+                    ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                    : null,
+              }).pipe(
+                Effect.catch((err) =>
+                  err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+                ),
+              );
+              if (reactive) {
+                if (reactive.matched) return;
+                if (reactive.actual !== undefined) lastActual = reactive.actual;
+                if (Date.now() >= deadline) break;
+                yield* Effect.sleep(
+                  Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
+                );
+                continue;
+              }
+            }
+
+            cache.invalidate();
+            let attached = false;
+            if (
+              !isSystemUISelector(selector) &&
+              !isRelativeSelectorLike(selector) &&
+              domChannel?.isConnected()
+            ) {
+              const matches = yield* Effect.tryPromise({
+                try: () => domChannel.query(selector as Selector),
+                catch: (err) =>
+                  isInvalidSelectorError(err)
+                    ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                    : null,
+              }).pipe(
+                Effect.catch((err) =>
+                  err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+                ),
+              );
+              if (matches) {
+                attached = matches.length > 0;
+              }
+            } else {
+              const raw = yield* driver.dumpHierarchy();
+              const root = parse(raw);
+              attached = findElements(root, selector as Selector).length > 0;
+            }
+            lastActual = attached ? "attached" : "detached";
+            if (negate ? !attached : attached) return;
+            if (Date.now() >= deadline) break;
+            yield* Effect.sleep(
+              Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+            );
+          }
+
+          return yield* new TextMismatchError({
+            message: negate
+              ? `Expected element NOT to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected element to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? "detached" : "attached",
+            actual: lastActual ?? (negate ? "attached" : "detached"),
+            selector,
+          });
+        }),
+
+      assertInViewport: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const vpW = config.screenWidth ?? 1280;
+            const vpH = config.screenHeight ?? 720;
+            const b = el.bounds;
+            const inVp =
+              b.width > 0 &&
+              b.height > 0 &&
+              b.x + b.width > 0 &&
+              b.y + b.height > 0 &&
+              b.x < vpW &&
+              b.y < vpH;
+            return { matched: inVp, actual: inVp ? "in viewport" : "outside viewport" };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected element NOT to be in viewport after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected element to be in viewport but it was "${actual ?? "outside viewport"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? "outside viewport" : "in viewport",
+          }),
+          { kind: "inViewport" },
+          negate,
+        ),
+
+      assertJSProperty: (
+        selector: ExtendedSelector,
+        propertyName: string,
+        expectedValue: unknown,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const raw = (el as unknown as Record<string, unknown>)[propertyName];
+            const matched = JSON.stringify(raw) === JSON.stringify(expectedValue);
+            return {
+              matched,
+              actual: typeof raw === "string" ? raw : JSON.stringify(raw),
+            };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected JS property "${propertyName}" NOT to equal ${JSON.stringify(expectedValue)} after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected JS property "${propertyName}" to equal ${JSON.stringify(expectedValue)} but got ${actual ?? "undefined"} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate
+              ? `not ${JSON.stringify(expectedValue)}`
+              : JSON.stringify(expectedValue),
+          }),
+          { kind: "jsProperty", propertyName, expectedValue },
+          negate,
+        ),
+
+      assertMatchesText: (
+        selector: ExtendedSelector,
+        pattern: RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = normalizeWhitespace(el.textContent ?? el.text ?? "");
+            return { matched: pattern.test(actual), actual };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected text NOT to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`
+              : `Expected text to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
+            expected: negate ? `not ${String(pattern)}` : String(pattern),
+          }),
+          { kind: "matchesText", patternSource: pattern.source, patternFlags: pattern.flags },
+          negate,
+        ),
+
+      getAttribute: (
+        selector: ExtendedSelector,
+        name: string,
+        opts?: WaitOptions & { includeHidden?: boolean },
+      ): Effect.Effect<string | null, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+        Effect.gen(function* () {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const domChannel = driver.domChannel;
           const effectiveSelector = opts?.includeHidden
             ? withIncludeHiddenSelector(selector)
             : selector;
-          const start = Date.now();
-          while (true) {
-            const matches = yield* Effect.tryPromise({
-              try: () => domChannel.query(effectiveSelector as Selector),
-              catch: () => null,
-            }).pipe(Effect.catch(() => Effect.succeed(null)));
-            if (matches && matches.length > 0) {
-              const visibleMatches = matches.filter((m) => m.visible);
-              const target =
-                opts?.includeHidden === false
-                  ? visibleMatches[visibleMatches.length - 1]
-                  : (visibleMatches[visibleMatches.length - 1] ?? matches[matches.length - 1]);
-              if (target) {
-                return Boolean(
-                  target.checked === true || target.attributes?.["aria-checked"] === "true",
-                );
-              }
-            }
-            if (Date.now() - start >= timeout) {
-              return yield* new ElementNotFoundError({
-                message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
-                selector,
-                timeoutMs: timeout,
-              });
-            }
-            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
-          }
-        }
-        const element = yield* waitForElement(
-          driver,
-          selector,
-          parse,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
-        );
-        return Boolean(element.checked === true || element.attributes?.["aria-checked"] === "true");
-      }),
 
-    assertValue: (
-      selector: ExtendedSelector,
-      expected: string | number | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > => {
-      const isRe = expected instanceof RegExp;
-      const expectedStr = isRe ? String(expected) : String(expected);
-      return pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const actual = el.value ?? "";
-          const matched = isRe ? expected.test(actual) : actual === expectedStr;
-          return { matched, actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected value NOT to ${isRe ? "match" : "be"} ${isRe ? expectedStr : JSON.stringify(expectedStr)} after ${timeout}ms`
-            : `Expected value ${isRe ? expectedStr : JSON.stringify(expectedStr)} but got "${actual ?? "(no value)"}" after ${timeout}ms`,
-          expected: negate ? `not ${expectedStr}` : expectedStr,
-        }),
-        isRe
-          ? { kind: "value", patternSource: expected.source, patternFlags: expected.flags }
-          : { kind: "value", expected: expectedStr },
-        negate,
-      );
-    },
-
-    assertAttribute: (
-      selector: ExtendedSelector,
-      name: string,
-      expectedValue?: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > => {
-      const isRe = expectedValue instanceof RegExp;
-      return pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const actual = el.attributes?.[name];
-          if (expectedValue === undefined) {
-            return { matched: actual !== undefined, actual };
-          }
-          const matched = isRe
-            ? actual !== undefined && expectedValue.test(actual)
-            : actual === expectedValue;
-          return { matched, actual };
-        },
-        (actual, timeout) =>
-          negate
-            ? expectedValue === undefined
-              ? {
-                  message: `Expected attribute "${name}" NOT to exist but got "${actual ?? ""}" after ${timeout}ms`,
-                  expected: `not ${name}`,
-                }
-              : {
-                  message: `Expected attribute "${name}" NOT to ${isRe ? "match" : "be"} ${isRe ? String(expectedValue) : JSON.stringify(expectedValue)} after ${timeout}ms`,
-                  expected: `not ${String(expectedValue)}`,
-                }
-            : expectedValue === undefined
-              ? {
-                  message: `Expected attribute "${name}" to exist but it was not found after ${timeout}ms`,
-                  expected: name,
-                }
-              : {
-                  message: `Expected attribute "${name}" to ${isRe ? "match" : "be"} ${isRe ? String(expectedValue) : JSON.stringify(expectedValue)} but got "${actual ?? "(not found)"}" after ${timeout}ms`,
-                  expected: String(expectedValue),
-                },
-        isRe
-          ? {
-              kind: "attribute",
-              attributeName: name,
-              patternSource: expectedValue.source,
-              patternFlags: expectedValue.flags,
-            }
-          : { kind: "attribute", attributeName: name, expected: expectedValue },
-        negate,
-      );
-    },
-
-    assertAttached: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<void, TextMismatchError | DriverError> =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
-        const start = Date.now();
-        const deadline = start + timeout;
-        let lastActual: string | undefined;
-
-        while (true) {
-          const domChannel = driver.domChannel;
+          // On web/DOM channels, allow reading attributes from any attached element
+          // (including display:none, <input type="hidden">, or zero-size elements without a layout box).
           if (
-            (config.platform === "web" || !config.platform) &&
-            !isSystemUISelector(selector) &&
-            !isRelativeSelectorLike(selector) &&
-            domChannel?.isConnected() &&
-            domChannel.waitForMatch
-          ) {
-            const remaining = Math.max(50, deadline - Date.now());
-            const reactive = yield* Effect.tryPromise({
-              try: () =>
-                domChannel.waitForMatch!(selector as Selector, {
-                  kind: "attached",
-                  ...(negate ? { negate: true } : {}),
-                  timeoutMs: remaining,
-                }),
-              catch: (err) =>
-                isInvalidSelectorError(err)
-                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                  : null,
-            }).pipe(
-              Effect.catch((err) =>
-                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-              ),
-            );
-            if (reactive) {
-              if (reactive.matched) return;
-              if (reactive.actual !== undefined) lastActual = reactive.actual;
-              if (Date.now() >= deadline) break;
-              yield* Effect.sleep(
-                Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
-              );
-              continue;
-            }
-          }
-
-          cache.invalidate();
-          let attached = false;
-          if (
-            !isSystemUISelector(selector) &&
-            !isRelativeSelectorLike(selector) &&
+            !isSystemUISelector(effectiveSelector) &&
+            !isRelativeSelectorLike(effectiveSelector) &&
             domChannel?.isConnected()
           ) {
-            const matches = yield* Effect.tryPromise({
-              try: () => domChannel.query(selector as Selector),
-              catch: (err) =>
-                isInvalidSelectorError(err)
-                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                  : null,
-            }).pipe(
-              Effect.catch((err) =>
-                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-              ),
-            );
-            if (matches) {
-              attached = matches.length > 0;
+            const start = Date.now();
+            while (true) {
+              const matches = yield* Effect.tryPromise({
+                try: () => domChannel.query(effectiveSelector as Selector),
+                catch: () => null,
+              }).pipe(Effect.catch(() => Effect.succeed(null)));
+              if (matches && matches.length > 0) {
+                const target =
+                  opts?.includeHidden === false
+                    ? matches.filter((m) => m.visible).at(-1)
+                    : matches[matches.length - 1];
+                if (target) {
+                  return target.attributes?.[name] ?? null;
+                }
+              }
+              if (Date.now() - start >= timeout) {
+                return yield* new ElementNotFoundError({
+                  message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
+                  selector,
+                  timeoutMs: timeout,
+                });
+              }
+              yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
             }
+          }
+
+          const element = yield* waitForElement(
+            driver,
+            effectiveSelector,
+            parse,
+            { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+            cache,
+          );
+          return element.attributes?.[name] ?? null;
+        }),
+
+      assertScreenshot: (
+        selector: ExtendedSelector | undefined,
+        name: string,
+        flowFilePath: string,
+        flowName: string,
+        platform: string,
+        options: {
+          threshold?: number;
+          maxDiffPixelRatio?: number;
+          mask?: Array<{ x: number; y: number; width: number; height: number }>;
+          maskSelectors?: ExtendedSelector[];
+          fullPage?: boolean;
+          updateBaselines?: boolean;
+          outputDir?: string;
+          baselinesDir?: string;
+        },
+      ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
+        Effect.gen(function* () {
+          const { resolveBaselinePath, readBaseline, writeBaseline } = yield* Effect.promise(
+            () => import("../core/baseline-manager.js"),
+          );
+          const { cropToElement, applyMask, compareScreenshots } = yield* Effect.promise(
+            () => import("../core/screenshot-compare.js"),
+          );
+
+          // 1. Take screenshot (optionally full-page when supported by driver)
+          const raw =
+            options.fullPage && driver.takeFullPageScreenshot
+              ? yield* driver.takeFullPageScreenshot()
+              : yield* driver.takeScreenshot();
+
+          // Resolve mask selectors to pixel bounds if provided (3.2)
+          const resolvedMasks: Array<{ x: number; y: number; width: number; height: number }> = [
+            ...(options.mask ?? []),
+          ];
+          let cropOriginX = 0;
+          let cropOriginY = 0;
+          if (options.maskSelectors && options.maskSelectors.length > 0) {
+            for (const maskSel of options.maskSelectors) {
+              const found = yield* resolveElementAcrossChannels(driver, maskSel, parse, cache, {
+                forAction: false,
+                platform: config.platform,
+              });
+              if (found?.element?.bounds) {
+                resolvedMasks.push(found.element.bounds);
+              }
+            }
+          }
+
+          // 2. Optionally crop to element bounds
+          let screenshotBuf: Buffer;
+          if (selector !== undefined) {
+            const element = yield* waitForElement(driver, selector, parse, { ...defaults }, cache);
+            cropOriginX = element.bounds.x;
+            cropOriginY = element.bounds.y;
+            screenshotBuf = yield* Effect.promise(() => cropToElement(raw, element.bounds));
           } else {
-            const raw = yield* driver.dumpHierarchy();
-            const root = parse(raw);
-            attached = findElements(root, selector as Selector).length > 0;
+            screenshotBuf = Buffer.from(raw);
           }
-          lastActual = attached ? "attached" : "detached";
-          if (negate ? !attached : attached) return;
-          if (Date.now() >= deadline) break;
-          yield* Effect.sleep(
-            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+
+          // Adjust mask coordinates relative to cropped element origin
+          const effectiveMasks =
+            selector !== undefined
+              ? resolvedMasks.map((m) => ({
+                  x: Math.max(0, m.x - cropOriginX),
+                  y: Math.max(0, m.y - cropOriginY),
+                  width: m.width,
+                  height: m.height,
+                }))
+              : resolvedMasks;
+
+          // 3. Resolve baseline path
+          const baselinePath = resolveBaselinePath(
+            flowFilePath,
+            flowName,
+            platform,
+            name,
+            options.baselinesDir,
           );
-        }
 
-        return yield* new TextMismatchError({
-          message: negate
-            ? `Expected element NOT to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected element to be attached after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? "detached" : "attached",
-          actual: lastActual ?? (negate ? "attached" : "detached"),
-          selector,
-        });
-      }),
-
-    assertInViewport: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const vpW = config.screenWidth ?? 1280;
-          const vpH = config.screenHeight ?? 720;
-          const b = el.bounds;
-          const inVp =
-            b.width > 0 &&
-            b.height > 0 &&
-            b.x + b.width > 0 &&
-            b.y + b.height > 0 &&
-            b.x < vpW &&
-            b.y < vpH;
-          return { matched: inVp, actual: inVp ? "in viewport" : "outside viewport" };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected element NOT to be in viewport after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected element to be in viewport but it was "${actual ?? "outside viewport"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? "outside viewport" : "in viewport",
-        }),
-        { kind: "inViewport" },
-        negate,
-      ),
-
-    assertJSProperty: (
-      selector: ExtendedSelector,
-      propertyName: string,
-      expectedValue: unknown,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const raw = (el as unknown as Record<string, unknown>)[propertyName];
-          const matched = JSON.stringify(raw) === JSON.stringify(expectedValue);
-          return {
-            matched,
-            actual: typeof raw === "string" ? raw : JSON.stringify(raw),
-          };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected JS property "${propertyName}" NOT to equal ${JSON.stringify(expectedValue)} after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected JS property "${propertyName}" to equal ${JSON.stringify(expectedValue)} but got ${actual ?? "undefined"} after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? `not ${JSON.stringify(expectedValue)}` : JSON.stringify(expectedValue),
-        }),
-        { kind: "jsProperty", propertyName, expectedValue },
-        negate,
-      ),
-
-    assertMatchesText: (
-      selector: ExtendedSelector,
-      pattern: RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const actual = normalizeWhitespace(el.textContent ?? el.text ?? "");
-          return { matched: pattern.test(actual), actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected text NOT to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`
-            : `Expected text to match ${pattern} but got "${actual ?? "(no text)"}" after ${timeout}ms`,
-          expected: negate ? `not ${String(pattern)}` : String(pattern),
-        }),
-        { kind: "matchesText", patternSource: pattern.source, patternFlags: pattern.flags },
-        negate,
-      ),
-
-    getAttribute: (
-      selector: ExtendedSelector,
-      name: string,
-      opts?: WaitOptions & { includeHidden?: boolean },
-    ): Effect.Effect<string | null, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
-        const domChannel = driver.domChannel;
-        const effectiveSelector = opts?.includeHidden
-          ? withIncludeHiddenSelector(selector)
-          : selector;
-
-        // On web/DOM channels, allow reading attributes from any attached element
-        // (including display:none, <input type="hidden">, or zero-size elements without a layout box).
-        if (
-          !isSystemUISelector(effectiveSelector) &&
-          !isRelativeSelectorLike(effectiveSelector) &&
-          domChannel?.isConnected()
-        ) {
-          const start = Date.now();
-          while (true) {
-            const matches = yield* Effect.tryPromise({
-              try: () => domChannel.query(effectiveSelector as Selector),
-              catch: () => null,
-            }).pipe(Effect.catch(() => Effect.succeed(null)));
-            if (matches && matches.length > 0) {
-              const target =
-                opts?.includeHidden === false
-                  ? matches.filter((m) => m.visible).at(-1)
-                  : matches[matches.length - 1];
-              if (target) {
-                return target.attributes?.[name] ?? null;
-              }
-            }
-            if (Date.now() - start >= timeout) {
-              return yield* new ElementNotFoundError({
-                message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}`,
-                selector,
-                timeoutMs: timeout,
-              });
-            }
-            yield* Effect.sleep(Duration.millis(Math.min(pollInterval, 100)));
+          // 4. If updateBaselines: write baseline and return
+          if (options.updateBaselines) {
+            const toWrite =
+              effectiveMasks.length > 0
+                ? yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks))
+                : screenshotBuf;
+            yield* Effect.promise(() => Promise.resolve(writeBaseline(baselinePath, toWrite)));
+            return;
           }
-        }
 
-        const element = yield* waitForElement(
-          driver,
-          effectiveSelector,
-          parse,
-          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
-          cache,
-        );
-        return element.attributes?.[name] ?? null;
-      }),
-
-    assertScreenshot: (
-      selector: ExtendedSelector | undefined,
-      name: string,
-      flowFilePath: string,
-      flowName: string,
-      platform: string,
-      options: {
-        threshold?: number;
-        maxDiffPixelRatio?: number;
-        mask?: Array<{ x: number; y: number; width: number; height: number }>;
-        maskSelectors?: ExtendedSelector[];
-        fullPage?: boolean;
-        updateBaselines?: boolean;
-        outputDir?: string;
-        baselinesDir?: string;
-      },
-    ): Effect.Effect<void, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-      Effect.gen(function* () {
-        const { resolveBaselinePath, readBaseline, writeBaseline } = yield* Effect.promise(
-          () => import("../core/baseline-manager.js"),
-        );
-        const { cropToElement, applyMask, compareScreenshots } = yield* Effect.promise(
-          () => import("../core/screenshot-compare.js"),
-        );
-
-        // 1. Take screenshot (optionally full-page when supported by driver)
-        const raw =
-          options.fullPage && driver.takeFullPageScreenshot
-            ? yield* driver.takeFullPageScreenshot()
-            : yield* driver.takeScreenshot();
-
-        // Resolve mask selectors to pixel bounds if provided (3.2)
-        const resolvedMasks: Array<{ x: number; y: number; width: number; height: number }> = [
-          ...(options.mask ?? []),
-        ];
-        let cropOriginX = 0;
-        let cropOriginY = 0;
-        if (options.maskSelectors && options.maskSelectors.length > 0) {
-          for (const maskSel of options.maskSelectors) {
-            const found = yield* resolveElementAcrossChannels(driver, maskSel, parse, cache, {
-              forAction: false,
-              platform: config.platform,
-            });
-            if (found?.element?.bounds) {
-              resolvedMasks.push(found.element.bounds);
-            }
+          // 5. If no baseline exists (first run): write baseline and return
+          const existing = readBaseline(baselinePath);
+          if (existing === null) {
+            const toWrite =
+              effectiveMasks.length > 0
+                ? yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks))
+                : screenshotBuf;
+            yield* Effect.promise(() => Promise.resolve(writeBaseline(baselinePath, toWrite)));
+            return;
           }
-        }
 
-        // 2. Optionally crop to element bounds
-        let screenshotBuf: Buffer;
-        if (selector !== undefined) {
-          const element = yield* waitForElement(driver, selector, parse, { ...defaults }, cache);
-          cropOriginX = element.bounds.x;
-          cropOriginY = element.bounds.y;
-          screenshotBuf = yield* Effect.promise(() => cropToElement(raw, element.bounds));
-        } else {
-          screenshotBuf = Buffer.from(raw);
-        }
-
-        // Adjust mask coordinates relative to cropped element origin
-        const effectiveMasks =
-          selector !== undefined
-            ? resolvedMasks.map((m) => ({
-                x: Math.max(0, m.x - cropOriginX),
-                y: Math.max(0, m.y - cropOriginY),
-                width: m.width,
-                height: m.height,
-              }))
-            : resolvedMasks;
-
-        // 3. Resolve baseline path
-        const baselinePath = resolveBaselinePath(
-          flowFilePath,
-          flowName,
-          platform,
-          name,
-          options.baselinesDir,
-        );
-
-        // 4. If updateBaselines: write baseline and return
-        if (options.updateBaselines) {
-          const toWrite =
-            effectiveMasks.length > 0
-              ? yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks))
-              : screenshotBuf;
-          yield* Effect.promise(() => Promise.resolve(writeBaseline(baselinePath, toWrite)));
-          return;
-        }
-
-        // 5. If no baseline exists (first run): write baseline and return
-        const existing = readBaseline(baselinePath);
-        if (existing === null) {
-          const toWrite =
-            effectiveMasks.length > 0
-              ? yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks))
-              : screenshotBuf;
-          yield* Effect.promise(() => Promise.resolve(writeBaseline(baselinePath, toWrite)));
-          return;
-        }
-
-        // 6. Apply masks if provided
-        let actualBuf: Buffer = screenshotBuf;
-        let expectedBuf: Buffer = existing;
-        if (effectiveMasks.length > 0) {
-          actualBuf = yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks));
-          expectedBuf = yield* Effect.promise(() => applyMask(existing, effectiveMasks));
-        }
-
-        // 7. Compare
-        const result = compareScreenshots(expectedBuf, actualBuf, {
-          threshold: options.threshold,
-          maxDiffPixelRatio: options.maxDiffPixelRatio,
-        });
-
-        // 8. If mismatch: write output images and fail
-        if (!result.match) {
-          const { writeFileSync, mkdirSync } = yield* Effect.promise(() => import("node:fs"));
-          const { join } = yield* Effect.promise(() => import("node:path"));
-          const outDir = options.outputDir ?? config.outputDir ?? "spana-output";
-          mkdirSync(outDir, { recursive: true });
-          const safeFlowName = flowName
-            .toLowerCase()
-            .replaceAll(/[^a-z0-9]+/g, "-")
-            .replaceAll(/^-|-$/g, "");
-          const prefix = join(outDir, `${safeFlowName}-${platform}-${name}`);
-          writeFileSync(`${prefix}-expected.png`, existing);
-          writeFileSync(`${prefix}-actual.png`, actualBuf);
-          if (result.diffImage) {
-            writeFileSync(`${prefix}-diff.png`, result.diffImage);
+          // 6. Apply masks if provided
+          let actualBuf: Buffer = screenshotBuf;
+          let expectedBuf: Buffer = existing;
+          if (effectiveMasks.length > 0) {
+            actualBuf = yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks));
+            expectedBuf = yield* Effect.promise(() => applyMask(existing, effectiveMasks));
           }
-          const detail = result.sizeMismatch
-            ? "image dimensions differ"
-            : `${result.diffPixelCount} differing pixels (ratio: ${(result.diffPixelRatio * 100).toFixed(2)}%)`;
-          return yield* new DriverError({
-            message: `Screenshot mismatch for "${name}": ${detail}. Expected: ${prefix}-expected.png, Actual: ${prefix}-actual.png${result.diffImage ? `, Diff: ${prefix}-diff.png` : ""}`,
+
+          // 7. Compare
+          const result = compareScreenshots(expectedBuf, actualBuf, {
+            threshold: options.threshold,
+            maxDiffPixelRatio: options.maxDiffPixelRatio,
           });
-        }
-      }),
 
-    assertAccessibilityLabel: (
-      selector: ExtendedSelector,
-      expected?: string,
-      opts?: WaitOptions,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const label = el.accessibilityLabel;
-          if (expected === undefined) {
-            return { matched: label !== undefined && label.length > 0, actual: label };
-          }
-          return { matched: label === expected, actual: label };
-        },
-        (actual, timeout) =>
-          expected === undefined
-            ? {
-                message: `Expected element to have a non-empty accessibilityLabel but got "${actual ?? "(none)"}" after ${timeout}ms`,
-                expected: "(non-empty)",
-              }
-            : {
-                message: `Expected accessibilityLabel "${expected}" but got "${actual ?? "(none)"}" after ${timeout}ms`,
-                expected,
-              },
-        { kind: "accessibilityLabel", expected },
-      ),
-
-    assertAccessibleName: (
-      selector: ExtendedSelector,
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const actual = el.accessibilityLabel || el.text || "";
-          const matched =
-            expected instanceof RegExp ? expected.test(actual) : actual.trim() === expected.trim();
-          return { matched, actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected accessible name NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected accessible name ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? `not ${String(expected)}` : String(expected),
-        }),
-        expected instanceof RegExp
-          ? {
-              kind: "accessibleName",
-              patternSource: expected.source,
-              patternFlags: expected.flags,
+          // 8. If mismatch: write output images and fail
+          if (!result.match) {
+            const { writeFileSync, mkdirSync } = yield* Effect.promise(() => import("node:fs"));
+            const { join } = yield* Effect.promise(() => import("node:path"));
+            const outDir = options.outputDir ?? config.outputDir ?? "spana-output";
+            mkdirSync(outDir, { recursive: true });
+            const safeFlowName = flowName
+              .toLowerCase()
+              .replaceAll(/[^a-z0-9]+/g, "-")
+              .replaceAll(/^-|-$/g, "");
+            const prefix = join(outDir, `${safeFlowName}-${platform}-${name}`);
+            writeFileSync(`${prefix}-expected.png`, existing);
+            writeFileSync(`${prefix}-actual.png`, actualBuf);
+            if (result.diffImage) {
+              writeFileSync(`${prefix}-diff.png`, result.diffImage);
             }
-          : { kind: "accessibleName", expected },
-        negate,
-      ),
-
-    assertAccessibleDescription: (
-      selector: ExtendedSelector,
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const actual = el.accessibleDescription ?? el.attributes?.["aria-description"] ?? "";
-          const matched =
-            expected instanceof RegExp ? expected.test(actual) : actual.trim() === expected.trim();
-          return { matched, actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected accessible description NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected accessible description ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? `not ${String(expected)}` : String(expected),
-        }),
-        expected instanceof RegExp
-          ? {
-              kind: "accessibleDescription",
-              patternSource: expected.source,
-              patternFlags: expected.flags,
-            }
-          : { kind: "accessibleDescription", expected },
-        negate,
-      ),
-
-    assertFocused: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => ({
-          matched: el.focused === true,
-          actual: el.focused ? "focused" : "not focused",
-        }),
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected element NOT to be focused but it was "${actual ?? "focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected element to be focused but it was "${actual ?? "not focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? "not focused" : "focused",
-        }),
-        { kind: "focused" },
-        negate,
-      ),
-
-    assertChecked: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => ({
-          matched: el.checked === true || el.attributes?.["aria-checked"] === "true",
-          actual: el.checked ? "checked" : "unchecked",
-        }),
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected element NOT to be checked but it was "${actual ?? "checked"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected element to be checked but it was "${actual ?? "unchecked"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? "unchecked" : "checked",
-        }),
-        { kind: "checked" },
-        negate,
-      ),
-
-    assertEditable: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => ({
-          matched: el.editable === true,
-          actual: el.editable ? "editable" : "not editable",
-        }),
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected element NOT to be editable but it was "${actual ?? "editable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected element to be editable but it was "${actual ?? "not editable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? "not editable" : "editable",
-        }),
-        { kind: "editable" },
-        negate,
-      ),
-
-    assertEmpty: (
-      selector: ExtendedSelector,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const isEmpty =
-            el.empty !== undefined
-              ? el.empty
-              : (el.value ?? el.textContent ?? el.text ?? "").trim().length === 0;
-          return {
-            matched: isEmpty,
-            actual: isEmpty ? "empty" : (el.value ?? el.text ?? "non-empty"),
-          };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected element NOT to be empty after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected element to be empty but got "${actual ?? "(non-empty)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? "non-empty" : "empty",
-        }),
-        { kind: "empty" },
-        negate,
-      ),
-
-    assertClass: (
-      selector: ExtendedSelector,
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const cls = el.className ?? el.attributes?.["class"] ?? "";
-          const matched =
-            expected instanceof RegExp
-              ? expected.test(cls)
-              : expected
-                  .trim()
-                  .split(/\s+/)
-                  .filter(Boolean)
-                  .every((tok) => cls.trim().split(/\s+/).includes(tok));
-          return { matched, actual: cls };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected class NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected class ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? `not ${String(expected)}` : String(expected),
-        }),
-        expected instanceof RegExp
-          ? { kind: "class", patternSource: expected.source, patternFlags: expected.flags }
-          : { kind: "class", expected },
-        negate,
-      ),
-
-    assertCss: (
-      selector: ExtendedSelector,
-      property: string,
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const actual = el.attributes?.[`style:${property}`] ?? "";
-          const matched =
-            expected instanceof RegExp ? expected.test(actual) : actual.trim() === expected.trim();
-          return { matched, actual };
-        },
-        (actual, timeout) => ({
-          message: negate
-            ? `Expected CSS "${property}" NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected CSS "${property}" to be ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? `not ${String(expected)}` : String(expected),
-        }),
-        expected instanceof RegExp
-          ? {
-              kind: "css",
-              cssProperty: property,
-              patternSource: expected.source,
-              patternFlags: expected.flags,
-            }
-          : { kind: "css", cssProperty: property, expected },
-        negate,
-      ),
-
-    waitForTitle: (
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<void, TextMismatchError | DriverError> =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
-        const start = Date.now();
-        const deadline = start + timeout;
-        let lastTitle = "";
-        const matchesTitle = (t: string): boolean =>
-          expected instanceof RegExp ? expected.test(t) : t === expected;
-
-        while (true) {
-          const domChannel = driver.domChannel;
-          if (
-            (config.platform === "web" || !config.platform) &&
-            domChannel?.isConnected() &&
-            domChannel.waitForMatch
-          ) {
-            const remaining = Math.max(50, deadline - Date.now());
-            const reactive = yield* Effect.tryPromise({
-              try: () =>
-                domChannel.waitForMatch!("", {
-                  kind: "title",
-                  ...(expected instanceof RegExp
-                    ? { patternSource: expected.source, patternFlags: expected.flags }
-                    : { expected }),
-                  ...(negate ? { negate: true } : {}),
-                  timeoutMs: remaining,
-                }),
-              catch: () => null,
-            }).pipe(Effect.catch(() => Effect.succeed(null)));
-
-            if (reactive) {
-              if (reactive.matched) return;
-              if (reactive.actual !== undefined) lastTitle = reactive.actual;
-              if (Date.now() >= deadline) break;
-              yield* Effect.sleep(
-                Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
-              );
-              continue;
-            }
-          }
-
-          const title = yield* driver
-            .evaluate<string>("typeof document !== 'undefined' ? String(document.title || '') : ''")
-            .pipe(Effect.catch(() => Effect.succeed("")));
-          lastTitle = title;
-          if (negate ? !matchesTitle(title) : matchesTitle(title)) return;
-          if (Date.now() >= deadline) break;
-          yield* Effect.sleep(
-            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
-          );
-        }
-
-        return yield* new TextMismatchError({
-          message: negate
-            ? `Expected title NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastTitle)} after ${timeout}ms`
-            : `Expected title ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastTitle)} after ${timeout}ms`,
-          expected: negate ? `not ${String(expected)}` : String(expected),
-          actual: lastTitle,
-          selector: "title",
-        });
-      }),
-
-    assertCount: (
-      selector: ExtendedSelector,
-      expectedCount: number,
-      opts?: WaitOptions & { visible?: boolean },
-      negate: boolean = false,
-    ): Effect.Effect<void, TextMismatchError | DriverError> =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
-        const visibleOnly = Boolean(opts?.visible);
-        const start = Date.now();
-        const deadline = start + timeout;
-        let lastCount = -1;
-        let lastActualStr: string | undefined;
-
-        while (true) {
-          const domChannel = driver.domChannel;
-          if (
-            (config.platform === "web" || !config.platform) &&
-            !isSystemUISelector(selector) &&
-            !isRelativeSelectorLike(selector) &&
-            domChannel?.isConnected() &&
-            domChannel.waitForMatch
-          ) {
-            const remaining = Math.max(50, deadline - Date.now());
-            const reactive = yield* Effect.tryPromise({
-              try: () =>
-                domChannel.waitForMatch!(selector as Selector, {
-                  kind: "count",
-                  expectedCount,
-                  ...(visibleOnly ? { visibleOnly: true } : {}),
-                  ...(negate ? { negate: true } : {}),
-                  timeoutMs: remaining,
-                }),
-              catch: (err) =>
-                isInvalidSelectorError(err)
-                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                  : null,
-            }).pipe(
-              Effect.catch((err) =>
-                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-              ),
-            );
-
-            if (reactive) {
-              if (reactive.matched) return;
-              if (reactive.actual !== undefined) lastActualStr = reactive.actual;
-              if (Date.now() >= deadline) break;
-              yield* Effect.sleep(
-                Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
-              );
-              continue;
-            }
-          }
-
-          cache.invalidate();
-          if (
-            !isSystemUISelector(selector) &&
-            !isRelativeSelectorLike(selector) &&
-            domChannel?.isConnected()
-          ) {
-            const matches = yield* Effect.tryPromise({
-              try: () => domChannel.query(selector as Selector),
-              catch: (err) =>
-                isInvalidSelectorError(err)
-                  ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
-                  : null,
-            }).pipe(
-              Effect.catch((err) =>
-                err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
-              ),
-            );
-            if (matches) {
-              const count = visibleOnly ? matches.filter((m) => m.visible).length : matches.length;
-              lastCount = count;
-              lastActualStr = String(count);
-              if (negate ? count !== expectedCount : count === expectedCount) return;
-              if (Date.now() >= deadline) break;
-              yield* Effect.sleep(
-                Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
-              );
-              continue;
-            }
-          }
-
-          const raw = yield* driver.dumpHierarchy();
-          const root = parse(raw);
-          const matched = findElements(root, selector as Selector);
-          const count = visibleOnly
-            ? matched.filter((el) => el.visible !== false).length
-            : matched.length;
-          lastCount = count;
-          lastActualStr = String(count);
-          if (negate ? count !== expectedCount : count === expectedCount) return;
-          if (Date.now() >= deadline) break;
-          yield* Effect.sleep(
-            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
-          );
-        }
-
-        const finalActual = lastActualStr ?? String(lastCount >= 0 ? lastCount : 0);
-        return yield* new TextMismatchError({
-          message: negate
-            ? `Expected count NOT to be ${expectedCount} after ${timeout}ms — selector: ${formatSelector(selector)}`
-            : `Expected count ${expectedCount} but got ${finalActual} after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: negate ? `not ${expectedCount}` : String(expectedCount),
-          actual: finalActual,
-          selector,
-        });
-      }),
-
-    waitForURL: (
-      expected: string | RegExp,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<void, TextMismatchError | DriverError> =>
-      Effect.gen(function* () {
-        const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
-        const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
-        const start = Date.now();
-        const deadline = start + timeout;
-        let lastUrl = "";
-
-        const matchesUrl = (url: string): boolean =>
-          expected instanceof RegExp
-            ? expected.test(url)
-            : url === expected || url.includes(expected);
-
-        const initialNavUrls = driver.getNavigationUrls ? driver.getNavigationUrls() : [];
-        const navMark = initialNavUrls.length;
-        const lastPreMarkUrl = navMark > 0 ? initialNavUrls[navMark - 1] : undefined;
-
-        const checkRecentNavUrls = (): boolean => {
-          if (negate || !driver.getNavigationUrls) return false;
-          const all = driver.getNavigationUrls();
-          const sinceMark = all.slice(Math.min(navMark, all.length));
-          if (sinceMark.some((u) => matchesUrl(u))) return true;
-          // Also check the latest committed URL right before waitForURL started (redirect right before call)
-          if (lastPreMarkUrl && matchesUrl(lastPreMarkUrl)) return true;
-          return false;
-        };
-
-        const readCurrentUrl = () =>
-          driver.getUrl
-            ? driver.getUrl().pipe(Effect.catch(() => Effect.succeed("")))
-            : driver
-                .evaluate<string>(
-                  "typeof window !== 'undefined' && window.location ? window.location.href : ''",
-                )
-                .pipe(Effect.catch(() => Effect.succeed("")));
-
-        // Immediate check before invoking reactive DOM wait (catches rapid redirect & current URL)
-        const initialUrl = yield* readCurrentUrl();
-        lastUrl = initialUrl;
-        if (negate ? !matchesUrl(initialUrl) : matchesUrl(initialUrl) || checkRecentNavUrls()) {
-          return;
-        }
-
-        while (Date.now() < deadline) {
-          if (checkRecentNavUrls()) return;
-          const domChannel = driver.domChannel;
-          if (
-            (config.platform === "web" || !config.platform) &&
-            domChannel?.isConnected() &&
-            domChannel.waitForMatch
-          ) {
-            const remaining = Math.max(50, deadline - Date.now());
-            const reactive = yield* Effect.tryPromise({
-              try: () =>
-                domChannel.waitForMatch!("", {
-                  kind: "url",
-                  ...(expected instanceof RegExp
-                    ? { patternSource: expected.source, patternFlags: expected.flags }
-                    : { expected }),
-                  ...(negate ? { negate: true } : {}),
-                  timeoutMs: Math.min(remaining, 300),
-                }),
-              catch: () => null,
-            }).pipe(Effect.catch(() => Effect.succeed(null)));
-
-            if (reactive?.matched) return;
-            if (reactive?.actual) lastUrl = reactive.actual;
-            if (checkRecentNavUrls()) return;
-          }
-
-          const url = yield* readCurrentUrl();
-          if (url) lastUrl = url;
-          if (negate ? !matchesUrl(url) : matchesUrl(url) || checkRecentNavUrls()) return;
-          if (Date.now() >= deadline) break;
-          yield* Effect.sleep(
-            Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
-          );
-        }
-
-        return yield* new TextMismatchError({
-          message: negate
-            ? `Expected URL NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`
-            : `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`,
-          expected: negate ? `not ${String(expected)}` : String(expected),
-          actual: lastUrl,
-          selector: "url",
-        });
-      }),
-
-    assertFocusable: (
-      selector: ExtendedSelector,
-      platform: string,
-      opts?: WaitOptions,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      Effect.gen(function* () {
-        const { isFocusable } = yield* Effect.promise(
-          () => import("../core/accessibility-audit.js"),
-        );
-        yield* pollUntilMatch(
-          selector,
-          opts,
-          (el) => {
-            const focusable = isFocusable(el as unknown as Record<string, unknown>, {
-              platform: platform as import("../schemas/selector.js").Platform,
+            const detail = result.sizeMismatch
+              ? "image dimensions differ"
+              : `${result.diffPixelCount} differing pixels (ratio: ${(result.diffPixelRatio * 100).toFixed(2)}%)`;
+            return yield* new DriverError({
+              message: `Screenshot mismatch for "${name}": ${detail}. Expected: ${prefix}-expected.png, Actual: ${prefix}-actual.png${result.diffImage ? `, Diff: ${prefix}-diff.png` : ""}`,
             });
-            return { matched: focusable, actual: focusable ? "focusable" : "not focusable" };
-          },
-          (actual, timeout) => ({
-            message: `Expected element to be focusable but it was "${actual ?? "not focusable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-            expected: "focusable",
-          }),
-        );
-      }),
+          }
+        }),
 
-    assertRole: (
-      selector: ExtendedSelector,
-      expectedRole: string,
-      platform: string,
-      opts?: WaitOptions,
-      negate: boolean = false,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      Effect.gen(function* () {
-        const { normalizeRole } = yield* Effect.promise(
-          () => import("../core/accessibility-audit.js"),
-        );
-        yield* pollUntilMatch(
+      assertAccessibilityLabel: (
+        selector: ExtendedSelector,
+        expected?: string,
+        opts?: WaitOptions,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
           selector,
           opts,
           (el) => {
-            const actual =
-              el.role ??
-              normalizeRole(
-                platform as import("../schemas/selector.js").Platform,
-                el.elementType ?? "",
-                el.attributes ?? {},
-              );
-            return { matched: actual === expectedRole, actual };
+            const label = el.accessibilityLabel;
+            if (expected === undefined) {
+              return { matched: label !== undefined && label.length > 0, actual: label };
+            }
+            return { matched: label === expected, actual: label };
+          },
+          (actual, timeout) =>
+            expected === undefined
+              ? {
+                  message: `Expected element to have a non-empty accessibilityLabel but got "${actual ?? "(none)"}" after ${timeout}ms`,
+                  expected: "(non-empty)",
+                }
+              : {
+                  message: `Expected accessibilityLabel "${expected}" but got "${actual ?? "(none)"}" after ${timeout}ms`,
+                  expected,
+                },
+          { kind: "accessibilityLabel", expected },
+        ),
+
+      assertAccessibleName: (
+        selector: ExtendedSelector,
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = el.accessibilityLabel || el.text || "";
+            const matched =
+              expected instanceof RegExp
+                ? expected.test(actual)
+                : actual.trim() === expected.trim();
+            return { matched, actual };
           },
           (actual, timeout) => ({
             message: negate
-              ? `Expected role NOT to be "${expectedRole}" after ${timeout}ms — selector: ${formatSelector(selector)}`
-              : `Expected role "${expectedRole}" but got "${actual ?? "(unknown)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-            expected: negate ? `not ${expectedRole}` : expectedRole,
+              ? `Expected accessible name NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected accessible name ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
           }),
-          { kind: "role", expected: expectedRole },
+          expected instanceof RegExp
+            ? {
+                kind: "accessibleName",
+                patternSource: expected.source,
+                patternFlags: expected.flags,
+              }
+            : { kind: "accessibleName", expected },
           negate,
-        );
-      }),
+        ),
 
-    assertMinTouchTarget: (
-      selector: ExtendedSelector,
-      minSize: number,
-      opts?: WaitOptions,
-    ): Effect.Effect<
-      void,
-      ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
-    > =>
-      pollUntilMatch(
-        selector,
-        opts,
-        (el) => {
-          const { width, height } = el.bounds;
-          const passed = width >= minSize && height >= minSize;
-          const actual = `${width}x${height}`;
-          return { matched: passed, actual };
-        },
-        (actual, timeout) => ({
-          message: `Expected touch target to be at least ${minSize}x${minSize}px but got "${actual ?? "(unknown)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
-          expected: `${minSize}x${minSize}`,
+      assertAccessibleDescription: (
+        selector: ExtendedSelector,
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = el.accessibleDescription ?? el.attributes?.["aria-description"] ?? "";
+            const matched =
+              expected instanceof RegExp
+                ? expected.test(actual)
+                : actual.trim() === expected.trim();
+            return { matched, actual };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected accessible description NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected accessible description ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? "(none)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
+          }),
+          expected instanceof RegExp
+            ? {
+                kind: "accessibleDescription",
+                patternSource: expected.source,
+                patternFlags: expected.flags,
+              }
+            : { kind: "accessibleDescription", expected },
+          negate,
+        ),
+
+      assertFocused: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => ({
+            matched: el.focused === true,
+            actual: el.focused ? "focused" : "not focused",
+          }),
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected element NOT to be focused but it was "${actual ?? "focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected element to be focused but it was "${actual ?? "not focused"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? "not focused" : "focused",
+          }),
+          { kind: "focused" },
+          negate,
+        ),
+
+      assertChecked: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => ({
+            matched: el.checked === true || el.attributes?.["aria-checked"] === "true",
+            actual: el.checked ? "checked" : "unchecked",
+          }),
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected element NOT to be checked but it was "${actual ?? "checked"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected element to be checked but it was "${actual ?? "unchecked"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? "unchecked" : "checked",
+          }),
+          { kind: "checked" },
+          negate,
+        ),
+
+      assertEditable: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => ({
+            matched: el.editable === true,
+            actual: el.editable ? "editable" : "not editable",
+          }),
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected element NOT to be editable but it was "${actual ?? "editable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected element to be editable but it was "${actual ?? "not editable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? "not editable" : "editable",
+          }),
+          { kind: "editable" },
+          negate,
+        ),
+
+      assertEmpty: (
+        selector: ExtendedSelector,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const isEmpty =
+              el.empty !== undefined
+                ? el.empty
+                : (el.value ?? el.textContent ?? el.text ?? "").trim().length === 0;
+            return {
+              matched: isEmpty,
+              actual: isEmpty ? "empty" : (el.value ?? el.text ?? "non-empty"),
+            };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected element NOT to be empty after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected element to be empty but got "${actual ?? "(non-empty)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? "non-empty" : "empty",
+          }),
+          { kind: "empty" },
+          negate,
+        ),
+
+      assertClass: (
+        selector: ExtendedSelector,
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const cls = el.className ?? el.attributes?.["class"] ?? "";
+            const matched =
+              expected instanceof RegExp
+                ? expected.test(cls)
+                : expected
+                    .trim()
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .every((tok) => cls.trim().split(/\s+/).includes(tok));
+            return { matched, actual: cls };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected class NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected class ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
+          }),
+          expected instanceof RegExp
+            ? { kind: "class", patternSource: expected.source, patternFlags: expected.flags }
+            : { kind: "class", expected },
+          negate,
+        ),
+
+      assertCss: (
+        selector: ExtendedSelector,
+        property: string,
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const actual = el.attributes?.[`style:${property}`] ?? "";
+            const matched =
+              expected instanceof RegExp
+                ? expected.test(actual)
+                : actual.trim() === expected.trim();
+            return { matched, actual };
+          },
+          (actual, timeout) => ({
+            message: negate
+              ? `Expected CSS "${property}" NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected CSS "${property}" to be ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got "${actual ?? ""}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
+          }),
+          expected instanceof RegExp
+            ? {
+                kind: "css",
+                cssProperty: property,
+                patternSource: expected.source,
+                patternFlags: expected.flags,
+              }
+            : { kind: "css", cssProperty: property, expected },
+          negate,
+        ),
+
+      waitForTitle: (
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<void, TextMismatchError | DriverError> =>
+        Effect.gen(function* () {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const start = Date.now();
+          const deadline = start + timeout;
+          let lastTitle = "";
+          const matchesTitle = (t: string): boolean =>
+            expected instanceof RegExp ? expected.test(t) : t === expected;
+
+          while (true) {
+            const domChannel = driver.domChannel;
+            if (
+              (config.platform === "web" || !config.platform) &&
+              domChannel?.isConnected() &&
+              domChannel.waitForMatch
+            ) {
+              const remaining = Math.max(50, deadline - Date.now());
+              const reactive = yield* Effect.tryPromise({
+                try: () =>
+                  domChannel.waitForMatch!("", {
+                    kind: "title",
+                    ...(expected instanceof RegExp
+                      ? { patternSource: expected.source, patternFlags: expected.flags }
+                      : { expected }),
+                    ...(negate ? { negate: true } : {}),
+                    timeoutMs: remaining,
+                  }),
+                catch: () => null,
+              }).pipe(Effect.catch(() => Effect.succeed(null)));
+
+              if (reactive) {
+                if (reactive.matched) return;
+                if (reactive.actual !== undefined) lastTitle = reactive.actual;
+                if (Date.now() >= deadline) break;
+                yield* Effect.sleep(
+                  Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
+                );
+                continue;
+              }
+            }
+
+            const title = yield* driver
+              .evaluate<string>(
+                "typeof document !== 'undefined' ? String(document.title || '') : ''",
+              )
+              .pipe(Effect.catch(() => Effect.succeed("")));
+            lastTitle = title;
+            if (negate ? !matchesTitle(title) : matchesTitle(title)) return;
+            if (Date.now() >= deadline) break;
+            yield* Effect.sleep(
+              Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+            );
+          }
+
+          return yield* new TextMismatchError({
+            message: negate
+              ? `Expected title NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastTitle)} after ${timeout}ms`
+              : `Expected title ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastTitle)} after ${timeout}ms`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
+            actual: lastTitle,
+            selector: "title",
+          });
         }),
-      ),
 
-    runAccessibilityAudit: (
-      platform: string,
-      options: {
-        rules?: string[];
-        disableRules?: string[];
-        tags?: string[];
-        targetSelector?: string;
-        includeSelectors?: string[];
-        excludeSelectors?: string[];
-      } = {},
-    ): Effect.Effect<
-      { violations: import("../core/accessibility-audit.js").AccessibilityViolation[] },
-      DriverError
-    > =>
-      Effect.gen(function* () {
-        if (platform !== "web") {
-          return yield* new DriverError({
-            message: `accessibilityAudit() is only supported on web — platform "${platform}" is not supported`,
+      assertCount: (
+        selector: ExtendedSelector,
+        expectedCount: number,
+        opts?: WaitOptions & { visible?: boolean },
+        negate: boolean = false,
+      ): Effect.Effect<void, TextMismatchError | DriverError> =>
+        Effect.gen(function* () {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 200;
+          const visibleOnly = Boolean(opts?.visible);
+          const start = Date.now();
+          const deadline = start + timeout;
+          let lastCount = -1;
+          let lastActualStr: string | undefined;
+
+          while (true) {
+            const domChannel = driver.domChannel;
+            if (
+              (config.platform === "web" || !config.platform) &&
+              !isSystemUISelector(selector) &&
+              !isRelativeSelectorLike(selector) &&
+              domChannel?.isConnected() &&
+              domChannel.waitForMatch
+            ) {
+              const remaining = Math.max(50, deadline - Date.now());
+              const reactive = yield* Effect.tryPromise({
+                try: () =>
+                  domChannel.waitForMatch!(selector as Selector, {
+                    kind: "count",
+                    expectedCount,
+                    ...(visibleOnly ? { visibleOnly: true } : {}),
+                    ...(negate ? { negate: true } : {}),
+                    timeoutMs: remaining,
+                  }),
+                catch: (err) =>
+                  isInvalidSelectorError(err)
+                    ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                    : null,
+              }).pipe(
+                Effect.catch((err) =>
+                  err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+                ),
+              );
+
+              if (reactive) {
+                if (reactive.matched) return;
+                if (reactive.actual !== undefined) lastActualStr = reactive.actual;
+                if (Date.now() >= deadline) break;
+                yield* Effect.sleep(
+                  Duration.millis(Math.min(30, Math.max(10, deadline - Date.now()))),
+                );
+                continue;
+              }
+            }
+
+            cache.invalidate();
+            if (
+              !isSystemUISelector(selector) &&
+              !isRelativeSelectorLike(selector) &&
+              domChannel?.isConnected()
+            ) {
+              const matches = yield* Effect.tryPromise({
+                try: () => domChannel.query(selector as Selector),
+                catch: (err) =>
+                  isInvalidSelectorError(err)
+                    ? new DriverError({ message: err instanceof Error ? err.message : String(err) })
+                    : null,
+              }).pipe(
+                Effect.catch((err) =>
+                  err instanceof DriverError ? Effect.fail(err) : Effect.succeed(null),
+                ),
+              );
+              if (matches) {
+                const count = visibleOnly
+                  ? matches.filter((m) => m.visible).length
+                  : matches.length;
+                lastCount = count;
+                lastActualStr = String(count);
+                if (negate ? count !== expectedCount : count === expectedCount) return;
+                if (Date.now() >= deadline) break;
+                yield* Effect.sleep(
+                  Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+                );
+                continue;
+              }
+            }
+
+            const raw = yield* driver.dumpHierarchy();
+            const root = parse(raw);
+            const matched = findElements(root, selector as Selector);
+            const count = visibleOnly
+              ? matched.filter((el) => el.visible !== false).length
+              : matched.length;
+            lastCount = count;
+            lastActualStr = String(count);
+            if (negate ? count !== expectedCount : count === expectedCount) return;
+            if (Date.now() >= deadline) break;
+            yield* Effect.sleep(
+              Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+            );
+          }
+
+          const finalActual = lastActualStr ?? String(lastCount >= 0 ? lastCount : 0);
+          return yield* new TextMismatchError({
+            message: negate
+              ? `Expected count NOT to be ${expectedCount} after ${timeout}ms — selector: ${formatSelector(selector)}`
+              : `Expected count ${expectedCount} but got ${finalActual} after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: negate ? `not ${expectedCount}` : String(expectedCount),
+            actual: finalActual,
+            selector,
           });
-        }
+        }),
 
-        const axeContext: Record<string, string[][]> = {};
-        const includes = [
-          ...(options.targetSelector ? [options.targetSelector] : []),
-          ...(options.includeSelectors ?? []),
-        ];
-        if (includes.length > 0) {
-          axeContext["include"] = includes.map((s) => [s]);
-        }
-        if (options.excludeSelectors && options.excludeSelectors.length > 0) {
-          axeContext["exclude"] = options.excludeSelectors.map((s) => [s]);
-        }
-        const serializedContext =
-          Object.keys(axeContext).length > 0 ? JSON.stringify(axeContext) : "document";
+      waitForURL: (
+        expected: string | RegExp,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<void, TextMismatchError | DriverError> =>
+        Effect.gen(function* () {
+          const timeout = opts?.timeout ?? defaults?.timeout ?? 5000;
+          const pollInterval = opts?.pollInterval ?? defaults?.pollInterval ?? 100;
+          const start = Date.now();
+          const deadline = start + timeout;
+          let lastUrl = "";
 
-        const axeOptions: Record<string, unknown> = {};
-        const rulesConfig: Record<string, { enabled: boolean }> = {};
-        for (const r of options.rules ?? []) rulesConfig[r] = { enabled: true };
-        for (const r of options.disableRules ?? []) rulesConfig[r] = { enabled: false };
-        if (Object.keys(rulesConfig).length > 0) {
-          axeOptions["rules"] = rulesConfig;
-        }
-        if (options.tags && options.tags.length > 0) {
-          axeOptions["runOnly"] = { type: "tag", values: options.tags };
-        }
+          const matchesUrl = (url: string): boolean =>
+            expected instanceof RegExp
+              ? expected.test(url)
+              : url === expected || url.includes(expected);
 
-        type AxeResult = {
-          violations: Array<{
-            id: string;
-            impact: string;
-            description: string;
-            helpUrl: string;
-            tags: string[];
-            nodes: Array<{
-              target: string[];
-              html: string;
-              failureSummary: string;
-            }>;
-          }>;
-        };
+          const initialNavUrls = driver.getNavigationUrls ? driver.getNavigationUrls() : [];
+          const navMark = initialNavUrls.length;
+          const lastPreMarkUrl = navMark > 0 ? initialNavUrls[navMark - 1] : undefined;
 
-        const runExpr = `axe.run(${serializedContext}, ${JSON.stringify(axeOptions)})`;
-        const fastScript = `(function() { if (typeof axe === "undefined") return { __spanaNeedAxe: true }; return ${runExpr}; })()`;
-        let rawResult = yield* driver.evaluate<AxeResult | { __spanaNeedAxe: true }>(fastScript);
-        if (rawResult && typeof rawResult === "object" && "__spanaNeedAxe" in rawResult) {
-          const axeSource = yield* Effect.promise(() => loadCachedAxeSource());
-          const injectAndRunScript = `(function() { if (typeof axe === "undefined") { ${axeSource} } return ${runExpr}; })()`;
-          rawResult = yield* driver.evaluate<AxeResult>(injectAndRunScript);
-        }
-        const axeResult = rawResult as AxeResult;
-        const violations = (axeResult?.violations ?? []).map((v) => ({
-          ruleId: v.id,
-          severity: (v.impact ?? "minor") as "critical" | "serious" | "moderate" | "minor",
-          description: v.description,
-          helpUrl: v.helpUrl,
-          wcagCriteria: v.tags.filter((t) => t.startsWith("wcag")),
-          elements: v.nodes.map((n) => ({
-            selector: n.target.join(", "),
-            html: n.html,
-            failureSummary: n.failureSummary,
-          })),
-        }));
-        return { violations };
-      }),
+          const checkRecentNavUrls = (): boolean => {
+            if (negate || !driver.getNavigationUrls) return false;
+            const all = driver.getNavigationUrls();
+            const sinceMark = all.slice(Math.min(navMark, all.length));
+            if (sinceMark.some((u) => matchesUrl(u))) return true;
+            // Also check the latest committed URL right before waitForURL started (redirect right before call)
+            if (lastPreMarkUrl && matchesUrl(lastPreMarkUrl)) return true;
+            return false;
+          };
 
-    assertAccessibilityAudit: (
-      platform: string,
-      options: {
-        severity?: "critical" | "serious" | "moderate" | "minor";
-        rules?: string[];
-        disableRules?: string[];
-        tags?: string[];
-        targetSelector?: string;
-        includeSelectors?: string[];
-        excludeSelectors?: string[];
-      } = {},
-    ): Effect.Effect<void, DriverError> =>
-      Effect.gen(function* () {
-        if (platform !== "web") {
-          return yield* new DriverError({
-            message: `assertAccessibilityAudit() is only supported on web — platform "${platform}" is not supported`,
+          const readCurrentUrl = () =>
+            driver.getUrl
+              ? driver.getUrl().pipe(Effect.catch(() => Effect.succeed("")))
+              : driver
+                  .evaluate<string>(
+                    "typeof window !== 'undefined' && window.location ? window.location.href : ''",
+                  )
+                  .pipe(Effect.catch(() => Effect.succeed("")));
+
+          // Immediate check before invoking reactive DOM wait (catches rapid redirect & current URL)
+          const initialUrl = yield* readCurrentUrl();
+          lastUrl = initialUrl;
+          if (negate ? !matchesUrl(initialUrl) : matchesUrl(initialUrl) || checkRecentNavUrls()) {
+            return;
+          }
+
+          while (Date.now() < deadline) {
+            if (checkRecentNavUrls()) return;
+            const domChannel = driver.domChannel;
+            if (
+              (config.platform === "web" || !config.platform) &&
+              domChannel?.isConnected() &&
+              domChannel.waitForMatch
+            ) {
+              const remaining = Math.max(50, deadline - Date.now());
+              const reactive = yield* Effect.tryPromise({
+                try: () =>
+                  domChannel.waitForMatch!("", {
+                    kind: "url",
+                    ...(expected instanceof RegExp
+                      ? { patternSource: expected.source, patternFlags: expected.flags }
+                      : { expected }),
+                    ...(negate ? { negate: true } : {}),
+                    timeoutMs: Math.min(remaining, 300),
+                  }),
+                catch: () => null,
+              }).pipe(Effect.catch(() => Effect.succeed(null)));
+
+              if (reactive?.matched) return;
+              if (reactive?.actual) lastUrl = reactive.actual;
+              if (checkRecentNavUrls()) return;
+            }
+
+            const url = yield* readCurrentUrl();
+            if (url) lastUrl = url;
+            if (negate ? !matchesUrl(url) : matchesUrl(url) || checkRecentNavUrls()) return;
+            if (Date.now() >= deadline) break;
+            yield* Effect.sleep(
+              Duration.millis(Math.min(pollInterval, Math.max(10, deadline - Date.now()))),
+            );
+          }
+
+          return yield* new TextMismatchError({
+            message: negate
+              ? `Expected URL NOT to match ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`
+              : `Expected URL ${expected instanceof RegExp ? String(expected) : JSON.stringify(expected)} but got ${JSON.stringify(lastUrl)} after ${timeout}ms`,
+            expected: negate ? `not ${String(expected)}` : String(expected),
+            actual: lastUrl,
+            selector: "url",
           });
-        }
+        }),
 
-        const axeContext: Record<string, string[][]> = {};
-        const includes = [
-          ...(options.targetSelector ? [options.targetSelector] : []),
-          ...(options.includeSelectors ?? []),
-        ];
-        if (includes.length > 0) {
-          axeContext["include"] = includes.map((s) => [s]);
-        }
-        if (options.excludeSelectors && options.excludeSelectors.length > 0) {
-          axeContext["exclude"] = options.excludeSelectors.map((s) => [s]);
-        }
-        const serializedContext =
-          Object.keys(axeContext).length > 0 ? JSON.stringify(axeContext) : "document";
+      assertFocusable: (
+        selector: ExtendedSelector,
+        platform: string,
+        opts?: WaitOptions,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        Effect.gen(function* () {
+          const { isFocusable } = yield* Effect.promise(
+            () => import("../core/accessibility-audit.js"),
+          );
+          yield* pollUntilMatch(
+            selector,
+            opts,
+            (el) => {
+              const focusable = isFocusable(el as unknown as Record<string, unknown>, {
+                platform: platform as import("../schemas/selector.js").Platform,
+              });
+              return { matched: focusable, actual: focusable ? "focusable" : "not focusable" };
+            },
+            (actual, timeout) => ({
+              message: `Expected element to be focusable but it was "${actual ?? "not focusable"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+              expected: "focusable",
+            }),
+          );
+        }),
 
-        const axeOptions: Record<string, unknown> = {};
-        const rulesConfig: Record<string, { enabled: boolean }> = {};
-        for (const r of options.rules ?? []) rulesConfig[r] = { enabled: true };
-        for (const r of options.disableRules ?? []) rulesConfig[r] = { enabled: false };
-        if (Object.keys(rulesConfig).length > 0) {
-          axeOptions["rules"] = rulesConfig;
-        }
-        if (options.tags && options.tags.length > 0) {
-          axeOptions["runOnly"] = { type: "tag", values: options.tags };
-        }
+      assertRole: (
+        selector: ExtendedSelector,
+        expectedRole: string,
+        platform: string,
+        opts?: WaitOptions,
+        negate: boolean = false,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        Effect.gen(function* () {
+          const { normalizeRole } = yield* Effect.promise(
+            () => import("../core/accessibility-audit.js"),
+          );
+          yield* pollUntilMatch(
+            selector,
+            opts,
+            (el) => {
+              const actual =
+                el.role ??
+                normalizeRole(
+                  platform as import("../schemas/selector.js").Platform,
+                  el.elementType ?? "",
+                  el.attributes ?? {},
+                );
+              return { matched: actual === expectedRole, actual };
+            },
+            (actual, timeout) => ({
+              message: negate
+                ? `Expected role NOT to be "${expectedRole}" after ${timeout}ms — selector: ${formatSelector(selector)}`
+                : `Expected role "${expectedRole}" but got "${actual ?? "(unknown)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+              expected: negate ? `not ${expectedRole}` : expectedRole,
+            }),
+            { kind: "role", expected: expectedRole },
+            negate,
+          );
+        }),
 
-        type AxeResult = {
-          violations: Array<{
-            id: string;
-            impact: string;
-            description: string;
-            helpUrl: string;
-            tags: string[];
-            nodes: Array<{
-              target: string[];
-              html: string;
-              failureSummary: string;
+      assertMinTouchTarget: (
+        selector: ExtendedSelector,
+        minSize: number,
+        opts?: WaitOptions,
+      ): Effect.Effect<
+        void,
+        ElementNotFoundError | WaitTimeoutError | TextMismatchError | DriverError
+      > =>
+        pollUntilMatch(
+          selector,
+          opts,
+          (el) => {
+            const { width, height } = el.bounds;
+            const passed = width >= minSize && height >= minSize;
+            const actual = `${width}x${height}`;
+            return { matched: passed, actual };
+          },
+          (actual, timeout) => ({
+            message: `Expected touch target to be at least ${minSize}x${minSize}px but got "${actual ?? "(unknown)"}" after ${timeout}ms — selector: ${formatSelector(selector)}`,
+            expected: `${minSize}x${minSize}`,
+          }),
+        ),
+
+      runAccessibilityAudit: (
+        platform: string,
+        options: {
+          rules?: string[];
+          disableRules?: string[];
+          tags?: string[];
+          targetSelector?: string;
+          includeSelectors?: string[];
+          excludeSelectors?: string[];
+        } = {},
+      ): Effect.Effect<
+        { violations: import("../core/accessibility-audit.js").AccessibilityViolation[] },
+        DriverError
+      > =>
+        Effect.gen(function* () {
+          if (platform !== "web") {
+            return yield* new DriverError({
+              message: `accessibilityAudit() is only supported on web — platform "${platform}" is not supported`,
+            });
+          }
+
+          const axeContext: Record<string, string[][]> = {};
+          const includes = [
+            ...(options.targetSelector ? [options.targetSelector] : []),
+            ...(options.includeSelectors ?? []),
+          ];
+          if (includes.length > 0) {
+            axeContext["include"] = includes.map((s) => [s]);
+          }
+          if (options.excludeSelectors && options.excludeSelectors.length > 0) {
+            axeContext["exclude"] = options.excludeSelectors.map((s) => [s]);
+          }
+          const serializedContext =
+            Object.keys(axeContext).length > 0 ? JSON.stringify(axeContext) : "document";
+
+          const axeOptions: Record<string, unknown> = {};
+          const rulesConfig: Record<string, { enabled: boolean }> = {};
+          for (const r of options.rules ?? []) rulesConfig[r] = { enabled: true };
+          for (const r of options.disableRules ?? []) rulesConfig[r] = { enabled: false };
+          if (Object.keys(rulesConfig).length > 0) {
+            axeOptions["rules"] = rulesConfig;
+          }
+          if (options.tags && options.tags.length > 0) {
+            axeOptions["runOnly"] = { type: "tag", values: options.tags };
+          }
+
+          type AxeResult = {
+            violations: Array<{
+              id: string;
+              impact: string;
+              description: string;
+              helpUrl: string;
+              tags: string[];
+              nodes: Array<{
+                target: string[];
+                html: string;
+                failureSummary: string;
+              }>;
             }>;
-          }>;
-        };
+          };
 
-        // Fast path: check whether `window.axe` is already loaded in the current document before
-        // transmitting ~560 KB of axe-core source over CDP, and reuse the in-memory cached source
-        // from `loadCachedAxeSource()` on first injection per document.
-        const runExpr = `axe.run(${serializedContext}, ${JSON.stringify(axeOptions)})`;
-        const fastScript = `(function() { if (typeof axe === "undefined") return { __spanaNeedAxe: true }; return ${runExpr}; })()`;
-        let rawResult = yield* driver.evaluate<AxeResult | { __spanaNeedAxe: true }>(fastScript);
-        if (rawResult && typeof rawResult === "object" && "__spanaNeedAxe" in rawResult) {
-          const axeSource = yield* Effect.promise(() => loadCachedAxeSource());
-          const injectAndRunScript = `(function() { if (typeof axe === "undefined") { ${axeSource} } return ${runExpr}; })()`;
-          rawResult = yield* driver.evaluate<AxeResult>(injectAndRunScript);
-        }
-        const axeResult = rawResult as AxeResult;
+          const runExpr = `axe.run(${serializedContext}, ${JSON.stringify(axeOptions)})`;
+          let rawResult: AxeResult | { __spanaNeedAxe: true };
+          if (hasInjectedAxe) {
+            const fastScript = `(function() { if (typeof axe === "undefined") return { __spanaNeedAxe: true }; return ${runExpr}; })()`;
+            rawResult = yield* driver.evaluate<AxeResult | { __spanaNeedAxe: true }>(fastScript);
+          } else {
+            rawResult = { __spanaNeedAxe: true };
+          }
+          if (rawResult && typeof rawResult === "object" && "__spanaNeedAxe" in rawResult) {
+            const axeSource = yield* Effect.promise(() => loadCachedAxeSource());
+            const injectAndRunScript = `(function() { if (typeof axe === "undefined") { ${axeSource} } return ${runExpr}; })()`;
+            rawResult = yield* driver.evaluate<AxeResult>(injectAndRunScript);
+            hasInjectedAxe = true;
+          }
+          const axeResult = rawResult as AxeResult;
+          const violations = (axeResult?.violations ?? []).map((v) => ({
+            ruleId: v.id,
+            severity: (v.impact ?? "minor") as "critical" | "serious" | "moderate" | "minor",
+            description: v.description,
+            helpUrl: v.helpUrl,
+            wcagCriteria: v.tags.filter((t) => t.startsWith("wcag")),
+            elements: v.nodes.map((n) => ({
+              selector: n.target.join(", "),
+              html: n.html,
+              failureSummary: n.failureSummary,
+            })),
+          }));
+          return { violations };
+        }),
 
-        const violations = (axeResult?.violations ?? []).map((v) => ({
-          ruleId: v.id,
-          severity: (v.impact ?? "minor") as "critical" | "serious" | "moderate" | "minor",
-          description: v.description,
-          helpUrl: v.helpUrl,
-          wcagCriteria: v.tags.filter((t) => t.startsWith("wcag")),
-          elements: v.nodes.map((n) => ({
-            selector: n.target.join(", "),
-            html: n.html,
-            failureSummary: n.failureSummary,
-          })),
-        }));
+      assertAccessibilityAudit: (
+        platform: string,
+        options: {
+          severity?: "critical" | "serious" | "moderate" | "minor";
+          rules?: string[];
+          disableRules?: string[];
+          tags?: string[];
+          targetSelector?: string;
+          includeSelectors?: string[];
+          excludeSelectors?: string[];
+        } = {},
+      ): Effect.Effect<void, DriverError> =>
+        Effect.gen(function* () {
+          if (platform !== "web") {
+            return yield* new DriverError({
+              message: `assertAccessibilityAudit() is only supported on web — platform "${platform}" is not supported`,
+            });
+          }
 
-        const minSeverity = options.severity ?? "serious";
-        const filtered = filterViolations(violations, minSeverity);
+          const axeContext: Record<string, string[][]> = {};
+          const includes = [
+            ...(options.targetSelector ? [options.targetSelector] : []),
+            ...(options.includeSelectors ?? []),
+          ];
+          if (includes.length > 0) {
+            axeContext["include"] = includes.map((s) => [s]);
+          }
+          if (options.excludeSelectors && options.excludeSelectors.length > 0) {
+            axeContext["exclude"] = options.excludeSelectors.map((s) => [s]);
+          }
+          const serializedContext =
+            Object.keys(axeContext).length > 0 ? JSON.stringify(axeContext) : "document";
 
-        if (filtered.length > 0) {
-          const summary = formatViolationSummary(filtered);
-          return yield* new DriverError({ message: summary });
-        }
-      }),
-  });
+          const axeOptions: Record<string, unknown> = {};
+          const rulesConfig: Record<string, { enabled: boolean }> = {};
+          for (const r of options.rules ?? []) rulesConfig[r] = { enabled: true };
+          for (const r of options.disableRules ?? []) rulesConfig[r] = { enabled: false };
+          if (Object.keys(rulesConfig).length > 0) {
+            axeOptions["rules"] = rulesConfig;
+          }
+          if (options.tags && options.tags.length > 0) {
+            axeOptions["runOnly"] = { type: "tag", values: options.tags };
+          }
+
+          type AxeResult = {
+            violations: Array<{
+              id: string;
+              impact: string;
+              description: string;
+              helpUrl: string;
+              tags: string[];
+              nodes: Array<{
+                target: string[];
+                html: string;
+                failureSummary: string;
+              }>;
+            }>;
+          };
+
+          // Fast path: check whether `window.axe` is already loaded in the current document before
+          // transmitting ~560 KB of axe-core source over CDP, and reuse the in-memory cached source
+          // from `loadCachedAxeSource()` on first injection per document.
+          const runExpr = `axe.run(${serializedContext}, ${JSON.stringify(axeOptions)})`;
+          let rawResult: AxeResult | { __spanaNeedAxe: true };
+          if (hasInjectedAxe) {
+            const fastScript = `(function() { if (typeof axe === "undefined") return { __spanaNeedAxe: true }; return ${runExpr}; })()`;
+            rawResult = yield* driver.evaluate<AxeResult | { __spanaNeedAxe: true }>(fastScript);
+          } else {
+            rawResult = { __spanaNeedAxe: true };
+          }
+          if (rawResult && typeof rawResult === "object" && "__spanaNeedAxe" in rawResult) {
+            const axeSource = yield* Effect.promise(() => loadCachedAxeSource());
+            const injectAndRunScript = `(function() { if (typeof axe === "undefined") { ${axeSource} } return ${runExpr}; })()`;
+            rawResult = yield* driver.evaluate<AxeResult>(injectAndRunScript);
+            hasInjectedAxe = true;
+          }
+          const axeResult = rawResult as AxeResult;
+
+          const violations = (axeResult?.violations ?? []).map((v) => ({
+            ruleId: v.id,
+            severity: (v.impact ?? "minor") as "critical" | "serious" | "moderate" | "minor",
+            description: v.description,
+            helpUrl: v.helpUrl,
+            wcagCriteria: v.tags.filter((t) => t.startsWith("wcag")),
+            elements: v.nodes.map((n) => ({
+              selector: n.target.join(", "),
+              html: n.html,
+              failureSummary: n.failureSummary,
+            })),
+          }));
+
+          const minSeverity = options.severity ?? "serious";
+          const filtered = filterViolations(violations, minSeverity);
+
+          if (filtered.length > 0) {
+            const summary = formatViolationSummary(filtered);
+            return yield* new DriverError({ message: summary });
+          }
+        }),
+    };
+  };
 
   const assertions = createAssertions();
 

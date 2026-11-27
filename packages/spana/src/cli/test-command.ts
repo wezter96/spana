@@ -8,14 +8,16 @@ import {
   discoverStepFiles,
   filterFlows,
   focusFlows,
+  getFlowSkip,
   applyShard,
   type ShardOptions,
 } from "../core/runner.js";
+import { executeFlow, type EngineConfig, type TestResult } from "../core/engine.js";
 import { orchestrate, type PlatformConfig } from "../core/orchestrator.js";
 import type { ProvConfig } from "../schemas/config.js";
 import type { Reporter } from "../report/types.js";
 import type { Platform } from "../schemas/selector.js";
-import type { RuntimeHandle } from "../runtime/types.js";
+import type { RuntimeHandle, RuntimeResult } from "../runtime/types.js";
 import { resolveCapabilities } from "../runtime/capabilities.js";
 import { loadConfig } from "./config-loader.js";
 import {
@@ -25,10 +27,13 @@ import {
   buildElectrobunRuntime,
   buildLocalAndroidRuntime,
   buildLocalIOSRuntime,
+  createSharedWebWavePool,
+  getWebDriverReuseKey,
   resolveWebEngine,
   speculativelyPrelaunchWebBrowser,
   type PrelaunchedWebBrowser,
 } from "../runtime/local.js";
+import { resolveDriverAdapter } from "../drivers/adapter-registry.js";
 import type { createCloudProviderHelper as CreateCloudProviderHelper } from "../cloud/provider.js";
 import type { DeviceWorkerConfig } from "../core/parallel.js";
 import { collectDiagnosticSections } from "../report/failure-diagnostics.js";
@@ -1497,31 +1502,358 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         }
       };
 
-      // Enforce the global --workers budget across concurrent projects in each wave so
-      // a wave of N projects with --workers W never spawns N × W simultaneous browsers.
+      // True shared dynamic cross-project worker pool across all projects in each dependency wave:
+      // - Strictly caps total concurrent workers across the entire wave to `globalWorkerBudget`.
+      // - Eliminates static per-project worker starvation so as soon as smaller projects drain,
+      //   all N workers immediately help drain remaining larger projects in the same wave.
+      // - Shares warm Chromium browser processes across projects with matching launch configs
+      //   and reuses warm drivers with zero switch cost when adjacent projects share driver config.
       const globalWorkerBudget = Math.max(1, opts.workers ?? config.defaults?.workers ?? 1);
-      for (const wave of plan.waves) {
-        const maxConcurrentProjects = Math.min(wave.length, globalWorkerBudget);
-        const baseWorkersPerProj = Math.max(
-          1,
-          Math.floor(globalWorkerBudget / maxConcurrentProjects),
-        );
-        const extraWorkerSlots =
-          wave.length <= globalWorkerBudget
-            ? globalWorkerBudget - baseWorkersPerProj * maxConcurrentProjects
-            : 0;
-        const waveOutcomes: boolean[] = Array.from({ length: wave.length }, () => true);
-        let nextIndex = 0;
-        const runSlot = async (slotIdx: number) => {
-          const slotBudget = baseWorkersPerProj + (slotIdx < extraWorkerSlots ? 1 : 0);
-          while (true) {
-            const idx = nextIndex++;
-            if (idx >= wave.length) break;
-            waveOutcomes[idx] = await executeProject(wave[idx]!, slotBudget);
-          }
+      const redactWaveResult = <T extends TestResult>(r: T): T => {
+        if (!r.error) return r;
+        return {
+          ...r,
+          error: {
+            ...r.error,
+            message: projRedactor.redact(r.error.message),
+            stack: r.error.stack ? projRedactor.redact(r.error.stack) : undefined,
+            suggestion: r.error.suggestion ? projRedactor.redact(r.error.suggestion) : undefined,
+          },
         };
-        await Promise.all(Array.from({ length: maxConcurrentProjects }, (_, s) => runSlot(s)));
-        if (waveOutcomes.some((ok) => !ok)) {
+      };
+      const waveOnResult = createResultHandler(projReporters, redactWaveResult, projRedactor, opts);
+      const emitWaveResult = (result: TestResult, workerName?: string) => {
+        const payload = workerName ? ({ ...result, workerName } as TestResult) : result;
+        waveOnResult(payload);
+      };
+
+      const executeWaveDynamicPool = async (
+        wave: import("../core/projects.js").ProjectConfig[],
+      ): Promise<boolean> => {
+        if (wave.length === 1) {
+          return executeProject(wave[0]!, globalWorkerBudget);
+        }
+
+        interface PreparedSharedWebProject {
+          project: import("../core/projects.js").ProjectConfig;
+          projConfig: ProvConfig;
+          matched: import("../api/flow.js").FlowDefinition[];
+          results: TestResult[];
+        }
+
+        const sharedWebProjects: PreparedSharedWebProject[] = [];
+        const fallbackProjects: import("../core/projects.js").ProjectConfig[] = [];
+        let discoveryPassed = true;
+
+        for (const project of wave) {
+          const isDependencyOrTeardown =
+            teardownProjectNames.has(project.name) ||
+            (dependencyProjectNames.has(project.name) &&
+              !(requestedProjectSet.size > 0 && requestedProjectSet.has(project.name)));
+          const cliWorkDir = opts.cwd ? resolve(opts.cwd) : process.cwd();
+          const projFlowDirs =
+            !isDependencyOrTeardown && rawCliFlowPaths.length > 0
+              ? rawCliFlowPaths.map((p) => resolve(cliWorkDir, p))
+              : [resolveFromConfig(project.flowDir ?? config.flowDir ?? "./flows")];
+          const projFlowDir = projFlowDirs[0]!;
+          const projPlatforms: Platform[] =
+            opts.platforms.length > 0
+              ? opts.platforms
+              : project.platform
+                ? [project.platform]
+                : config.platforms && config.platforms.length > 0
+                  ? config.platforms
+                  : ["web"];
+          for (const p of projPlatforms) allProjectPlatforms.add(p);
+
+          const projConfig: ProvConfig = {
+            ...config,
+            projects: undefined,
+            webServer: undefined,
+            apps: {
+              ...config.apps,
+              ...(project.baseUrl ? { web: { ...config.apps?.web, url: project.baseUrl } } : {}),
+            },
+            execution: {
+              ...config.execution,
+              web: {
+                ...config.execution?.web,
+                ...project.use,
+                ...(project.browser ? { browser: project.browser } : {}),
+                ...(project.storageState
+                  ? { storageState: resolveFromConfig(project.storageState) }
+                  : {}),
+              },
+            },
+            defaults: {
+              ...config.defaults,
+              ...(project.retries !== undefined ? { retries: project.retries } : {}),
+            },
+          };
+
+          const requestedProcesses = opts.processes ?? projConfig.defaults?.processes;
+          const canUseSharedWebPool =
+            executionMode === "local" &&
+            !opts.device &&
+            !opts.devices &&
+            !process.env.SPANA_WORKER_PROCESS &&
+            !(requestedProcesses && requestedProcesses > 1) &&
+            projPlatforms.length === 1 &&
+            projPlatforms[0] === "web" &&
+            !projConfig.hooks?.beforeAll &&
+            !projConfig.hooks?.afterAll &&
+            !projConfig.apps?.web?.bridge &&
+            !projConfig.execution?.bridge &&
+            !resolveDriverAdapter("web", projConfig.execution?.web?.engine);
+
+          if (!canUseSharedWebPool) {
+            fallbackProjects.push(project);
+            continue;
+          }
+
+          const effectiveTags = isDependencyOrTeardown ? project.tags : (opts.tags ?? project.tags);
+          const effectiveGrep = isDependencyOrTeardown ? project.grep : (opts.grep ?? project.grep);
+          const effectiveGrepInvert = isDependencyOrTeardown ? undefined : opts.grepInvert;
+          const discovered = await discoverAndFilterFlows({
+            flowDir: projFlowDir,
+            flowDirs: projFlowDirs,
+            cwd: cliWorkDir,
+            configPath,
+            tags: effectiveTags,
+            grep: effectiveGrep,
+            grepInvert: effectiveGrepInvert,
+            passWithNoTests: opts.passWithNoTests ?? true,
+            platforms: projPlatforms,
+            outputDir: config.artifacts?.outputDir ?? resolveFromConfig("./spana-output"),
+          });
+          if (!discovered.ok) {
+            if (!discovered.success) discoveryPassed = false;
+            continue;
+          }
+          const matched = filterFlowsForProject(discovered.selectedFlows, project);
+          if (matched.length === 0) {
+            console.log(`[project:${project.name}] No matching flows, skipping.`);
+            continue;
+          }
+          sharedWebProjects.push({
+            project,
+            projConfig,
+            matched,
+            results: [],
+          });
+        }
+
+        let waveOk = discoveryPassed;
+
+        if (sharedWebProjects.length > 0) {
+          interface WaveWorkItem {
+            projIndex: number;
+            unit: import("../api/flow.js").FlowDefinition[];
+          }
+          const queue: WaveWorkItem[] = [];
+          for (let pIdx = 0; pIdx < sharedWebProjects.length; pIdx++) {
+            const sp = sharedWebProjects[pIdx]!;
+            const focused = focusFlows(sp.matched);
+            const units = buildOrderedWorkUnits(focused);
+            console.log(`\n[project:${sp.project.name}] Running ${focused.length} flow(s)...`);
+            for (const unit of units) {
+              queue.push({ projIndex: pIdx, unit });
+            }
+          }
+
+          if (queue.length > 0) {
+            const workerCount = Math.min(globalWorkerBudget, queue.length);
+            const wavePool = createSharedWebWavePool(workerCount);
+            const workerOffset =
+              Number.parseInt(process.env.SPANA_WORKER_INDEX_OFFSET ?? "0", 10) || 0;
+            const bailLimit = opts.bail;
+            let nextItemIdx = 0;
+            let failureCount = 0;
+
+            const runPoolWorker = async (slotIdx: number) => {
+              const workerName = workerCount > 1 ? `Chromium #${slotIdx + 1}` : "web";
+              const workerIndex = workerOffset + slotIdx;
+              let currentDriverKey: string | null = null;
+              let currentRuntime: RuntimeResult | null = null;
+
+              try {
+                while (true) {
+                  if (bailLimit !== undefined && failureCount >= bailLimit) break;
+                  const itemIdx = nextItemIdx++;
+                  if (itemIdx >= queue.length) break;
+                  const { projIndex, unit } = queue[itemIdx]!;
+                  const sp = sharedWebProjects[projIndex]!;
+
+                  if (unit.every((f) => Boolean(getFlowSkip(f, "web")))) {
+                    for (const f of unit) {
+                      const skip = getFlowSkip(f, "web")!;
+                      sp.results.push(skip);
+                      emitWaveResult(skip, workerName);
+                    }
+                    continue;
+                  }
+
+                  const neededKey = getWebDriverReuseKey(sp.projConfig, workerIndex);
+                  if (currentDriverKey !== neededKey || !currentRuntime) {
+                    if (currentRuntime) {
+                      await currentRuntime.runtime.cleanup().catch(() => {});
+                      currentRuntime = null;
+                      currentDriverKey = null;
+                    }
+                    currentRuntime = await wavePool.acquireRuntime(
+                      slotIdx,
+                      sp.projConfig,
+                      workerIndex,
+                    );
+                    currentDriverKey = neededKey;
+                  }
+
+                  const flowEngineConfig: EngineConfig = {
+                    ...currentRuntime.engineConfig,
+                    debugOnFailure: opts.debugOnFailure,
+                    updateBaselines: opts.updateBaselines,
+                    workerIndex,
+                    parallelIndex: workerIndex,
+                  };
+                  const projRetries = opts.retries ?? sp.projConfig.defaults?.retries ?? 0;
+                  let serialFailed = false;
+
+                  for (const flow of unit) {
+                    if (serialFailed) {
+                      const skipped: TestResult = {
+                        name: flow.name,
+                        platform: "web",
+                        status: "skipped",
+                        skipReason: "Skipped because an earlier flow in this serial suite failed",
+                        durationMs: 0,
+                        ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+                        ...(flow.config.annotations
+                          ? { annotations: flow.config.annotations }
+                          : {}),
+                      };
+                      sp.results.push(skipped);
+                      emitWaveResult(skipped, workerName);
+                      continue;
+                    }
+                    if (bailLimit !== undefined && failureCount >= bailLimit) break;
+                    const skip = getFlowSkip(flow, "web");
+                    if (skip) {
+                      sp.results.push(skip);
+                      emitWaveResult(skip, workerName);
+                      continue;
+                    }
+
+                    const flowRetries = flow.config.retries ?? projRetries;
+                    for (const reporter of projReporters) {
+                      reporter.onFlowStart?.(flow.name, "web", workerName);
+                    }
+                    let res = await executeFlow(
+                      flow,
+                      currentRuntime.runtime.driver,
+                      flowEngineConfig,
+                    );
+                    let attempts = 1;
+                    while (res.status === "failed" && attempts <= flowRetries) {
+                      if (bailLimit !== undefined && failureCount >= bailLimit) break;
+                      res = await executeFlow(
+                        flow,
+                        currentRuntime.runtime.driver,
+                        flowEngineConfig,
+                      );
+                      attempts++;
+                    }
+                    if (res.status === "passed" && attempts > 1) {
+                      res.flaky = true;
+                    }
+                    res.attempts = attempts;
+                    const redacted = redactWaveResult(res);
+                    sp.results.push(redacted);
+                    if (redacted.status === "failed") {
+                      failureCount++;
+                      if (unit.length > 1) serialFailed = true;
+                    }
+                    emitWaveResult(redacted, workerName);
+                  }
+                }
+              } finally {
+                if (currentRuntime) {
+                  await currentRuntime.runtime.cleanup().catch(() => {});
+                }
+              }
+            };
+
+            try {
+              await Promise.all(Array.from({ length: workerCount }, (_, s) => runPoolWorker(s)));
+
+              if (bailLimit !== undefined && failureCount >= bailLimit) {
+                while (nextItemIdx < queue.length) {
+                  const { projIndex, unit } = queue[nextItemIdx++]!;
+                  const sp = sharedWebProjects[projIndex]!;
+                  for (const flow of unit) {
+                    const skipped: TestResult = getFlowSkip(flow, "web") ?? {
+                      name: flow.name,
+                      platform: "web",
+                      status: "skipped",
+                      skipReason: "Skipped due to bail limit",
+                      durationMs: 0,
+                      attempts: 0,
+                      ...(flow.config.tags ? { tags: flow.config.tags } : {}),
+                    };
+                    sp.results.push(skipped);
+                    waveOnResult(skipped);
+                  }
+                }
+              }
+            } finally {
+              await wavePool.closeAll();
+            }
+          }
+
+          for (const sp of sharedWebProjects) {
+            allProjectResults.push(...sp.results);
+            const passed = sp.results.filter((r) => r.status === "passed").length;
+            const failed = sp.results.filter((r) => r.status === "failed").length;
+            const skipped = sp.results.filter((r) => r.status === "skipped").length;
+            console.log(
+              `[project:${sp.project.name}] ${passed} passed, ${failed} failed, ${skipped} skipped`,
+            );
+            if (failed > 0) waveOk = false;
+          }
+        }
+
+        if (fallbackProjects.length > 0) {
+          const maxConcurrentProjects = Math.min(fallbackProjects.length, globalWorkerBudget);
+          const baseWorkersPerProj = Math.max(
+            1,
+            Math.floor(globalWorkerBudget / maxConcurrentProjects),
+          );
+          const extraWorkerSlots =
+            fallbackProjects.length <= globalWorkerBudget
+              ? globalWorkerBudget - baseWorkersPerProj * maxConcurrentProjects
+              : 0;
+          const fallbackOutcomes: boolean[] = Array.from(
+            { length: fallbackProjects.length },
+            () => true,
+          );
+          let nextFbIdx = 0;
+          const runFbSlot = async (slotIdx: number) => {
+            const slotBudget = baseWorkersPerProj + (slotIdx < extraWorkerSlots ? 1 : 0);
+            while (true) {
+              const idx = nextFbIdx++;
+              if (idx >= fallbackProjects.length) break;
+              fallbackOutcomes[idx] = await executeProject(fallbackProjects[idx]!, slotBudget);
+            }
+          };
+          await Promise.all(Array.from({ length: maxConcurrentProjects }, (_, s) => runFbSlot(s)));
+          if (fallbackOutcomes.some((ok) => !ok)) waveOk = false;
+        }
+
+        return waveOk;
+      };
+
+      for (const wave of plan.waves) {
+        const wavePassed = await executeWaveDynamicPool(wave);
+        if (!wavePassed) {
           allPassed = false;
           break;
         }

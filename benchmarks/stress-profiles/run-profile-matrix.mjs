@@ -367,6 +367,34 @@ export default flow("runtime-skip-check", async (ctx) => {
       detail: `exit=${waveRes.exitCode}, entered=${concStats.totalEntered}, peak=${concStats.peak}`,
       errorLog: waveRes.stdout + "\n" + waveRes.stderr,
     });
+
+    // 7. Unbalanced 5-project wave (4 small projects + 1 large 20-flow project under --workers 4):
+    //    20 × 350ms sleep = 7.0s minimum single-threaded; dynamic 4-worker pool MUST saturate all 4 workers (peak >= 3, wall < 6.8s)
+    const unbalancedDir = resolve(projectsDir, "wave-unbalanced");
+    const unbalancedCfg = resolve(unbalancedDir, "spana-unbalanced.config.ts");
+    await fetch(`http://127.0.0.1:${PRIMARY_PORT}/api/concurrency/reset`);
+    const unbalRes = await runCommandWithRss(
+      bin,
+      [cliPath, "test", "--config", unbalancedCfg, "--workers", "4"],
+      {
+        cwd: unbalancedDir,
+        env: { STRESS_PORT: String(PRIMARY_PORT) },
+      },
+    );
+    const unbalStats = await fetch(`http://127.0.0.1:${PRIMARY_PORT}/api/concurrency/stats`).then(
+      (r) => r.json(),
+    );
+    checks.push({
+      name: `${label}: unbalanced 5-project wave dynamically saturates --workers 4`,
+      ok:
+        unbalRes.exitCode === 0 &&
+        unbalStats.totalEntered === 20 &&
+        unbalStats.peak >= 3 &&
+        unbalStats.peak <= 4 &&
+        unbalRes.wallMs < 6_800,
+      detail: `exit=${unbalRes.exitCode}, entered=${unbalStats.totalEntered}, peak=${unbalStats.peak}, wall=${(unbalRes.wallMs / 1000).toFixed(2)}s`,
+      errorLog: unbalRes.stdout + "\n" + unbalRes.stderr,
+    });
   }
 
   await new Promise((r) => setTimeout(r, 350));

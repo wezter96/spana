@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-27T21:59:46.947Z",
+  "generatedAt": "2026-11-27T23:17:51.694Z",
   "nodeVersion": "v22.23.3",
   "bunVersion": "1.4.5",
   "matrix": [
@@ -9,9 +9,9 @@
       "isolation": "fresh",
       "workers": 1,
       "exitCode": 0,
-      "wallMs": 22325,
-      "peakRssMb": 268.9,
-      "approxLaunchOverheadMs": 621,
+      "wallMs": 23072,
+      "peakRssMb": 269.6,
+      "approxLaunchOverheadMs": 600,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -19,30 +19,30 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 21704,
-        "avgMs": 181,
-        "p50Ms": 142,
-        "p95Ms": 425,
-        "maxMs": 783
+        "sumMs": 22472,
+        "avgMs": 187,
+        "p50Ms": 144,
+        "p95Ms": 435,
+        "maxMs": 819
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1281,
-          "avgMs": 128,
-          "p50Ms": 111,
-          "p95Ms": 275,
-          "maxMs": 275
+          "sumMs": 1178,
+          "avgMs": 118,
+          "p50Ms": 108,
+          "p95Ms": 202,
+          "maxMs": 202
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1385,
-          "avgMs": 139,
-          "p50Ms": 143,
+          "sumMs": 1404,
+          "avgMs": 140,
+          "p50Ms": 142,
           "p95Ms": 191,
           "maxMs": 191
         },
@@ -50,101 +50,101 @@
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1315,
-          "avgMs": 132,
-          "p50Ms": 91,
-          "p95Ms": 422,
-          "maxMs": 422
+          "sumMs": 1333,
+          "avgMs": 133,
+          "p50Ms": 90,
+          "p95Ms": 419,
+          "maxMs": 419
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2136,
-          "avgMs": 214,
-          "p50Ms": 187,
-          "p95Ms": 405,
-          "maxMs": 405
+          "sumMs": 2186,
+          "avgMs": 219,
+          "p50Ms": 200,
+          "p95Ms": 394,
+          "maxMs": 394
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1460,
-          "avgMs": 146,
-          "p50Ms": 115,
-          "p95Ms": 223,
-          "maxMs": 223
+          "sumMs": 1532,
+          "avgMs": 153,
+          "p50Ms": 112,
+          "p95Ms": 232,
+          "maxMs": 232
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1390,
-          "avgMs": 139,
-          "p50Ms": 109,
-          "p95Ms": 309,
-          "maxMs": 309
+          "sumMs": 1368,
+          "avgMs": 137,
+          "p50Ms": 107,
+          "p95Ms": 327,
+          "maxMs": 327
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5162,
-          "avgMs": 516,
-          "p50Ms": 425,
-          "p95Ms": 783,
-          "maxMs": 783
+          "sumMs": 5379,
+          "avgMs": 538,
+          "p50Ms": 435,
+          "p95Ms": 819,
+          "maxMs": 819
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2054,
-          "avgMs": 205,
-          "p50Ms": 190,
-          "p95Ms": 303,
-          "maxMs": 303
+          "sumMs": 2146,
+          "avgMs": 215,
+          "p50Ms": 187,
+          "p95Ms": 352,
+          "maxMs": 352
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1797,
-          "avgMs": 180,
-          "p50Ms": 140,
-          "p95Ms": 462,
-          "maxMs": 462
+          "sumMs": 1872,
+          "avgMs": 187,
+          "p50Ms": 139,
+          "p95Ms": 463,
+          "maxMs": 463
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1245,
-          "avgMs": 125,
-          "p50Ms": 103,
-          "p95Ms": 207,
-          "maxMs": 207
+          "sumMs": 1277,
+          "avgMs": 128,
+          "p50Ms": 125,
+          "p95Ms": 210,
+          "maxMs": 210
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1137,
-          "avgMs": 114,
-          "p50Ms": 103,
-          "p95Ms": 179,
-          "maxMs": 179
+          "sumMs": 1297,
+          "avgMs": 130,
+          "p50Ms": 114,
+          "p95Ms": 198,
+          "maxMs": 198
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1342,
-          "avgMs": 134,
-          "p50Ms": 92,
-          "p95Ms": 265,
-          "maxMs": 265
+          "sumMs": 1500,
+          "avgMs": 150,
+          "p50Ms": 106,
+          "p95Ms": 288,
+          "maxMs": 288
         }
       },
       "failures": []
@@ -155,9 +155,9 @@
       "isolation": "hot-cache",
       "workers": 1,
       "exitCode": 0,
-      "wallMs": 15956,
-      "peakRssMb": 253.2,
-      "approxLaunchOverheadMs": 546,
+      "wallMs": 16599,
+      "peakRssMb": 252.1,
+      "approxLaunchOverheadMs": 612,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -165,30 +165,30 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 15410,
-        "avgMs": 128,
-        "p50Ms": 73,
-        "p95Ms": 404,
-        "maxMs": 703
+        "sumMs": 15987,
+        "avgMs": 133,
+        "p50Ms": 80,
+        "p95Ms": 418,
+        "maxMs": 717
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 574,
-          "avgMs": 57,
-          "p50Ms": 33,
-          "p95Ms": 172,
-          "maxMs": 172
+          "sumMs": 591,
+          "avgMs": 59,
+          "p50Ms": 39,
+          "p95Ms": 180,
+          "maxMs": 180
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 913,
-          "avgMs": 91,
-          "p50Ms": 69,
+          "sumMs": 919,
+          "avgMs": 92,
+          "p50Ms": 71,
           "p95Ms": 157,
           "maxMs": 157
         },
@@ -196,21 +196,21 @@
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 898,
-          "avgMs": 90,
-          "p50Ms": 45,
-          "p95Ms": 374,
-          "maxMs": 374
+          "sumMs": 950,
+          "avgMs": 95,
+          "p50Ms": 44,
+          "p95Ms": 409,
+          "maxMs": 409
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1637,
-          "avgMs": 164,
-          "p50Ms": 119,
-          "p95Ms": 353,
-          "maxMs": 353
+          "sumMs": 1768,
+          "avgMs": 177,
+          "p50Ms": 132,
+          "p95Ms": 368,
+          "maxMs": 368
         },
         "P5": {
           "passed": 10,
@@ -218,79 +218,79 @@
           "count": 10,
           "sumMs": 996,
           "avgMs": 100,
-          "p50Ms": 73,
-          "p95Ms": 182,
-          "maxMs": 182
+          "p50Ms": 74,
+          "p95Ms": 183,
+          "maxMs": 183
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 830,
-          "avgMs": 83,
-          "p50Ms": 34,
-          "p95Ms": 268,
-          "maxMs": 268
+          "sumMs": 857,
+          "avgMs": 86,
+          "p50Ms": 37,
+          "p95Ms": 285,
+          "maxMs": 285
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4493,
-          "avgMs": 449,
-          "p50Ms": 406,
-          "p95Ms": 703,
-          "maxMs": 703
+          "sumMs": 4653,
+          "avgMs": 465,
+          "p50Ms": 432,
+          "p95Ms": 717,
+          "maxMs": 717
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1602,
-          "avgMs": 160,
+          "sumMs": 1695,
+          "avgMs": 170,
           "p50Ms": 137,
-          "p95Ms": 243,
-          "maxMs": 243
+          "p95Ms": 318,
+          "maxMs": 318
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1354,
-          "avgMs": 135,
-          "p50Ms": 91,
-          "p95Ms": 404,
-          "maxMs": 404
+          "sumMs": 1357,
+          "avgMs": 136,
+          "p50Ms": 94,
+          "p95Ms": 402,
+          "maxMs": 402
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 684,
-          "avgMs": 68,
-          "p50Ms": 55,
-          "p95Ms": 126,
-          "maxMs": 126
+          "sumMs": 716,
+          "avgMs": 72,
+          "p50Ms": 60,
+          "p95Ms": 134,
+          "maxMs": 134
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 547,
+          "sumMs": 545,
           "avgMs": 55,
-          "p50Ms": 38,
-          "p95Ms": 110,
-          "maxMs": 110
+          "p50Ms": 39,
+          "p95Ms": 113,
+          "maxMs": 113
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 882,
-          "avgMs": 88,
+          "sumMs": 940,
+          "avgMs": 94,
           "p50Ms": 64,
-          "p95Ms": 234,
-          "maxMs": 234
+          "p95Ms": 233,
+          "maxMs": 233
         }
       },
       "failures": []
@@ -301,9 +301,9 @@
       "isolation": "fresh",
       "workers": 4,
       "exitCode": 0,
-      "wallMs": 15962,
-      "peakRssMb": 330.5,
-      "approxLaunchOverheadMs": 866,
+      "wallMs": 18201,
+      "peakRssMb": 333.3,
+      "approxLaunchOverheadMs": 986,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -311,132 +311,132 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 60385,
-        "avgMs": 503,
-        "p50Ms": 436,
-        "p95Ms": 1037,
-        "maxMs": 1524
+        "sumMs": 68861,
+        "avgMs": 574,
+        "p50Ms": 464,
+        "p95Ms": 1213,
+        "maxMs": 2407
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4105,
-          "avgMs": 411,
-          "p50Ms": 402,
-          "p95Ms": 463,
-          "maxMs": 463
+          "sumMs": 4079,
+          "avgMs": 408,
+          "p50Ms": 386,
+          "p95Ms": 518,
+          "maxMs": 518
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4520,
-          "avgMs": 452,
-          "p50Ms": 419,
-          "p95Ms": 661,
-          "maxMs": 661
+          "sumMs": 4960,
+          "avgMs": 496,
+          "p50Ms": 464,
+          "p95Ms": 628,
+          "maxMs": 628
         },
         "P3": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3762,
-          "avgMs": 376,
-          "p50Ms": 354,
-          "p95Ms": 588,
-          "maxMs": 588
+          "sumMs": 4796,
+          "avgMs": 480,
+          "p50Ms": 462,
+          "p95Ms": 706,
+          "maxMs": 706
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 6998,
-          "avgMs": 700,
-          "p50Ms": 653,
-          "p95Ms": 1225,
-          "maxMs": 1225
+          "sumMs": 8664,
+          "avgMs": 866,
+          "p50Ms": 1015,
+          "p95Ms": 1316,
+          "maxMs": 1316
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5200,
-          "avgMs": 520,
-          "p50Ms": 466,
-          "p95Ms": 765,
-          "maxMs": 765
+          "sumMs": 5720,
+          "avgMs": 572,
+          "p50Ms": 428,
+          "p95Ms": 945,
+          "maxMs": 945
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3721,
-          "avgMs": 372,
-          "p50Ms": 324,
-          "p95Ms": 1057,
-          "maxMs": 1057
+          "sumMs": 4185,
+          "avgMs": 419,
+          "p50Ms": 381,
+          "p95Ms": 856,
+          "maxMs": 856
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 7741,
-          "avgMs": 774,
-          "p50Ms": 701,
-          "p95Ms": 1194,
-          "maxMs": 1194
+          "sumMs": 10255,
+          "avgMs": 1026,
+          "p50Ms": 979,
+          "p95Ms": 1673,
+          "maxMs": 1673
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4144,
+          "sumMs": 4135,
           "avgMs": 414,
-          "p50Ms": 377,
-          "p95Ms": 648,
-          "maxMs": 648
+          "p50Ms": 410,
+          "p95Ms": 619,
+          "maxMs": 619
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5586,
-          "avgMs": 559,
-          "p50Ms": 460,
-          "p95Ms": 1121,
-          "maxMs": 1121
+          "sumMs": 5300,
+          "avgMs": 530,
+          "p50Ms": 427,
+          "p95Ms": 880,
+          "maxMs": 880
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3574,
-          "avgMs": 357,
-          "p50Ms": 345,
-          "p95Ms": 514,
-          "maxMs": 514
+          "sumMs": 3981,
+          "avgMs": 398,
+          "p50Ms": 359,
+          "p95Ms": 584,
+          "maxMs": 584
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5699,
-          "avgMs": 570,
-          "p50Ms": 340,
-          "p95Ms": 1524,
-          "maxMs": 1524
+          "sumMs": 7342,
+          "avgMs": 734,
+          "p50Ms": 438,
+          "p95Ms": 2407,
+          "maxMs": 2407
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5335,
-          "avgMs": 534,
-          "p50Ms": 473,
-          "p95Ms": 724,
-          "maxMs": 724
+          "sumMs": 5444,
+          "avgMs": 544,
+          "p50Ms": 476,
+          "p95Ms": 982,
+          "maxMs": 982
         }
       },
       "failures": []
@@ -447,9 +447,9 @@
       "isolation": "hot-cache",
       "workers": 4,
       "exitCode": 0,
-      "wallMs": 8563,
-      "peakRssMb": 295,
-      "approxLaunchOverheadMs": 792,
+      "wallMs": 11340,
+      "peakRssMb": 291.2,
+      "approxLaunchOverheadMs": 893,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -457,132 +457,132 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 31083,
-        "avgMs": 259,
-        "p50Ms": 209,
-        "p95Ms": 642,
-        "maxMs": 1031
+        "sumMs": 41787,
+        "avgMs": 348,
+        "p50Ms": 281,
+        "p95Ms": 772,
+        "maxMs": 1448
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1693,
-          "avgMs": 169,
-          "p50Ms": 161,
-          "p95Ms": 244,
-          "maxMs": 244
+          "sumMs": 2247,
+          "avgMs": 225,
+          "p50Ms": 170,
+          "p95Ms": 425,
+          "maxMs": 425
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2167,
-          "avgMs": 217,
-          "p50Ms": 209,
-          "p95Ms": 299,
-          "maxMs": 299
+          "sumMs": 3180,
+          "avgMs": 318,
+          "p50Ms": 277,
+          "p95Ms": 561,
+          "maxMs": 561
         },
         "P3": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1816,
-          "avgMs": 182,
-          "p50Ms": 147,
-          "p95Ms": 470,
-          "maxMs": 470
+          "sumMs": 2598,
+          "avgMs": 260,
+          "p50Ms": 203,
+          "p95Ms": 612,
+          "maxMs": 612
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3417,
-          "avgMs": 342,
-          "p50Ms": 286,
-          "p95Ms": 633,
-          "maxMs": 633
+          "sumMs": 3924,
+          "avgMs": 392,
+          "p50Ms": 379,
+          "p95Ms": 695,
+          "maxMs": 695
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1982,
-          "avgMs": 198,
-          "p50Ms": 205,
-          "p95Ms": 335,
-          "maxMs": 335
+          "sumMs": 3230,
+          "avgMs": 323,
+          "p50Ms": 230,
+          "p95Ms": 630,
+          "maxMs": 630
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1746,
-          "avgMs": 175,
-          "p50Ms": 147,
-          "p95Ms": 441,
-          "maxMs": 441
+          "sumMs": 2547,
+          "avgMs": 255,
+          "p50Ms": 208,
+          "p95Ms": 619,
+          "maxMs": 619
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 6624,
-          "avgMs": 662,
-          "p50Ms": 690,
-          "p95Ms": 1031,
-          "maxMs": 1031
+          "sumMs": 8914,
+          "avgMs": 891,
+          "p50Ms": 813,
+          "p95Ms": 1448,
+          "maxMs": 1448
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3152,
-          "avgMs": 315,
-          "p50Ms": 287,
-          "p95Ms": 498,
-          "maxMs": 498
+          "sumMs": 3247,
+          "avgMs": 325,
+          "p50Ms": 301,
+          "p95Ms": 470,
+          "maxMs": 470
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2339,
-          "avgMs": 234,
-          "p50Ms": 211,
-          "p95Ms": 420,
-          "maxMs": 420
+          "sumMs": 3452,
+          "avgMs": 345,
+          "p50Ms": 286,
+          "p95Ms": 690,
+          "maxMs": 690
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1824,
-          "avgMs": 182,
-          "p50Ms": 175,
-          "p95Ms": 297,
-          "maxMs": 297
+          "sumMs": 2398,
+          "avgMs": 240,
+          "p50Ms": 222,
+          "p95Ms": 362,
+          "maxMs": 362
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2244,
-          "avgMs": 224,
-          "p50Ms": 140,
-          "p95Ms": 508,
-          "maxMs": 508
+          "sumMs": 2637,
+          "avgMs": 264,
+          "p50Ms": 177,
+          "p95Ms": 589,
+          "maxMs": 589
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2079,
-          "avgMs": 208,
-          "p50Ms": 177,
-          "p95Ms": 343,
-          "maxMs": 343
+          "sumMs": 3413,
+          "avgMs": 341,
+          "p50Ms": 271,
+          "p95Ms": 477,
+          "maxMs": 477
         }
       },
       "failures": []
@@ -593,9 +593,9 @@
       "isolation": "fresh",
       "workers": 1,
       "exitCode": 0,
-      "wallMs": 21613,
-      "peakRssMb": 268,
-      "approxLaunchOverheadMs": 407,
+      "wallMs": 25688,
+      "peakRssMb": 268.3,
+      "approxLaunchOverheadMs": 461,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -603,132 +603,132 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 21206,
-        "avgMs": 177,
-        "p50Ms": 139,
-        "p95Ms": 436,
-        "maxMs": 801
+        "sumMs": 25227,
+        "avgMs": 210,
+        "p50Ms": 151,
+        "p95Ms": 489,
+        "maxMs": 1203
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1101,
-          "avgMs": 110,
-          "p50Ms": 99,
-          "p95Ms": 194,
-          "maxMs": 194
+          "sumMs": 1188,
+          "avgMs": 119,
+          "p50Ms": 115,
+          "p95Ms": 199,
+          "maxMs": 199
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1354,
-          "avgMs": 135,
-          "p50Ms": 142,
-          "p95Ms": 188,
-          "maxMs": 188
+          "sumMs": 1404,
+          "avgMs": 140,
+          "p50Ms": 144,
+          "p95Ms": 192,
+          "maxMs": 192
         },
         "P3": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1350,
-          "avgMs": 135,
-          "p50Ms": 93,
-          "p95Ms": 469,
-          "maxMs": 469
+          "sumMs": 1367,
+          "avgMs": 137,
+          "p50Ms": 89,
+          "p95Ms": 438,
+          "maxMs": 438
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2068,
-          "avgMs": 207,
-          "p50Ms": 183,
-          "p95Ms": 399,
-          "maxMs": 399
+          "sumMs": 2267,
+          "avgMs": 227,
+          "p50Ms": 200,
+          "p95Ms": 401,
+          "maxMs": 401
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1529,
-          "avgMs": 153,
-          "p50Ms": 126,
-          "p95Ms": 253,
-          "maxMs": 253
+          "sumMs": 1549,
+          "avgMs": 155,
+          "p50Ms": 146,
+          "p95Ms": 233,
+          "maxMs": 233
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1213,
-          "avgMs": 121,
-          "p50Ms": 89,
-          "p95Ms": 235,
-          "maxMs": 235
+          "sumMs": 1736,
+          "avgMs": 174,
+          "p50Ms": 130,
+          "p95Ms": 396,
+          "maxMs": 396
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5137,
-          "avgMs": 514,
-          "p50Ms": 428,
-          "p95Ms": 801,
-          "maxMs": 801
+          "sumMs": 6768,
+          "avgMs": 677,
+          "p50Ms": 579,
+          "p95Ms": 1203,
+          "maxMs": 1203
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1999,
-          "avgMs": 200,
-          "p50Ms": 189,
-          "p95Ms": 302,
-          "maxMs": 302
+          "sumMs": 2338,
+          "avgMs": 234,
+          "p50Ms": 220,
+          "p95Ms": 336,
+          "maxMs": 336
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1807,
-          "avgMs": 181,
-          "p50Ms": 118,
-          "p95Ms": 436,
-          "maxMs": 436
+          "sumMs": 2010,
+          "avgMs": 201,
+          "p50Ms": 143,
+          "p95Ms": 483,
+          "maxMs": 483
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1177,
-          "avgMs": 118,
-          "p50Ms": 97,
-          "p95Ms": 201,
-          "maxMs": 201
+          "sumMs": 1569,
+          "avgMs": 157,
+          "p50Ms": 146,
+          "p95Ms": 223,
+          "maxMs": 223
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1122,
-          "avgMs": 112,
-          "p50Ms": 104,
-          "p95Ms": 192,
-          "maxMs": 192
+          "sumMs": 1333,
+          "avgMs": 133,
+          "p50Ms": 126,
+          "p95Ms": 197,
+          "maxMs": 197
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1349,
-          "avgMs": 135,
-          "p50Ms": 91,
-          "p95Ms": 268,
-          "maxMs": 268
+          "sumMs": 1698,
+          "avgMs": 170,
+          "p50Ms": 115,
+          "p95Ms": 375,
+          "maxMs": 375
         }
       },
       "failures": []
@@ -739,9 +739,9 @@
       "isolation": "hot-cache",
       "workers": 1,
       "exitCode": 0,
-      "wallMs": 15159,
-      "peakRssMb": 249.7,
-      "approxLaunchOverheadMs": 402,
+      "wallMs": 18215,
+      "peakRssMb": 250.3,
+      "approxLaunchOverheadMs": 451,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -749,132 +749,132 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 14757,
-        "avgMs": 123,
-        "p50Ms": 73,
-        "p95Ms": 404,
-        "maxMs": 556
+        "sumMs": 17764,
+        "avgMs": 148,
+        "p50Ms": 85,
+        "p95Ms": 471,
+        "maxMs": 747
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 556,
-          "avgMs": 56,
-          "p50Ms": 32,
-          "p95Ms": 173,
-          "maxMs": 173
+          "sumMs": 624,
+          "avgMs": 62,
+          "p50Ms": 35,
+          "p95Ms": 197,
+          "maxMs": 197
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 912,
-          "avgMs": 91,
-          "p50Ms": 66,
-          "p95Ms": 158,
-          "maxMs": 158
+          "sumMs": 983,
+          "avgMs": 98,
+          "p50Ms": 83,
+          "p95Ms": 174,
+          "maxMs": 174
         },
         "P3": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 899,
-          "avgMs": 90,
-          "p50Ms": 42,
-          "p95Ms": 380,
-          "maxMs": 380
+          "sumMs": 935,
+          "avgMs": 94,
+          "p50Ms": 50,
+          "p95Ms": 390,
+          "maxMs": 390
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1569,
-          "avgMs": 157,
-          "p50Ms": 117,
-          "p95Ms": 334,
-          "maxMs": 334
+          "sumMs": 2566,
+          "avgMs": 257,
+          "p50Ms": 167,
+          "p95Ms": 587,
+          "maxMs": 587
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 963,
-          "avgMs": 96,
-          "p50Ms": 78,
-          "p95Ms": 183,
-          "maxMs": 183
+          "sumMs": 1096,
+          "avgMs": 110,
+          "p50Ms": 81,
+          "p95Ms": 198,
+          "maxMs": 198
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 790,
-          "avgMs": 79,
-          "p50Ms": 28,
-          "p95Ms": 267,
-          "maxMs": 267
+          "sumMs": 918,
+          "avgMs": 92,
+          "p50Ms": 42,
+          "p95Ms": 301,
+          "maxMs": 301
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4244,
-          "avgMs": 424,
-          "p50Ms": 420,
-          "p95Ms": 556,
-          "maxMs": 556
+          "sumMs": 5202,
+          "avgMs": 520,
+          "p50Ms": 471,
+          "p95Ms": 747,
+          "maxMs": 747
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1485,
-          "avgMs": 149,
-          "p50Ms": 134,
-          "p95Ms": 212,
-          "maxMs": 212
+          "sumMs": 1711,
+          "avgMs": 171,
+          "p50Ms": 169,
+          "p95Ms": 285,
+          "maxMs": 285
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1325,
-          "avgMs": 133,
-          "p50Ms": 82,
-          "p95Ms": 404,
-          "maxMs": 404
+          "sumMs": 1436,
+          "avgMs": 144,
+          "p50Ms": 102,
+          "p95Ms": 418,
+          "maxMs": 418
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 666,
-          "avgMs": 67,
-          "p50Ms": 60,
-          "p95Ms": 117,
-          "maxMs": 117
+          "sumMs": 762,
+          "avgMs": 76,
+          "p50Ms": 69,
+          "p95Ms": 145,
+          "maxMs": 145
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 506,
-          "avgMs": 51,
-          "p50Ms": 35,
-          "p95Ms": 110,
-          "maxMs": 110
+          "sumMs": 546,
+          "avgMs": 55,
+          "p50Ms": 38,
+          "p95Ms": 121,
+          "maxMs": 121
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 842,
-          "avgMs": 84,
-          "p50Ms": 61,
-          "p95Ms": 217,
-          "maxMs": 217
+          "sumMs": 985,
+          "avgMs": 99,
+          "p50Ms": 76,
+          "p95Ms": 216,
+          "maxMs": 216
         }
       },
       "failures": []
@@ -885,9 +885,9 @@
       "isolation": "fresh",
       "workers": 4,
       "exitCode": 0,
-      "wallMs": 15387,
-      "peakRssMb": 334.2,
-      "approxLaunchOverheadMs": 706,
+      "wallMs": 19843,
+      "peakRssMb": 327.2,
+      "approxLaunchOverheadMs": 763,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -895,132 +895,132 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 58724,
-        "avgMs": 489,
-        "p50Ms": 434,
-        "p95Ms": 930,
-        "maxMs": 2194
+        "sumMs": 76320,
+        "avgMs": 636,
+        "p50Ms": 553,
+        "p95Ms": 1250,
+        "maxMs": 2299
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3617,
-          "avgMs": 362,
-          "p50Ms": 336,
-          "p95Ms": 513,
-          "maxMs": 513
+          "sumMs": 4801,
+          "avgMs": 480,
+          "p50Ms": 472,
+          "p95Ms": 607,
+          "maxMs": 607
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3977,
-          "avgMs": 398,
-          "p50Ms": 390,
-          "p95Ms": 497,
-          "maxMs": 497
+          "sumMs": 5492,
+          "avgMs": 549,
+          "p50Ms": 506,
+          "p95Ms": 979,
+          "maxMs": 979
         },
         "P3": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4056,
-          "avgMs": 406,
-          "p50Ms": 355,
-          "p95Ms": 680,
-          "maxMs": 680
+          "sumMs": 4465,
+          "avgMs": 447,
+          "p50Ms": 444,
+          "p95Ms": 596,
+          "maxMs": 596
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 7113,
-          "avgMs": 711,
-          "p50Ms": 676,
-          "p95Ms": 1074,
-          "maxMs": 1074
+          "sumMs": 9962,
+          "avgMs": 996,
+          "p50Ms": 907,
+          "p95Ms": 1939,
+          "maxMs": 1939
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4766,
-          "avgMs": 477,
-          "p50Ms": 413,
-          "p95Ms": 647,
-          "maxMs": 647
+          "sumMs": 6679,
+          "avgMs": 668,
+          "p50Ms": 521,
+          "p95Ms": 1158,
+          "maxMs": 1158
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3451,
-          "avgMs": 345,
-          "p50Ms": 277,
-          "p95Ms": 728,
-          "maxMs": 728
+          "sumMs": 4193,
+          "avgMs": 419,
+          "p50Ms": 396,
+          "p95Ms": 765,
+          "maxMs": 765
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 7481,
-          "avgMs": 748,
-          "p50Ms": 681,
-          "p95Ms": 1226,
-          "maxMs": 1226
+          "sumMs": 9629,
+          "avgMs": 963,
+          "p50Ms": 912,
+          "p95Ms": 1405,
+          "maxMs": 1405
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4703,
-          "avgMs": 470,
-          "p50Ms": 449,
-          "p95Ms": 666,
-          "maxMs": 666
+          "sumMs": 5444,
+          "avgMs": 544,
+          "p50Ms": 553,
+          "p95Ms": 724,
+          "maxMs": 724
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 5093,
-          "avgMs": 509,
-          "p50Ms": 436,
-          "p95Ms": 764,
-          "maxMs": 764
+          "sumMs": 5764,
+          "avgMs": 576,
+          "p50Ms": 553,
+          "p95Ms": 934,
+          "maxMs": 934
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3502,
-          "avgMs": 350,
-          "p50Ms": 358,
-          "p95Ms": 504,
-          "maxMs": 504
+          "sumMs": 5474,
+          "avgMs": 547,
+          "p50Ms": 501,
+          "p95Ms": 724,
+          "maxMs": 724
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 6345,
-          "avgMs": 635,
-          "p50Ms": 372,
-          "p95Ms": 2194,
-          "maxMs": 2194
+          "sumMs": 7983,
+          "avgMs": 798,
+          "p50Ms": 455,
+          "p95Ms": 2299,
+          "maxMs": 2299
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 4620,
-          "avgMs": 462,
-          "p50Ms": 464,
-          "p95Ms": 736,
-          "maxMs": 736
+          "sumMs": 6434,
+          "avgMs": 643,
+          "p50Ms": 624,
+          "p95Ms": 1252,
+          "maxMs": 1252
         }
       },
       "failures": []
@@ -1031,9 +1031,9 @@
       "isolation": "hot-cache",
       "workers": 4,
       "exitCode": 0,
-      "wallMs": 8383,
-      "peakRssMb": 291.4,
-      "approxLaunchOverheadMs": 669,
+      "wallMs": 10115,
+      "peakRssMb": 292.9,
+      "approxLaunchOverheadMs": 813,
       "orphanChromes": 0,
       "total": 120,
       "passed": 120,
@@ -1041,132 +1041,132 @@
       "flaky": 0,
       "overall": {
         "count": 120,
-        "sumMs": 30858,
-        "avgMs": 257,
-        "p50Ms": 190,
-        "p95Ms": 632,
-        "maxMs": 990
+        "sumMs": 37207,
+        "avgMs": 310,
+        "p50Ms": 245,
+        "p95Ms": 707,
+        "maxMs": 1138
       },
       "byProfile": {
         "P1": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1623,
-          "avgMs": 162,
-          "p50Ms": 165,
-          "p95Ms": 235,
-          "maxMs": 235
+          "sumMs": 1961,
+          "avgMs": 196,
+          "p50Ms": 153,
+          "p95Ms": 314,
+          "maxMs": 314
         },
         "P2": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2186,
-          "avgMs": 219,
-          "p50Ms": 232,
-          "p95Ms": 308,
-          "maxMs": 308
+          "sumMs": 2335,
+          "avgMs": 234,
+          "p50Ms": 220,
+          "p95Ms": 402,
+          "maxMs": 402
         },
         "P3": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1900,
-          "avgMs": 190,
-          "p50Ms": 161,
-          "p95Ms": 433,
-          "maxMs": 433
+          "sumMs": 2403,
+          "avgMs": 240,
+          "p50Ms": 202,
+          "p95Ms": 543,
+          "maxMs": 543
         },
         "P4": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 3248,
-          "avgMs": 325,
-          "p50Ms": 250,
-          "p95Ms": 576,
-          "maxMs": 576
+          "sumMs": 4455,
+          "avgMs": 446,
+          "p50Ms": 381,
+          "p95Ms": 786,
+          "maxMs": 786
         },
         "P5": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2400,
-          "avgMs": 240,
-          "p50Ms": 151,
-          "p95Ms": 474,
-          "maxMs": 474
+          "sumMs": 2715,
+          "avgMs": 272,
+          "p50Ms": 249,
+          "p95Ms": 479,
+          "maxMs": 479
         },
         "P6": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1657,
-          "avgMs": 166,
-          "p50Ms": 123,
-          "p95Ms": 472,
-          "maxMs": 472
+          "sumMs": 2680,
+          "avgMs": 268,
+          "p50Ms": 217,
+          "p95Ms": 542,
+          "maxMs": 542
         },
         "P7": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 6871,
-          "avgMs": 687,
-          "p50Ms": 722,
-          "p95Ms": 990,
-          "maxMs": 990
+          "sumMs": 7567,
+          "avgMs": 757,
+          "p50Ms": 674,
+          "p95Ms": 1138,
+          "maxMs": 1138
         },
         "P8": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2696,
-          "avgMs": 270,
-          "p50Ms": 263,
-          "p95Ms": 345,
-          "maxMs": 345
+          "sumMs": 3451,
+          "avgMs": 345,
+          "p50Ms": 316,
+          "p95Ms": 618,
+          "maxMs": 618
         },
         "P9": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2649,
-          "avgMs": 265,
-          "p50Ms": 228,
-          "p95Ms": 632,
-          "maxMs": 632
+          "sumMs": 2713,
+          "avgMs": 271,
+          "p50Ms": 250,
+          "p95Ms": 518,
+          "maxMs": 518
         },
         "P10": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1687,
-          "avgMs": 169,
-          "p50Ms": 156,
-          "p95Ms": 277,
-          "maxMs": 277
+          "sumMs": 1979,
+          "avgMs": 198,
+          "p50Ms": 169,
+          "p95Ms": 394,
+          "maxMs": 394
         },
         "P11": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 1804,
-          "avgMs": 180,
-          "p50Ms": 157,
-          "p95Ms": 351,
-          "maxMs": 351
+          "sumMs": 2498,
+          "avgMs": 250,
+          "p50Ms": 170,
+          "p95Ms": 576,
+          "maxMs": 576
         },
         "P12": {
           "passed": 10,
           "failed": 0,
           "count": 10,
-          "sumMs": 2137,
-          "avgMs": 214,
-          "p50Ms": 177,
-          "p95Ms": 408,
-          "maxMs": 408
+          "sumMs": 2450,
+          "avgMs": 245,
+          "p50Ms": 233,
+          "p95Ms": 458,
+          "maxMs": 458
         }
       },
       "failures": []
@@ -1182,19 +1182,19 @@
       "name": "node: dependencies:[setup] with --tag smoke",
       "ok": true,
       "detail": "exit=0, hasDirectCdp=true",
-      "errorLog": "\n[project:setup] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  auth.setup: sign in and persist storageState (234ms)\n[project:setup] 1 passed, 0 failed, 0 skipped\n\n[project:authed-app] Running 1 flow(s)...\n  ✓  authed-smoke: consumes setup storageState (84ms)\n[project:authed-app] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.8s)\n\n2/2 passed, 0 failed (0.8s)\n\n"
+      "errorLog": "\n[project:setup] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  auth.setup: sign in and persist storageState (264ms)\n[project:setup] 1 passed, 0 failed, 0 skipped\n\n[project:authed-app] Running 1 flow(s)...\n  ✓  authed-smoke: consumes setup storageState (188ms)\n[project:authed-app] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓  2/2 passed (1.3s)\n\n2/2 passed, 0 failed (1.3s)\n\n"
     },
     {
       "name": "node: multi-file positional CLI args",
       "ok": true,
       "detail": "exit=0",
-      "errorLog": "Running 2 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/2 50%] P1-01: async SPA hydration button becomes actionable (206ms)\n  ✓ web [2/2 100%] P3-01: @media (any-hover: hover) and (hover: hover) are true in headless CDP (61ms)\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.3s)\n\n2/2 passed, 0 failed (0.3s)\n\n"
+      "errorLog": "Running 2 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/2 50%] P1-01: async SPA hydration button becomes actionable (297ms)\n  ✓ web [2/2 100%] P3-01: @media (any-hover: hover) and (hover: hover) are true in headless CDP (279ms)\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.6s)\n\n2/2 passed, 0 failed (0.6s)\n\n"
     },
     {
       "name": "node: deep TMPDIR (>108B) Chromium launch",
       "ok": true,
       "detail": "exit=0",
-      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/1 100%] P10-01: console log/warn/error events captured accurately (115ms)\n\nweb (Direct CDP)          ✓  1/1 passed (0.1s)\n\n1/1 passed, 0 failed (0.1s)\n\n"
+      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/1 100%] P10-01: console log/warn/error events captured accurately (162ms)\n\nweb (Direct CDP)          ✓  1/1 passed (0.2s)\n\n1/1 passed, 0 failed (0.2s)\n\n"
     },
     {
       "name": "node: spana validate reads config.flowDir",
@@ -1205,13 +1205,19 @@
       "name": "node: runtime ctx.skip() exits 0 & reports skipped",
       "ok": true,
       "detail": "exit=0",
-      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  – web [1/1 100%] runtime-skip-check (skip: feature disabled in stress check)\n\nweb (Direct CDP)          –  0/1 passed (0.0s)\n  – [web] runtime-skip-check (skip: feature disabled in stress check)\n\n0/1 passed, 0 failed, 1 skipped (0.0s)\n\n"
+      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  – web [1/1 100%] runtime-skip-check (skip: feature disabled in stress check)\n\nweb (Direct CDP)          –  0/1 passed (0.1s)\n  – [web] runtime-skip-check (skip: feature disabled in stress check)\n\n0/1 passed, 0 failed, 1 skipped (0.1s)\n\n"
     },
     {
       "name": "node: 5-project wave caps concurrency to --workers 2",
       "ok": true,
       "detail": "exit=0, entered=5, peak=2",
-      "errorLog": "\n[project:wave-p1] Running 1 flow(s)...\n\n[project:wave-p2] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  wave-p1 (336ms)\n[project:wave-p1] 1 passed, 0 failed, 0 skipped\n  ✓  wave-p2 (328ms)\n[project:wave-p2] 1 passed, 0 failed, 0 skipped\n\n[project:wave-p4] Running 1 flow(s)...\n\n[project:wave-p3] Running 1 flow(s)...\n  ✓  wave-p4 (327ms)\n[project:wave-p4] 1 passed, 0 failed, 0 skipped\n  ✓  wave-p3 (341ms)\n[project:wave-p3] 1 passed, 0 failed, 0 skipped\n\n[project:wave-p5] Running 1 flow(s)...\n  ✓  wave-p5 (327ms)\n[project:wave-p5] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓✓✓✓  5/5 passed (1.9s)\n\n5/5 passed, 0 failed (1.9s)\n\n"
+      "errorLog": "\n[project:wave-p1] Running 1 flow(s)...\n\n[project:wave-p2] Running 1 flow(s)...\n\n[project:wave-p3] Running 1 flow(s)...\n\n[project:wave-p4] Running 1 flow(s)...\n\n[project:wave-p5] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓ [Chromium #2]  wave-p2 (636ms)\n  ✓ [Chromium #1]  wave-p1 (737ms)\n  ✓ [Chromium #2]  wave-p3 (519ms)\n  ✓ [Chromium #1]  wave-p4 (674ms)\n  ✓ [Chromium #2]  wave-p5 (460ms)\n[project:wave-p1] 1 passed, 0 failed, 0 skipped\n[project:wave-p2] 1 passed, 0 failed, 0 skipped\n[project:wave-p3] 1 passed, 0 failed, 0 skipped\n[project:wave-p4] 1 passed, 0 failed, 0 skipped\n[project:wave-p5] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓✓✓✓  5/5 passed (2.4s)\n\n5/5 passed, 0 failed (2.4s)\n\n"
+    },
+    {
+      "name": "node: unbalanced 5-project wave dynamically saturates --workers 4",
+      "ok": true,
+      "detail": "exit=0, entered=20, peak=4, wall=6.67s",
+      "errorLog": "\n[project:small-1] Running 1 flow(s)...\n\n[project:small-2] Running 1 flow(s)...\n\n[project:small-3] Running 1 flow(s)...\n\n[project:small-4] Running 1 flow(s)...\n\n[project:large-20] Running 20 flow(s)...\n\n  web (Direct CDP)\n  ✓ [Chromium #2]  small-2 (732ms)\n  ✓ [Chromium #3]  small-3 (713ms)\n  ✓ [Chromium #1]  small-1 (721ms)\n  ✓ [Chromium #4]  small-4 (720ms)\n  ✓ [Chromium #1]  large-20-03 (1055ms)\n  ✓ [Chromium #2]  large-20-01 (1089ms)\n  ✓ [Chromium #3]  large-20-02 (1128ms)\n  ✓ [Chromium #4]  large-20-04 (1188ms)\n  ✓ [Chromium #1]  large-20-05 (544ms)\n  ✓ [Chromium #2]  large-20-06 (713ms)\n  ✓ [Chromium #3]  large-20-07 (741ms)\n  ✓ [Chromium #4]  large-20-08 (773ms)\n  ✓ [Chromium #1]  large-20-09 (631ms)\n  ✓ [Chromium #2]  large-20-10 (609ms)\n  ✓ [Chromium #3]  large-20-11 (792ms)\n  ✓ [Chromium #4]  large-20-12 (935ms)\n  ✓ [Chromium #1]  large-20-13 (849ms)\n  ✓ [Chromium #2]  large-20-14 (750ms)\n  ✓ [Chromium #3]  large-20-15 (669ms)\n  ✓ [Chromium #4]  large-20-16 (541ms)\n  ✓ [Chromium #1]  large-20-17 (468ms)\n  ✓ [Chromium #2]  large-20-18 (512ms)\n  ✓ [Chromium #3]  large-20-19 (522ms)\n  ✓ [Chromium #4]  large-20-20 (530ms)\n[project:small-1] 1 passed, 0 failed, 0 skipped\n[project:small-2] 1 passed, 0 failed, 0 skipped\n[project:small-3] 1 passed, 0 failed, 0 skipped\n[project:small-4] 1 passed, 0 failed, 0 skipped\n[project:large-20] 20 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓  24/24 passed (5.8s)\n\n24/24 passed, 0 failed (5.8s)\n\n"
     },
     {
       "name": "bun: spana test --help",
@@ -1222,19 +1228,19 @@
       "name": "bun: dependencies:[setup] with --tag smoke",
       "ok": true,
       "detail": "exit=0, hasDirectCdp=true",
-      "errorLog": "\n[project:setup] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  auth.setup: sign in and persist storageState (237ms)\n[project:setup] 1 passed, 0 failed, 0 skipped\n\n[project:authed-app] Running 1 flow(s)...\n  ✓  authed-smoke: consumes setup storageState (95ms)\n[project:authed-app] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.8s)\n\n2/2 passed, 0 failed (0.8s)\n\n"
+      "errorLog": "\n[project:setup] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  auth.setup: sign in and persist storageState (452ms)\n[project:setup] 1 passed, 0 failed, 0 skipped\n\n[project:authed-app] Running 1 flow(s)...\n  ✓  authed-smoke: consumes setup storageState (229ms)\n[project:authed-app] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓  2/2 passed (1.9s)\n\n2/2 passed, 0 failed (1.9s)\n\n"
     },
     {
       "name": "bun: multi-file positional CLI args",
       "ok": true,
       "detail": "exit=0",
-      "errorLog": "Running 2 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/2 50%] P1-01: async SPA hydration button becomes actionable (200ms)\n  ✓ web [2/2 100%] P3-01: @media (any-hover: hover) and (hover: hover) are true in headless CDP (62ms)\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.3s)\n\n2/2 passed, 0 failed (0.3s)\n\n"
+      "errorLog": "Running 2 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/2 50%] P1-01: async SPA hydration button becomes actionable (367ms)\n  ✓ web [2/2 100%] P3-01: @media (any-hover: hover) and (hover: hover) are true in headless CDP (237ms)\n\nweb (Direct CDP)          ✓✓  2/2 passed (0.6s)\n\n2/2 passed, 0 failed (0.6s)\n\n"
     },
     {
       "name": "bun: deep TMPDIR (>108B) Chromium launch",
       "ok": true,
       "detail": "exit=0",
-      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/1 100%] P10-01: console log/warn/error events captured accurately (115ms)\n\nweb (Direct CDP)          ✓  1/1 passed (0.1s)\n\n1/1 passed, 0 failed (0.1s)\n\n"
+      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  ✓ web [1/1 100%] P10-01: console log/warn/error events captured accurately (245ms)\n\nweb (Direct CDP)          ✓  1/1 passed (0.3s)\n\n1/1 passed, 0 failed (0.3s)\n\n"
     },
     {
       "name": "bun: spana validate reads config.flowDir",
@@ -1245,13 +1251,19 @@
       "name": "bun: runtime ctx.skip() exits 0 & reports skipped",
       "ok": true,
       "detail": "exit=0",
-      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  – web [1/1 100%] runtime-skip-check (skip: feature disabled in stress check)\n\nweb (Direct CDP)          –  0/1 passed (0.0s)\n  – [web] runtime-skip-check (skip: feature disabled in stress check)\n\n0/1 passed, 0 failed, 1 skipped (0.0s)\n\n"
+      "errorLog": "Running 1 flow(s) on web...\n\n\n  web (Direct CDP)\n  – web [1/1 100%] runtime-skip-check (skip: feature disabled in stress check)\n\nweb (Direct CDP)          –  0/1 passed (0.1s)\n  – [web] runtime-skip-check (skip: feature disabled in stress check)\n\n0/1 passed, 0 failed, 1 skipped (0.1s)\n\n"
     },
     {
       "name": "bun: 5-project wave caps concurrency to --workers 2",
       "ok": true,
       "detail": "exit=0, entered=5, peak=2",
-      "errorLog": "\n[project:wave-p2] Running 1 flow(s)...\n\n[project:wave-p1] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓  wave-p1 (341ms)\n[project:wave-p1] 1 passed, 0 failed, 0 skipped\n  ✓  wave-p2 (345ms)\n[project:wave-p2] 1 passed, 0 failed, 0 skipped\n\n[project:wave-p3] Running 1 flow(s)...\n\n[project:wave-p4] Running 1 flow(s)...\n  ✓  wave-p3 (356ms)\n[project:wave-p3] 1 passed, 0 failed, 0 skipped\n  ✓  wave-p4 (348ms)\n[project:wave-p4] 1 passed, 0 failed, 0 skipped\n\n[project:wave-p5] Running 1 flow(s)...\n  ✓  wave-p5 (308ms)\n[project:wave-p5] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓✓✓✓  5/5 passed (1.8s)\n\n5/5 passed, 0 failed (1.8s)\n\n"
+      "errorLog": "\n[project:wave-p1] Running 1 flow(s)...\n\n[project:wave-p2] Running 1 flow(s)...\n\n[project:wave-p3] Running 1 flow(s)...\n\n[project:wave-p4] Running 1 flow(s)...\n\n[project:wave-p5] Running 1 flow(s)...\n\n  web (Direct CDP)\n  ✓ [Chromium #2]  wave-p2 (535ms)\n  ✓ [Chromium #1]  wave-p1 (545ms)\n  ✓ [Chromium #2]  wave-p3 (460ms)\n  ✓ [Chromium #1]  wave-p4 (464ms)\n  ✓ [Chromium #2]  wave-p5 (380ms)\n[project:wave-p1] 1 passed, 0 failed, 0 skipped\n[project:wave-p2] 1 passed, 0 failed, 0 skipped\n[project:wave-p3] 1 passed, 0 failed, 0 skipped\n[project:wave-p4] 1 passed, 0 failed, 0 skipped\n[project:wave-p5] 1 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓✓✓✓  5/5 passed (2.0s)\n\n5/5 passed, 0 failed (2.0s)\n\n"
+    },
+    {
+      "name": "bun: unbalanced 5-project wave dynamically saturates --workers 4",
+      "ok": true,
+      "detail": "exit=0, entered=20, peak=4, wall=5.75s",
+      "errorLog": "\n[project:small-1] Running 1 flow(s)...\n\n[project:small-2] Running 1 flow(s)...\n\n[project:small-3] Running 1 flow(s)...\n\n[project:small-4] Running 1 flow(s)...\n\n[project:large-20] Running 20 flow(s)...\n\n  web (Direct CDP)\n  ✓ [Chromium #1]  small-1 (821ms)\n  ✓ [Chromium #3]  small-3 (813ms)\n  ✓ [Chromium #2]  small-2 (817ms)\n  ✓ [Chromium #4]  small-4 (832ms)\n  ✓ [Chromium #1]  large-20-01 (659ms)\n  ✓ [Chromium #3]  large-20-02 (984ms)\n  ✓ [Chromium #2]  large-20-03 (986ms)\n  ✓ [Chromium #4]  large-20-04 (1020ms)\n  ✓ [Chromium #1]  large-20-05 (598ms)\n  ✓ [Chromium #2]  large-20-07 (720ms)\n  ✓ [Chromium #3]  large-20-06 (752ms)\n  ✓ [Chromium #4]  large-20-08 (944ms)\n  ✓ [Chromium #1]  large-20-09 (740ms)\n  ✓ [Chromium #2]  large-20-10 (623ms)\n  ✓ [Chromium #3]  large-20-11 (665ms)\n  ✓ [Chromium #1]  large-20-13 (664ms)\n  ✓ [Chromium #4]  large-20-12 (696ms)\n  ✓ [Chromium #2]  large-20-14 (543ms)\n  ✓ [Chromium #3]  large-20-15 (579ms)\n  ✓ [Chromium #1]  large-20-16 (530ms)\n  ✓ [Chromium #4]  large-20-17 (647ms)\n  ✓ [Chromium #2]  large-20-18 (558ms)\n  ✓ [Chromium #3]  large-20-19 (563ms)\n  ✓ [Chromium #1]  large-20-20 (570ms)\n[project:small-1] 1 passed, 0 failed, 0 skipped\n[project:small-2] 1 passed, 0 failed, 0 skipped\n[project:small-3] 1 passed, 0 failed, 0 skipped\n[project:small-4] 1 passed, 0 failed, 0 skipped\n[project:large-20] 20 passed, 0 failed, 0 skipped\n\nweb (Direct CDP)          ✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓✓  24/24 passed (5.4s)\n\n24/24 passed, 0 failed (5.4s)\n\n"
     },
     {
       "name": "orphan-check after extra checks",

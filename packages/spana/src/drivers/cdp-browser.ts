@@ -939,8 +939,15 @@ export function makeLightweightCdpDriver(
     let mainFrameId: string | null = null;
     let lastNavigationStatus: number | null = null;
     const authAttemptedRequestIds = new Set<string>();
-    let emulationMutated = false;
-    let viewportMutated = false;
+    let hasDeviceMetricsDirty = false;
+    let hasTouchEmulationDirty = false;
+    let hasUserAgentDirty = false;
+    let hasLocaleDirty = false;
+    let hasEmulatedMediaDirty = false;
+    let hasTimezoneDirty = false;
+    let hasNetworkConditionsDirty = false;
+    let hasSubframeNavigation = false;
+    let slotNeedsHealthCheck = false;
     let geolocationMutated = false;
     let permissionsMutated = false;
     let slotHasCustomStorageState = false;
@@ -1005,6 +1012,17 @@ export function makeLightweightCdpDriver(
     };
 
     const cleanupFlowScopedHooks = async () => {
+      if (
+        flowInitScripts.length === 0 &&
+        clockInitScript === null &&
+        flowExposedFunctions.size === 0 &&
+        flowExposedBindingNames.size === 0 &&
+        flowInitScriptIds.size === 0 &&
+        clockInitScriptIds.size === 0 &&
+        flowExposedScriptIds.size === 0
+      ) {
+        return;
+      }
       flowInitScripts.length = 0;
       clockInitScript = null;
       flowExposedFunctions.clear();
@@ -1824,8 +1842,28 @@ export function makeLightweightCdpDriver(
             activeSlot.targetId = fallback.targetId;
             activeSlot.sessionId = fallback.sessionId;
             cdpChannel.setSessionId(fallback.sessionId);
+          } else if (wasActive) {
+            slotNeedsHealthCheck = true;
           }
         }
+      }
+    });
+    cdpChannel.onEvent("Target.targetDestroyed", (params) => {
+      if (
+        activeSlot &&
+        typeof params?.targetId === "string" &&
+        params.targetId === activeSlot.targetId
+      ) {
+        slotNeedsHealthCheck = true;
+      }
+    });
+    cdpChannel.onEvent("Target.targetCrashed", (params) => {
+      if (
+        activeSlot &&
+        typeof params?.targetId === "string" &&
+        params.targetId === activeSlot.targetId
+      ) {
+        slotNeedsHealthCheck = true;
       }
     });
 
@@ -1997,6 +2035,18 @@ export function makeLightweightCdpDriver(
           mainFrameId = params.frame.id;
         }
         recordNavUrl(params?.frame?.url, sid);
+      } else {
+        hasSubframeNavigation = true;
+        if (typeof params?.frame?.url === "string") {
+          try {
+            const parsed = new URL(params.frame.url);
+            if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+              observedOrigins.add(parsed.origin);
+            }
+          } catch {
+            // ignore non-http(s) subframe URLs
+          }
+        }
       }
     });
     cdpChannel.onEvent("Page.navigatedWithinDocument", (params, sid) => {
@@ -2544,23 +2594,49 @@ export function makeLightweightCdpDriver(
 
       const eventName =
         waitUntil === "domcontentloaded" ? "Page.domContentEventFired" : "Page.loadEventFired";
+      let targetFrameCommitted = false;
+      let expectedLoaderId: string | undefined;
+      const seenLoaderIds = new Set<string>();
+      const unsubNavCommit = cdpChannel.onEvent("Page.frameNavigated", (params, sid) => {
+        if (targetSid && sid && sid !== targetSid) return;
+        if (params?.frame?.parentId) return;
+        const loaderId =
+          typeof params?.frame?.loaderId === "string" ? params.frame.loaderId : undefined;
+        if (loaderId) seenLoaderIds.add(loaderId);
+        const frameUrl = typeof params?.frame?.url === "string" ? params.frame.url : "";
+        if (expectedLoaderId) {
+          if (loaderId === expectedLoaderId || (frameUrl && frameUrl !== "about:blank")) {
+            targetFrameCommitted = true;
+          }
+        } else if (frameUrl !== "about:blank") {
+          targetFrameCommitted = true;
+        }
+      });
       const waiter = cdpChannel.waitForEventCancellable(
         eventName,
         15_000,
-        (_p, sid) => !targetSid || !sid || sid === targetSid,
+        (_p, sid) => (!targetSid || !sid || sid === targetSid) && targetFrameCommitted,
       );
       waiter.promise.catch(() => {});
       try {
         const navRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
           frameId?: string;
+          loaderId?: string;
           errorText?: string;
         } | null;
         if (navRes?.frameId) mainFrameId = navRes.frameId;
         if (navRes?.errorText && navRes.errorText !== "net::ERR_ABORTED") {
           throw new Error(`Navigation to "${target}" failed: ${navRes.errorText}`);
         }
-        await waiter.promise.catch(() => {});
+        if (navRes?.loaderId) {
+          expectedLoaderId = navRes.loaderId;
+          if (seenLoaderIds.has(navRes.loaderId)) {
+            targetFrameCommitted = true;
+          }
+          await waiter.promise.catch(() => {});
+        }
       } finally {
+        unsubNavCommit();
         waiter.cancel();
       }
       // Pre-warm the next fresh context AFTER navigation settles so renderer spawn
@@ -2797,65 +2873,91 @@ export function makeLightweightCdpDriver(
             activeUserAgent = options.emulation?.userAgent;
             activeLocale = options.emulation?.locale;
 
+            const hadSubframeNavigation = hasSubframeNavigation;
+            hasSubframeNavigation = false;
+            const clearAllDirtyFlags = () => {
+              hasDeviceMetricsDirty = false;
+              hasTouchEmulationDirty = false;
+              hasUserAgentDirty = false;
+              hasLocaleDirty = false;
+              hasEmulatedMediaDirty = false;
+              hasTimezoneDirty = false;
+              hasNetworkConditionsDirty = false;
+              permissionsMutated = false;
+              geolocationMutated = false;
+              slotNeedsHealthCheck = false;
+            };
+
             // Remove all flow-scoped init scripts, fake clock init script, and exposed bindings (1.19)
             await cleanupFlowScopedHooks();
 
             if (useContexts && effectiveFreshContextPerFlow && hasRunFirstFlow) {
               if (contextIsolation === "hot-cache" && activeSlot && !slotHasCustomStorageState) {
-                const slotWasHealthy = await ensureActiveSlotHealthy();
+                const slotWasHealthy =
+                  slotNeedsHealthCheck || activeSlot.tabs.length === 0
+                    ? await ensureActiveSlotHealthy()
+                    : true;
+                slotNeedsHealthCheck = false;
                 if (slotWasHealthy && activeSlot) {
-                  // Collect origins + partitioned StorageKeys from main frame tree AND attached OOPIF child sessions (1.24)
-                  const frameIdsToQuery: Array<{ frameId: string; sid: string }> = [];
-                  const frameTreeRes = (await cdpChannel
-                    .sendCommand("Page.getFrameTree", {}, activeSlot.sessionId, 1_500)
-                    .catch(() => null)) as { frameTree?: any } | null;
-                  const collectFrameOrigins = (node: any) => {
-                    if (!node) return;
-                    const u = node.frame?.url;
-                    if (typeof node.frame?.id === "string") {
-                      frameIdsToQuery.push({ frameId: node.frame.id, sid: activeSlot!.sessionId });
-                    }
-                    if (typeof u === "string") {
-                      try {
-                        const parsed = new URL(u);
-                        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-                          visitedOrigins.add(parsed.origin);
+                  // Only query Page.getFrameTree + Storage.getStorageKeyForFrame when subframes or
+                  // OOPIF child sessions actually existed in the prior flow (avoids 2 serial RTTs
+                  // on 99% of flows where observedOrigins already captured all top-level origins).
+                  if (hadSubframeNavigation || activeChildSessions.length > 0) {
+                    const frameIdsToQuery: Array<{ frameId: string; sid: string }> = [];
+                    const frameTreeRes = (await cdpChannel
+                      .sendCommand("Page.getFrameTree", {}, activeSlot.sessionId, 1_500)
+                      .catch(() => null)) as { frameTree?: any } | null;
+                    const collectFrameOrigins = (node: any) => {
+                      if (!node) return;
+                      const u = node.frame?.url;
+                      if (typeof node.frame?.id === "string") {
+                        frameIdsToQuery.push({
+                          frameId: node.frame.id,
+                          sid: activeSlot!.sessionId,
+                        });
+                      }
+                      if (typeof u === "string") {
+                        try {
+                          const parsed = new URL(u);
+                          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+                            visitedOrigins.add(parsed.origin);
+                          }
+                        } catch {
+                          // ignore
                         }
-                      } catch {
-                        // ignore
+                      }
+                      if (Array.isArray(node.childFrames)) {
+                        for (const child of node.childFrames) collectFrameOrigins(child);
+                      }
+                    };
+                    collectFrameOrigins(frameTreeRes?.frameTree);
+                    for (const child of activeChildSessions) {
+                      if (child.targetId) {
+                        frameIdsToQuery.push({ frameId: child.targetId, sid: child.sessionId });
+                      }
+                      if (child.url) {
+                        try {
+                          const parsed = new URL(child.url);
+                          if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+                            visitedOrigins.add(parsed.origin);
+                          }
+                        } catch {
+                          // ignore
+                        }
                       }
                     }
-                    if (Array.isArray(node.childFrames)) {
-                      for (const child of node.childFrames) collectFrameOrigins(child);
-                    }
-                  };
-                  collectFrameOrigins(frameTreeRes?.frameTree);
-                  for (const child of activeChildSessions) {
-                    if (child.targetId) {
-                      frameIdsToQuery.push({ frameId: child.targetId, sid: child.sessionId });
-                    }
-                    if (child.url) {
-                      try {
-                        const parsed = new URL(child.url);
-                        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-                          visitedOrigins.add(parsed.origin);
-                        }
-                      } catch {
-                        // ignore
+                    if (frameIdsToQuery.length > 0) {
+                      const skResults = await Promise.all(
+                        frameIdsToQuery.map(({ frameId, sid }) =>
+                          cdpChannel
+                            .sendCommand("Storage.getStorageKeyForFrame", { frameId }, sid, 1_000)
+                            .catch(() => null),
+                        ),
+                      );
+                      for (const res of skResults) {
+                        const sk = (res as { storageKey?: string } | null)?.storageKey;
+                        if (sk) visitedStorageKeys.add(sk);
                       }
-                    }
-                  }
-                  if (frameIdsToQuery.length > 0) {
-                    const skResults = await Promise.all(
-                      frameIdsToQuery.map(({ frameId, sid }) =>
-                        cdpChannel
-                          .sendCommand("Storage.getStorageKeyForFrame", { frameId }, sid, 1_000)
-                          .catch(() => null),
-                      ),
-                    );
-                    for (const res of skResults) {
-                      const sk = (res as { storageKey?: string } | null)?.storageKey;
-                      if (sk) visitedStorageKeys.add(sk);
                     }
                   }
 
@@ -2881,6 +2983,7 @@ export function makeLightweightCdpDriver(
                   }
                   // 2. Close any extra tabs opened by the prior flow and return to tab 0 BEFORE clearing page state.
                   const preResetOps: Array<Promise<unknown>> = [];
+                  let blankNavFailed = false;
                   if (activeSlot.tabs.length > 1) {
                     const primaryTab = activeSlot.tabs[0]!;
                     const extraTabs = activeSlot.tabs.slice(1);
@@ -2918,22 +3021,53 @@ export function makeLightweightCdpDriver(
                           })()`,
                         )
                         .catch(() => {})
-                        .then(() =>
-                          cdpChannel
-                            .sendCommand("Page.navigate", { url: "about:blank" }, undefined, 4_000)
-                            .catch(() => {}),
-                        )
-                        .then(() => {
-                          isAtBlank = true;
+                        .then(async () => {
+                          const targetSid = activeSlot?.sessionId;
+                          const blankWaiter = cdpChannel.waitForEventCancellable(
+                            "Page.domContentEventFired",
+                            1_500,
+                            (_p, sid) => !targetSid || !sid || sid === targetSid,
+                          );
+                          blankWaiter.promise.catch(() => {});
+                          try {
+                            await cdpChannel.sendCommand(
+                              "Page.navigate",
+                              { url: "about:blank" },
+                              undefined,
+                              4_000,
+                            );
+                            await blankWaiter.promise.catch(() => {});
+                            isAtBlank = true;
+                          } catch {
+                            blankNavFailed = true;
+                          } finally {
+                            blankWaiter.cancel();
+                          }
                         }),
                     );
                   }
                   if (preResetOps.length > 0) {
                     await Promise.all(preResetOps);
                   }
+                  if (blankNavFailed) {
+                    const recovered = await ensureActiveSlotHealthy();
+                    if (!recovered) {
+                      cdpChannel.clearChildSessions();
+                      await disableAllFetchInterception();
+                      clearAllDirtyFlags();
+                      if (activeSlot && options.virtualAuthenticator) {
+                        await ensureVirtualAuthenticatorForSlot(activeSlot, true);
+                      } else if (activeSlot) {
+                        activeAuthenticatorId = activeSlot.authenticatorId;
+                      }
+                      hasRunFirstFlow = true;
+                      return;
+                    }
+                  }
                   cdpChannel.clearChildSessions();
-                  // 2. Now that the page is safely on about:blank (no active document holding storage locks),
-                  // wipe cookies, per-origin & partitioned storage keys, permissions, geolocation, routes, viewport, emulation, and network conditions in parallel.
+                  // 3. Now that the page is safely on about:blank (no active document holding storage locks),
+                  // wipe cookies, per-origin & partitioned storage keys, and ONLY the dirty emulation/route/network
+                  // overrides in parallel (zero redundant CDP round-trips for untouched state!).
                   const resetOps: Array<Promise<unknown>> = [
                     cdpChannel
                       .sendCommand("Network.clearBrowserCookies", {}, undefined, 2_000)
@@ -2988,55 +3122,76 @@ export function makeLightweightCdpDriver(
                         .catch(() => {}),
                     );
                   }
-                  if (fetchEnabledSessions.size > 0) {
+                  if (fetchEnabledSessions.size > 0 && !activeHttpCredentials) {
                     resetOps.push(disableAllFetchInterception());
                   }
-                  if (viewportMutated) {
-                    viewportMutated = false;
+                  if (hasDeviceMetricsDirty || hasTouchEmulationDirty) {
+                    const needsTouchReset = hasTouchEmulationDirty;
+                    hasDeviceMetricsDirty = false;
+                    hasTouchEmulationDirty = false;
                     width = initialWidth;
                     height = initialHeight;
                     currentDeviceScaleFactor = initialDeviceScaleFactor;
                     currentMobile = initialMobile;
                     currentHasTouch = initialHasTouch;
-                    resetOps.push(
-                      (async () => {
-                        await cdpChannel
-                          .sendCommand("Emulation.clearDeviceMetricsOverride", {})
-                          .catch(() => {});
-                        await cdpChannel
-                          .sendCommand("Emulation.setTouchEmulationEnabled", {
-                            enabled: initialHasTouch,
-                            ...(initialHasTouch ? { maxTouchPoints: 5 } : {}),
-                          })
-                          .catch(() => {});
-                        if (!initialHasTouch && !initialMobile) {
+                    if (needsTouchReset) {
+                      resetOps.push(
+                        (async () => {
                           await cdpChannel
-                            .sendCommand("Emulation.setEmitTouchEventsForMouse", {
-                              enabled: false,
-                              configuration: "desktop",
+                            .sendCommand("Emulation.clearDeviceMetricsOverride", {})
+                            .catch(() => {});
+                          await cdpChannel
+                            .sendCommand("Emulation.setTouchEmulationEnabled", {
+                              enabled: initialHasTouch,
+                              ...(initialHasTouch ? { maxTouchPoints: 5 } : {}),
                             })
                             .catch(() => {});
-                        }
-                        await cdpChannel
+                          if (!initialHasTouch && !initialMobile) {
+                            await cdpChannel
+                              .sendCommand("Emulation.setEmitTouchEventsForMouse", {
+                                enabled: false,
+                                configuration: "desktop",
+                              })
+                              .catch(() => {});
+                          }
+                          await cdpChannel
+                            .sendCommand("Emulation.setDeviceMetricsOverride", {
+                              width: initialWidth,
+                              height: initialHeight,
+                              deviceScaleFactor: initialDeviceScaleFactor,
+                              mobile: initialMobile,
+                            })
+                            .catch(() => {});
+                        })(),
+                      );
+                    } else {
+                      resetOps.push(
+                        cdpChannel
                           .sendCommand("Emulation.setDeviceMetricsOverride", {
                             width: initialWidth,
                             height: initialHeight,
                             deviceScaleFactor: initialDeviceScaleFactor,
                             mobile: initialMobile,
                           })
-                          .catch(() => {});
-                      })(),
-                    );
+                          .catch(() => {}),
+                      );
+                    }
                   }
-                  if (emulationMutated) {
-                    emulationMutated = false;
-                    activeUserAgent = options.emulation?.userAgent;
+                  if (hasLocaleDirty) {
+                    hasLocaleDirty = false;
                     activeLocale = options.emulation?.locale;
                     const defaultLocale = options.emulation?.locale ?? "";
                     resetOps.push(
                       cdpChannel
                         .sendCommand("Emulation.setLocaleOverride", { locale: defaultLocale })
                         .catch(() => {}),
+                    );
+                  }
+                  if (hasUserAgentDirty) {
+                    hasUserAgentDirty = false;
+                    activeUserAgent = options.emulation?.userAgent;
+                    const defaultLocale = options.emulation?.locale ?? "";
+                    resetOps.push(
                       cdpChannel
                         .sendCommand("Emulation.setUserAgentOverride", {
                           userAgent:
@@ -3047,6 +3202,11 @@ export function makeLightweightCdpDriver(
                           acceptLanguage: buildAcceptLanguage(defaultLocale) ?? "",
                         })
                         .catch(() => {}),
+                    );
+                  }
+                  if (hasEmulatedMediaDirty) {
+                    hasEmulatedMediaDirty = false;
+                    resetOps.push(
                       cdpChannel
                         .sendCommand("Emulation.setEmulatedMedia", {
                           media: "",
@@ -3070,6 +3230,11 @@ export function makeLightweightCdpDriver(
                           ],
                         })
                         .catch(() => {}),
+                    );
+                  }
+                  if (hasTimezoneDirty) {
+                    hasTimezoneDirty = false;
+                    resetOps.push(
                       cdpChannel
                         .sendCommand("Emulation.setTimezoneOverride", {
                           timezoneId: options.emulation?.timezoneId ?? "",
@@ -3077,41 +3242,42 @@ export function makeLightweightCdpDriver(
                         .catch(() => {}),
                     );
                   }
-                  resetOps.push(
-                    cdpChannel
-                      .sendCommand("Network.emulateNetworkConditions", {
-                        offline: false,
-                        latency: 0,
-                        downloadThroughput: -1,
-                        uploadThroughput: -1,
-                      })
-                      .catch(() => {}),
-                  );
+                  if (hasNetworkConditionsDirty) {
+                    hasNetworkConditionsDirty = false;
+                    resetOps.push(
+                      cdpChannel
+                        .sendCommand("Network.emulateNetworkConditions", {
+                          offline: false,
+                          latency: 0,
+                          downloadThroughput: -1,
+                          uploadThroughput: -1,
+                        })
+                        .catch(() => {}),
+                    );
+                  }
                   await Promise.all(resetOps);
-                  const state = await loadStorageStateFile(options.storageState);
-                  if (state?.cookies && state.cookies.length > 0) {
-                    await cdpChannel
-                      .sendCommand("Network.setCookies", { cookies: state.cookies })
-                      .catch(() => {});
+                  if (options.storageState) {
+                    const state = await loadStorageStateFile(options.storageState);
+                    if (state?.cookies && state.cookies.length > 0) {
+                      await cdpChannel
+                        .sendCommand("Network.setCookies", { cookies: state.cookies })
+                        .catch(() => {});
+                    }
                   }
                 } else {
                   cdpChannel.clearChildSessions();
                   await disableAllFetchInterception();
-                  emulationMutated = false;
-                  viewportMutated = false;
-                  permissionsMutated = false;
-                  geolocationMutated = false;
+                  clearAllDirtyFlags();
                 }
-                if (activeSlot) {
+                if (activeSlot && options.virtualAuthenticator) {
                   await ensureVirtualAuthenticatorForSlot(activeSlot, true);
+                } else if (activeSlot) {
+                  activeAuthenticatorId = activeSlot.authenticatorId;
                 }
               } else {
                 cdpChannel.clearChildSessions();
                 await disableAllFetchInterception();
-                emulationMutated = false;
-                viewportMutated = false;
-                permissionsMutated = false;
-                geolocationMutated = false;
+                clearAllDirtyFlags();
                 width = initialWidth;
                 height = initialHeight;
                 currentDeviceScaleFactor = initialDeviceScaleFactor;
@@ -3128,7 +3294,11 @@ export function makeLightweightCdpDriver(
                   ? await pending
                   : await createContextSlot(options.storageState);
                 cdpChannel.setSessionId(activeSlot.sessionId);
-                await ensureVirtualAuthenticatorForSlot(activeSlot, false);
+                if (options.virtualAuthenticator) {
+                  await ensureVirtualAuthenticatorForSlot(activeSlot, false);
+                } else {
+                  activeAuthenticatorId = activeSlot.authenticatorId;
+                }
                 if (previousSlot) {
                   disposeSlotInBackground(previousSlot);
                 }
@@ -3136,9 +3306,14 @@ export function makeLightweightCdpDriver(
             } else if (activeSlot) {
               cdpChannel.clearChildSessions();
               await disableAllFetchInterception();
-              await ensureActiveSlotHealthy();
-              if (activeSlot) {
+              if (slotNeedsHealthCheck || activeSlot.tabs.length === 0) {
+                await ensureActiveSlotHealthy();
+                slotNeedsHealthCheck = false;
+              }
+              if (activeSlot && options.virtualAuthenticator) {
                 await ensureVirtualAuthenticatorForSlot(activeSlot, false);
+              } else if (activeSlot) {
+                activeAuthenticatorId = activeSlot.authenticatorId;
               }
             }
             hasRunFirstFlow = true;
@@ -3830,10 +4005,28 @@ export function makeLightweightCdpDriver(
       takeScreenshot: () =>
         Effect.tryPromise({
           try: async () => {
-            const res = (await cdpChannel.sendCommand("Page.captureScreenshot", {
-              format: "png",
-            })) as { data?: string };
-            return new Uint8Array(Buffer.from(res?.data ?? "", "base64"));
+            let lastErr: unknown;
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                const res = (await cdpChannel.sendCommand("Page.captureScreenshot", {
+                  format: "png",
+                })) as { data?: string };
+                return new Uint8Array(Buffer.from(res?.data ?? "", "base64"));
+              } catch (err) {
+                lastErr = err;
+                const msg = err instanceof Error ? err.message : String(err);
+                if (
+                  attempt < 2 &&
+                  (msg.includes("Not attached to an active page") ||
+                    msg.includes("Unable to capture screenshot"))
+                ) {
+                  await new Promise((r) => setTimeout(r, 60));
+                  continue;
+                }
+                throw err;
+              }
+            }
+            throw lastErr;
           },
           catch: (e) => new DriverError({ message: `CDP screenshot failed: ${e}` }),
         }),
@@ -3841,12 +4034,30 @@ export function makeLightweightCdpDriver(
       takeFullPageScreenshot: () =>
         Effect.tryPromise({
           try: async () => {
-            const res = (await cdpChannel.sendCommand("Page.captureScreenshot", {
-              format: "png",
-              captureBeyondViewport: true,
-              fromSurface: true,
-            })) as { data?: string };
-            return new Uint8Array(Buffer.from(res?.data ?? "", "base64"));
+            let lastErr: unknown;
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                const res = (await cdpChannel.sendCommand("Page.captureScreenshot", {
+                  format: "png",
+                  captureBeyondViewport: true,
+                  fromSurface: true,
+                })) as { data?: string };
+                return new Uint8Array(Buffer.from(res?.data ?? "", "base64"));
+              } catch (err) {
+                lastErr = err;
+                const msg = err instanceof Error ? err.message : String(err);
+                if (
+                  attempt < 2 &&
+                  (msg.includes("Not attached to an active page") ||
+                    msg.includes("Unable to capture screenshot"))
+                ) {
+                  await new Promise((r) => setTimeout(r, 60));
+                  continue;
+                }
+                throw err;
+              }
+            }
+            throw lastErr;
           },
           catch: (e) => new DriverError({ message: `CDP fullPage screenshot failed: ${e}` }),
         }),
@@ -4727,6 +4938,7 @@ export function makeLightweightCdpDriver(
       setNetworkConditions: (conditions: NetworkConditions) =>
         Effect.tryPromise({
           try: async () => {
+            hasNetworkConditionsDirty = true;
             currentNetworkConditions = { ...conditions };
             // Apply to ALL tabs in the active browser context (3.16)
             const sessions = activeSlot
@@ -4985,7 +5197,17 @@ export function makeLightweightCdpDriver(
             currentDeviceScaleFactor = nextDpr;
             currentMobile = nextMobile;
             currentHasTouch = nextHasTouch;
-            viewportMutated = true;
+            hasDeviceMetricsDirty = true;
+            if (
+              nextMobile !== initialMobile ||
+              nextHasTouch !== initialHasTouch ||
+              wasMobileOrTouch !== (initialMobile || initialHasTouch) ||
+              viewport.hasTouch !== undefined ||
+              viewport.mobile !== undefined ||
+              viewport.isMobile !== undefined
+            ) {
+              hasTouchEmulationDirty = true;
+            }
             if (wasMobileOrTouch && !nextMobile && !nextHasTouch) {
               await cdpChannel
                 .sendCommand("Emulation.clearDeviceMetricsOverride", {})
@@ -5044,9 +5266,9 @@ export function makeLightweightCdpDriver(
       setEmulation: (emulationOpts: BrowserEmulationOptions) =>
         Effect.tryPromise({
           try: async () => {
-            emulationMutated = true;
             const features: Array<{ name: string; value: string }> = [];
             if (emulationOpts.colorScheme !== undefined) {
+              hasEmulatedMediaDirty = true;
               features.push({
                 name: "prefers-color-scheme",
                 value:
@@ -5054,6 +5276,7 @@ export function makeLightweightCdpDriver(
               });
             }
             if (emulationOpts.reducedMotion !== undefined) {
+              hasEmulatedMediaDirty = true;
               features.push({
                 name: "prefers-reduced-motion",
                 value:
@@ -5062,17 +5285,33 @@ export function makeLightweightCdpDriver(
                     : emulationOpts.reducedMotion,
               });
             }
+            const emuOps: Array<Promise<unknown>> = [];
             if (features.length > 0) {
-              await cdpChannel.sendCommand("Emulation.setEmulatedMedia", { features });
+              emuOps.push(cdpChannel.sendCommand("Emulation.setEmulatedMedia", { features }));
             }
             if (emulationOpts.userAgent !== undefined) {
+              hasUserAgentDirty = true;
               activeUserAgent = emulationOpts.userAgent;
             }
             if (emulationOpts.locale !== undefined) {
+              hasLocaleDirty = true;
+              hasUserAgentDirty = true;
               activeLocale = emulationOpts.locale;
-              await cdpChannel
-                .sendCommand("Emulation.setLocaleOverride", { locale: emulationOpts.locale })
-                .catch(() => {});
+              emuOps.push(
+                cdpChannel
+                  .sendCommand("Emulation.setLocaleOverride", { locale: emulationOpts.locale })
+                  .catch(() => {}),
+              );
+            }
+            if (emulationOpts.timezoneId !== undefined) {
+              hasTimezoneDirty = true;
+              emuOps.push(
+                cdpChannel
+                  .sendCommand("Emulation.setTimezoneOverride", {
+                    timezoneId: emulationOpts.timezoneId,
+                  })
+                  .catch(() => {}),
+              );
             }
             if (emulationOpts.locale !== undefined || emulationOpts.userAgent !== undefined) {
               const effectiveUa = await resolveEffectiveUserAgent(
@@ -5080,19 +5319,17 @@ export function makeLightweightCdpDriver(
                 emulationOpts.userAgent,
               );
               const acceptLanguage = buildAcceptLanguage(activeLocale);
-              await cdpChannel
-                .sendCommand("Emulation.setUserAgentOverride", {
-                  userAgent: effectiveUa,
-                  ...(acceptLanguage ? { acceptLanguage } : {}),
-                })
-                .catch(() => {});
+              emuOps.push(
+                cdpChannel
+                  .sendCommand("Emulation.setUserAgentOverride", {
+                    userAgent: effectiveUa,
+                    ...(acceptLanguage ? { acceptLanguage } : {}),
+                  })
+                  .catch(() => {}),
+              );
             }
-            if (emulationOpts.timezoneId !== undefined) {
-              await cdpChannel
-                .sendCommand("Emulation.setTimezoneOverride", {
-                  timezoneId: emulationOpts.timezoneId,
-                })
-                .catch(() => {});
+            if (emuOps.length > 0) {
+              await Promise.all(emuOps);
             }
           },
           catch: (e) => new DriverError({ message: `CDP setEmulation failed: ${e}` }),

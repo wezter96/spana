@@ -208,6 +208,24 @@ function registerCliMocks(): void {
   mock.module("../runtime/local.js", () => ({
     resolveWebEngine: () => "cdp",
     speculativelyPrelaunchWebBrowser: () => undefined,
+    getWebDriverReuseKey: () => "mock-key",
+    createSharedWebWavePool: () => ({
+      acquireRuntime: async () => ({
+        runtime: {
+          driver: {},
+          cleanup: async () => {},
+          metadata: { platform: "web", mode: "local" },
+        },
+        engineConfig: {
+          appId: "http://localhost:3000",
+          platform: "web",
+          coordinatorConfig: { parse: () => null, defaults: {} },
+          autoLaunch: true,
+          flowTimeout: 60_000,
+        },
+      }),
+      closeAll: async () => {},
+    }),
     buildWebRuntime: async () => ({
       runtime: {
         driver: {},
