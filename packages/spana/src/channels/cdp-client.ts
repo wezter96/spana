@@ -1001,7 +1001,17 @@ export class CdpDomChannel implements DomChannel {
   private async applyChildOffset(
     matches: DomElementMatch[],
     child: CdpChildSessionInfo,
+    waitCompositor = false,
   ): Promise<DomElementMatch[]> {
+    if (waitCompositor && matches.length > 0) {
+      // Wait 2 animation frames inside the OOPIF so its renderer commits its
+      // compositor surface & Viz hit-test region before dispatching mouse events.
+      await this.evaluateOnSessionWithTimeout(
+        child.sessionId,
+        "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
+        1000,
+      ).catch(() => {});
+    }
     const offset = this.frameOffsetResolver
       ? await this.frameOffsetResolver(child).catch(() => ({ x: 0, y: 0, scaleX: 1, scaleY: 1 }))
       : { x: 0, y: 0, scaleX: 1, scaleY: 1 };
@@ -1678,7 +1688,9 @@ export class CdpDomChannel implements DomChannel {
           childFallback,
           rpcTimeout,
         ).catch(() => []);
-        return Array.isArray(res) && res.length > 0 ? this.applyChildOffset(res, child) : [];
+        return Array.isArray(res) && res.length > 0
+          ? this.applyChildOffset(res, child, Boolean(opts?.forAction))
+          : [];
       }),
       ...inProcessFrames.map(async (frame) => {
         const res = await this.invokeInProcessFrame<DomElementMatch[]>(
@@ -1729,7 +1741,9 @@ export class CdpDomChannel implements DomChannel {
                 )
                   .then(async (res) => {
                     if (Array.isArray(res) && res.length > 0) {
-                      finishPoller(await this.applyChildOffset(res, child));
+                      finishPoller(
+                        await this.applyChildOffset(res, child, Boolean(opts?.forAction)),
+                      );
                     }
                   })
                   .catch(() => {});
