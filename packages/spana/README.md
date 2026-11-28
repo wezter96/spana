@@ -294,6 +294,9 @@ export default defineConfig({
       browser: "chromium",
       engine: "playwright", // or "cdp" / "lightpanda" with cdpUrl
       headless: true,
+      waitUntil: "domcontentloaded", // default: "domcontentloaded" on CDP, "load" on Playwright
+      navigationTimeout: 30_000, // timeout for openLink/launchApp/reload/back/forward (default: defaults.waitTimeout or 30000ms)
+      readyExpression: "Boolean(window.__APP_HYDRATED__)", // optional SSR hydration readiness signal (sets window.__SPANA_APP_READY__)
       warmBrowser: true, // reuse warm headless Chromium across runs
       instantAnimations: true, // collapse CSS transitions to 0.001ms
       blockResources: ["image", "font", "media"], // optional asset blocking
@@ -324,6 +327,7 @@ export default defineConfig({
     initialPollInterval: 50,
     hierarchyCacheTtl: 100,
     retryDelay: 0,
+    // failFastWhenIdle: false, // aborts element waits early once document.readyState === "complete", animations finish, and no fetch/XHR requests are in flight for idleQuietMs (skip on pages driven by delayed timers or SSE push without a preceding fetch)
   },
   launchOptions: {
     clearState: false,

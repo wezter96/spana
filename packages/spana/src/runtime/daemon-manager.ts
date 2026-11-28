@@ -385,6 +385,7 @@ export function reapIdleWarmDaemons(
 
 const SPANA_BROWSER_PROFILE_MARKERS = [
   "spana-cdp-profile-",
+  "spana-cdp-",
   "spana-pw-profile-",
   "spana-browser-profile-",
 ];

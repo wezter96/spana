@@ -12,6 +12,8 @@ import {
   applyShard,
   type ShardOptions,
 } from "../core/runner.js";
+import { createPromiseApp } from "../api/app.js";
+import { createPromiseExpect } from "../api/expect.js";
 import { executeFlow, type EngineConfig, type TestResult } from "../core/engine.js";
 import { orchestrate, type PlatformConfig } from "../core/orchestrator.js";
 import type { ProvConfig } from "../schemas/config.js";
@@ -2081,12 +2083,79 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
         const shardOutDirs: string[] = [];
         let workerIndexOffsetCursor = 0;
 
-        // Run global config.hooks.beforeAll once in parent process (3.11)
-        if (config.hooks?.beforeAll) {
-          await config.hooks.beforeAll({ app: undefined, platform: platforms[0] } as any);
-        }
+        // Build a real parent hook runtime when beforeAll/afterAll is configured in --processes mode (3.11)
+        const hookPlatform = platforms[0] ?? "web";
+        let parentHookRuntime: RuntimeResult | undefined;
+        const createParentHookContext = async () => {
+          if (!parentHookRuntime) {
+            if (hookPlatform === "web") {
+              parentHookRuntime = await buildWebRuntime(config);
+            } else if (hookPlatform === "electron") {
+              parentHookRuntime = await buildElectronRuntime(config, resolveFromConfig);
+            } else if (hookPlatform === "electrobun") {
+              parentHookRuntime = await buildElectrobunRuntime(config, resolveFromConfig);
+            } else if (hookPlatform === "android") {
+              parentHookRuntime =
+                (await buildLocalAndroidRuntime(config, null, resolveFromConfig)) ?? undefined;
+            } else if (hookPlatform === "ios") {
+              parentHookRuntime =
+                (await buildLocalIOSRuntime(config, null, resolveFromConfig)) ?? undefined;
+            }
+          }
+          if (!parentHookRuntime) {
+            return {
+              app: undefined,
+              expect: undefined,
+              platform: hookPlatform,
+              workerIndex: 0,
+              parallelIndex: 0,
+            };
+          }
+          const { runtime: hookRt, engineConfig: hookEngineCfg } = parentHookRuntime;
+          const hookApp = createPromiseApp(
+            hookRt.driver,
+            hookEngineCfg.appId,
+            hookEngineCfg.coordinatorConfig,
+            undefined,
+            {
+              platform: hookPlatform,
+              storybook: hookEngineCfg.storybook,
+              launchOptions: hookEngineCfg.launchOptions,
+              visualRegression: hookEngineCfg.visualRegression,
+            },
+          );
+          const hookExpect = createPromiseExpect(
+            hookRt.driver,
+            hookEngineCfg.coordinatorConfig,
+            undefined,
+            {
+              flowFilePath: "",
+              flowName: "beforeAll/afterAll",
+              platform: hookPlatform,
+              updateBaselines: opts.updateBaselines ?? false,
+            },
+            hookEngineCfg.visualRegression,
+          );
+          return {
+            app: hookApp,
+            expect: hookExpect,
+            platform: hookPlatform,
+            workerIndex: 0,
+            parallelIndex: 0,
+          };
+        };
 
         try {
+          // Run global config.hooks.beforeAll once in parent process (3.11)
+          if (config.hooks?.beforeAll) {
+            const hookCtx = await createParentHookContext();
+            await config.hooks.beforeAll(hookCtx as any);
+            // If no afterAll hook exists, release the hook runtime before spawning child workers
+            if (!config.hooks.afterAll && parentHookRuntime) {
+              await parentHookRuntime.runtime.cleanup().catch(() => {});
+              parentHookRuntime = undefined;
+            }
+          }
           const poolResult = await runMultiProcessPool({
             totalWorkers: requestedWorkers,
             maxWorkersPerProcess,
@@ -2215,9 +2284,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
 
           if (config.hooks?.afterAll) {
             try {
+              const afterHookCtx = await createParentHookContext();
               await config.hooks.afterAll({
-                app: undefined,
-                platform: platforms[0],
+                ...afterHookCtx,
                 summary: { results: redactedResults },
               } as any);
             } catch (hookError) {
@@ -2254,6 +2323,9 @@ async function runTestCommandOnce(opts: TestCommandOptions): Promise<RunTestComm
             ),
           };
         } finally {
+          if (parentHookRuntime) {
+            await parentHookRuntime.runtime.cleanup().catch(() => {});
+          }
           await queueServer.close();
         }
       }

@@ -33,7 +33,7 @@ import type {
   Route,
 } from "playwright-core";
 import { DriverError } from "../errors.js";
-import { buildDirectChromiumLaunchArgs } from "./cdp-browser.js";
+import { buildDirectChromiumLaunchArgs, mapPermissionToCdpDescriptor } from "./cdp-browser.js";
 import { hasLaunchDeviceState } from "./launch-options.js";
 import { deviceEffect } from "./device-controls.js";
 import { resolveNetworkConditions } from "./network-profiles.js";
@@ -119,6 +119,8 @@ export interface PlaywrightConfig {
   reducedMotion?: "reduce" | "no-preference";
   /** Navigation wait condition for launchApp / openLink (e.g. "domcontentloaded" for prefetch-heavy SSR apps). */
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+  /** Navigation timeout in ms for `launchApp`, `openLink`, `reload`, `back`, `forward`. */
+  navigationTimeout?: number;
   /** Record per-request HAR metadata over CDP/IPC. Disable when `artifacts.har` is off for faster page loads. Default: true. */
   recordHar?: boolean;
   /** Flashwright-inspired: speed up CSS transitions & animations to 0.001ms so actions never stall on transitions. */
@@ -1839,10 +1841,13 @@ export function makePlaywrightDriver(
                   "Use browser-specific emulation when execution.web adds that support.",
               );
             }
-            await page.goto(
-              targetUrl,
-              config.waitUntil ? { waitUntil: config.waitUntil } : undefined,
-            );
+            const navOpts: {
+              waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+              timeout?: number;
+            } = {};
+            if (config.waitUntil) navOpts.waitUntil = config.waitUntil;
+            if (config.navigationTimeout !== undefined) navOpts.timeout = config.navigationTimeout;
+            await page.goto(targetUrl, Object.keys(navOpts).length > 0 ? navOpts : undefined);
             updateHarPage(page);
             schedulePrefetchNextContext();
             debugLog("launchApp", targetUrl);
@@ -1925,9 +1930,15 @@ export function makePlaywrightDriver(
                 }
               }
             }
+            const navOpts: {
+              waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+              timeout?: number;
+            } = {};
+            if (config.waitUntil) navOpts.waitUntil = config.waitUntil;
+            if (config.navigationTimeout !== undefined) navOpts.timeout = config.navigationTimeout;
             const navRes = await page.goto(
               targetUrl,
-              config.waitUntil ? { waitUntil: config.waitUntil } : undefined,
+              Object.keys(navOpts).length > 0 ? navOpts : undefined,
             );
             lastNavigationStatus = navRes ? navRes.status() : null;
             updateHarPage(page);
@@ -1940,7 +1951,11 @@ export function makePlaywrightDriver(
       back: () =>
         Effect.tryPromise({
           try: async () => {
-            const navRes = await page.goBack();
+            const navRes = await page.goBack(
+              config.navigationTimeout !== undefined
+                ? { timeout: config.navigationTimeout }
+                : undefined,
+            );
             if (navRes) lastNavigationStatus = navRes.status();
             updateHarPage(page);
             debugLog("back", currentPageUrl(page));
@@ -1951,7 +1966,11 @@ export function makePlaywrightDriver(
       forward: () =>
         Effect.tryPromise({
           try: async () => {
-            const navRes = await page.goForward();
+            const navRes = await page.goForward(
+              config.navigationTimeout !== undefined
+                ? { timeout: config.navigationTimeout }
+                : undefined,
+            );
             if (navRes) lastNavigationStatus = navRes.status();
             updateHarPage(page);
             debugLog("forward", currentPageUrl(page));
@@ -1963,7 +1982,17 @@ export function makePlaywrightDriver(
         Effect.tryPromise({
           try: async () => {
             const waitUntil = reloadOpts?.waitUntil ?? config.waitUntil;
-            const navRes = await page.reload(waitUntil ? { waitUntil } : undefined);
+            const reloadArg: {
+              waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
+              timeout?: number;
+            } = {};
+            if (waitUntil) reloadArg.waitUntil = waitUntil;
+            if (config.navigationTimeout !== undefined) {
+              reloadArg.timeout = config.navigationTimeout;
+            }
+            const navRes = await page.reload(
+              Object.keys(reloadArg).length > 0 ? reloadArg : undefined,
+            );
             if (navRes) lastNavigationStatus = navRes.status();
             updateHarPage(page);
             debugLog("reload", currentPageUrl(page));
@@ -2085,9 +2114,9 @@ export function makePlaywrightDriver(
           } = await session.send("Target.getTargetInfo");
           if (!browserContextId)
             throw new Error("Could not resolve Chromium's browser context for permission denial");
-          const name = permission === "midi-sysex" ? "midi" : permission;
+          const descriptor = mapPermissionToCdpDescriptor(permission);
           await session.send("Browser.setPermission", {
-            permission: { name, ...(permission === "midi-sysex" ? { sysex: true } : {}) },
+            permission: descriptor,
             setting: "denied",
             ...(options?.origin ? { origin: options.origin } : {}),
             browserContextId,

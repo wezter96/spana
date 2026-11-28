@@ -212,13 +212,28 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
               visible?: boolean;
               enabled?: boolean;
               obstructedBy?: string;
+              hiddenReason?: string;
+              pointerEventsNone?: boolean;
+              lastActionFailure?: string;
               matchCount?: number;
               visibleCount?: number;
               detachedAfterScroll?: boolean;
             }>(buildDomActionabilityDiagScript(selector as Selector)),
-          catch: () => null,
+          catch: (diagErr) => {
+            if (!lastReactiveErrorMsg) {
+              lastReactiveErrorMsg = `DOM actionability diagnostic failed: ${diagErr instanceof Error ? diagErr.message : String(diagErr)}`;
+            }
+            return null;
+          },
         }).pipe(Effect.catch(() => Effect.succeed(null)));
 
+        if (forAction && actionDiag?.found && actionDiag.pointerEventsNone) {
+          return yield* new ElementNotFoundError({
+            message: `Element has pointer-events: none (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
+            selector,
+            timeoutMs: timeout,
+          });
+        }
         if (forAction && actionDiag?.found && actionDiag.obstructedBy) {
           return yield* new ElementNotFoundError({
             message: `Element is covered by ${actionDiag.obstructedBy} (not actionable within ${timeout}ms) — selector: ${formatSelector(selector)}`,
@@ -236,14 +251,20 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
         const extraHints: string[] = [];
         if (actionDiag?.found && !actionDiag.visible && (actionDiag.matchCount ?? 0) > 0) {
           extraHints.push(
-            `Matched ${actionDiag.matchCount} element(s) (${actionDiag.visibleCount ?? 0} visible); picked match is hidden`,
+            `Matched ${actionDiag.matchCount} element(s) (${actionDiag.visibleCount ?? 0} visible); picked match is hidden${actionDiag.hiddenReason ? ` (${actionDiag.hiddenReason})` : ""}`,
           );
+        }
+        if (forAction && actionDiag?.found && actionDiag.pointerEventsNone) {
+          extraHints.push("Actionability check failed: element has pointer-events: none");
+        }
+        if (forAction && actionDiag?.lastActionFailure) {
+          extraHints.push(`Actionability check failed: ${actionDiag.lastActionFailure}`);
         }
         if (actionDiag?.detachedAfterScroll) {
           extraHints.push("Element detached from the DOM after scrolling");
         }
-        if (lastReactiveErrorMsg && !sawEmptyArray) {
-          extraHints.push(`Last error: ${lastReactiveErrorMsg}`);
+        if (lastReactiveErrorMsg) {
+          extraHints.push(`Last DOM channel error: ${lastReactiveErrorMsg}`);
         }
         if (cache) cache.invalidate();
         const diagRoot = yield* getHierarchy(driver, parse, cache).pipe(
@@ -262,6 +283,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
       }
     }
 
+    const channelDiag: { lastDomError?: string } = {};
     while (isFirstPoll || Date.now() - start < timeout) {
       if (!isFirstPoll && cache) cache.invalidate();
       isFirstPoll = false;
@@ -270,6 +292,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
         forAction,
         tapMode: opts?.tapMode,
         platform: opts?.platform,
+        diagnostics: channelDiag,
       });
 
       if (resolved) {
@@ -280,6 +303,7 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
             forAction,
             tapMode: opts?.tapMode,
             platform: opts?.platform,
+            diagnostics: channelDiag,
           });
           if (settled) return settled;
         } else {
@@ -305,7 +329,10 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
                   : {}),
                 ...(opts?.armTapGuard && !opts?.force ? { armTapGuard: true } : {}),
               }),
-            catch: () => null,
+            catch: (err) => {
+              channelDiag.lastDomError = `DOM waitForSelector failed: ${err instanceof Error ? err.message : String(err)}`;
+              return null;
+            },
           }).pipe(Effect.catch(() => Effect.succeed(null)));
 
           if (Array.isArray(reactiveResult) && reactiveResult.length > 0) {
@@ -345,9 +372,12 @@ function waitForResolvedAcrossChannels<T extends string = string, R extends stri
     const diagRoot = yield* getHierarchy(driver, parse, cache);
     const diagnostic = diagnoseElementNotFound(diagRoot, selector);
     const diagMessage = formatDiagnostic(diagnostic);
+    const domErrSuffix = channelDiag.lastDomError
+      ? `\nLast DOM channel error: ${channelDiag.lastDomError}`
+      : "";
 
     return yield* new ElementNotFoundError({
-      message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}\n${diagMessage}`,
+      message: `Element not found within ${timeout}ms — selector: ${formatSelector(selector)}${domErrSuffix}\n${diagMessage}`,
       selector,
       timeoutMs: timeout,
     });

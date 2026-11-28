@@ -192,7 +192,7 @@ export interface WebExecutionConfig {
   /** Browser release channel (e.g. "chrome", "chrome-beta", "msedge"). */
   channel?: string;
   headless?: boolean;
-  /** Navigation readiness event for launchApp/openLink (default: "load"). */
+  /** Navigation readiness event for launchApp/openLink (default: "domcontentloaded" on CDP, "load" on Playwright). */
   waitUntil?: "domcontentloaded" | "load" | "networkidle" | "commit";
   /** Collapse CSS transitions & animations to 0.001ms for faster deterministic runs. */
   instantAnimations?: boolean;
@@ -276,6 +276,8 @@ export interface WebExecutionConfig {
   launchTimeout?: number;
   /** Timeout in ms for `app.evaluate()` / CDP `Runtime.evaluate` calls (default: 10000). */
   evaluateTimeout?: number;
+  /** Timeout in ms for page navigations (`openLink`, `launchApp`, `reload`, `back`, `forward`). Defaults to `defaults.waitTimeout` or 30000ms. */
+  navigationTimeout?: number;
 }
 
 export interface CloudAppReferenceConfig {
@@ -730,6 +732,7 @@ const webExecutionConfigSchema = z
     readyExpression: z.string().min(1).optional(),
     launchTimeout: z.number().positive().optional(),
     evaluateTimeout: z.number().positive().optional(),
+    navigationTimeout: z.number().positive().optional(),
   })
   .strict();
 

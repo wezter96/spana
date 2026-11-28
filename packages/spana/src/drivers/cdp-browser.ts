@@ -536,6 +536,91 @@ export async function launchDirectCdpBrowser(
   };
 }
 
+/**
+ * Map Playwright / W3C permission names (e.g. `"camera"`, `"microphone"`, `"clipboard-read"`)
+ * to Chromium CDP `Browser.grantPermissions` `PermissionType` enum values (3.29).
+ */
+export function mapPermissionToCdpGrantName(permission: string): string {
+  switch (permission) {
+    case "camera":
+      return "videoCapture";
+    case "microphone":
+      return "audioCapture";
+    case "clipboard-read":
+      return "clipboardReadWrite";
+    case "clipboard-write":
+      return "clipboardSanitizedWrite";
+    case "midi-sysex":
+      return "midiSysex";
+    case "background-sync":
+      return "backgroundSync";
+    case "ambient-light-sensor":
+    case "accelerometer":
+    case "gyroscope":
+    case "magnetometer":
+      return "sensors";
+    case "accessibility-events":
+      return "accessibilityEvents";
+    case "payment-handler":
+      return "paymentHandler";
+    case "storage-access":
+      return "storageAccess";
+    case "top-level-storage-access":
+      return "topLevelStorageAccess";
+    case "local-fonts":
+      return "localFonts";
+    case "screen-wake-lock":
+      return "wakeLockScreen";
+    case "idle-detection":
+      return "idleDetection";
+    case "window-management":
+      return "windowManagement";
+    default:
+      return permission;
+  }
+}
+
+/**
+ * Map Playwright / CDP permission names to Chromium CDP `Browser.setPermission`
+ * `PermissionDescriptor` objects (which use W3C kebab-case names).
+ */
+export function mapPermissionToCdpDescriptor(permission: string): {
+  name: string;
+  sysex?: boolean;
+} {
+  switch (permission) {
+    case "videoCapture":
+      return { name: "camera" };
+    case "audioCapture":
+      return { name: "microphone" };
+    case "clipboardReadWrite":
+      return { name: "clipboard-read" };
+    case "clipboardSanitizedWrite":
+      return { name: "clipboard-write" };
+    case "midi-sysex":
+    case "midiSysex":
+      return { name: "midi", sysex: true };
+    case "backgroundSync":
+      return { name: "background-sync" };
+    case "accessibilityEvents":
+      return { name: "accessibility-events" };
+    case "paymentHandler":
+      return { name: "payment-handler" };
+    case "storageAccess":
+      return { name: "storage-access" };
+    case "localFonts":
+      return { name: "local-fonts" };
+    case "wakeLockScreen":
+      return { name: "screen-wake-lock" };
+    case "idleDetection":
+      return { name: "idle-detection" };
+    case "windowManagement":
+      return { name: "window-management" };
+    default:
+      return { name: permission };
+  }
+}
+
 export interface LightweightCdpDriverOptions {
   /**
    * HTTP CDP endpoint (e.g. `"http://127.0.0.1:9222"` for Lightpanda or Chrome `--remote-debugging-port`)
@@ -567,6 +652,8 @@ export interface LightweightCdpDriverOptions {
   httpCredentials?: HttpCredentials;
   /** Evaluation timeout in ms (default: 10_000). */
   evaluateTimeout?: number;
+  /** Navigation timeout in ms for `openLink`, `launchApp`, `reload`, `back`, `forward` (default: 30_000). */
+  navigationTimeout?: number;
   /**
    * Use isolated CDP browser contexts (`Target.createBrowserContext` + flattened CDP sessions)
    * on a browser-level WebSocket — zero Playwright Node client↔server pipe!
@@ -1058,6 +1145,8 @@ export function makeLightweightCdpDriver(
     let activeResponseWatchers = 0;
     let nextTabSeq = 1;
     let downloadDir: string | undefined;
+    const downloadConfiguredContexts = new Set<string>();
+    const navigationTimeoutMs = options.navigationTimeout ?? 30_000;
     const popupWaiters: Array<{
       resolve: (tabId: string) => void;
       reject: (err: Error) => void;
@@ -1537,6 +1626,7 @@ export function makeLightweightCdpDriver(
     };
 
     const disposeSlotInBackground = (slot: CdpContextSlot) => {
+      downloadConfiguredContexts.delete(slot.browserContextId);
       const p = new Promise<void>((r) => setTimeout(r, 120))
         .then(() =>
           cdpChannel.sendCommand(
@@ -2557,12 +2647,38 @@ export function makeLightweightCdpDriver(
       return rawUrl;
     };
 
+    const ensureDownloadBehaviorForActiveContext = async (): Promise<void> => {
+      if (!downloadDir) {
+        const dlBaseDir = process.platform === "linux" && tmpdir().length > 40 ? "/tmp" : tmpdir();
+        downloadDir = mkdtempSync(join(dlBaseDir, "spana-cdp-dl-"));
+      }
+      const ctxId = activeSlot?.browserContextId;
+      const ctxKey = ctxId ?? "__default__";
+      if (downloadConfiguredContexts.has(ctxKey)) return;
+      await cdpChannel.sendCommand(
+        "Browser.setDownloadBehavior",
+        {
+          behavior: "allowAndName",
+          downloadPath: downloadDir,
+          eventsEnabled: true,
+          ...(ctxId ? { browserContextId: ctxId } : {}),
+        },
+        null,
+      );
+      downloadConfiguredContexts.add(ctxKey);
+    };
+
     const navigate = async (rawUrl: string) => {
       const target = await resolveUrlAsync(rawUrl);
       lastNavigationStatus = null;
       if (!useContexts) {
         await cdpChannel.sendCommand("Page.enable").catch(() => {});
-        const navRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+        const navRes = (await cdpChannel.sendCommand(
+          "Page.navigate",
+          { url: target },
+          undefined,
+          navigationTimeoutMs,
+        )) as {
           frameId?: string;
         } | null;
         if (navRes?.frameId) mainFrameId = navRes.frameId;
@@ -2574,14 +2690,24 @@ export function makeLightweightCdpDriver(
       if (target === "about:blank") {
         if (isAtBlank) return;
         await cdpChannel
-          .sendCommand("Page.navigate", { url: target }, undefined, 4_000)
+          .sendCommand(
+            "Page.navigate",
+            { url: target },
+            undefined,
+            Math.min(4_000, navigationTimeoutMs),
+          )
           .catch(() => {});
         isAtBlank = true;
         return;
       }
       isAtBlank = false;
       if (waitUntil === "commit") {
-        const commitRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+        const commitRes = (await cdpChannel.sendCommand(
+          "Page.navigate",
+          { url: target },
+          undefined,
+          navigationTimeoutMs,
+        )) as {
           frameId?: string;
           errorText?: string;
         } | null;
@@ -2612,14 +2738,20 @@ export function makeLightweightCdpDriver(
           targetFrameCommitted = true;
         }
       });
+      const navStart = Date.now();
       const waiter = cdpChannel.waitForEventCancellable(
         eventName,
-        15_000,
+        navigationTimeoutMs,
         (_p, sid) => (!targetSid || !sid || sid === targetSid) && targetFrameCommitted,
       );
       waiter.promise.catch(() => {});
       try {
-        const navRes = (await cdpChannel.sendCommand("Page.navigate", { url: target })) as {
+        const navRes = (await cdpChannel.sendCommand(
+          "Page.navigate",
+          { url: target },
+          undefined,
+          navigationTimeoutMs,
+        )) as {
           frameId?: string;
           loaderId?: string;
           errorText?: string;
@@ -2633,7 +2765,15 @@ export function makeLightweightCdpDriver(
           if (seenLoaderIds.has(navRes.loaderId)) {
             targetFrameCommitted = true;
           }
-          await waiter.promise.catch(() => {});
+          try {
+            await waiter.promise;
+          } catch (waitErr) {
+            const elapsed = Date.now() - navStart;
+            throw new Error(
+              `Navigation to "${target}" timed out waiting for ${waitUntil} after ${elapsed}ms (navigationTimeout: ${navigationTimeoutMs}ms): ${waitErr instanceof Error ? waitErr.message : String(waitErr)}`,
+              { cause: waitErr },
+            );
+          }
         }
       } finally {
         unsubNavCommit();
@@ -3845,19 +3985,30 @@ export function makeLightweightCdpDriver(
           try: async () => {
             const waitUntil = reloadOpts?.waitUntil ?? options.waitUntil ?? "domcontentloaded";
             const targetSid = activeSlot?.sessionId;
+            if (waitUntil === "commit") {
+              await cdpChannel.sendCommand("Page.reload", {}, undefined, navigationTimeoutMs);
+              return;
+            }
             const eventName =
               waitUntil === "domcontentloaded"
                 ? "Page.domContentEventFired"
                 : "Page.loadEventFired";
             const waiter = cdpChannel.waitForEventCancellable(
               eventName,
-              15_000,
+              navigationTimeoutMs,
               (_p, sid) => !targetSid || !sid || sid === targetSid,
             );
             waiter.promise.catch(() => {});
             try {
-              await cdpChannel.sendCommand("Page.reload", {});
-              await waiter.promise.catch(() => {});
+              await cdpChannel.sendCommand("Page.reload", {}, undefined, navigationTimeoutMs);
+              try {
+                await waiter.promise;
+              } catch (waitErr) {
+                throw new Error(
+                  `Page reload timed out waiting for ${waitUntil} after ${navigationTimeoutMs}ms: ${waitErr instanceof Error ? waitErr.message : String(waitErr)}`,
+                  { cause: waitErr },
+                );
+              }
             } finally {
               waiter.cancel();
             }
@@ -3882,7 +4033,7 @@ export function makeLightweightCdpDriver(
       waitForLoadState: (state = "load", waitOpts) =>
         Effect.tryPromise({
           try: async () => {
-            const timeoutMs = waitOpts?.timeout ?? 15_000;
+            const timeoutMs = waitOpts?.timeout ?? navigationTimeoutMs;
             const targetSid = activeSlot?.sessionId;
             if (state === "domcontentloaded") {
               const ready = await cdpChannel
@@ -4079,34 +4230,25 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async () => {
             permissionsMutated = true;
-            const cdpName =
-              permission === "clipboard-read"
-                ? "clipboardReadWrite"
-                : permission === "clipboard-write"
-                  ? "clipboardSanitizedWrite"
-                  : permission === "midi-sysex"
-                    ? "midi"
-                    : permission;
             const origin = permOpts?.origin;
             const ctxId = activeSlot?.browserContextId;
             if (state === "grant") {
+              const grantName = mapPermissionToCdpGrantName(permission);
               await cdpChannel.sendCommand(
                 "Browser.grantPermissions",
                 {
-                  permissions: [cdpName],
+                  permissions: [grantName],
                   ...(origin ? { origin } : {}),
                   ...(ctxId ? { browserContextId: ctxId } : {}),
                 },
                 null,
               );
             } else {
+              const descriptor = mapPermissionToCdpDescriptor(permission);
               await cdpChannel.sendCommand(
                 "Browser.setPermission",
                 {
-                  permission: {
-                    name: cdpName,
-                    ...(permission === "midi-sysex" ? { sysex: true } : {}),
-                  },
+                  permission: descriptor,
                   setting: "denied",
                   ...(origin ? { origin } : {}),
                   ...(ctxId ? { browserContextId: ctxId } : {}),
@@ -4175,6 +4317,7 @@ export function makeLightweightCdpDriver(
               }
               downloadDir = undefined;
             }
+            downloadConfiguredContexts.clear();
             for (const dir of uploadTempDirs.splice(0)) {
               try {
                 rmSync(dir, { recursive: true, force: true });
@@ -4226,26 +4369,46 @@ export function makeLightweightCdpDriver(
                   : "Page.domContentEventFired";
               const w1 = cdpChannel.waitForEventCancellable(
                 eventName,
-                10_000,
+                navigationTimeoutMs,
                 (_p, sid) => !targetSid || !sid || sid === targetSid,
               );
               const w2 = cdpChannel.waitForEventCancellable(
                 "Page.navigatedWithinDocument",
-                10_000,
+                navigationTimeoutMs,
                 (_p, sid) => !targetSid || !sid || sid === targetSid,
+              );
+              const w3 = cdpChannel.waitForEventCancellable(
+                "Page.frameNavigated",
+                navigationTimeoutMs,
+                (p, sid) =>
+                  (!targetSid || !sid || sid === targetSid) &&
+                  !p?.frame?.parentId &&
+                  p?.type === "BackForwardCacheRestore",
               );
               w1.promise.catch(() => {});
               w2.promise.catch(() => {});
-              const waiter = Promise.race([w1.promise, w2.promise]);
+              w3.promise.catch(() => {});
+              const waiter = Promise.race([w1.promise, w2.promise, w3.promise]);
               waiter.catch(() => {});
               try {
-                await cdpChannel.sendCommand("Page.navigateToHistoryEntry", {
-                  entryId: targetEntry.id,
-                });
-                await waiter.catch(() => {});
+                await cdpChannel.sendCommand(
+                  "Page.navigateToHistoryEntry",
+                  { entryId: targetEntry.id },
+                  undefined,
+                  navigationTimeoutMs,
+                );
+                try {
+                  await waiter;
+                } catch (waitErr) {
+                  throw new Error(
+                    `History back navigation timed out after ${navigationTimeoutMs}ms: ${waitErr instanceof Error ? waitErr.message : String(waitErr)}`,
+                    { cause: waitErr },
+                  );
+                }
               } finally {
                 w1.cancel();
                 w2.cancel();
+                w3.cancel();
               }
               // Short non-fatal DOM-idle settle wait so back() layout/hydration settles (1.16)
               await cdpChannel
@@ -4286,26 +4449,46 @@ export function makeLightweightCdpDriver(
                   : "Page.domContentEventFired";
               const w1 = cdpChannel.waitForEventCancellable(
                 eventName,
-                10_000,
+                navigationTimeoutMs,
                 (_p, sid) => !targetSid || !sid || sid === targetSid,
               );
               const w2 = cdpChannel.waitForEventCancellable(
                 "Page.navigatedWithinDocument",
-                10_000,
+                navigationTimeoutMs,
                 (_p, sid) => !targetSid || !sid || sid === targetSid,
+              );
+              const w3 = cdpChannel.waitForEventCancellable(
+                "Page.frameNavigated",
+                navigationTimeoutMs,
+                (p, sid) =>
+                  (!targetSid || !sid || sid === targetSid) &&
+                  !p?.frame?.parentId &&
+                  p?.type === "BackForwardCacheRestore",
               );
               w1.promise.catch(() => {});
               w2.promise.catch(() => {});
-              const waiter = Promise.race([w1.promise, w2.promise]);
+              w3.promise.catch(() => {});
+              const waiter = Promise.race([w1.promise, w2.promise, w3.promise]);
               waiter.catch(() => {});
               try {
-                await cdpChannel.sendCommand("Page.navigateToHistoryEntry", {
-                  entryId: targetEntry.id,
-                });
-                await waiter.catch(() => {});
+                await cdpChannel.sendCommand(
+                  "Page.navigateToHistoryEntry",
+                  { entryId: targetEntry.id },
+                  undefined,
+                  navigationTimeoutMs,
+                );
+                try {
+                  await waiter;
+                } catch (waitErr) {
+                  throw new Error(
+                    `History forward navigation timed out after ${navigationTimeoutMs}ms: ${waitErr instanceof Error ? waitErr.message : String(waitErr)}`,
+                    { cause: waitErr },
+                  );
+                }
               } finally {
                 w1.cancel();
                 w2.cancel();
+                w3.cancel();
               }
               // Short non-fatal DOM-idle settle wait so forward() layout/hydration settles (1.16)
               await cdpChannel
@@ -5046,23 +5229,7 @@ export function makeLightweightCdpDriver(
       downloadFile: (destPath: string) =>
         Effect.tryPromise({
           try: async () => {
-            if (!downloadDir) {
-              const dlBaseDir =
-                process.platform === "linux" && tmpdir().length > 40 ? "/tmp" : tmpdir();
-              downloadDir = mkdtempSync(join(dlBaseDir, "spana-cdp-dl-"));
-              await cdpChannel.sendCommand(
-                "Browser.setDownloadBehavior",
-                {
-                  behavior: "allowAndName",
-                  downloadPath: downloadDir,
-                  eventsEnabled: true,
-                  ...(activeSlot?.browserContextId
-                    ? { browserContextId: activeSlot.browserContextId }
-                    : {}),
-                },
-                null,
-              );
-            }
+            await ensureDownloadBehaviorForActiveContext();
             const downloaded =
               completedDownloads.shift() ??
               (await new Promise<CompletedCdpDownload>((resolve, reject) => {
@@ -5408,23 +5575,7 @@ export function makeLightweightCdpDriver(
         Effect.tryPromise({
           try: async (): Promise<BrowserDownloadInfo> => {
             const timeoutMs = dlOpts?.timeout ?? 15_000;
-            if (!downloadDir) {
-              const dlBaseDir =
-                process.platform === "linux" && tmpdir().length > 40 ? "/tmp" : tmpdir();
-              downloadDir = mkdtempSync(join(dlBaseDir, "spana-cdp-dl-"));
-              await cdpChannel.sendCommand(
-                "Browser.setDownloadBehavior",
-                {
-                  behavior: "allowAndName",
-                  downloadPath: downloadDir,
-                  eventsEnabled: true,
-                  ...(activeSlot?.browserContextId
-                    ? { browserContextId: activeSlot.browserContextId }
-                    : {}),
-                },
-                null,
-              );
-            }
+            await ensureDownloadBehaviorForActiveContext();
             let timer: ReturnType<typeof setTimeout> | undefined;
             let waiterEntry:
               | {

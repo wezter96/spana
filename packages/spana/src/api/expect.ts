@@ -105,6 +105,8 @@ export interface PromiseExpectation<T extends string = string> {
       threshold?: number;
       maxDiffPixelRatio?: number;
       mask?: ExtendedSelector<T>[];
+      /** Fill color for masked regions (CSS hex `#RGB`/`#RRGGBB` or `rgb(r,g,b)`). Default: `#808080`. */
+      maskColor?: string;
       fullPage?: boolean;
     },
   ): Promise<void>;
@@ -755,6 +757,7 @@ export function createPromiseExpect<T extends string = string, R extends string 
             maxDiffPixelRatio: options?.maxDiffPixelRatio ?? visualRegression?.maxDiffPixelRatio,
             mask: [],
             maskSelectors: options?.mask,
+            maskColor: options?.maskColor,
             fullPage: options?.fullPage,
             updateBaselines: ctx.updateBaselines,
             baselinesDir: visualRegression?.baselinesDir,

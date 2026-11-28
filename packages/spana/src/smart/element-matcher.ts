@@ -34,6 +34,46 @@ function matchTextSpec(actual: string, spec: string | RegExp, exact?: boolean): 
     : normActual.toLowerCase().includes(normSpec.toLowerCase());
 }
 
+function computeAccessibleName(element: Element): string {
+  if (element.accessibilityLabel && normalizeWs(element.accessibilityLabel).length > 0) {
+    return normalizeWs(element.accessibilityLabel);
+  }
+  const ariaLabel = element.attributes?.["aria-label"];
+  if (ariaLabel && normalizeWs(ariaLabel).length > 0) {
+    return normalizeWs(ariaLabel);
+  }
+  if (element.text && normalizeWs(element.text).length > 0) {
+    return normalizeWs(element.text);
+  }
+  if (!element.children || element.children.length === 0) {
+    return "";
+  }
+  const parts: string[] = [];
+  const stack: Element[] = [];
+  for (let i = element.children.length - 1; i >= 0; i--) {
+    stack.push(element.children[i]!);
+  }
+  while (stack.length > 0) {
+    const child = stack.pop()!;
+    if (child.attributes?.["aria-hidden"] === "true") continue;
+    if (child.visible === false) continue;
+    const childLabel = child.accessibilityLabel ?? child.attributes?.["aria-label"];
+    if (childLabel && normalizeWs(childLabel).length > 0) {
+      parts.push(normalizeWs(childLabel));
+      continue;
+    }
+    if (child.text && normalizeWs(child.text).length > 0) {
+      parts.push(normalizeWs(child.text));
+    }
+    if (child.children && child.children.length > 0) {
+      for (let i = child.children.length - 1; i >= 0; i--) {
+        stack.push(child.children[i]!);
+      }
+    }
+  }
+  return normalizeWs(parts.join(" "));
+}
+
 /** Check if an element matches a selector */
 export function matchesSelector(element: Element, selector: Selector): boolean {
   if (typeof selector === "string") {
@@ -49,6 +89,12 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
   } else if ("accessibilityLabel" in selector) {
     baseMatch = element.accessibilityLabel === selector.accessibilityLabel;
   } else if ("role" in selector) {
+    if (
+      !selector.includeHidden &&
+      (element.attributes?.["aria-hidden"] === "true" || "inert" in (element.attributes ?? {}))
+    ) {
+      return false;
+    }
     const elRole = (element.attributes?.role ?? element.elementType ?? "").toLowerCase();
     const roleMatch = elRole === selector.role.toLowerCase();
     if (!roleMatch) return false;
@@ -59,7 +105,7 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
     if (selector.name === undefined) {
       baseMatch = true;
     } else {
-      const candidateName = element.accessibilityLabel ?? element.text ?? "";
+      const candidateName = computeAccessibleName(element);
       baseMatch = matchTextSpec(candidateName, selector.name, selector.exact);
     }
   } else if ("css" in selector) {
@@ -96,9 +142,36 @@ export function matchesSelector(element: Element, selector: Selector): boolean {
   return true;
 }
 
+/** Flatten elements while optionally pruning subtrees hidden from the accessibility tree (`aria-hidden="true"` / `inert`). */
+function flattenElementsForSelector(root: Element, skipAriaHiddenSubtrees: boolean): Element[] {
+  if (!skipAriaHiddenSubtrees) return flattenElements(root);
+  const result: Element[] = [];
+  const stack: Element[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node.attributes?.["aria-hidden"] === "true" || "inert" in (node.attributes ?? {})) {
+      continue;
+    }
+    result.push(node);
+    if (node.children) {
+      for (let i = node.children.length - 1; i >= 0; i--) {
+        stack.push(node.children[i]!);
+      }
+    }
+  }
+  return result;
+}
+
 /** Find all elements matching a selector */
 export function findElements(root: Element, selector: Selector): Element[] {
-  const matched = flattenElements(root).filter((el) => matchesSelector(el, selector));
+  const skipAriaHidden =
+    typeof selector === "object" &&
+    selector !== null &&
+    "role" in selector &&
+    !selector.includeHidden;
+  const matched = flattenElementsForSelector(root, skipAriaHidden).filter((el) =>
+    matchesSelector(el, selector),
+  );
   if (typeof selector === "object" && selector !== null && !("point" in selector)) {
     if (selector.first) return matched.length > 0 ? [matched[0]!] : [];
     if (selector.last) return matched.length > 0 ? [matched[matched.length - 1]!] : [];

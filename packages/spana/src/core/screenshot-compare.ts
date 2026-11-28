@@ -176,18 +176,63 @@ export async function cropToElement(
 }
 
 /**
- * Paint solid gray rectangles over regions to mask dynamic content.
+ * Parse a CSS color string (`#RGB`, `#RRGGBB`, `#RRGGBBAA`, `rgb(r, g, b)`, `rgba(r, g, b, a)`)
+ * into an `[r, g, b, a]` tuple. Falls back to solid neutral gray (`[128, 128, 128, 255]`).
+ */
+export function parseMaskColor(color?: string): [number, number, number, number] {
+  if (!color || typeof color !== "string") return [128, 128, 128, 255];
+  const trimmed = color.trim();
+  const hex3 = /^#([0-9a-fA-F]{3})$/.exec(trimmed);
+  if (hex3) {
+    const h = hex3[1]!;
+    return [
+      Number.parseInt(h[0]! + h[0]!, 16),
+      Number.parseInt(h[1]! + h[1]!, 16),
+      Number.parseInt(h[2]! + h[2]!, 16),
+      255,
+    ];
+  }
+  const hex6 = /^#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/.exec(trimmed);
+  if (hex6) {
+    const rgb = hex6[1]!;
+    const alpha = hex6[2] ? Number.parseInt(hex6[2], 16) : 255;
+    return [
+      Number.parseInt(rgb.slice(0, 2), 16),
+      Number.parseInt(rgb.slice(2, 4), 16),
+      Number.parseInt(rgb.slice(4, 6), 16),
+      alpha,
+    ];
+  }
+  const rgbMatch =
+    /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([\d.]+))?\s*\)$/i.exec(trimmed);
+  if (rgbMatch) {
+    const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
+    const a = rgbMatch[4] !== undefined ? clamp(Number.parseFloat(rgbMatch[4]) * 255) : 255;
+    return [
+      clamp(Number.parseInt(rgbMatch[1]!, 10)),
+      clamp(Number.parseInt(rgbMatch[2]!, 10)),
+      clamp(Number.parseInt(rgbMatch[3]!, 10)),
+      a,
+    ];
+  }
+  return [128, 128, 128, 255];
+}
+
+/**
+ * Paint solid colored rectangles over regions to mask dynamic content (default: gray `#808080`).
  * Returns the original image (as PNG buffer) if regions is empty.
  */
 export async function applyMask(
   screenshot: Buffer | Uint8Array,
   regions: Array<{ x: number; y: number; width: number; height: number }>,
+  maskColor?: string,
 ): Promise<Buffer> {
   const buf = Buffer.from(screenshot);
   if (regions.length === 0) {
     return buf;
   }
 
+  const [r, g, b, a] = parseMaskColor(maskColor);
   const png = PNG.sync.read(buf);
   for (const region of regions) {
     const startX = Math.max(0, Math.round(region.x));
@@ -197,10 +242,10 @@ export async function applyMask(
     for (let y = startY; y < endY; y++) {
       for (let x = startX; x < endX; x++) {
         const idx = (y * png.width + x) * 4;
-        png.data[idx] = 128; // R
-        png.data[idx + 1] = 128; // G
-        png.data[idx + 2] = 128; // B
-        png.data[idx + 3] = 255; // A
+        png.data[idx] = r;
+        png.data[idx + 1] = g;
+        png.data[idx + 2] = b;
+        png.data[idx + 3] = a;
       }
     }
   }

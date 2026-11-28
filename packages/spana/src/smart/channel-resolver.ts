@@ -194,6 +194,8 @@ export interface ChannelResolveOptions {
   /** Default "native" (real touch via native driver). Opt-in "dom" skips native coordinate mapping. */
   tapMode?: TapMode;
   platform?: Platform;
+  /** Optional sink populated when the DOM channel throws so callers can include the failure cause in diagnostics (2.32). */
+  diagnostics?: { lastDomError?: string };
 }
 
 /**
@@ -242,16 +244,23 @@ export function resolveElementAcrossChannels<T extends string = string, R extend
             if (!isTestIDSelector(selector) && !isComposableDomSelector(selector)) return [];
             try {
               await domChannel.connect();
-            } catch {
+            } catch (connectErr) {
+              if (options.diagnostics) {
+                options.diagnostics.lastDomError = `DOM channel connect failed: ${connectErr instanceof Error ? connectErr.message : String(connectErr)}`;
+              }
               return [];
             }
           }
           return await domChannel.query(selector as Selector);
         },
         catch: (err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (options.diagnostics) {
+            options.diagnostics.lastDomError = `DOM channel query failed: ${msg}`;
+          }
           if (isInvalidSelectorError(err)) {
             return new DriverError({
-              message: err instanceof Error ? err.message : String(err),
+              message: msg,
             });
           }
           return null;

@@ -5,6 +5,7 @@ import type { ExtendedSelector, Platform, Selector, TapMode } from "../schemas/s
 import { isSystemUISelector } from "../schemas/selector.js";
 import {
   buildDomActionabilityDiagScript,
+  buildDomArmTapGuardBySelectorScript,
   buildDomFindElementScript,
   buildDomFocusScript,
   buildDomSelectOptionScript,
@@ -564,13 +565,25 @@ export function createCoordinator<T extends string = string, R extends string = 
         selector: ExtendedSelector,
         opts?: WaitOptions,
       ): Effect.Effect<Element, ElementNotFoundError | WaitTimeoutError | DriverError> =>
-        waitForElement(driver, selector, parse, { ...defaults, ...opts }, cache),
+        waitForElement(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        ),
 
       assertHidden: (
         selector: ExtendedSelector,
         opts?: WaitOptions,
       ): Effect.Effect<void, WaitTimeoutError | DriverError> =>
-        waitForNotVisible(driver, selector, parse, { ...defaults, ...opts }, cache),
+        waitForNotVisible(
+          driver,
+          selector,
+          parse,
+          { ...defaults, ...opts, platform: opts?.platform ?? config.platform },
+          cache,
+        ),
 
       assertText: (
         selector: ExtendedSelector,
@@ -1176,6 +1189,7 @@ export function createCoordinator<T extends string = string, R extends string = 
           maxDiffPixelRatio?: number;
           mask?: Array<{ x: number; y: number; width: number; height: number }>;
           maskSelectors?: ExtendedSelector[];
+          maskColor?: string;
           fullPage?: boolean;
           updateBaselines?: boolean;
           outputDir?: string;
@@ -1217,7 +1231,13 @@ export function createCoordinator<T extends string = string, R extends string = 
           // 2. Optionally crop to element bounds
           let screenshotBuf: Buffer;
           if (selector !== undefined) {
-            const element = yield* waitForElement(driver, selector, parse, { ...defaults }, cache);
+            const element = yield* waitForElement(
+              driver,
+              selector,
+              parse,
+              { ...defaults, platform: config.platform },
+              cache,
+            );
             cropOriginX = element.bounds.x;
             cropOriginY = element.bounds.y;
             screenshotBuf = yield* Effect.promise(() => cropToElement(raw, element.bounds));
@@ -1249,7 +1269,9 @@ export function createCoordinator<T extends string = string, R extends string = 
           if (options.updateBaselines) {
             const toWrite =
               effectiveMasks.length > 0
-                ? yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks))
+                ? yield* Effect.promise(() =>
+                    applyMask(screenshotBuf, effectiveMasks, options.maskColor),
+                  )
                 : screenshotBuf;
             yield* Effect.promise(() => Promise.resolve(writeBaseline(baselinePath, toWrite)));
             return;
@@ -1260,7 +1282,9 @@ export function createCoordinator<T extends string = string, R extends string = 
           if (existing === null) {
             const toWrite =
               effectiveMasks.length > 0
-                ? yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks))
+                ? yield* Effect.promise(() =>
+                    applyMask(screenshotBuf, effectiveMasks, options.maskColor),
+                  )
                 : screenshotBuf;
             yield* Effect.promise(() => Promise.resolve(writeBaseline(baselinePath, toWrite)));
             return;
@@ -1270,8 +1294,12 @@ export function createCoordinator<T extends string = string, R extends string = 
           let actualBuf: Buffer = screenshotBuf;
           let expectedBuf: Buffer = existing;
           if (effectiveMasks.length > 0) {
-            actualBuf = yield* Effect.promise(() => applyMask(screenshotBuf, effectiveMasks));
-            expectedBuf = yield* Effect.promise(() => applyMask(existing, effectiveMasks));
+            actualBuf = yield* Effect.promise(() =>
+              applyMask(screenshotBuf, effectiveMasks, options.maskColor),
+            );
+            expectedBuf = yield* Effect.promise(() =>
+              applyMask(existing, effectiveMasks, options.maskColor),
+            );
           }
 
           // 7. Compare
@@ -2239,14 +2267,7 @@ export function createCoordinator<T extends string = string, R extends string = 
         const guardActive =
           !opts?.force &&
           resolved.channel === "dom" &&
-          !isRelativeSelectorLike(selector) &&
           !isSystemUISelector(selector) &&
-          !(
-            typeof selector === "object" &&
-            selector !== null &&
-            "frame" in selector &&
-            selector.frame
-          ) &&
           driver.domChannel?.isConnected();
 
         if (guardActive && canInlineTapGuard) {
@@ -2265,13 +2286,26 @@ export function createCoordinator<T extends string = string, R extends string = 
             });
           }
         } else if (guardActive) {
-          const armed = yield* Effect.tryPromise({
-            try: () =>
-              driver.domChannel!.evaluate<boolean>(
-                `((tx, ty) => {
+          const isRel = isRelativeSelectorLike(selector);
+          const armScript = !isRel
+            ? buildDomArmTapGuardBySelectorScript(selector as Selector)
+            : `((tx, ty, expectedId, expectedTag, expectedText) => {
                   try {
-                    const expected = document.elementFromPoint(tx, ty);
-                    if (!expected) return false;
+                    const hit = document.elementFromPoint(tx, ty);
+                    if (!hit) return false;
+                    let expected = hit;
+                    if (expectedId) {
+                      const byId = hit.closest ? hit.closest('[data-testid="' + expectedId.replace(/"/g, '\\\\"') + '"], [id="' + expectedId.replace(/"/g, '\\\\"') + '"]') : null;
+                      if (!byId) return false;
+                      expected = byId;
+                    } else if (expectedTag) {
+                      const byTag = hit.closest ? hit.closest(expectedTag) : null;
+                      if (byTag) expected = byTag;
+                    }
+                    if (expectedText) {
+                      const actualText = (expected.innerText || expected.textContent || "").trim().replace(/\\s+/g, " ");
+                      if (actualText && actualText !== expectedText && actualText.indexOf(expectedText) === -1) return false;
+                    }
                     if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
                     window.__spanaTapMissed = false;
                     const match = (t) => {
@@ -2282,28 +2316,39 @@ export function createCoordinator<T extends string = string, R extends string = 
                       if (expected.tagName === "LABEL" && expected.control && (t === expected.control || (expected.control.contains && expected.control.contains(t)))) return true;
                       return false;
                     };
+                    const cleanup = () => {
+                      window.removeEventListener("pointerdown", onEvt, true);
+                      window.removeEventListener("mousedown", onEvt, true);
+                      window.removeEventListener("mouseup", onMouseUp, true);
+                      window.removeEventListener("click", onEvt, true);
+                      if (window.__spanaTapGuardCleanup === cleanup) delete window.__spanaTapGuardCleanup;
+                    };
+                    const onMouseUp = (e) => {
+                      if (!e.isTrusted) return;
+                      Promise.resolve().then(cleanup);
+                    };
                     const onEvt = (e) => {
                       if (!e.isTrusted) return;
-                      const hit = document.elementFromPoint(e.clientX, e.clientY) || e.target;
-                      if (!match(hit) && !match(e.target)) {
+                      const curHit = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+                      if (!match(curHit) && !match(e.target)) {
                         e.stopImmediatePropagation();
                         e.preventDefault();
                         window.__spanaTapMissed = true;
+                        if (e.type === "click") cleanup();
+                      } else if (e.type === "click") {
+                        cleanup();
                       }
                     };
                     window.addEventListener("pointerdown", onEvt, true);
                     window.addEventListener("mousedown", onEvt, true);
+                    window.addEventListener("mouseup", onMouseUp, true);
                     window.addEventListener("click", onEvt, true);
-                    window.__spanaTapGuardCleanup = () => {
-                      window.removeEventListener("pointerdown", onEvt, true);
-                      window.removeEventListener("mousedown", onEvt, true);
-                      window.removeEventListener("click", onEvt, true);
-                      delete window.__spanaTapGuardCleanup;
-                    };
+                    window.__spanaTapGuardCleanup = cleanup;
                     return true;
                   } catch { return false; }
-                })(${x}, ${y})`,
-              ),
+                })(${x}, ${y}, ${JSON.stringify(resolved.domMatch?.id ?? resolved.element.id ?? null)}, ${JSON.stringify(resolved.domMatch?.tag ?? null)}, ${JSON.stringify(resolved.domMatch?.text ?? resolved.element.text ?? null)})`;
+          const armed = yield* Effect.tryPromise({
+            try: () => driver.domChannel!.evaluate<boolean>(armScript),
             catch: () => false,
           }).pipe(Effect.catch(() => Effect.succeed(false)));
 

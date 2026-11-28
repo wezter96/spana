@@ -651,13 +651,16 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
 
     await app.openLink(`${server.url}/bolagy-lab`);
 
-    // 0.16.0 regression #1: opacity:0 & inert elements visible & focusable (matching Playwright)
+    // 0.16.0 regression #1 + 0.18.0 (2.35): opacity:0 & inert elements visible by testID/CSS,
+    // while role selectors skip inert subtrees (matching Playwright's getByRole) unless includeHidden: true
     await expect(byRole("button", { name: "Hover Reveal Action" })).toBeVisible();
     await app.focus(byRole("button", { name: "Hover Reveal Action" }));
     await expect({ testID: "focus-log" }).toHaveText("focused-opacity");
     await app.blur(byRole("button", { name: "Hover Reveal Action" }));
     await expect({ testID: "focus-log" }).toHaveText("blurred-opacity");
-    await expect(byRole("button", { name: "Inert Button" })).toBeVisible();
+    await expect({ testID: "inert-btn" }).toBeVisible();
+    bunExpect(await app.count(byRole("button", { name: "Inert Button" }))).toBe(0);
+    await expect(byRole("button", { name: "Inert Button", includeHidden: true })).toBeVisible();
 
     // Closed <select> <option> accessible via byRole("option")
     bunExpect(await app.count(byRole("option", { name: "Sweden" }))).toBe(1);

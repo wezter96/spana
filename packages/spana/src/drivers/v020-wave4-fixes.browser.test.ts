@@ -336,13 +336,22 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
       bunExpect(resizeResetMethods).not.toContain("Emulation.setTouchEmulationEnabled");
       bunExpect(resizeResetMethods).not.toContain("Emulation.setEmitTouchEventsForMouse");
 
-      // Flow 3: mobile + touch + dark mode + locale + network mutation
+      // Flow 3: mobile + touch + flipped colorScheme + locale + network mutation
+      const initialDark = await app.evaluate<boolean>(
+        'window.matchMedia("(prefers-color-scheme: dark)").matches',
+      );
       await app.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
-      await app.setEmulation({ colorScheme: "dark", locale: "sv-SE" });
+      await app.setEmulation({
+        colorScheme: initialDark ? "light" : "dark",
+        locale: "sv-SE",
+      });
       await app.setNetworkConditions({ offline: false, latencyMs: 5 });
       await app.openLink(`${server.url}/simple`);
+      bunExpect(
+        await app.evaluate<boolean>('window.matchMedia("(prefers-color-scheme: dark)").matches'),
+      ).toBe(!initialDark);
 
-      // Flow 4 beginFlow: MUST restore mobile/touch hover media, dark mode, locale, AND network cleanly!
+      // Flow 4 beginFlow: MUST restore mobile/touch hover media, colorScheme, locale, AND network cleanly!
       recordedMethods.length = 0;
       await Effect.runPromise(driver.beginFlow!("wave4-fix-c-4"));
       const mutatedResetMethods = [...recordedMethods];
@@ -365,7 +374,7 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
       );
       bunExpect(restored.width).toBe(1280);
       bunExpect(restored.anyHover).toBe(true);
-      bunExpect(restored.dark).toBe(false);
+      bunExpect(restored.dark).toBe(initialDark);
 
       // Fresh-page axe audit: first call in a coordinator runs in 1 Runtime.evaluate (no wasted probe RTT),
       // while second call on the same document reuses window.axe without re-injecting.

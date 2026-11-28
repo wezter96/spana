@@ -616,6 +616,89 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     return normWs(out.join(""));
   }
+  function ensureNetworkTracker() {
+    if (typeof window === "undefined" || window.__spanaNetHooked) return;
+    try {
+      window.__spanaNetHooked = true;
+      window.__spanaInflightNet = window.__spanaInflightNet || 0;
+      window.__spanaLastNetEnd = window.__spanaLastNetEnd || 0;
+      if (typeof window.fetch === "function") {
+        var origFetch = window.fetch;
+        window.fetch = function() {
+          window.__spanaInflightNet = (window.__spanaInflightNet || 0) + 1;
+          var done = false;
+          var finish = function() {
+            if (done) return;
+            done = true;
+            window.__spanaInflightNet = Math.max(0, (window.__spanaInflightNet || 1) - 1);
+            window.__spanaLastNetEnd = Date.now();
+          };
+          try {
+            var p = origFetch.apply(this, arguments);
+            if (p && typeof p.then === "function") {
+              p.then(finish, finish);
+            } else {
+              finish();
+            }
+            return p;
+          } catch (e) {
+            finish();
+            throw e;
+          }
+        };
+      }
+      if (typeof XMLHttpRequest !== "undefined" && XMLHttpRequest.prototype && typeof XMLHttpRequest.prototype.send === "function") {
+        var origSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function() {
+          window.__spanaInflightNet = (window.__spanaInflightNet || 0) + 1;
+          var done = false;
+          var finish = function() {
+            if (done) return;
+            done = true;
+            window.__spanaInflightNet = Math.max(0, (window.__spanaInflightNet || 1) - 1);
+            window.__spanaLastNetEnd = Date.now();
+          };
+          try {
+            this.addEventListener("loadend", finish, { once: true });
+            return origSend.apply(this, arguments);
+          } catch (e) {
+            finish();
+            throw e;
+          }
+        };
+      }
+    } catch (e) {}
+  }
+  ensureNetworkTracker();
+  function hasInflightNetwork(quietMs) {
+    if (typeof window === "undefined") return false;
+    if ((window.__spanaInflightNet || 0) > 0) return true;
+    var lastEnd = window.__spanaLastNetEnd || 0;
+    if (lastEnd > 0 && Date.now() - lastEnd < Math.min(quietMs || 150, 150)) return true;
+    return false;
+  }
+  function isVisiblyHiddenInAncestorChain(el) {
+    if (!el) return true;
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var cur = el;
+    var guard = 0;
+    while (cur && guard++ < 48) {
+      if (cur.nodeType === 1 && win && win.getComputedStyle) {
+        var cs = win.getComputedStyle(cur);
+        if (cs) {
+          if (cs.display === "none") return true;
+          if (cs.contentVisibility === "hidden") return true;
+        }
+      }
+      var root = typeof cur.getRootNode === "function" ? cur.getRootNode() : null;
+      cur = cur.parentElement || (root && root.host) || null;
+    }
+    if (el.nodeType === 1 && win && win.getComputedStyle) {
+      var selfCs = win.getComputedStyle(el);
+      if (selfCs && (selfCs.visibility === "hidden" || selfCs.visibility === "collapse")) return true;
+    }
+    return false;
+  }
   function isHiddenInAncestorChain(el) {
     if (!el) return true;
     var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
@@ -625,6 +708,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
       if (cur.getAttribute) {
         if (cur.getAttribute("aria-hidden") === "true") return true;
       }
+      if (cur.hasAttribute && cur.hasAttribute("inert")) return true;
       if (cur.nodeType === 1 && win && win.getComputedStyle) {
         var cs = win.getComputedStyle(cur);
         if (cs) {
@@ -689,7 +773,6 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
         var win = (child.ownerDocument && child.ownerDocument.defaultView) || window;
         var cst = win && win.getComputedStyle ? win.getComputedStyle(child) : null;
         if (cst && (cst.display === "none" || cst.visibility === "hidden" || cst.visibility === "collapse")) continue;
-        if (child.getAttribute && child.getAttribute("aria-hidden") === "true") continue;
         var r = cst && cst.display === "contents"
           ? getContentsUnionRect(child, depth + 1)
           : (child.getBoundingClientRect ? child.getBoundingClientRect() : null);
@@ -1841,7 +1924,7 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
   }
   function isVisible(el, rect, depth) {
     if (!el) return false;
-    if (isHiddenInAncestorChain(el)) return false;
+    if (isVisiblyHiddenInAncestorChain(el)) return false;
     var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
     var style = win && win.getComputedStyle ? win.getComputedStyle(el) : null;
     if (style && style.display === "contents") {
@@ -1849,6 +1932,30 @@ const SHARED_DOM_TRAVERSAL_HELPERS = `
     }
     if (!rect || rect.width <= 0 || rect.height <= 0) return false;
     return true;
+  }
+  function getVisibilityFailureReason(el, rect) {
+    if (!el) return "element is null";
+    var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+    var cur = el;
+    var guard = 0;
+    while (cur && guard++ < 48) {
+      if (cur.nodeType === 1 && win && win.getComputedStyle) {
+        var cs = win.getComputedStyle(cur);
+        if (cs) {
+          if (cs.display === "none") return cur === el ? "display: none" : "ancestor has display: none";
+          if (cs.contentVisibility === "hidden") return cur === el ? "content-visibility: hidden" : "ancestor has content-visibility: hidden";
+        }
+      }
+      var root = typeof cur.getRootNode === "function" ? cur.getRootNode() : null;
+      cur = cur.parentElement || (root && root.host) || null;
+    }
+    if (el.nodeType === 1 && win && win.getComputedStyle) {
+      var selfCs = win.getComputedStyle(el);
+      if (selfCs && (selfCs.visibility === "hidden" || selfCs.visibility === "collapse")) return "visibility: " + selfCs.visibility;
+      if (selfCs && selfCs.display === "contents" && !hasVisibleDescendant(el, 0)) return "display: contents with no visible children";
+    }
+    if (!rect || rect.width <= 0 || rect.height <= 0) return "bounding box has zero size (" + (rect ? Math.round(rect.width) + "x" + Math.round(rect.height) : "none") + ")";
+    return null;
   }
   function toMatch(hit) {
     if (hit.wasmNode) {
@@ -2004,13 +2111,20 @@ export function buildDomTapScript(selector: Selector): string {
   const serialized = JSON.stringify(serializeSelectorForDom(selector));
   return `(function(sel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
-    var hits = findAcrossRoots(sel);
-    if (hits.length === 0) return false;
-    var hit = hits[hits.length - 1];
+    var hits = findAcrossRoots(sel, "strict");
+    var hit = null;
+    for (var i = hits.length - 1; i >= 0; i--) {
+      var m = toMatch(hits[i]);
+      if (m.visible && m.enabled) { hit = hits[i]; break; }
+    }
+    if (!hit) return false;
     var el = hit.el;
     if (typeof el.scrollIntoView === "function") {
       try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
     }
+    if (!el.isConnected) return false;
+    var postMatch = toMatch(hit);
+    if (!postMatch.visible || !postMatch.enabled) return false;
     var rect = el.getBoundingClientRect();
     var cx = rect.left + rect.width / 2;
     var cy = rect.top + rect.height / 2;
@@ -2081,8 +2195,8 @@ export function buildDomWaitForSelectorScript(
       try {
         var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
         var doc = el.ownerDocument || document;
-        if (win.__spanaTapGuardCleanup) win.__spanaTapGuardCleanup();
-        win.__spanaTapMissed = false;
+        if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+        window.__spanaTapMissed = false;
         var matchTarget = function(t) {
           return isSameOrDescendant(el, t);
         };
@@ -2091,7 +2205,7 @@ export function buildDomWaitForSelectorScript(
           win.removeEventListener("mousedown", onEvt, true);
           win.removeEventListener("mouseup", onMouseUp, true);
           win.removeEventListener("click", onEvt, true);
-          if (win.__spanaTapGuardCleanup === cleanup) delete win.__spanaTapGuardCleanup;
+          if (window.__spanaTapGuardCleanup === cleanup) delete window.__spanaTapGuardCleanup;
         };
         var onMouseUp = function(e) {
           if (!e.isTrusted) return;
@@ -2103,7 +2217,7 @@ export function buildDomWaitForSelectorScript(
           if (!matchTarget(hit) && !matchTarget(e.target)) {
             e.stopImmediatePropagation();
             e.preventDefault();
-            win.__spanaTapMissed = true;
+            window.__spanaTapMissed = true;
             if (e.type === "click") cleanup();
           } else if (e.type === "click") {
             cleanup();
@@ -2113,22 +2227,30 @@ export function buildDomWaitForSelectorScript(
         win.addEventListener("mousedown", onEvt, true);
         win.addEventListener("mouseup", onMouseUp, true);
         win.addEventListener("click", onEvt, true);
-        win.__spanaTapGuardCleanup = cleanup;
+        window.__spanaTapGuardCleanup = cleanup;
       } catch (e) {}
     }
 
+    function recordActionFailure(reason) {
+      if (!forAction) return;
+      try { window.__spanaLastActionDiag = reason; } catch (e) {}
+    }
+
     function findCandidates() {
-      if (waitForAppReady && !isAppReady()) return null;
-      if (forAction && !force && hasActiveViewTransition()) return null;
+      if (waitForAppReady && !isAppReady()) { recordActionFailure("waiting for app ready (__SPANA_APP_READY__)"); return null; }
+      if (forAction && !force && hasActiveViewTransition()) { recordActionFailure("active CSS view transition in progress"); return null; }
       var rawHits = findAcrossRoots(sel, "strict");
+      if (rawHits.length === 0) { recordActionFailure(null); return null; }
       var ready = [];
+      var lastFail = null;
       for (var i = 0; i < rawHits.length; i++) {
         var h = rawHits[i];
         var m = toMatch(h);
-        if (!m.visible) continue;
-        if (forAction && !force && !m.enabled) continue;
+        if (!m.visible) { lastFail = getVisibilityFailureReason(h.el, h.el && h.el.getBoundingClientRect ? h.el.getBoundingClientRect() : null) || "not visible"; continue; }
+        if (forAction && !force && !m.enabled) { lastFail = "element is disabled"; continue; }
         ready.push({ hit: h, match: m });
       }
+      if (ready.length === 0) recordActionFailure(lastFail);
       return ready.length > 0 ? ready : null;
     }
 
@@ -2144,12 +2266,18 @@ export function buildDomWaitForSelectorScript(
           if (scrollToUnobscure(target.hit)) {
             didScroll = true;
           }
-          if (!target.hit.el.isConnected) return null;
+          if (!target.hit.el.isConnected) { recordActionFailure("element detached from DOM after scrolling"); return null; }
         }
-        if (!isHitTestClear(target.hit)) return null;
+        if (!isHitTestClear(target.hit)) {
+          var blocker = getHitTestBlocker(target.hit);
+          recordActionFailure(blocker ? ("hit-test blocked by " + blocker) : "hit-test failed (element not receiving pointer events at click point)");
+          return null;
+        }
       }
       var updated = toMatch(target.hit);
-      if (!updated.visible || (!force && !updated.enabled)) return null;
+      if (!updated.visible) { recordActionFailure("element became hidden after scroll"); return null; }
+      if (!force && !updated.enabled) { recordActionFailure("element became disabled"); return null; }
+      recordActionFailure(null);
       return { hits: ready, target: target, match: updated, didScroll: didScroll };
     }
 
@@ -2203,7 +2331,8 @@ export function buildDomWaitForSelectorScript(
           if (
             document.readyState === "complete" &&
             (!waitForAppReady || isAppReady()) &&
-            !hasActiveAnimation(rootEl)
+            !hasActiveAnimation(rootEl) &&
+            !hasInflightNetwork(idleQuietMs)
           ) {
             var hit = checkActionableNow();
             if (hit) {
@@ -2261,6 +2390,7 @@ export function buildDomWaitForSelectorScript(
               return;
             }
           } else {
+            recordActionFailure("element bounding box unstable (still moving)");
             remainingFrames = framesToWait;
             lastRect = cur.rect;
           }
@@ -2840,13 +2970,20 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
   }
 
   function tap(sel) {
-    var hits = findAcrossRoots(sel);
-    if (hits.length === 0) return false;
-    var hit = hits[hits.length - 1];
+    var hits = findAcrossRoots(sel, "strict");
+    var hit = null;
+    for (var i = hits.length - 1; i >= 0; i--) {
+      var m = toMatch(hits[i]);
+      if (m.visible && m.enabled) { hit = hits[i]; break; }
+    }
+    if (!hit) return false;
     var el = hit.el;
     if (typeof el.scrollIntoView === "function") {
       try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
     }
+    if (!el.isConnected) return false;
+    var postMatch = toMatch(hit);
+    if (!postMatch.visible || !postMatch.enabled) return false;
     var rect = el.getBoundingClientRect();
     var cx = rect.left + rect.width / 2;
     var cy = rect.top + rect.height / 2;
@@ -2880,8 +3017,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
       try {
         var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
         var doc = el.ownerDocument || document;
-        if (win.__spanaTapGuardCleanup) win.__spanaTapGuardCleanup();
-        win.__spanaTapMissed = false;
+        if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+        window.__spanaTapMissed = false;
         var matchTarget = function(t) {
           return isSameOrDescendant(el, t);
         };
@@ -2890,7 +3027,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           win.removeEventListener("mousedown", onEvt, true);
           win.removeEventListener("mouseup", onMouseUp, true);
           win.removeEventListener("click", onEvt, true);
-          if (win.__spanaTapGuardCleanup === cleanup) delete win.__spanaTapGuardCleanup;
+          if (window.__spanaTapGuardCleanup === cleanup) delete window.__spanaTapGuardCleanup;
         };
         var onMouseUp = function(e) {
           if (!e.isTrusted) return;
@@ -2902,7 +3039,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           if (!matchTarget(hit) && !matchTarget(e.target)) {
             e.stopImmediatePropagation();
             e.preventDefault();
-            win.__spanaTapMissed = true;
+            window.__spanaTapMissed = true;
             if (e.type === "click") cleanup();
           } else if (e.type === "click") {
             cleanup();
@@ -2912,22 +3049,30 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
         win.addEventListener("mousedown", onEvt, true);
         win.addEventListener("mouseup", onMouseUp, true);
         win.addEventListener("click", onEvt, true);
-        win.__spanaTapGuardCleanup = cleanup;
+        window.__spanaTapGuardCleanup = cleanup;
       } catch (e) {}
     }
 
+    function recordActionFailure(reason) {
+      if (!forAction) return;
+      try { window.__spanaLastActionDiag = reason; } catch (e) {}
+    }
+
     function findCandidates() {
-      if (waitForAppReady && !isAppReady()) return null;
-      if (forAction && !force && hasActiveViewTransition()) return null;
+      if (waitForAppReady && !isAppReady()) { recordActionFailure("waiting for app ready (__SPANA_APP_READY__)"); return null; }
+      if (forAction && !force && hasActiveViewTransition()) { recordActionFailure("active CSS view transition in progress"); return null; }
       var rawHits = findAcrossRoots(sel, "strict");
+      if (rawHits.length === 0) { recordActionFailure(null); return null; }
       var ready = [];
+      var lastFail = null;
       for (var i = 0; i < rawHits.length; i++) {
         var h = rawHits[i];
         var m = toMatch(h);
-        if (!m.visible) continue;
-        if (forAction && !force && !m.enabled) continue;
+        if (!m.visible) { lastFail = getVisibilityFailureReason(h.el, h.el && h.el.getBoundingClientRect ? h.el.getBoundingClientRect() : null) || "not visible"; continue; }
+        if (forAction && !force && !m.enabled) { lastFail = "element is disabled"; continue; }
         ready.push({ hit: h, match: m });
       }
+      if (ready.length === 0) recordActionFailure(lastFail);
       return ready.length > 0 ? ready : null;
     }
 
@@ -2943,12 +3088,18 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           if (scrollToUnobscure(target.hit)) {
             didScroll = true;
           }
-          if (!target.hit.el.isConnected) return null;
+          if (!target.hit.el.isConnected) { recordActionFailure("element detached from DOM after scrolling"); return null; }
         }
-        if (!isHitTestClear(target.hit)) return null;
+        if (!isHitTestClear(target.hit)) {
+          var blocker = getHitTestBlocker(target.hit);
+          recordActionFailure(blocker ? ("hit-test blocked by " + blocker) : "hit-test failed (element not receiving pointer events at click point)");
+          return null;
+        }
       }
       var updated = toMatch(target.hit);
-      if (!updated.visible || (!force && !updated.enabled)) return null;
+      if (!updated.visible) { recordActionFailure("element became hidden after scroll"); return null; }
+      if (!force && !updated.enabled) { recordActionFailure("element became disabled"); return null; }
+      recordActionFailure(null);
       return { hits: ready, target: target, match: updated, didScroll: didScroll };
     }
 
@@ -2999,7 +3150,8 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
           if (
             document.readyState === "complete" &&
             (!waitForAppReady || isAppReady()) &&
-            !hasActiveAnimation(rootEl)
+            !hasActiveAnimation(rootEl) &&
+            !hasInflightNetwork(idleQuietMs)
           ) {
             var hit = checkActionableNow();
             if (hit && forAction) armTapGuardOnEl(hit.target.hit.el);
@@ -3037,6 +3189,7 @@ export const SPANA_INJECTED_RUNTIME_SCRIPT = `(function() {
             remainingFrames -= 1;
             if (remainingFrames <= 0) { armTapGuardOnEl(el); finish([cur]); return; }
           } else {
+            recordActionFailure("element bounding box unstable (still moving)");
             remainingFrames = framesToWait;
             lastRect = cur.rect;
           }
@@ -3583,25 +3736,88 @@ export function buildDomFocusScript(selector: Selector): string {
   })(${serializedSel})`;
 }
 
-/** Build an in-page diagnostic script reporting why an existing element failed actionability (covered/disabled/hidden). */
+/** Build an in-page script that arms the moving-target tap guard directly on the matched selector element. */
+export function buildDomArmTapGuardBySelectorScript(selector: Selector): string {
+  const serialized = JSON.stringify(serializeSelectorForDom(selector));
+  return `(function(sel) {
+    ${SHARED_DOM_TRAVERSAL_HELPERS}
+    try {
+      var hits = findAcrossRoots(sel, "strict");
+      var visible = [];
+      for (var i = 0; i < hits.length; i++) {
+        if (toMatch(hits[i]).visible) visible.push(hits[i]);
+      }
+      var target = visible.length > 0 ? visible[visible.length - 1] : hits[hits.length - 1];
+      if (!target || !target.el || target.el.nodeType !== 1) return false;
+      var el = target.el;
+      var win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      var doc = el.ownerDocument || document;
+      if (window.__spanaTapGuardCleanup) window.__spanaTapGuardCleanup();
+      window.__spanaTapMissed = false;
+      var matchTarget = function(t) { return isSameOrDescendant(el, t); };
+      var cleanup = function() {
+        win.removeEventListener("pointerdown", onEvt, true);
+        win.removeEventListener("mousedown", onEvt, true);
+        win.removeEventListener("mouseup", onMouseUp, true);
+        win.removeEventListener("click", onEvt, true);
+        if (window.__spanaTapGuardCleanup === cleanup) delete window.__spanaTapGuardCleanup;
+      };
+      var onMouseUp = function(e) {
+        if (!e.isTrusted) return;
+        Promise.resolve().then(cleanup);
+      };
+      var onEvt = function(e) {
+        if (!e.isTrusted) return;
+        var hit = deepElementFromPoint(doc, e.clientX, e.clientY) || e.target;
+        if (!matchTarget(hit) && !matchTarget(e.target)) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          window.__spanaTapMissed = true;
+          if (e.type === "click") cleanup();
+        } else if (e.type === "click") {
+          cleanup();
+        }
+      };
+      win.addEventListener("pointerdown", onEvt, true);
+      win.addEventListener("mousedown", onEvt, true);
+      win.addEventListener("mouseup", onMouseUp, true);
+      win.addEventListener("click", onEvt, true);
+      window.__spanaTapGuardCleanup = cleanup;
+      return true;
+    } catch (e) { return false; }
+  })(${serialized})`;
+}
+
+/** Build an in-page diagnostic script reporting why an existing element failed actionability (covered/disabled/hidden/pointer-events/unstable). */
 export function buildDomActionabilityDiagScript(selector: Selector): string {
   const serialized = JSON.stringify(serializeSelectorForDom(selector));
   return `(function(sel) {
     ${SHARED_DOM_TRAVERSAL_HELPERS}
     var detachedAfterScroll = Boolean(typeof window !== "undefined" && window.__spanaLastScrollDetached);
-    if (typeof window !== "undefined") { try { delete window.__spanaLastScrollDetached; } catch (e) {} }
+    var lastActionFailure = typeof window !== "undefined" && typeof window.__spanaLastActionDiag === "string" ? window.__spanaLastActionDiag : undefined;
+    if (typeof window !== "undefined") {
+      try { delete window.__spanaLastScrollDetached; } catch (e) {}
+      try { delete window.__spanaLastActionDiag; } catch (e) {}
+    }
     var hits = findAcrossRoots(sel);
-    if (hits.length === 0) return { found: false, matchCount: 0, visibleCount: 0, detachedAfterScroll: detachedAfterScroll || undefined };
+    if (hits.length === 0) return { found: false, matchCount: 0, visibleCount: 0, detachedAfterScroll: detachedAfterScroll || undefined, lastActionFailure: lastActionFailure };
     var visibleCount = 0;
     for (var i = 0; i < hits.length; i++) {
       if (toMatch(hits[i]).visible) visibleCount += 1;
     }
     var target = hits[hits.length - 1];
     var m = toMatch(target);
-    if (!m.visible) return { found: true, visible: false, enabled: m.enabled, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined };
-    if (!m.enabled) return { found: true, visible: true, enabled: false, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined };
+    var rawRect = target.el && target.el.getBoundingClientRect ? target.el.getBoundingClientRect() : null;
+    var win = (target.el && target.el.ownerDocument && target.el.ownerDocument.defaultView) || window;
+    var cs = target.el && target.el.nodeType === 1 && win && win.getComputedStyle ? win.getComputedStyle(target.el) : null;
+    var pointerEventsNone = Boolean(cs && cs.pointerEvents === "none");
+    if (!m.visible) {
+      var hiddenReason = getVisibilityFailureReason(target.el, rawRect) || undefined;
+      return { found: true, visible: false, enabled: m.enabled, hiddenReason: hiddenReason, pointerEventsNone: pointerEventsNone || undefined, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined, lastActionFailure: lastActionFailure };
+    }
+    if (!m.enabled) return { found: true, visible: true, enabled: false, pointerEventsNone: pointerEventsNone || undefined, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined, lastActionFailure: lastActionFailure };
     var blocker = getHitTestBlocker(target);
-    return { found: true, visible: true, enabled: true, obstructedBy: blocker || undefined, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined };
+    return { found: true, visible: true, enabled: true, obstructedBy: blocker || undefined, pointerEventsNone: pointerEventsNone || undefined, matchCount: hits.length, visibleCount: visibleCount, detachedAfterScroll: detachedAfterScroll || undefined, lastActionFailure: lastActionFailure };
   })(${serialized})`;
 }
 

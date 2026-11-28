@@ -391,7 +391,7 @@ export interface PromiseApp<T extends string = string, R extends string = string
   addInitScript(script: string | ((...args: any[]) => unknown), ...args: unknown[]): Promise<void>;
   /** Expose a Node/Bun callback function onto `window[name]` in the browser page. */
   exposeFunction(name: string, fn: (...args: any[]) => any): Promise<void>;
-  takeScreenshot(name?: string): Promise<Uint8Array>;
+  takeScreenshot(name?: string, options?: { fullPage?: boolean }): Promise<Uint8Array>;
   /** Return the visible bounding box `{ x, y, width, height }` of an element (or `null` if not found). */
   boundingBox(
     selector: ExtendedSelector<T>,
@@ -1766,10 +1766,15 @@ export function createPromiseApp<T extends string = string, R extends string = s
       runStep(`exposeFunction(${name})`, () =>
         run(optionalMethod("exposeFunction", driver.exposeFunction)(name, fn)),
       ),
-    takeScreenshot: (name) =>
+    takeScreenshot: (name, opts) =>
       runScreenshotStep(
         name ? `takeScreenshot(${name})` : "takeScreenshot",
-        () => run(driver.takeScreenshot()),
+        () =>
+          run(
+            opts?.fullPage && driver.takeFullPageScreenshot
+              ? driver.takeFullPageScreenshot()
+              : driver.takeScreenshot(),
+          ),
         { name },
       ),
     boundingBox: (selector, opts) =>

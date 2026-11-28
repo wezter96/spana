@@ -112,6 +112,9 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
           document.getElementById("bui").addEventListener("pointerdown", (e) => {
             document.getElementById("out").textContent = e.pointerType + ":" + e.buttons;
           });
+          document.getElementById("mclick").addEventListener("pointerdown", (e) => {
+            document.getElementById("out").textContent = "ctrl=" + e.ctrlKey;
+          });
           document.getElementById("mclick").addEventListener("click", (e) => {
             document.getElementById("out").textContent = "ctrl=" + e.ctrlKey;
           });
