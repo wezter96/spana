@@ -3,6 +3,13 @@ import { createServer } from "node:http";
 import { allocateFreePort } from "../core/port-allocator.js";
 import { isHttpUrlReady, isTcpPortOpen, startWebServer, startWebServers } from "./web-server.js";
 
+async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await predicate()) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 describe("webServer auto-boot lifecycle", () => {
   it("spawns a local HTTP server, polls until ready, and shuts it down cleanly", async () => {
     const port = await allocateFreePort(18100);
@@ -25,7 +32,8 @@ describe("webServer auto-boot lifecycle", () => {
     expect(await isTcpPortOpen(port)).toBe(true);
 
     await running.stop();
-    await new Promise((r) => setTimeout(r, 150));
+    // stop() resolves when the shell exits; the server it spawned can close its port a moment later.
+    await waitUntil(async () => !(await isTcpPortOpen(port)));
     expect(await isTcpPortOpen(port)).toBe(false);
   });
 
@@ -77,7 +85,7 @@ describe("webServer auto-boot lifecycle", () => {
       ),
     ).rejects.toThrow(/exited before/);
 
-    await new Promise((r) => setTimeout(r, 150));
+    await waitUntil(async () => !(await isTcpPortOpen(port1)));
     expect(await isTcpPortOpen(port1)).toBe(false);
   });
 });

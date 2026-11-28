@@ -16,6 +16,13 @@ import { byRole, filterSelector, isComposableDomSelector, or } from "../schemas/
 import { formatSelector } from "../smart/element-matcher.js";
 import type { TestResult } from "./engine.js";
 
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 const dirs: string[] = [];
 function makeTmpDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -70,6 +77,7 @@ describe("0.9.0 pilot fixes unit coverage", () => {
     const stateFile = join(dir, "daemons.json");
 
     // Spawn a harmless dummy sleeper process to simulate an existing daemon for scope-a
+    // oxlint-disable-next-line landmines/no-cold-start-in-test -- spawn() is not awaited; the test only needs a live PID for registerWarmDaemon to kill
     const oldChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
       detached: true,
       stdio: "ignore",
@@ -104,7 +112,8 @@ describe("0.9.0 pilot fixes unit coverage", () => {
         stateFile,
       );
 
-      await new Promise((r) => setTimeout(r, 80));
+      // SIGTERM is async; poll until the old daemon is gone instead of guessing how long it takes.
+      await waitUntil(() => !isPidAlive(oldPid));
       expect(isPidAlive(oldPid)).toBe(false);
 
       // Idle TTL reaping: expired record returns null from getHealthyWarmDaemon

@@ -172,7 +172,7 @@ export function RecorderPage() {
     client.recording
       .generateCode({ sessionId, flowName: flowName || "Recorded flow" })
       .then((data) => setGeneratedCode(data.code))
-      .catch(() => {});
+      .catch((err) => console.error("Failed to generate code:", err));
   }, [sessionId, actions, flowName]);
 
   const handleStart = useCallback(async () => {
@@ -328,7 +328,9 @@ export function RecorderPage() {
 
   const handleCopyCode = useCallback(() => {
     if (generatedCode) {
-      navigator.clipboard.writeText(generatedCode).catch(() => {});
+      navigator.clipboard
+        .writeText(generatedCode)
+        .catch((err) => console.error("Failed to copy code:", err));
     }
   }, [generatedCode]);
 

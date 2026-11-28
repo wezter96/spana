@@ -873,6 +873,7 @@ describe("Playwright driver adapter", () => {
         failureText: "net::ERR_FAILED",
       });
 
+      // oxlint-disable-next-line landmines/no-fixed-sleep -- zero-delay tick: lets the fire-and-forget HAR handlers settle; the fakes resolve in microtasks, no duration is guessed
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       const har = await Effect.runPromise(driver.getHAR!());
@@ -953,11 +954,9 @@ describe("Playwright driver adapter", () => {
       Effect.result(firefoxDriver.setNetworkConditions!({ latencyMs: 10 })),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("only supported with the chromium browser");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("only supported with the chromium browser");
   });
 
   test("wraps browser launch failures in DriverError", async () => {
@@ -966,11 +965,9 @@ describe("Playwright driver adapter", () => {
     const { makePlaywrightDriver } = await importFreshDriver();
     const result = await Effect.runPromise(Effect.result(makePlaywrightDriver({})));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Failed to launch browser: Error: browser exploded");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Failed to launch browser: Error: browser exploded");
   });
 
   test("wraps page creation failures in DriverError", async () => {
@@ -979,11 +976,9 @@ describe("Playwright driver adapter", () => {
     const { makePlaywrightDriver } = await importFreshDriver();
     const result = await Effect.runPromise(Effect.result(makePlaywrightDriver({})));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Failed to create page: Error: page exploded");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Failed to create page: Error: page exploded");
   });
 
   test("wraps page interaction failures in DriverError", async () => {
@@ -993,11 +988,9 @@ describe("Playwright driver adapter", () => {
 
     const result = await Effect.runPromise(Effect.result(driver.pressKey("Enter")));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Failed to press key Enter: Error: press exploded");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Failed to press key Enter: Error: press exploded");
   });
 
   test("forwards multiple arguments in evaluate(fn, a, b, c) without dropping args 2+", async () => {

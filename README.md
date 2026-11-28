@@ -104,12 +104,17 @@ bun run benchmarks/mcp-agent-bench/benchmark.ts --base-url http://127.0.0.1:8000
 ## Quick Start
 
 ```bash
-npm install spana-test effect
+npm install spana-test
 # or
-bun add spana-test effect
+bun add spana-test
 ```
 
-> **Lean install:** `effect` is a peer dependency (`>=4.1.0 <5.0.0`). Direct CDP Chromium launches with `chromiumSandbox: false` by default (matching Playwright) so Ubuntu 23.10+ and GitHub Actions runners work out of the box. Optional mobile Appium server packages (`appium-uiautomator2-server`, `appium-webdriveragent`) are not bundled by default — install them only when using local Android/iOS device drivers.
+> **Zero-dependency standalone install:** `spana-test` ships with **0 required runtime dependencies** (and 0 transitive packages) — safe for strict lockfile / SBOM audits in security-critical organizations. Direct CDP Chromium launches with `chromiumSandbox: false` by default (matching Playwright) so Ubuntu 23.10+ and GitHub Actions runners work out of the box. Install optional add-ons only when you need them:
+>
+> - `playwright-core` — Firefox / WebKit, `engine: "playwright"`, remote `wsEndpoint`, a branded `channel` (chrome, msedge), `artifacts.har`, or Electron `_electron.launch`
+> - `axe-core` — WCAG accessibility audits (`toPassAccessibilityAudit()` / `auditAccessibility()`)
+> - `@cucumber/gherkin`, `@cucumber/messages`, `@cucumber/cucumber-expressions` — Gherkin `.feature` files
+> - `effect` — optional TypeScript types only if authoring custom Effect-based `RawDriverService` drivers
 
 Create `spana.config.ts`:
 

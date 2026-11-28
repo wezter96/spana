@@ -514,6 +514,7 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       }
       const ffElapsed = Date.now() - ffStart;
       expect(ffFailed).toBe(true);
+      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser perf guard: fail-fast must beat the 5 s timeout; no in-process signal shows that
       expect(ffElapsed).toBeLessThan(2500);
 
       // 1.17: FlowConfig.baseUrl overrides default appId in executeFlow
@@ -555,11 +556,13 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       await app.openLink(`${baseUrl}/clock-page`);
       const t0 = Date.parse("2026-06-01T12:00:00.000Z");
       await app.clock.install({ time: t0 });
+      // oxlint-disable-next-line landmines/no-fixed-sleep -- proves the installed clock keeps running in real time
       await new Promise((r) => setTimeout(r, 40));
       const runningNow = await app.evaluate<number>(() => Date.now());
       expect(runningNow).toBeGreaterThan(t0);
 
       await app.clock.setFixedTime(t0);
+      // oxlint-disable-next-line landmines/no-fixed-sleep -- proves setFixedTime freezes Date.now while real time passes
       await new Promise((r) => setTimeout(r, 30));
       expect(await app.evaluate<number>(() => Date.now())).toBe(t0);
 
@@ -636,6 +639,7 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       const evalOutcome = await evalRun;
       const cancelMs = Date.now() - cancelStart;
       expect(evalOutcome._tag).toBe("Failure");
+      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser regression guard: a hung evaluate must cancel on navigation, not after its 10 s timeout
       expect(cancelMs).toBeLessThan(2000);
 
       // 2.25 + 2.26 + 2.29 + 2.34: below-the-fold visible, display:contents visible, opacity:0, inert, and aria-hidden visible by testID (Playwright visibility semantics)

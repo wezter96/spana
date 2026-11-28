@@ -1,6 +1,6 @@
 {
   "name": "spana-test",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "The fastest AI-native E2E framework — one TypeScript test across Web, iOS, Android, Electron, Electrobun, and WASM",
   "keywords": [
     "android",
@@ -60,10 +60,6 @@
     "embed-studio": "bun scripts/embed-studio.ts",
     "postbuild": "bun scripts/embed-studio.ts"
   },
-  "dependencies": {
-    "axe-core": "^4.10.0",
-    "playwright-core": "^1.49.0"
-  },
   "devDependencies": {
     "@cucumber/cucumber-expressions": "^19.0.0",
     "@cucumber/gherkin": "^39.0.0",
@@ -74,9 +70,11 @@
     "@orpc/zod": "1.14.10",
     "@types/bun": "^1.2.0",
     "@types/pngjs": "^6.0.4",
+    "axe-core": "^4.10.0",
     "effect": "^4.1.5",
     "hono": "^4.12.10",
     "pixelmatch": "^7.1.0",
+    "playwright-core": "^1.49.0",
     "pngjs": "^7.0.0",
     "tsup": "^8.3.5",
     "typescript": "^7.0.2",
@@ -86,7 +84,9 @@
     "@cucumber/cucumber-expressions": "^19.0.0",
     "@cucumber/gherkin": "^39.0.0",
     "@cucumber/messages": "^32.0.0",
-    "effect": ">=4.1.0 <5.0.0"
+    "axe-core": "^4.10.0",
+    "effect": ">=4.1.0 <5.0.0",
+    "playwright-core": "^1.49.0"
   },
   "peerDependenciesMeta": {
     "@cucumber/cucumber-expressions": {
@@ -96,6 +96,15 @@
       "optional": true
     },
     "@cucumber/messages": {
+      "optional": true
+    },
+    "axe-core": {
+      "optional": true
+    },
+    "effect": {
+      "optional": true
+    },
+    "playwright-core": {
       "optional": true
     }
   }

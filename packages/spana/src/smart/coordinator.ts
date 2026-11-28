@@ -71,7 +71,14 @@ export async function loadCachedAxeSource(): Promise<string> {
   try {
     axePath = require.resolve("axe-core/axe.min.js");
   } catch {
-    axePath = require.resolve("axe-core/axe.js");
+    try {
+      axePath = require.resolve("axe-core/axe.js");
+    } catch (cause) {
+      throw new Error(
+        'Accessibility audits (toPassAccessibilityAudit / auditAccessibility) require the optional "axe-core" add-on. Install it with: npm install axe-core',
+        { cause },
+      );
+    }
   }
   cachedAxeSource = readFileSync(axePath, "utf-8");
   return cachedAxeSource;

@@ -10,6 +10,7 @@ import { applyMask, parseMaskColor } from "../core/screenshot-compare.js";
 import { parseWebHierarchy } from "./playwright-parser.js";
 import { findElements } from "../smart/element-matcher.js";
 import { waitForElement } from "../smart/auto-wait.js";
+import { validateConfig } from "../schemas/config.js";
 import type { RawDriverService } from "./raw-driver.js";
 import {
   launchDirectCdpBrowser,
@@ -586,7 +587,6 @@ describe("v0.18.0 unit checks (2.32, 3.29, 3.30)", () => {
   });
 
   test("1.28: validateConfig accepts execution.web.navigationTimeout", async () => {
-    const { validateConfig } = await import("../schemas/config.js");
     const valid = validateConfig({
       apps: { web: { url: "http://127.0.0.1:3000" } },
       execution: { web: { engine: "cdp", navigationTimeout: 45_000 } },

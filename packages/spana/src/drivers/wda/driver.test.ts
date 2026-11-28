@@ -267,11 +267,9 @@ describe("WDA driver adapter", () => {
     const driver = await Effect.runPromise(createWDADriver("127.0.0.1", 8100, "com.example.app"));
     const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Tap failed: Error: tap exploded");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Tap failed: Error: tap exploded");
   });
 
   test("setNetworkConditions with offline on simulator calls pfctlSetOffline", async () => {
@@ -306,11 +304,9 @@ describe("WDA driver adapter", () => {
       Effect.result(driver.setNetworkConditions!({ profile: "3g" })),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("not supported on physical iOS devices");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("not supported on physical iOS devices");
   });
 
   test("setNetworkConditions with empty object resets network", async () => {
@@ -332,13 +328,11 @@ describe("WDA driver adapter", () => {
       Effect.result(createWDADriver("127.0.0.1", 8100, "com.example.app")),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain(
-        "Failed to create WDA session: Error: session exploded",
-      );
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain(
+      "Failed to create WDA session: Error: session exploded",
+    );
   });
 
   test("supports direct WDA evaluate() and getContexts() via attached DOM channel without Appium", async () => {

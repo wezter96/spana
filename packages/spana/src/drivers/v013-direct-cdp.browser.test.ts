@@ -213,6 +213,7 @@ describe("Spana v0.13.0 Direct CDP parity & isolation regressions", () => {
       const t0 = performance.now();
       const audit2 = await app.accessibilityAudit();
       expect(audit2.violations).toBeArray();
+      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser perf guard: the cached second audit must skip re-injecting axe.js
       expect(performance.now() - t0).toBeLessThan(2000);
 
       // 5. waitForResponse captures 303 redirectResponse with original POST method

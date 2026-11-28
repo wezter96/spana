@@ -395,11 +395,9 @@ describe("Appium Android driver", () => {
       Effect.result(driver.launchApp("com.example.app", { launchArguments: { foo: "bar" } })),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("launchArguments are not supported");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("launchArguments are not supported");
   });
 
   test("launchApp with deviceState warns and still activates the app", async () => {
@@ -479,10 +477,8 @@ describe("Appium Android driver", () => {
     const driver = await Effect.runPromise(createAppiumAndroidDriver(client));
     const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Tap failed");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Tap failed");
   });
 });

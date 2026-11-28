@@ -48,6 +48,7 @@ import {
   type WasmTrap,
   type WebGpuMode,
 } from "./wasm-utils.js";
+import { handledByLaterAwait, ignoreBestEffortFailure } from "../core/rejections.js";
 
 export interface DirectCdpBrowserLaunchOptions {
   /** Explicit Chromium/Chrome binary path. Auto-detects system Chrome or Playwright Chromium if omitted. */
@@ -1831,13 +1832,13 @@ export function makeLightweightCdpDriver(
         );
         if (isOurPopup && !handlingPopupTargets.has(targetId)) {
           handlingPopupTargets.add(targetId);
-          void setupPopupSession(targetId, childSid, waiting).catch(() => {});
+          void setupPopupSession(targetId, childSid, waiting).catch(ignoreBestEffortFailure);
           return;
         }
         if (waiting) {
           void cdpChannel
             .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
-            .catch(() => {});
+            .catch(ignoreBestEffortFailure);
         }
         return;
       }
@@ -1900,7 +1901,7 @@ export function makeLightweightCdpDriver(
       } else if (waiting && typeof childSid === "string") {
         void cdpChannel
           .sendCommand("Runtime.runIfWaitingForDebugger", {}, childSid)
-          .catch(() => {});
+          .catch(ignoreBestEffortFailure);
       }
     });
 
@@ -1969,7 +1970,7 @@ export function makeLightweightCdpDriver(
         const accept = dialogType === "beforeunload";
         void cdpChannel
           .sendCommand("Page.handleJavaScriptDialog", { accept }, targetSid)
-          .catch(() => {});
+          .catch(ignoreBestEffortFailure);
         return;
       }
 
@@ -1997,6 +1998,7 @@ export function makeLightweightCdpDriver(
         },
       };
 
+      // oxlint-disable-next-line landmines/no-silent-catch -- a throwing user dialog handler must not block the finally that dismisses the dialog; the error is not surfaced yet (jsErrors could carry it)
       void Promise.resolve(activeHandler(info))
         .catch(() => {})
         .finally(() => {
@@ -2008,7 +2010,7 @@ export function makeLightweightCdpDriver(
                 { accept: dialogType === "beforeunload" },
                 targetSid,
               )
-              .catch(() => {});
+              .catch(ignoreBestEffortFailure);
           }
         });
     });
@@ -2056,7 +2058,9 @@ export function makeLightweightCdpDriver(
               return callRes.result.value;
             }
           } finally {
-            void cdpChannel.sendCommand("Runtime.releaseObject", { objectId }).catch(() => {});
+            void cdpChannel
+              .sendCommand("Runtime.releaseObject", { objectId })
+              .catch(ignoreBestEffortFailure);
           }
         }
         const box = (await cdpChannel.sendCommand("DOM.getBoxModel", boxParams)) as {
@@ -2255,7 +2259,7 @@ export function makeLightweightCdpDriver(
             },
             sessionKey,
           )
-          .catch(() => {});
+          .catch(ignoreBestEffortFailure);
         return;
       }
       authAttemptedRequestIds.add(reqId);
@@ -2276,7 +2280,7 @@ export function makeLightweightCdpDriver(
           },
           sessionKey,
         )
-        .catch(() => {});
+        .catch(ignoreBestEffortFailure);
     });
 
     cdpChannel.onEvent("Fetch.requestPaused", (params, sid) => {
@@ -2300,7 +2304,7 @@ export function makeLightweightCdpDriver(
       if (matchingRules.length === 0) {
         void cdpChannel
           .sendCommand("Fetch.continueRequest", { requestId: reqId }, sessionKey)
-          .catch(() => {});
+          .catch(ignoreBestEffortFailure);
         return;
       }
 
@@ -2380,7 +2384,7 @@ export function makeLightweightCdpDriver(
             },
             sessionKey,
           )
-          .catch(() => {});
+          .catch(ignoreBestEffortFailure);
         return;
       }
 
@@ -2744,7 +2748,7 @@ export function makeLightweightCdpDriver(
         navigationTimeoutMs,
         (_p, sid) => (!targetSid || !sid || sid === targetSid) && targetFrameCommitted,
       );
-      waiter.promise.catch(() => {});
+      waiter.promise.catch(handledByLaterAwait);
       try {
         const navRes = (await cdpChannel.sendCommand(
           "Page.navigate",
@@ -3168,7 +3172,7 @@ export function makeLightweightCdpDriver(
                             1_500,
                             (_p, sid) => !targetSid || !sid || sid === targetSid,
                           );
-                          blankWaiter.promise.catch(() => {});
+                          blankWaiter.promise.catch(handledByLaterAwait);
                           try {
                             await cdpChannel.sendCommand(
                               "Page.navigate",
@@ -3998,7 +4002,7 @@ export function makeLightweightCdpDriver(
               navigationTimeoutMs,
               (_p, sid) => !targetSid || !sid || sid === targetSid,
             );
-            waiter.promise.catch(() => {});
+            waiter.promise.catch(handledByLaterAwait);
             try {
               await cdpChannel.sendCommand("Page.reload", {}, undefined, navigationTimeoutMs);
               try {
@@ -4140,7 +4144,7 @@ export function makeLightweightCdpDriver(
               };
               popupWaiters.push(entry);
             });
-            popupPromise.catch(() => {});
+            popupPromise.catch(handledByLaterAwait);
             try {
               await triggerFn();
               return await popupPromise;
@@ -4385,11 +4389,11 @@ export function makeLightweightCdpDriver(
                   !p?.frame?.parentId &&
                   p?.type === "BackForwardCacheRestore",
               );
-              w1.promise.catch(() => {});
-              w2.promise.catch(() => {});
-              w3.promise.catch(() => {});
+              w1.promise.catch(handledByLaterAwait);
+              w2.promise.catch(handledByLaterAwait);
+              w3.promise.catch(handledByLaterAwait);
               const waiter = Promise.race([w1.promise, w2.promise, w3.promise]);
-              waiter.catch(() => {});
+              waiter.catch(handledByLaterAwait);
               try {
                 await cdpChannel.sendCommand(
                   "Page.navigateToHistoryEntry",
@@ -4465,11 +4469,11 @@ export function makeLightweightCdpDriver(
                   !p?.frame?.parentId &&
                   p?.type === "BackForwardCacheRestore",
               );
-              w1.promise.catch(() => {});
-              w2.promise.catch(() => {});
-              w3.promise.catch(() => {});
+              w1.promise.catch(handledByLaterAwait);
+              w2.promise.catch(handledByLaterAwait);
+              w3.promise.catch(handledByLaterAwait);
               const waiter = Promise.race([w1.promise, w2.promise, w3.promise]);
-              waiter.catch(() => {});
+              waiter.catch(handledByLaterAwait);
               try {
                 await cdpChannel.sendCommand(
                   "Page.navigateToHistoryEntry",
@@ -4888,7 +4892,7 @@ export function makeLightweightCdpDriver(
           ? activeSlot.tabs.map((t) => t.sessionId)
           : [null as string | null];
         for (const sid of sessions) {
-          void cdpChannel.sendCommand("Network.enable", {}, sid).catch(() => {});
+          void cdpChannel.sendCommand("Network.enable", {}, sid).catch(ignoreBestEffortFailure);
         }
         return () => {
           requestListeners.delete(listener);
@@ -5611,7 +5615,7 @@ export function makeLightweightCdpDriver(
               };
               downloadWaiters.push(waiterEntry);
             });
-            downloadPromise.catch(() => {});
+            downloadPromise.catch(handledByLaterAwait);
             let entry: CompletedCdpDownload;
             try {
               await triggerFn();

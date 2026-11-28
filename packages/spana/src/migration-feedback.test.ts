@@ -548,10 +548,12 @@ export default flow("Excluded Flow C", { tags: ["skipme"] }, async () => {
 
     // 3.19 version check
     const pkg = JSON.parse(readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"));
+    // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
     const { stdout: verOut } = await execFileAsync("bun", [cliEntry, "version"]);
     expect(verOut.trim()).toBe(`spana v${pkg.version}`);
 
     // 1.2 + 1.3 + 1.4 + 1.5 + 3.11: --processes 2 with --grep-invert and file reporters
+    // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
     await execFileAsync(
       "bun",
       [
@@ -590,6 +592,7 @@ export default flow("Excluded Flow C", { tags: ["skipme"] }, async () => {
     // 1.6 zero-match exits non-zero by default, 0 with --pass-with-no-tests
     let zeroMatchExitedNonZero = false;
     try {
+      // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
       await execFileAsync(
         "bun",
         [cliEntry, "test", "--config", configFile, "--grep", "DOES_NOT_EXIST"],
@@ -602,6 +605,7 @@ export default flow("Excluded Flow C", { tags: ["skipme"] }, async () => {
     }
     expect(zeroMatchExitedNonZero).toBe(true);
 
+    // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
     await execFileAsync(
       "bun",
       [

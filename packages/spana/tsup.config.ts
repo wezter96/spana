@@ -2,7 +2,7 @@ import { defineConfig } from "tsup";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const shared = [
-  "effect",
+  "axe-core",
   "playwright-core",
   "@cucumber/gherkin",
   "@cucumber/messages",
@@ -23,6 +23,7 @@ export default defineConfig({
   splitting: true,
   shims: true,
   external: shared,
+  noExternal: ["effect"],
   banner: {
     js: 'import { createRequire as __spanaCreateRequire } from "node:module"; const require = __spanaCreateRequire(import.meta.url);',
   },

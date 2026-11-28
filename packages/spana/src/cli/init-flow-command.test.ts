@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInitFlowCommand } from "./init-flow-command.js";
+import { isFlowStubPreset, isInitPreset } from "./scaffolds.js";
 
 const tempDirs: string[] = [];
 
@@ -125,7 +126,6 @@ describe("runInitFlowCommand", () => {
 
 describe("scaffolds", () => {
   test("isFlowStubPreset validates correctly", async () => {
-    const { isFlowStubPreset } = await import("./scaffolds.js");
     expect(isFlowStubPreset("blank")).toBe(true);
     expect(isFlowStubPreset("smoke")).toBe(true);
     expect(isFlowStubPreset("auth")).toBe(true);
@@ -133,7 +133,6 @@ describe("scaffolds", () => {
   });
 
   test("isInitPreset validates correctly", async () => {
-    const { isInitPreset } = await import("./scaffolds.js");
     expect(isInitPreset("local-web")).toBe(true);
     expect(isInitPreset("browserstack")).toBe(true);
     expect(isInitPreset("unknown")).toBe(false);

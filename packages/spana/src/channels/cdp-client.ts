@@ -23,6 +23,7 @@ import {
   type DomWaitForSelectorOptions,
   type InjectedRuntimeMethod,
 } from "./dom-channel.js";
+import { handledByLaterAwait, ignoreBestEffortFailure } from "../core/rejections.js";
 
 export interface MinimalWebSocket {
   readonly readyState: number;
@@ -920,7 +921,7 @@ export class CdpDomChannel implements DomChannel {
           }
         });
         // Prevent unhandled rejection if evalPromise settles first
-        contextDestroyedPromise.catch(() => {});
+        contextDestroyedPromise.catch(handledByLaterAwait);
 
         const response = await Promise.race([evalPromise, contextDestroyedPromise]).finally(() => {
           if (abortGraceTimer !== undefined) {
@@ -1208,7 +1209,7 @@ export class CdpDomChannel implements DomChannel {
           }>("DOM.describeNode", { objectId, depth: 1 }, sessionId, 2_000).catch(() => null);
           frameId = desc?.node?.contentDocument?.frameId ?? desc?.node?.frameId;
           void this.sendCommand("Runtime.releaseObject", { objectId }, sessionId, 1_000).catch(
-            () => {},
+            ignoreBestEffortFailure,
           );
         }
       } catch {
@@ -1746,7 +1747,7 @@ export class CdpDomChannel implements DomChannel {
                       );
                     }
                   })
-                  .catch(() => {});
+                  .catch(ignoreBestEffortFailure);
               }
               if (raceState.done || pollerState.done) break;
               const appearedFrames = await this.resolveInProcessChildFrames(selector);
@@ -1765,7 +1766,7 @@ export class CdpDomChannel implements DomChannel {
                       finishPoller(this.applyFrameOffset(res, frame.offset));
                     }
                   })
-                  .catch(() => {});
+                  .catch(ignoreBestEffortFailure);
               }
             }
             finishPoller([]);

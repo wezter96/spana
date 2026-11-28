@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 
 let importCounter = 0;
@@ -42,6 +42,15 @@ function runNativeImport(envValue?: string, assertion?: string) {
 }
 
 describe("native env", () => {
+  let missing: ReturnType<typeof runNativeImport>;
+  let empty: ReturnType<typeof runNativeImport>;
+
+  // Each run spawns a fresh bun process; start them outside the per-test budget.
+  beforeAll(() => {
+    missing = runNativeImport();
+    empty = runNativeImport("");
+  });
+
   test("reads a valid Expo public server URL from runtime env", async () => {
     const { env } = await importFreshNative("https://example.com");
 
@@ -49,14 +58,10 @@ describe("native env", () => {
   });
 
   test("fails when the required Expo public server URL is missing", () => {
-    const result = runNativeImport();
-
-    expect(result.exitCode).toBe(1);
+    expect(missing.exitCode).toBe(1);
   });
 
   test("treats empty strings as undefined during validation", () => {
-    const result = runNativeImport("");
-
-    expect(result.exitCode).toBe(1);
+    expect(empty.exitCode).toBe(1);
   });
 });

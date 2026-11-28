@@ -89,6 +89,17 @@ const CLEAR_STORAGE_SCRIPT = `
  * specified. Reuses the running Electron process across flows and resets
  * storage cleanly between runs.
  */
+async function loadPlaywrightCoreForElectron() {
+  try {
+    return await import("playwright-core");
+  } catch (cause) {
+    throw new Error(
+      'The Electron driver requires the optional "playwright-core" add-on. Install it with: npm install playwright-core',
+      { cause },
+    );
+  }
+}
+
 export function makeElectronDriver(
   options: ElectronDriverOptions,
 ): Effect.Effect<RawDriverService, DriverError> {
@@ -125,11 +136,8 @@ export function makeElectronDriver(
     if (resolvedCdpUrl) {
       cdpBrowser = yield* Effect.tryPromise({
         try: async () => {
-          const connect =
-            options.connectOverCDP ??
-            (await import("playwright-core")).chromium.connectOverCDP.bind(
-              (await import("playwright-core")).chromium,
-            );
+          const pw = options.connectOverCDP ? undefined : await loadPlaywrightCoreForElectron();
+          const connect = options.connectOverCDP ?? pw!.chromium.connectOverCDP.bind(pw!.chromium);
           return connect(resolvedCdpUrl);
         },
         catch: (e) =>
@@ -167,11 +175,8 @@ export function makeElectronDriver(
 
       electronApp = yield* Effect.tryPromise({
         try: async () => {
-          const launcher =
-            options.launchElectron ??
-            (await import("playwright-core"))._electron.launch.bind(
-              (await import("playwright-core"))._electron,
-            );
+          const pw = options.launchElectron ? undefined : await loadPlaywrightCoreForElectron();
+          const launcher = options.launchElectron ?? pw!._electron.launch.bind(pw!._electron);
           return launcher({
             ...(options.executablePath ? { executablePath: options.executablePath } : {}),
             ...(launchArgs.length > 0 ? { args: launchArgs } : {}),

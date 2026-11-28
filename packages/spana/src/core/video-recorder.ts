@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StepResult } from "../report/types.js";
+import { ignoreBestEffortFailure } from "./rejections.js";
 
 export type VideoRecordingMode = "off" | "on" | "retain-on-failure";
 
@@ -190,7 +191,7 @@ export async function startCdpScreencastRecorder(
     if (stopped) return;
     const sessionId = params?.sessionId;
     if (sessionId !== undefined) {
-      void cdp.sendCommand("Page.screencastFrameAck", { sessionId }).catch(() => {});
+      void cdp.sendCommand("Page.screencastFrameAck", { sessionId }).catch(ignoreBestEffortFailure);
     }
     if (typeof params?.data === "string" && params.data.length > 0) {
       if (frames.length >= maxFrames) {

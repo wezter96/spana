@@ -222,11 +222,9 @@ describe("UiAutomator2 driver adapter", () => {
     );
     const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Tap failed: Error: tap exploded");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Tap failed: Error: tap exploded");
   });
 
   test("wraps session initialization failures in DriverError", async () => {
@@ -237,13 +235,11 @@ describe("UiAutomator2 driver adapter", () => {
       Effect.result(createUiAutomator2Driver("127.0.0.1", 4723, "SERIAL", "com.example.app")),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain(
-        "Failed to create UiAutomator2 session: Error: session exploded",
-      );
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain(
+      "Failed to create UiAutomator2 session: Error: session exploded",
+    );
   });
 
   test("setNetworkConditions with profile on emulator calls adbSetNetworkProfile", async () => {
@@ -278,11 +274,9 @@ describe("UiAutomator2 driver adapter", () => {
       Effect.result(driver.setNetworkConditions!({ profile: "3g" })),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("not supported on physical");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("not supported on physical");
   });
 
   test("setNetworkConditions with empty object resets network on emulator", async () => {

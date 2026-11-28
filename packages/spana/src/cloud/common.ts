@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { ignoreBestEffortFailure } from "../core/rejections.js";
 
 type ReadyMatcher = RegExp | string;
 
@@ -170,7 +171,7 @@ export async function startManagedProcess(options: {
 
     const timeout = setTimeout(() => {
       cleanup();
-      void stopManagedProcess(child, options.label).catch(() => {});
+      void stopManagedProcess(child, options.label).catch(ignoreBestEffortFailure);
       reject(new Error(`Timed out waiting for ${options.label} to become ready.`));
     }, 30_000);
 

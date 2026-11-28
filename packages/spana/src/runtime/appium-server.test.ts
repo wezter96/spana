@@ -62,8 +62,7 @@ describe("startLocalAppium", () => {
 
     await started.stop();
 
-    // After stop, the port should be unreachable
-    await new Promise((r) => setTimeout(r, 200));
+    // stop() resolves only after the child exited, so the port is already closed
     try {
       const check = await fetch(`${started.url}/status`, {
         signal: AbortSignal.timeout(500),

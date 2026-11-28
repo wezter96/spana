@@ -125,6 +125,7 @@ describe("in-page actionability & zero-polling DOM waits", () => {
       }),
     );
     expect(calls).toBe(1);
+    // oxlint-disable-next-line landmines/no-elapsed-time-bound -- the mock ignores timeoutMs, so no deadline or call count shows a stray 500 ms poll sleep; only elapsed time does
     expect(Date.now() - t0).toBeLessThan(200);
   });
 

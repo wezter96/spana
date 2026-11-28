@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -542,7 +543,6 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
         const authId = await app.enableVirtualAuthenticator();
         expect(authId.length).toBeGreaterThan(0);
         // Generate an ECDSA P-256 PKCS#8 keypair using Node crypto for a real CDP WebAuthn.addCredential test
-        const { generateKeyPairSync } = await import("node:crypto");
         const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
         const pkcs8Base64 = privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
         const credId = Buffer.from("spana-pilot-cred-id-1").toString("base64");

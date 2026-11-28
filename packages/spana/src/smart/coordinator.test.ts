@@ -175,11 +175,9 @@ describe("coordinator", () => {
       Effect.result(coordinator.scrollUntilVisible({ testID: "missing-card" }, { maxScrolls: 2 })),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(ElementNotFoundError);
-      expect(result.failure.message).toContain("after 2 scroll(s) toward down");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(ElementNotFoundError);
+    expect(result.failure.message).toContain("after 2 scroll(s) toward down");
     expect(swipes).toHaveLength(2);
   });
 
@@ -233,11 +231,9 @@ describe("coordinator", () => {
       Effect.result(coordinator.backUntilVisible({ testID: "home-title" })),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure.message).toContain("backUntilVisible() failed on back attempt 1");
-      expect(result.failure.message).toContain("back() is not supported on iOS");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure.message).toContain("backUntilVisible() failed on back attempt 1");
+    expect(result.failure.message).toContain("back() is not supported on iOS");
   });
 
   test("getText returns element text content", async () => {
@@ -263,15 +259,13 @@ describe("coordinator", () => {
       ),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(TextMismatchError);
-      expect(result.failure).toMatchObject({
-        expected: "Expected",
-        actual: "Actual",
-        selector: { text: "Actual" },
-      });
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(TextMismatchError);
+    expect(result.failure).toMatchObject({
+      expected: "Expected",
+      actual: "Actual",
+      selector: { text: "Actual" },
+    });
   });
 });
 

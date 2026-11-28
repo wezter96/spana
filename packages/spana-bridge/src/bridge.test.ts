@@ -93,6 +93,7 @@ describe("spana-bridge client", () => {
       idleResolved = true;
     });
 
+    // oxlint-disable-next-line landmines/no-fixed-sleep -- proves idle() stays pending while busy; only real time passing can show that
     await new Promise((r) => setTimeout(r, 40));
     expect(idleResolved).toBe(false);
 

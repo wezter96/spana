@@ -20,6 +20,7 @@ import {
   type DomWaitForMatchResult,
 } from "../channels/dom-channel.js";
 import { allocateFreePort } from "../core/port-allocator.js";
+import { ignoreBestEffortFailure } from "../core/rejections.js";
 import { getHealthyWarmDaemon, registerWarmDaemon } from "../runtime/daemon-manager.js";
 import type {
   Browser,
@@ -198,7 +199,14 @@ const INSTANT_ANIMATIONS_INIT_SCRIPT = `
  * registered in Spana's warm daemon registry (`spana daemon status|stop`).
  */
 async function loadPlaywrightCore() {
-  return import("playwright-core");
+  try {
+    return await import("playwright-core");
+  } catch (cause) {
+    throw new Error(
+      'This feature requires the optional "playwright-core" add-on (used for Firefox/WebKit, engine: "playwright", wsEndpoint, channel, artifacts.har, and Electron). Install it with: npm install playwright-core — or set execution.web.engine = "cdp" for zero-dependency Direct CDP.',
+      { cause },
+    );
+  }
 }
 
 async function getBrowserLauncher(browserName: BrowserName) {
@@ -883,23 +891,25 @@ export function makePlaywrightDriver(
             await dialog.dismiss();
           },
         };
+        // oxlint-disable-next-line landmines/no-silent-catch -- a throwing user dialog handler must not block the finally that dismisses the dialog; the error is not surfaced yet (jsErrors could carry it)
         void Promise.resolve(activeHandler(info))
           .catch(() => {})
           .finally(() => {
             if (!handled) {
               handled = true;
-              void dialog.dismiss().catch(() => {});
+              void dialog.dismiss().catch(ignoreBestEffortFailure);
             }
           });
       });
 
       if (config.recordHar !== false) {
+        // HAR capture is best effort: a request whose page closed mid-read is dropped from the HAR, not fatal to the flow.
         activePage.on("requestfinished", (request) => {
-          void recordRequestFinished(activePage, request).catch(() => {});
+          void recordRequestFinished(activePage, request).catch(ignoreBestEffortFailure);
         });
 
         activePage.on("requestfailed", (request) => {
-          void recordRequestFailed(activePage, request).catch(() => {});
+          void recordRequestFailed(activePage, request).catch(ignoreBestEffortFailure);
         });
       }
 
@@ -2155,6 +2165,7 @@ export function makePlaywrightDriver(
             const wrapped = (params: unknown) => {
               if (!unsubscribed) listener((params ?? {}) as Record<string, unknown>);
             };
+            // oxlint-disable-next-line landmines/no-silent-catch -- on() returns an unsubscribe fn and has no error path; if the CDP session fails the listener never fires; send() opens a new session and rejects if that fails too
             void ensureCdpSession()
               .then((session) => {
                 if (unsubscribed) return;

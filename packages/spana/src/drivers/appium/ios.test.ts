@@ -407,11 +407,9 @@ describe("Appium iOS driver", () => {
     const driver = await Effect.runPromise(createAppiumIOSDriver(client));
     const result = await Effect.runPromise(Effect.result(driver.back()));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("not supported on iOS");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("not supported on iOS");
   });
 
   // ---------------------------------------------------------------------------
@@ -490,11 +488,9 @@ describe("Appium iOS driver", () => {
     const driver = await Effect.runPromise(createAppiumIOSDriver(client));
     const result = await Effect.runPromise(Effect.result(driver.tapAtCoordinate(10, 20)));
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(DriverError);
-      expect(result.failure.message).toContain("Tap failed");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(DriverError);
+    expect(result.failure.message).toContain("Tap failed");
   });
 
   test("all touch actions use pointerType touch (not mouse)", async () => {
@@ -513,11 +509,9 @@ describe("Appium iOS driver", () => {
     await Effect.runPromise(driver.longPressAtCoordinate(1, 1, 500));
     await Effect.runPromise(driver.swipe(1, 1, 2, 2, 300));
 
-    for (const call of calls) {
-      const body = JSON.parse(String(call.init?.body));
-      if (body.actions?.[0]?.parameters) {
-        expect(body.actions[0].parameters.pointerType).toBe("touch");
-      }
-    }
+    const pointerTypes = calls.map(
+      (call) => JSON.parse(String(call.init?.body)).actions?.[0]?.parameters?.pointerType,
+    );
+    expect(pointerTypes).toEqual(["touch", "touch", "touch", "touch"]);
   });
 });

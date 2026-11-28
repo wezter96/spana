@@ -91,6 +91,13 @@ npm install spana-test
 bun add spana-test
 ```
 
+> **Zero-dependency standalone install:** `spana-test` ships with **0 required runtime dependencies** (and 0 transitive packages) — safe for strict lockfile / SBOM audits in security-critical organizations. Direct CDP Chromium launches with `chromiumSandbox: false` by default (matching Playwright) so Ubuntu 23.10+ and GitHub Actions runners work out of the box. Install optional add-ons only when you need them:
+>
+> - `playwright-core` — Firefox / WebKit, `engine: "playwright"`, remote `wsEndpoint`, a branded `channel` (chrome, msedge), `artifacts.har`, or Electron `_electron.launch`
+> - `axe-core` — WCAG accessibility audits (`toPassAccessibilityAudit()` / `auditAccessibility()`)
+> - `@cucumber/gherkin`, `@cucumber/messages`, `@cucumber/cucumber-expressions` — Gherkin `.feature` files
+> - `effect` — optional TypeScript types only if authoring custom Effect-based `RawDriverService` drivers
+
 Create `spana.config.ts`:
 
 ```ts

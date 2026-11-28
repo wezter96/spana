@@ -259,6 +259,7 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
       await exp({ testID: "out" }).toHaveText("vis-1");
       const t0 = performance.now();
       expect(await app.isVisible({ testID: "nonexistent-fast-check" })).toBe(false);
+      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser perf guard: isVisible on a missing node must not wait for auto-wait
       expect(performance.now() - t0).toBeLessThan(300);
 
       // Keyboard chords + held modifier click
@@ -312,6 +313,7 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
       await driver.beginFlow?.("v017-flow-2");
       const navStart = performance.now();
       await app.openLink(primaryUrl);
+      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser regression guard: fresh-mode Page.navigate must not hang 10 s
       expect(performance.now() - navStart).toBeLessThan(4000);
 
       // expect.poll(...).toBeNull() + newContext({ userAgent })

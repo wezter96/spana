@@ -91,14 +91,12 @@ describe("auto wait", () => {
       ),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(ElementNotFoundError);
-      expect(result.failure).toMatchObject({
-        selector: { text: "Missing" },
-        timeoutMs: 5,
-      });
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(ElementNotFoundError);
+    expect(result.failure).toMatchObject({
+      selector: { text: "Missing" },
+      timeoutMs: 5,
+    });
   });
 
   test("waitForNotVisible resolves once the matching element disappears", async () => {
@@ -154,14 +152,12 @@ describe("auto wait", () => {
       ),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure).toBeInstanceOf(WaitTimeoutError);
-      expect(result.failure).toMatchObject({
-        selector: { text: "Ready" },
-        timeoutMs: 5,
-      });
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure).toBeInstanceOf(WaitTimeoutError);
+    expect(result.failure).toMatchObject({
+      selector: { text: "Ready" },
+      timeoutMs: 5,
+    });
   });
 });
 
@@ -200,11 +196,9 @@ describe("error messages", () => {
       ),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure.message).toContain("testID");
-      expect(result.failure.message).toContain("login-btn");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure.message).toContain("testID");
+    expect(result.failure.message).toContain("login-btn");
   });
 
   test("waitForNotVisible error message includes selector JSON", async () => {
@@ -220,11 +214,9 @@ describe("error messages", () => {
       ),
     );
 
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(result.failure.message).toContain("text");
-      expect(result.failure.message).toContain("Loading");
-    }
+    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
+    expect(result.failure.message).toContain("text");
+    expect(result.failure.message).toContain("Loading");
   });
 });
 
@@ -290,20 +282,17 @@ describe("adaptive polling", () => {
     // First few polls return empty, then target appears
     const { driver } = createDriver([rootEmpty, rootEmpty, rootWithTarget]);
 
-    const startTime = Date.now();
+    // timeout < pollInterval: fixed 500ms polling would hit the deadline before the third dump,
+    // so finding the target proves the short initial interval was used.
     const element = await Effect.runPromise(
       waitForElement(driver, { text: "Found" }, parse, {
-        timeout: 2000,
+        timeout: 400,
         pollInterval: 500,
         initialPollInterval: 10,
       }),
     );
-    const elapsed = Date.now() - startTime;
 
     expect(element.text).toBe("Found");
-    // With initialPollInterval=10, the first two misses should take ~20ms total,
-    // not 1000ms (2 * 500ms) as with fixed polling
-    expect(elapsed).toBeLessThan(200);
   });
 
   test("falls back to pollInterval when initialPollInterval equals pollInterval", async () => {
@@ -436,11 +425,13 @@ describe("hierarchy cache integration", () => {
     expect(el.id).toBe("async-cta");
     expect(waitForSelectorCalls).toBe(1);
     // Woke up reactively (~15ms) instead of sleeping 500ms poll interval!
+    // oxlint-disable-next-line landmines/no-elapsed-time-bound -- the mock ignores timeoutMs, so no deadline or call count shows a stray 500 ms poll sleep; only elapsed time does
     expect(elapsed).toBeLessThan(200);
   });
 
   test("failFastWhenIdle on web fails early instead of waiting full timeout", async () => {
     const { driver } = createDriver([createElement()]);
+    let waitForSelectorCalls = 0;
     const driverWithDom = {
       ...driver,
       domChannel: {
@@ -450,12 +441,14 @@ describe("hierarchy cache integration", () => {
         disconnect: async () => {},
         evaluate: async () => undefined as any,
         query: async () => [],
-        waitForSelector: async () => [],
+        waitForSelector: async () => {
+          waitForSelectorCalls += 1;
+          return [];
+        },
         tapDom: async () => false,
       },
     };
 
-    const t0 = Date.now();
     const result = await Effect.runPromise(
       Effect.result(
         waitForElement(driverWithDom, { testID: "missing-btn" }, parse, {
@@ -466,8 +459,8 @@ describe("hierarchy cache integration", () => {
         }),
       ),
     );
-    const elapsed = Date.now() - t0;
     expect(result._tag).toBe("Failure");
-    expect(elapsed).toBeLessThan(500);
+    // Without failFastWhenIdle the empty result is retried until the deadline (~20 calls per second).
+    expect(waitForSelectorCalls).toBe(1);
   });
 });

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { Effect } from "effect";
 import type { Browser } from "playwright-core";
 import type { BridgeConfig, ProvConfig, WebExecutionConfig } from "../schemas/config.js";
@@ -16,6 +17,7 @@ import { resolveChromiumGpuArgs } from "../drivers/wasm-utils.js";
 import { parseWebHierarchy } from "../drivers/playwright-parser.js";
 import { updateWarmDaemonSession } from "./daemon-manager.js";
 import { allocatePort } from "../core/port-allocator.js";
+import { handledByLaterAwait } from "../core/rejections.js";
 import type { SpanaBridgeChannel } from "../channels/bridge-server.js";
 import { resolveDriverAdapter } from "../drivers/adapter-registry.js";
 
@@ -92,11 +94,28 @@ function buildEngineConfig(
   };
 }
 
+let cachedPlaywrightAvailable: boolean | undefined;
+
+/** Check whether the optional `playwright-core` add-on is installed in the host project. */
+export function isPlaywrightCoreAvailable(): boolean {
+  if (cachedPlaywrightAvailable !== undefined) return cachedPlaywrightAvailable;
+  try {
+    const req = createRequire(import.meta.url);
+    req.resolve("playwright-core");
+    cachedPlaywrightAvailable = true;
+  } catch {
+    cachedPlaywrightAvailable = false;
+  }
+  return cachedPlaywrightAvailable;
+}
+
 /**
  * Resolve the effective web browser engine.
  * - `"auto"`: automatically selects direct CDP (`"cdp"`, zero Playwright pipe) for Chromium
  *   when no Playwright-only features (`wsEndpoint`, `channel`, `artifacts.har`) are requested,
  *   and falls back seamlessly to `"playwright"` otherwise.
+ * - Omitted: selects `"cdp"` automatically when the optional `playwright-core` add-on is not
+ *   installed and Chromium is targeted; otherwise uses `"playwright"` for backwards compatibility.
  * - Explicit `"cdp"`, `"playwright"`, or `"lightpanda"` is respected verbatim.
  */
 export function resolveWebEngine(config: ProvConfig): "playwright" | "cdp" | "lightpanda" {
@@ -105,12 +124,15 @@ export function resolveWebEngine(config: ProvConfig): "playwright" | "cdp" | "li
   if (requested === "cdp" || requested === "lightpanda" || requested === "playwright") {
     return requested;
   }
+  const isChromium = (webExecution?.browser ?? "chromium") === "chromium";
+  const needsPlaywrightOnly = Boolean(
+    webExecution?.wsEndpoint || webExecution?.channel || config.artifacts?.har,
+  );
   if (requested === "auto") {
-    const isChromium = (webExecution?.browser ?? "chromium") === "chromium";
-    const needsPlaywrightOnly = Boolean(
-      webExecution?.wsEndpoint || webExecution?.channel || config.artifacts?.har,
-    );
     return isChromium && !needsPlaywrightOnly ? "cdp" : "playwright";
+  }
+  if (isChromium && !needsPlaywrightOnly && !isPlaywrightCoreAvailable()) {
+    return "cdp";
   }
   return "playwright";
 }
@@ -168,7 +190,7 @@ export function speculativelyPrelaunchWebBrowser(
         : undefined,
       daemonStateFile: config.execution?.warmDaemons?.stateFile,
     });
-    cdpBrowserPromise.catch(() => {});
+    cdpBrowserPromise.catch(handledByLaterAwait);
     return {
       browserPromise: Promise.resolve(undefined as unknown as Browser),
       ownsBrowser: !useWarm,
@@ -216,7 +238,7 @@ export function speculativelyPrelaunchWebBrowser(
   );
 
   // Prevent unhandled rejection if CLI exits early before awaiting
-  browserPromise.catch(() => {});
+  browserPromise.catch(handledByLaterAwait);
   return { browserPromise, ownsBrowser };
 }
 

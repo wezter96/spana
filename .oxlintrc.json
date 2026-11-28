@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc"],
+  "jsPlugins": [{ "name": "landmines", "specifier": "@interfere/landmines" }],
   "categories": {
     "correctness": "error",
     "suspicious": "error"
@@ -9,7 +10,13 @@
     "unicorn/prefer-string-replace-all": "error",
     "eslint/no-underscore-dangle": "off",
     "unicorn/no-array-fill-with-reference-type": "off",
-    "unicorn/consistent-function-scoping": "off"
+    "unicorn/consistent-function-scoping": "off",
+    "landmines/no-conditional-expect": "error",
+    "landmines/no-silent-catch": "error",
+    "landmines/no-fixed-sleep": "error",
+    "landmines/no-elapsed-time-bound": "error",
+    "landmines/no-cold-start-in-test": "error",
+    "landmines/no-cold-import-in-test": "error"
   },
   "env": {
     "builtin": true

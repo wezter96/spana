@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { Effect } from "effect";
 import type { RawDriverService } from "../drivers/raw-driver.js";
 import type { DeviceInfo } from "../schemas/device.js";
@@ -83,11 +83,11 @@ describe("hierarchy cache", () => {
     await Effect.runPromise(cache.get(driver, parse));
     expect(getDumpCount()).toBe(1);
 
-    // Wait for TTL to expire
-    await new Promise((r) => setTimeout(r, 5));
+    // Move the clock past the 1 ms TTL
+    setSystemTime(new Date(Date.now() + 5));
     setHierarchy(createElement({ text: "updated" }));
 
-    const result = await Effect.runPromise(cache.get(driver, parse));
+    const result = await Effect.runPromise(cache.get(driver, parse)).finally(() => setSystemTime());
     expect(result.text).toBe("updated");
     expect(getDumpCount()).toBe(2);
   });

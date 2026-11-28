@@ -180,7 +180,7 @@ describe("engine", () => {
       expect(result.error?.message).toContain("2 soft assertion(s) failed:");
       expect(result.error?.message).toContain("First mismatch");
       expect(result.error?.message).toContain("Second mismatch");
-      if (hardFailure) expect(result.error?.message).toContain("hard failure");
+      expect(result.error?.message?.includes("hard failure")).toBe(hardFailure);
       expect(events).toContainEqual(["inputText", "continued"]);
     },
   );
