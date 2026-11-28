@@ -454,7 +454,7 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 30_000);
+  });
 
   test("2.13, 2.28, 2.30, 2.24, 1.18, 1.22, 1.17, 1.16: waits, reload recovery, redirects, enabled polling, popover no-scroll, failFastWhenIdle, relative URL, back/forward", async () => {
     const driver = await Effect.runPromise(
@@ -501,21 +501,18 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       expect(await app.evaluate<number>("window.__scrollCount || 0")).toBe(0);
 
       // 1.22: failFastWhenIdle fails fast (~300-1000ms) instead of waiting 5000ms
+      // The target appears at 3s, inside the 5s timeout: a wait that ran to its
+      // timeout would find it, so rejecting proves it gave up once the page went idle.
       await app.openLink(`${baseUrl}/fail-fast`);
-      const ffStart = Date.now();
-      let ffFailed = false;
-      try {
-        await spanaExpect({ testID: "does-not-exist-ever" }).toBeVisible({
+      await app.evaluate(
+        "setTimeout(() => { const el = document.createElement('div'); el.dataset.testid = 'appears-after-idle'; el.textContent = 'late'; document.body.append(el); }, 3000)",
+      );
+      await expect(
+        spanaExpect({ testID: "appears-after-idle" }).toBeVisible({
           timeout: 5000,
           failFastWhenIdle: true,
-        });
-      } catch {
-        ffFailed = true;
-      }
-      const ffElapsed = Date.now() - ffStart;
-      expect(ffFailed).toBe(true);
-      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser perf guard: fail-fast must beat the 5 s timeout; no in-process signal shows that
-      expect(ffElapsed).toBeLessThan(2500);
+        }),
+      ).rejects.toThrow();
 
       // 1.17: FlowConfig.baseUrl overrides default appId in executeFlow
       const baseUrlFlow = flow(
@@ -535,7 +532,7 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 30_000);
+  });
 
   test("2.9, 2.10, 2.18, 2.21, 2.25, 2.26, 2.29, 2.31, 3.7, 3.21, 3.24, 3.26, 3.27: clock, ARIA roles, iframes, eval cancel, visibility, readyExpression, P3 quick wins", async () => {
     const driver = await Effect.runPromise(
@@ -556,14 +553,15 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       await app.openLink(`${baseUrl}/clock-page`);
       const t0 = Date.parse("2026-06-01T12:00:00.000Z");
       await app.clock.install({ time: t0 });
-      // oxlint-disable-next-line landmines/no-fixed-sleep -- proves the installed clock keeps running in real time
-      await new Promise((r) => setTimeout(r, 40));
-      const runningNow = await app.evaluate<number>(() => Date.now());
-      expect(runningNow).toBeGreaterThan(t0);
+      // A running clock keeps advancing from the installed time.
+      await spanaExpect
+        .poll(async () => await app.evaluate<number>(() => Date.now()))
+        .toBeGreaterThan(t0);
 
+      // A fixed clock stays frozen across round trips.
       await app.clock.setFixedTime(t0);
-      // oxlint-disable-next-line landmines/no-fixed-sleep -- proves setFixedTime freezes Date.now while real time passes
-      await new Promise((r) => setTimeout(r, 30));
+      expect(await app.evaluate<number>(() => Date.now())).toBe(t0);
+      await app.evaluate("void 0");
       expect(await app.evaluate<number>(() => Date.now())).toBe(t0);
 
       await app.clock.pauseAt(t0);
@@ -629,18 +627,27 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
       expect(missingIframeErr).toContain("Iframe matching");
 
       // 2.21: hung Runtime.evaluate cancels promptly on navigation/context destruction (not 10s!)
+      // The hung eval must reject as soon as the navigation destroys its context,
+      // i.e. before the navigation itself has finished.
       await app.openLink(`${baseUrl}/home`);
-      const cancelStart = Date.now();
-      const evalPromise = driver.evaluate("new Promise(() => {})").pipe(Effect.result);
-      const evalRun = Effect.runPromise(evalPromise);
-      setTimeout(() => {
-        void Effect.runPromise(driver.openLink(`${baseUrl}/second`)).catch(() => {});
-      }, 80);
-      const evalOutcome = await evalRun;
-      const cancelMs = Date.now() - cancelStart;
+      const order: string[] = [];
+      const evalRun = Effect.runPromise(
+        driver
+          .evaluate("new Promise(() => { window.__hungEvalStarted = true; })")
+          .pipe(Effect.result),
+      ).then((outcome) => {
+        order.push("eval-settled");
+        return outcome;
+      });
+      await spanaExpect
+        .poll(async () => await app.evaluate<boolean>("window.__hungEvalStarted === true"))
+        .toBe(true);
+      const navRun = Effect.runPromise(driver.openLink(`${baseUrl}/second`)).then(() => {
+        order.push("navigation-done");
+      });
+      const [evalOutcome] = await Promise.all([evalRun, navRun]);
       expect(evalOutcome._tag).toBe("Failure");
-      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser regression guard: a hung evaluate must cancel on navigation, not after its 10 s timeout
-      expect(cancelMs).toBeLessThan(2000);
+      expect(order[0]).toBe("eval-settled");
 
       // 2.25 + 2.26 + 2.29 + 2.34: below-the-fold visible, display:contents visible, opacity:0, inert, and aria-hidden visible by testID (Playwright visibility semantics)
       await app.openLink(`${baseUrl}/visibility-edges`);
@@ -695,7 +702,7 @@ describe("v0.16.0 migration audit fixes — live Direct CDP Chromium E2E", () =>
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 30_000);
+  });
 
   test("1.27: buildDirectChromiumLaunchArgs defaults to --no-sandbox unless chromiumSandbox: true", () => {
     const defaultArgs = buildDirectChromiumLaunchArgs({ userDataDir: "/tmp/spana-test-1" });

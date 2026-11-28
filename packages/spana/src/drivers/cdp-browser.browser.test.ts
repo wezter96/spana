@@ -128,7 +128,7 @@ describe("CDP browser driver 0.9.0 fixes", () => {
     await app.fill(byCss("#dirty"), "unsaved edit");
     await app.openLink(`${baseUrl}/after`);
     expect(await app.getText({ testID: "arrived" })).toBe("Arrived");
-  }, 15_000);
+  });
 
   test("#9: uploadFile waits for asynchronously mounted <input type='file'>", async () => {
     const app = createPromiseApp(
@@ -145,7 +145,7 @@ describe("CDP browser driver 0.9.0 fixes", () => {
     await app.uploadFile({ testID: "late-file" }, samplePath);
     const name = await app.evaluate<string>("window.__uploadedName || ''");
     expect(name).toBe("hello.txt");
-  }, 15_000);
+  });
 
   test("#11e: waitForResponse captures responses initiated by a newly opened tab", async () => {
     const app = createPromiseApp(
@@ -163,5 +163,5 @@ describe("CDP browser driver 0.9.0 fixes", () => {
     expect(res.url).toContain("/api/popup-data");
     const json = await res.json!<{ ok: boolean; from: string }>();
     expect(json).toEqual({ ok: true, from: "popup-tab" });
-  }, 15_000);
+  });
 });

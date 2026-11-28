@@ -141,7 +141,7 @@ describe("0.9.0 pilot fixes in real Chromium", () => {
     await app.tap({ testID: "sticky-target" });
     const clicks = await app.evaluate<number>("window.__stickyClicks || 0");
     expect(clicks).toBe(1);
-  }, 15_000);
+  });
 
   test("#1b: permanently covered element fails loudly with blocker description and never clicks through", async () => {
     const { app } = makeHarness();
@@ -156,7 +156,7 @@ describe("0.9.0 pilot fixes in real Chromium", () => {
     expect(errMsg).toContain("modal-blocker");
     const clicks = await app.evaluate<number>("window.__coveredClicks || 0");
     expect(clicks).toBe(0);
-  }, 15_000);
+  });
 
   test("#2: action stability default (2 frames) waits for moving target to settle", async () => {
     const { app } = makeHarness();
@@ -164,7 +164,7 @@ describe("0.9.0 pilot fixes in real Chromium", () => {
     await app.tap({ testID: "slider-btn" });
     const clickedLeft = await app.evaluate<number>("window.__clickedLeft || 0");
     expect(clickedLeft).toBeGreaterThanOrEqual(280);
-  }, 15_000);
+  });
 
   test("#3: hit test rejects sibling/ancestor overlay but accepts associated <label>", async () => {
     const { app } = makeHarness();
@@ -181,7 +181,7 @@ describe("0.9.0 pilot fixes in real Chromium", () => {
     // Clicking checkbox covered by its own <label> succeeds
     await app.tap({ testID: "labeled-cb" });
     expect(await app.evaluate<boolean>("document.getElementById('cb-1').checked")).toBe(true);
-  }, 15_000);
+  });
 
   test("#4, #5, #11a, #11d: role hidden filtering, aria-hidden accName, heading level, accessibleDescription", async () => {
     const { app, spanaExpect } = makeHarness();
@@ -207,7 +207,7 @@ describe("0.9.0 pilot fixes in real Chromium", () => {
     await spanaExpect({ testID: "email" }).toHaveAccessibleDescription("Must be a company email");
     await spanaExpect({ testID: "desc-btn" }).toHaveAccessibleDescription(/permanently/i);
     await spanaExpect({ testID: "desc-btn" }).not.toHaveAccessibleDescription("Wrong desc");
-  }, 15_000);
+  });
 
   test("#11b, #11c, #11f, #11g, #11h, #11i: or, filter has/hasNot, .not, count, toPass/poll, textContent, getText tr, boxless getAttribute, fill error", async () => {
     const { app, spanaExpect } = makeHarness();
@@ -278,5 +278,5 @@ describe("0.9.0 pilot fixes in real Chromium", () => {
     expect(classifyError(fillErr as Error).category).toBe("element-not-found");
     expect(String(fillErr)).toContain("not fillable");
     expect(String(fillErr)).not.toContain("Runtime.evaluate");
-  }, 15_000);
+  });
 });

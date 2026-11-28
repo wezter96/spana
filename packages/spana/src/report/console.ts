@@ -7,38 +7,40 @@ export interface ConsoleReporterOptions {
   quiet?: boolean;
   /** Resolved web browser engine label for accurate platform header reporting. */
   webEngine?: "playwright" | "cdp" | "lightpanda";
+  /** Output writer (defaults to console.log). */
+  write?: (line: string) => void;
 }
 
-function printResultAttachments(result: FlowResult): void {
+function printResultAttachments(result: FlowResult, write: (line: string) => void): void {
   for (const attachment of result.attachments ?? []) {
-    console.log(`    ↳ ${attachment.name}: ${attachment.path}`);
+    write(`    ↳ ${attachment.name}: ${attachment.path}`);
   }
 
   for (const [index, step] of (result.steps ?? []).entries()) {
     for (const attachment of step.attachments ?? []) {
-      console.log(`    ↳ step ${index + 1} ${step.command}: ${attachment.path}`);
+      write(`    ↳ step ${index + 1} ${step.command}: ${attachment.path}`);
     }
   }
 }
 
-function printScenarioSteps(steps: ScenarioStepResult[]): void {
+function printScenarioSteps(steps: ScenarioStepResult[], write: (line: string) => void): void {
   for (const step of steps) {
     const icon = step.status === "passed" ? "✓" : step.status === "failed" ? "✗" : "○";
     const duration = step.durationMs > 0 ? ` (${step.durationMs}ms)` : "";
-    console.log(`      ${icon} ${step.keyword} ${step.text}${duration}`);
+    write(`      ${icon} ${step.keyword} ${step.text}${duration}`);
     if (step.error) {
-      console.log(`        ${step.error}`);
+      write(`        ${step.error}`);
     }
   }
 }
 
-function printSelectorWarnings(result: FlowResult): void {
+function printSelectorWarnings(result: FlowResult, write: (line: string) => void): void {
   if (!result.steps || result.steps.length === 0) return;
   const warnings = analyzeStepQuality(result.steps);
   if (warnings.length === 0) return;
-  console.log("    Selector warnings:");
+  write("    Selector warnings:");
   for (const w of warnings) {
-    console.log(`      ! ${w.message}`);
+    write(`      ! ${w.message}`);
   }
 }
 
@@ -66,12 +68,12 @@ function getDriverLabel(
   return driverNames[platform];
 }
 
-function printA11yViolations(result: FlowResult): void {
+function printA11yViolations(result: FlowResult, write: (line: string) => void): void {
   for (const step of result.steps ?? []) {
     if (step.status === "failed" && step.command.includes("AccessibilityAudit") && step.error) {
-      console.log(`    Accessibility violations (${step.command}):`);
+      write(`    Accessibility violations (${step.command}):`);
       for (const line of step.error.split("\n")) {
-        console.log(`      ${line}`);
+        write(`      ${line}`);
       }
     }
   }
@@ -80,6 +82,7 @@ function printA11yViolations(result: FlowResult): void {
 export function createConsoleReporter(options?: ConsoleReporterOptions): Reporter {
   const quiet = options?.quiet ?? false;
   const webEngine = options?.webEngine;
+  const write = options?.write ?? ((line: string) => console.log(line));
   let completed = 0;
   let total = 0;
   let currentPlatform: Platform | undefined;
@@ -110,7 +113,7 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       // Print platform header when switching to a new platform
       if (platform !== currentPlatform) {
         currentPlatform = platform;
-        console.log(`\n  ${platform} (${getDriverLabel(platform, webEngine)})`);
+        write(`\n  ${platform} (${getDriverLabel(platform, webEngine)})`);
       }
 
       if (process.stderr.isTTY) {
@@ -133,12 +136,12 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
 
       const duration = `(${result.durationMs}ms)`;
       const flakyTag = result.flaky ? ` [flaky, passed on attempt ${result.attempts}]` : "";
-      console.log(
+      write(
         `  ✓ ${workerPrefix(result.workerName)}${progressPrefix(result.platform)} ${result.name} ${duration}${flakyTag}`,
       );
-      if (result.scenarioSteps) printScenarioSteps(result.scenarioSteps);
-      printResultAttachments(result);
-      printSelectorWarnings(result);
+      if (result.scenarioSteps) printScenarioSteps(result.scenarioSteps, write);
+      printResultAttachments(result, write);
+      printSelectorWarnings(result, write);
     },
 
     onFlowFail(result) {
@@ -153,12 +156,12 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
 
       // Always show failures, even in quiet mode
       const duration = `(${result.durationMs}ms)`;
-      console.log(
+      write(
         `  ✗ ${workerPrefix(result.workerName)}${progressPrefix(result.platform)} [${result.platform}] ${result.name} ${duration}`,
       );
-      if (result.scenarioSteps) printScenarioSteps(result.scenarioSteps);
-      printResultAttachments(result);
-      printA11yViolations(result);
+      if (result.scenarioSteps) printScenarioSteps(result.scenarioSteps, write);
+      printResultAttachments(result, write);
+      printA11yViolations(result, write);
     },
 
     onFlowSkip(result) {
@@ -173,13 +176,13 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
 
       const reason = result.skipReason ? `: ${result.skipReason}` : "";
       const tag = result.modifier ? `(${result.modifier}${reason})` : `(skipped${reason})`;
-      console.log(
+      write(
         `  – ${workerPrefix(result.workerName)}${progressPrefix(result.platform)} ${result.name} ${tag}`,
       );
     },
 
     onRunComplete(summary) {
-      console.log("");
+      write("");
 
       // Group results by platform
       const byPlatform = new Map<Platform, FlowResult[]>();
@@ -209,13 +212,13 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
             : (summary.platformDurations?.[platform] ??
               trackedElapsed ??
               results.reduce((sum, r) => sum + r.durationMs, 0));
-        console.log(
+        write(
           `${label.padEnd(25)} ${symbols}  ${passed}/${totalCount} passed (${(duration / 1000).toFixed(1)}s)`,
         );
       }
 
       for (const result of summary.results.filter((r) => r.status === "skipped" && r.modifier)) {
-        console.log(
+        write(
           `  – [${result.platform}] ${result.name} (${result.modifier}${result.skipReason ? `: ${result.skipReason}` : ""})`,
         );
       }
@@ -223,26 +226,26 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       // Failures detail with suggestions
       const failures = summary.results.filter((r) => r.status === "failed");
       if (failures.length > 0) {
-        console.log("\n--- Failures ---");
+        write("\n--- Failures ---");
         for (const f of failures) {
           const deviceLabel = f.workerName ? `${f.platform} on ${f.workerName}` : f.platform;
-          console.log(`✗ [${deviceLabel}] ${f.name}`);
+          write(`✗ [${deviceLabel}] ${f.name}`);
           if (f.error) {
-            console.log(`  Category: ${f.error.category}`);
-            console.log(`  ${f.error.message}`);
+            write(`  Category: ${f.error.category}`);
+            write(`  ${f.error.message}`);
             if (f.error.location) {
-              console.log(
+              write(
                 `  At: ${f.error.location.file}:${f.error.location.line}:${f.error.location.column}`,
               );
             }
             if (f.error.codeFrame) {
               for (const line of f.error.codeFrame.split("\n")) {
-                console.log(`  ${line}`);
+                write(`  ${line}`);
               }
             }
             if (f.error.suggestion) {
               for (const line of f.error.suggestion.split("\n")) {
-                console.log(`  💡 ${line}`);
+                write(`  💡 ${line}`);
               }
             }
           }
@@ -252,22 +255,22 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       // Flaky detail
       const flakyResults = summary.results.filter((r) => r.flaky);
       if (flakyResults.length > 0) {
-        console.log("\n--- Flaky ---");
+        write("\n--- Flaky ---");
         for (const f of flakyResults) {
-          console.log(`~ [${f.platform}] ${f.name} (passed on attempt ${f.attempts})`);
+          write(`~ [${f.platform}] ${f.name} (passed on attempt ${f.attempts})`);
         }
       }
 
       // Worker stats
       if (summary.workerStats && summary.workerStats.size > 0) {
-        console.log("\nWorker Stats:");
+        write("\nWorker Stats:");
         for (const [id, stats] of summary.workerStats) {
-          console.log(`  [${id}]  ${stats.flowCount} flows  ${(stats.totalMs / 1000).toFixed(1)}s`);
+          write(`  [${id}]  ${stats.flowCount} flows  ${(stats.totalMs / 1000).toFixed(1)}s`);
         }
       }
 
       if (summary.bailedOut) {
-        console.log(
+        write(
           `\nBailed out after ${summary.failed} failure(s)${
             summary.bailLimit ? ` (limit: ${summary.bailLimit})` : ""
           }.`,
@@ -277,7 +280,7 @@ export function createConsoleReporter(options?: ConsoleReporterOptions): Reporte
       // Final summary
       const skippedStr = summary.skipped > 0 ? `, ${summary.skipped} skipped` : "";
       const flakyStr = summary.flaky > 0 ? `, ${summary.flaky} flaky` : "";
-      console.log(
+      write(
         `\n${summary.passed}/${summary.total} passed, ${summary.failed} failed${skippedStr}${flakyStr} (${(summary.durationMs / 1000).toFixed(1)}s)`,
       );
     },

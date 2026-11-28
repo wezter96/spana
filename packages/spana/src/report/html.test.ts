@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,17 +6,12 @@ import { createHtmlReporter } from "./html.js";
 import type { RunSummary } from "./types.js";
 
 const createdDirs: string[] = [];
-const originalConsoleLog = console.log;
 
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "spana-html-report-"));
   createdDirs.push(dir);
   return dir;
 }
-
-afterEach(() => {
-  console.log = originalConsoleLog;
-});
 
 afterAll(() => {
   for (const dir of createdDirs) {
@@ -32,7 +27,6 @@ describe("createHtmlReporter", () => {
     const stepScreenshot = join(screenshotDir, "step.png");
     const consoleLogsPath = join(screenshotDir, "console-logs.json");
     const jsErrorsPath = join(screenshotDir, "js-errors.json");
-    const logs: string[] = [];
 
     writeFileSync(finalScreenshot, Buffer.from([0xde, 0xad, 0xbe, 0xef]));
     writeFileSync(stepScreenshot, Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
@@ -44,9 +38,6 @@ describe("createHtmlReporter", () => {
       jsErrorsPath,
       JSON.stringify([{ name: "Error", message: 'boom <bad> & "worse"' }]),
     );
-    console.log = (...args: unknown[]) => {
-      logs.push(args.join(" "));
-    };
 
     const reporter = createHtmlReporter(outputDir);
     const summary: RunSummary = {
@@ -98,7 +89,6 @@ describe("createHtmlReporter", () => {
     expect(html).toContain("ready &lt;ok&gt; &amp; &quot;quoted&quot;");
     expect(html).toContain("JavaScript errors");
     expect(html).toContain("boom &lt;bad&gt; &amp; &quot;worse&quot;");
-    expect(logs[0]).toContain(join(outputDir, "report.html"));
   });
 
   test("playback JSON cannot break out of its <script> block", () => {

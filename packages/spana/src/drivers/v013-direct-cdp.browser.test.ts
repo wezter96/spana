@@ -172,7 +172,7 @@ describe("Spana v0.13.0 Direct CDP parity & isolation regressions", () => {
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 20_000);
+  });
 
   it("handles byLabel, byRole('list'), async selectOption, HTML5 dragTo, 303 waitForResponse, same-site cross-origin frame, and cached axe", async () => {
     const driver = await Effect.runPromise(
@@ -210,11 +210,11 @@ describe("Spana v0.13.0 Direct CDP parity & isolation regressions", () => {
       // 4. Cached axe-core: second accessibilityAudit on the same SPA skips re-injecting 580KB axe.js
       const audit1 = await app.accessibilityAudit();
       expect(audit1.violations).toBeArray();
-      const t0 = performance.now();
+      // Tag the loaded axe instance; a re-injection would replace it and drop the tag.
+      await app.evaluate("window.axe.__spanaCacheProbe = true");
       const audit2 = await app.accessibilityAudit();
       expect(audit2.violations).toBeArray();
-      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser perf guard: the cached second audit must skip re-injecting axe.js
-      expect(performance.now() - t0).toBeLessThan(2000);
+      expect(await app.evaluate<boolean>("window.axe.__spanaCacheProbe === true")).toBe(true);
 
       // 5. waitForResponse captures 303 redirectResponse with original POST method
       const [redirectRes] = await Promise.all([
@@ -237,5 +237,5 @@ describe("Spana v0.13.0 Direct CDP parity & isolation regressions", () => {
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 25_000);
+  });
 });

@@ -182,5 +182,5 @@ describe("v0.11 competitive-parity features in real headless Chromium (Direct CD
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 30_000);
+  });
 });

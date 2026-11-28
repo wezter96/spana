@@ -387,7 +387,6 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
         await Effect.runPromise(driver.killApp(baseUrl));
       }
     },
-    15_000,
   );
 
   test("emulates geolocation, permissions, wall clock and viewport on Playwright Chromium", async () => {
@@ -426,7 +425,7 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
     } finally {
       await Effect.runPromise(driver.killApp(baseUrl));
     }
-  }, 15_000);
+  });
 
   beforeAll(async () => {
     const started = await createPilotTestAppServer();
@@ -438,7 +437,7 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
     uploadFileB = join(tempUploadDir, "b.txt");
     writeFileSync(uploadFileA, "file A", "utf8");
     writeFileSync(uploadFileB, "file B", "utf8");
-  }, 30_000);
+  });
 
   afterAll(async () => {
     await cdpHandle?.close().catch(() => {});
@@ -582,7 +581,7 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 30_000);
+  });
 
   test("Playwright driver passes multi-arg evaluate under strict CSP (script-src 'none') and records raw page steps + codeFrame on failure", async () => {
     const driver = await Effect.runPromise(
@@ -642,5 +641,5 @@ describe("Spana v0.8.0 live Chromium E2E (Direct CDP + Playwright parity)", () =
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 30_000);
+  });
 });

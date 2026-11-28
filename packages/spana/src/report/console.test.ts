@@ -1,23 +1,20 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createConsoleReporter } from "./console.js";
+import { describe, expect, test } from "bun:test";
+import { createConsoleReporter, type ConsoleReporterOptions } from "./console.js";
 
-const originalLog = console.log;
-const logs: string[] = [];
-
-beforeEach(() => {
-  logs.length = 0;
-  console.log = (...args: unknown[]) => {
-    logs.push(args.map((arg) => String(arg)).join(" "));
-  };
-});
-
-afterEach(() => {
-  console.log = originalLog;
-});
+function makeReporter(options?: Omit<ConsoleReporterOptions, "write">) {
+  const logs: string[] = [];
+  const reporter = createConsoleReporter({
+    ...options,
+    write: (line) => {
+      logs.push(line);
+    },
+  });
+  return { reporter, logs };
+}
 
 describe("console reporter", () => {
   test("prints flow results and nested step attachments", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
 
     reporter.onFlowPass?.({
       name: "Home flow",
@@ -59,7 +56,7 @@ describe("console reporter", () => {
   });
 
   test("groups summaries by platform and prints failures", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
 
     reporter.onRunComplete({
       total: 3,
@@ -104,7 +101,7 @@ describe("console reporter", () => {
   });
 
   test("prefixes output with worker name in parallel mode", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
 
     reporter.onFlowStart?.("Login flow", "android", "Pixel 8");
     reporter.onFlowPass?.({
@@ -121,7 +118,7 @@ describe("console reporter", () => {
   });
 
   test("omits worker prefix when workerName is absent", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
 
     reporter.onFlowStart?.("Login flow", "android");
     reporter.onFlowPass?.({
@@ -139,7 +136,7 @@ describe("console reporter", () => {
   });
 
   test("prints worker stats in summary when workerStats present", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
 
     const workerStats = new Map<string, { flowCount: number; totalMs: number }>();
     workerStats.set("Pixel 8", { flowCount: 5, totalMs: 12300 });
@@ -166,7 +163,7 @@ describe("console reporter", () => {
   });
 
   test("shows per-platform progress when platformFlowCounts is set", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
     reporter.platformFlowCounts = { web: 2, android: 3 };
 
     reporter.onFlowPass?.({
@@ -190,7 +187,7 @@ describe("console reporter", () => {
   });
 
   test("prints selector warnings after flow results", () => {
-    const reporter = createConsoleReporter();
+    const { reporter, logs } = makeReporter();
 
     reporter.onFlowPass?.({
       name: "Tappy flow",
@@ -207,7 +204,7 @@ describe("console reporter", () => {
   });
 
   test("suppresses selector warnings in quiet mode", () => {
-    const reporter = createConsoleReporter({ quiet: true });
+    const { reporter, logs } = makeReporter({ quiet: true });
 
     reporter.onFlowPass?.({
       name: "Tappy flow",
@@ -221,7 +218,7 @@ describe("console reporter", () => {
   });
 
   test("quiet mode suppresses pass output but shows failures", () => {
-    const reporter = createConsoleReporter({ quiet: true });
+    const { reporter, logs } = makeReporter({ quiet: true });
 
     reporter.onFlowPass?.({
       name: "Passing flow",
@@ -245,7 +242,7 @@ describe("console reporter", () => {
   });
 
   test("uses true elapsed wall time for platform summary bar and prints skipped flows cleanly", () => {
-    const reporter = createConsoleReporter({ webEngine: "cdp" });
+    const { reporter, logs } = makeReporter({ webEngine: "cdp" });
 
     reporter.onFlowSkip?.({
       name: "Conditional feature",

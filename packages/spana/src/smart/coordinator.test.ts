@@ -88,6 +88,14 @@ function createDriver(hierarchies: Element[], overrides: Partial<RawDriverServic
 
 const parse = (raw: string): Element => JSON.parse(raw) as Element;
 
+function unwrapFailure<E>(result: { _tag: "Failure"; failure: E } | { _tag: "Success" }): E {
+  expect(result._tag).toBe("Failure");
+  if (result._tag !== "Failure") {
+    throw new Error("Expected Effect failure");
+  }
+  return result.failure;
+}
+
 describe("coordinator", () => {
   test("uses matched element centers for tap, double tap, and long press", async () => {
     const element = createElement({ text: "Ready" });
@@ -175,9 +183,9 @@ describe("coordinator", () => {
       Effect.result(coordinator.scrollUntilVisible({ testID: "missing-card" }, { maxScrolls: 2 })),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure).toBeInstanceOf(ElementNotFoundError);
-    expect(result.failure.message).toContain("after 2 scroll(s) toward down");
+    const failure = unwrapFailure(result);
+    expect(failure).toBeInstanceOf(ElementNotFoundError);
+    expect(failure.message).toContain("after 2 scroll(s) toward down");
     expect(swipes).toHaveLength(2);
   });
 
@@ -231,9 +239,9 @@ describe("coordinator", () => {
       Effect.result(coordinator.backUntilVisible({ testID: "home-title" })),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure.message).toContain("backUntilVisible() failed on back attempt 1");
-    expect(result.failure.message).toContain("back() is not supported on iOS");
+    const failure = unwrapFailure(result);
+    expect(failure.message).toContain("backUntilVisible() failed on back attempt 1");
+    expect(failure.message).toContain("back() is not supported on iOS");
   });
 
   test("getText returns element text content", async () => {
@@ -259,9 +267,9 @@ describe("coordinator", () => {
       ),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure).toBeInstanceOf(TextMismatchError);
-    expect(result.failure).toMatchObject({
+    const failure = unwrapFailure(result);
+    expect(failure).toBeInstanceOf(TextMismatchError);
+    expect(failure).toMatchObject({
       expected: "Expected",
       actual: "Actual",
       selector: { text: "Actual" },

@@ -463,5 +463,5 @@ describe("Live Chromium Direct CDP WASM, Canvas Semantic Tree, Worker Traps & CO
       await browser?.close();
       await new Promise<void>((r) => srv.close(() => r()));
     }
-  }, 35_000);
+  });
 });

@@ -1,35 +1,56 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { UiAutomator2Client } from "./client.js";
 
-const originalFetch = globalThis.fetch;
-
-interface FetchResponse {
+interface QueuedResponse {
   status?: number;
   body: unknown;
 }
 
-function queueFetch(responses: FetchResponse[]) {
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
-
-  globalThis.fetch = (async (input, init) => {
-    const response = responses.shift();
-    if (!response) {
-      throw new Error(`Unexpected fetch: ${String(input)}`);
-    }
-
-    calls.push({ url: String(input), init });
-
-    return new Response(
-      typeof response.body === "string" ? response.body : JSON.stringify(response.body),
-      {
-        status: response.status ?? 200,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }) as typeof fetch;
-
-  return calls;
+interface RecordedRequest {
+  method: string;
+  path: string;
+  body: string;
 }
+
+let server: Server;
+let port: number;
+let queue: QueuedResponse[] = [];
+let calls: RecordedRequest[] = [];
+
+beforeAll(async () => {
+  server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push({
+        method: req.method ?? "GET",
+        path: req.url ?? "/",
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+      const next = queue.shift();
+      if (!next) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ value: { message: `Unexpected request: ${req.url}` } }));
+        return;
+      }
+      res.writeHead(next.status ?? 200, { "Content-Type": "application/json" });
+      res.end(typeof next.body === "string" ? next.body : JSON.stringify(next.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  port = (server.address() as AddressInfo).port;
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+beforeEach(() => {
+  queue = [];
+  calls = [];
+});
 
 async function captureError(action: () => Promise<unknown>): Promise<Error> {
   try {
@@ -40,19 +61,15 @@ async function captureError(action: () => Promise<unknown>): Promise<Error> {
   }
 }
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-});
-
 describe("UiAutomator2 client", () => {
   test("creates sessions and sends Android-specific action payloads", async () => {
-    const calls = queueFetch([
+    queue.push(
       { body: { value: { sessionId: "session-1" } } },
       { body: { value: null } },
       { body: { value: null } },
       { body: { value: null } },
-    ]);
-    const client = new UiAutomator2Client("127.0.0.1", 4723);
+    );
+    const client = new UiAutomator2Client("127.0.0.1", port);
 
     const sessionId = await client.createSession("com.example.app");
     await client.sendKeys("Ab");
@@ -60,14 +77,14 @@ describe("UiAutomator2 client", () => {
     await client.deleteSession();
 
     expect(sessionId).toBe("session-1");
-    expect(calls[0]?.url).toBe("http://127.0.0.1:4723/session");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    expect(calls[0]?.path).toBe("/session");
+    expect(JSON.parse(calls[0]!.body)).toEqual({
       capabilities: {
         platformName: "Android",
         "appium:appPackage": "com.example.app",
       },
     });
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+    expect(JSON.parse(calls[1]!.body)).toEqual({
       actions: [
         {
           type: "key",
@@ -81,26 +98,25 @@ describe("UiAutomator2 client", () => {
         },
       ],
     });
-    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+    expect(JSON.parse(calls[2]!.body)).toEqual({
       keycode: 66,
     });
-    expect(calls[3]?.url).toBe("http://127.0.0.1:4723/session/session-1");
-    expect(calls[3]?.init?.method).toBe("DELETE");
+    expect(calls[3]?.path).toBe("/session/session-1");
+    expect(calls[3]?.method).toBe("DELETE");
   });
 
   test("sendKeys skips unsupported emoji and sends remaining graphemes", async () => {
-    const calls = queueFetch([
+    queue.push(
       { body: { value: { sessionId: "session-2" } } },
-      { body: { value: null } }, // "A" batch
-      { body: { value: null } }, // "e\u0301" batch
-    ]);
-    const client = new UiAutomator2Client("127.0.0.1", 4723);
+      { body: { value: null } },
+      { body: { value: null } },
+    );
+    const client = new UiAutomator2Client("127.0.0.1", port);
 
     await client.createSession("com.example.app");
     await client.sendKeys("A👨‍👩‍👧‍👦e\u0301");
 
-    // "A" sent as first batch (before the emoji)
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+    expect(JSON.parse(calls[1]!.body)).toEqual({
       actions: [
         {
           type: "key",
@@ -112,8 +128,7 @@ describe("UiAutomator2 client", () => {
         },
       ],
     });
-    // "e\u0301" sent as second batch (after emoji is skipped)
-    expect(JSON.parse(String(calls[2]?.init?.body))).toEqual({
+    expect(JSON.parse(calls[2]!.body)).toEqual({
       actions: [
         {
           type: "key",
@@ -128,12 +143,12 @@ describe("UiAutomator2 client", () => {
   });
 
   test("surfaces embedded UiAutomator2 errors and non-OK request failures", async () => {
-    queueFetch([
+    queue.push(
       { body: { sessionId: "session-2", value: {} } },
       { body: { value: { error: "invalid element state", message: "bad tap" } } },
       { status: 404, body: { value: { message: "missing keyboard" } } },
-    ]);
-    const client = new UiAutomator2Client("localhost", 4723);
+    );
+    const client = new UiAutomator2Client("127.0.0.1", port);
 
     await client.createSession("com.example.app");
 
@@ -147,8 +162,8 @@ describe("UiAutomator2 client", () => {
   });
 
   test("reports parse failures for non-JSON responses", async () => {
-    queueFetch([{ body: "nope" }]);
-    const client = new UiAutomator2Client("localhost", 4723);
+    queue.push({ body: "nope" });
+    const client = new UiAutomator2Client("127.0.0.1", port);
 
     const error = await captureError(() => client.createSession());
 
@@ -156,7 +171,7 @@ describe("UiAutomator2 client", () => {
   });
 
   test("fails fast when a session-scoped request is made before a session exists", async () => {
-    const client = new UiAutomator2Client("localhost", 4723);
+    const client = new UiAutomator2Client("127.0.0.1", port);
 
     const error = await captureError(() => client.getSource());
 

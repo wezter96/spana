@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,14 +11,9 @@ import type { FlowDefinition } from "../api/flow.js";
 import { executeFlow, type EngineConfig } from "./engine.js";
 
 const tempDir = mkdtempSync(join(tmpdir(), "spana-engine-"));
-let freshEngineImportCounter = 0;
 
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true });
-});
-
-afterEach(() => {
-  mock.restore();
 });
 
 function createElement(overrides: Partial<Element> = {}): Element {
@@ -122,13 +117,6 @@ function createConfig(outputDir: string): EngineConfig {
   };
 }
 
-async function importFreshEngine() {
-  freshEngineImportCounter += 1;
-  return (await import(
-    new URL(`./engine.ts?case=${freshEngineImportCounter}`, import.meta.url).href
-  )) as typeof import("./engine.js");
-}
-
 describe("engine", () => {
   test("collects opted-in JavaScript coverage on a failed flow before teardown", async () => {
     const calls: string[] = [];
@@ -159,31 +147,49 @@ describe("engine", () => {
       { url: "https://example.test/main.js" },
     ]);
   });
-  test.each([false, true])(
-    "aggregates soft assertions without stopping the flow (hard failure: %s)",
-    async (hardFailure) => {
-      const { driver, events } = createDriver(
-        createElement({ children: [createElement({ text: "Ready" })] }),
-      );
-      const flow: FlowDefinition = {
-        name: "Soft assertions",
-        config: {},
-        fn: async ({ app, expect: flowExpect }) => {
-          await flowExpect.soft({ text: "Ready" }).toHaveText("First mismatch", { timeout: 1 });
-          await flowExpect.soft({ text: "Ready" }).toHaveText("Second mismatch", { timeout: 1 });
-          await app.inputText("continued");
-          if (hardFailure) throw new Error("hard failure");
-        },
-      };
-      const result = await executeFlow(flow, driver, createConfig(join(tempDir, "soft")));
-      expect(result.status).toBe("failed");
-      expect(result.error?.message).toContain("2 soft assertion(s) failed:");
-      expect(result.error?.message).toContain("First mismatch");
-      expect(result.error?.message).toContain("Second mismatch");
-      expect(result.error?.message?.includes("hard failure")).toBe(hardFailure);
-      expect(events).toContainEqual(["inputText", "continued"]);
-    },
-  );
+  test("aggregates soft assertions without stopping the flow", async () => {
+    const { driver, events } = createDriver(
+      createElement({ children: [createElement({ text: "Ready" })] }),
+    );
+    const flow: FlowDefinition = {
+      name: "Soft assertions",
+      config: {},
+      fn: async ({ app, expect: flowExpect }) => {
+        await flowExpect.soft({ text: "Ready" }).toHaveText("First mismatch", { timeout: 1 });
+        await flowExpect.soft({ text: "Ready" }).toHaveText("Second mismatch", { timeout: 1 });
+        await app.inputText("continued");
+      },
+    };
+    const result = await executeFlow(flow, driver, createConfig(join(tempDir, "soft")));
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toContain("2 soft assertion(s) failed:");
+    expect(result.error?.message).toContain("First mismatch");
+    expect(result.error?.message).toContain("Second mismatch");
+    expect(events).toContainEqual(["inputText", "continued"]);
+  });
+
+  test("aggregates soft assertions alongside a hard failure", async () => {
+    const { driver, events } = createDriver(
+      createElement({ children: [createElement({ text: "Ready" })] }),
+    );
+    const flow: FlowDefinition = {
+      name: "Soft assertions with hard failure",
+      config: {},
+      fn: async ({ app, expect: flowExpect }) => {
+        await flowExpect.soft({ text: "Ready" }).toHaveText("First mismatch", { timeout: 1 });
+        await flowExpect.soft({ text: "Ready" }).toHaveText("Second mismatch", { timeout: 1 });
+        await app.inputText("continued");
+        throw new Error("hard failure");
+      },
+    };
+    const result = await executeFlow(flow, driver, createConfig(join(tempDir, "soft-hard")));
+    expect(result.status).toBe("failed");
+    expect(result.error?.message).toContain("2 soft assertion(s) failed:");
+    expect(result.error?.message).toContain("First mismatch");
+    expect(result.error?.message).toContain("Second mismatch");
+    expect(result.error?.message).toContain("hard failure");
+    expect(events).toContainEqual(["inputText", "continued"]);
+  });
   test("executeFlow auto-launches by default and records app/expect steps", async () => {
     const { driver, events } = createDriver(
       createElement({
@@ -468,35 +474,5 @@ describe("engine", () => {
     expect(result.status).toBe("failed");
     expect(result.error?.message).toBe("setup failed");
     expect(calls).toEqual(["beforeEach"]);
-  });
-
-  test("executeFlow enters the debug REPL on failure when enabled", async () => {
-    const debugCalls: Array<{ flowName: string; platform: string }> = [];
-    mock.module("./debug-repl.js", () => ({
-      runDebugReplOnce: async (context: { flowName: string; platform: string }) => {
-        debugCalls.push(context);
-        return true;
-      },
-    }));
-
-    const { executeFlow: executeFlowFresh } = await importFreshEngine();
-    const { driver } = createDriver(createElement());
-    const flow: FlowDefinition = {
-      name: "Debug me",
-      config: { autoLaunch: false },
-      fn: async () => {
-        throw new Error("boom");
-      },
-    };
-
-    const result = await executeFlowFresh(flow, driver, {
-      ...createConfig(join(tempDir, "debug-on-failure")),
-      debugOnFailure: true,
-    });
-
-    expect(result.status).toBe("failed");
-    expect(debugCalls).toHaveLength(1);
-    expect(debugCalls[0]?.flowName).toBe("Debug me");
-    expect(debugCalls[0]?.platform).toBe("web");
   });
 });

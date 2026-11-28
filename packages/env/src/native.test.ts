@@ -42,13 +42,12 @@ function runNativeImport(envValue?: string, assertion?: string) {
 }
 
 describe("native env", () => {
-  let missing: ReturnType<typeof runNativeImport>;
-  let empty: ReturnType<typeof runNativeImport>;
+  let missingResult: ReturnType<typeof runNativeImport>;
+  let emptyResult: ReturnType<typeof runNativeImport>;
 
-  // Each run spawns a fresh bun process; start them outside the per-test budget.
   beforeAll(() => {
-    missing = runNativeImport();
-    empty = runNativeImport("");
+    missingResult = runNativeImport();
+    emptyResult = runNativeImport("");
   });
 
   test("reads a valid Expo public server URL from runtime env", async () => {
@@ -58,10 +57,10 @@ describe("native env", () => {
   });
 
   test("fails when the required Expo public server URL is missing", () => {
-    expect(missing.exitCode).toBe(1);
+    expect(missingResult.exitCode).toBe(1);
   });
 
   test("treats empty strings as undefined during validation", () => {
-    expect(empty.exitCode).toBe(1);
+    expect(emptyResult.exitCode).toBe(1);
   });
 });

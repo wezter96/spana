@@ -149,8 +149,7 @@ describeBrowser("v0.18.0 feedback fixes (Direct CDP)", () => {
     baseUrl = `http://127.0.0.1:${addr.port}`;
 
     browserHandle = await launchDirectCdpBrowser({ headless: true });
-  }, 30_000);
-
+  });
   afterAll(async () => {
     await browserHandle?.close().catch(() => {});
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -198,8 +197,7 @@ describeBrowser("v0.18.0 feedback fixes (Direct CDP)", () => {
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 20_000);
-
+  });
   test("1.22: failFastWhenIdle waits for in-flight fetch before failing, and fails fast on truly static idle pages", async () => {
     const driver = await Effect.runPromise(
       makeLightweightCdpDriver({
@@ -242,8 +240,7 @@ describeBrowser("v0.18.0 feedback fixes (Direct CDP)", () => {
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 20_000);
-
+  });
   test("1.28: execution.web.navigationTimeout allows slow SSR (> evaluateTimeout) and throws on timeout", async () => {
     // Low evaluateTimeout (500ms) but generous navigationTimeout (3000ms) — 900ms SSR must succeed!
     const driverOk = await Effect.runPromise(
@@ -288,8 +285,7 @@ describeBrowser("v0.18.0 feedback fixes (Direct CDP)", () => {
     } finally {
       await Effect.runPromise(driverTimeout.killApp(""));
     }
-  }, 20_000);
-
+  });
   test("3.28: waitForDownload routes downloads across fresh contexts and newContext()", async () => {
     const driver = await Effect.runPromise(
       makeLightweightCdpDriver({
@@ -340,8 +336,7 @@ describeBrowser("v0.18.0 feedback fixes (Direct CDP)", () => {
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 25_000);
-
+  });
   test("3.29, 3.30, 2.33, 1.11(b): permissions mapping, fullPage screenshot, actionability diagnostics & tap guard", async () => {
     const driver = await Effect.runPromise(
       makeLightweightCdpDriver({
@@ -415,7 +410,7 @@ describeBrowser("v0.18.0 feedback fixes (Direct CDP)", () => {
     } finally {
       await Effect.runPromise(driver.killApp(""));
     }
-  }, 25_000);
+  });
 });
 
 describe("v0.18.0 unit checks (2.32, 3.29, 3.30)", () => {

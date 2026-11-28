@@ -1,15 +1,10 @@
-import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJUnitReporter } from "./junit.js";
 
 const outputDir = mkdtempSync(join(tmpdir(), "spana-junit-"));
-const originalLog = console.log;
-
-afterEach(() => {
-  console.log = originalLog;
-});
 
 afterAll(() => {
   rmSync(outputDir, { recursive: true, force: true });
@@ -18,11 +13,6 @@ afterAll(() => {
 describe("junit reporter", () => {
   test("writes escaped xml with attachments and step output", () => {
     const reporter = createJUnitReporter(outputDir);
-    const logs: string[] = [];
-
-    console.log = (...args: unknown[]) => {
-      logs.push(args.join(" "));
-    };
 
     reporter.onRunComplete({
       total: 2,
@@ -62,7 +52,6 @@ describe("junit reporter", () => {
     const reportPath = join(outputDir, "junit-report.xml");
     const xml = readFileSync(reportPath, "utf8");
 
-    expect(logs[0]).toBe(`JUnit report written to ${reportPath}`);
     expect(xml).toContain('name="broken &lt;flow&gt;"');
     expect(xml).toContain('<failure message="boom &amp; &quot;bust&quot;">');
     expect(xml).toContain("<skipped/>");

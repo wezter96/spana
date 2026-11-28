@@ -154,24 +154,20 @@ describe("v0.16.0 runner, scheduling, reporting & packaging regressions", () => 
     const dir = mkdtempSync(join(tmpdir(), "spana-skip-evt-"));
     try {
       const outPath = join(dir, "events.json");
-      const reporter = createJsonReporter(outPath);
+      const reporter = createJsonReporter(outPath, { write: () => {} });
       const events: string[] = [];
-      const origLog = console.log;
-      console.log = (...args: unknown[]) => {
-        events.push(args.map(String).join(" "));
-      };
-      try {
-        const stdoutReporter = createJsonReporter();
-        stdoutReporter.onFlowSkip?.({
-          name: "skipped-flow",
-          platform: "web",
-          status: "skipped",
-          skipReason: "feature flag off",
-          durationMs: 0,
-        });
-      } finally {
-        console.log = origLog;
-      }
+      const stdoutReporter = createJsonReporter(undefined, {
+        write: (line) => {
+          events.push(line);
+        },
+      });
+      stdoutReporter.onFlowSkip?.({
+        name: "skipped-flow",
+        platform: "web",
+        status: "skipped",
+        skipReason: "feature flag off",
+        durationMs: 0,
+      });
       expect(events.length).toBe(1);
       const parsed = JSON.parse(events[0]!) as { event: string; name: string; status: string };
       expect(parsed.event).toBe("flowSkip");
@@ -283,5 +279,5 @@ describe("v0.16.0 runner, scheduling, reporting & packaging regressions", () => 
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 20_000);
+  });
 });

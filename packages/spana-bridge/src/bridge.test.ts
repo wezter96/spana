@@ -8,6 +8,8 @@ function createFakeEnv() {
   const listeners = new Map<string, Array<(e: any) => void>>();
   let resolveFetch: (() => void) | null = null;
   let animating = false;
+  let busyPolls = 0;
+  const busyPollWaiters: Array<{ count: number; resolve: () => void }> = [];
 
   const fakeWin: any = {
     innerWidth: 1280,
@@ -59,10 +61,15 @@ function createFakeEnv() {
     cookie: "",
     documentElement: { clientWidth: 1280, clientHeight: 800 },
     querySelectorAll: () => [],
-    getAnimations: () =>
-      animating
-        ? [{ playState: "running", effect: { getComputedTiming: () => ({ iterations: 1 }) } }]
-        : [],
+    getAnimations: () => {
+      if (!animating) return [];
+      busyPolls += 1;
+      for (const waiter of busyPollWaiters.filter((w) => busyPolls >= w.count)) {
+        busyPollWaiters.splice(busyPollWaiters.indexOf(waiter), 1);
+        waiter.resolve();
+      }
+      return [{ playState: "running", effect: { getComputedTiming: () => ({ iterations: 1 }) } }];
+    },
   };
 
   return {
@@ -73,6 +80,12 @@ function createFakeEnv() {
     setAnimating: (v: boolean) => {
       animating = v;
     },
+    /** Resolves once idle() has observed the running animation `count` times. */
+    waitForBusyPolls: (count: number) =>
+      new Promise<void>((resolve) => {
+        if (busyPolls >= count) resolve();
+        else busyPollWaiters.push({ count, resolve });
+      }),
   };
 }
 
@@ -93,8 +106,7 @@ describe("spana-bridge client", () => {
       idleResolved = true;
     });
 
-    // oxlint-disable-next-line landmines/no-fixed-sleep -- proves idle() stays pending while busy; only real time passing can show that
-    await new Promise((r) => setTimeout(r, 40));
+    await env.waitForBusyPolls(3);
     expect(idleResolved).toBe(false);
 
     env.setAnimating(false);

@@ -1998,9 +1998,10 @@ export function makeLightweightCdpDriver(
         },
       };
 
-      // oxlint-disable-next-line landmines/no-silent-catch -- a throwing user dialog handler must not block the finally that dismisses the dialog; the error is not surfaced yet (jsErrors could carry it)
       void Promise.resolve(activeHandler(info))
-        .catch(() => {})
+        .catch((err) => {
+          console.warn("[cdp-browser] dialog handler failed:", err);
+        })
         .finally(() => {
           if (!handled) {
             handled = true;

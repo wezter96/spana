@@ -1,20 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { createJsonReporter } from "./json.js";
-
-const originalLog = console.log;
-
-afterEach(() => {
-  console.log = originalLog;
-});
 
 describe("json reporter", () => {
   test("emits structured flow and run events", () => {
-    const reporter = createJsonReporter();
     const output: string[] = [];
-
-    console.log = (...args: unknown[]) => {
-      output.push(args.join(" "));
-    };
+    const reporter = createJsonReporter(undefined, {
+      write: (line) => {
+        output.push(line);
+      },
+    });
 
     reporter.onFlowPass?.({
       name: "flow",

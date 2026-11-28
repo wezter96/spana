@@ -116,17 +116,15 @@ describe("in-page actionability & zero-polling DOM waits", () => {
     const driver = createBaseDriver(domChannel);
     const parse = (raw: string) => JSON.parse(raw) as Element;
 
-    const t0 = Date.now();
+    // timeout=250 < pollInterval=500: only succeeds if reactive waitForHidden resolves without sleeping on pollInterval
     await Effect.runPromise(
       waitForNotVisible(driver, { testID: "loading" }, parse, {
-        timeout: 2000,
+        timeout: 250,
         pollInterval: 500,
         platform: "web",
       }),
     );
     expect(calls).toBe(1);
-    // oxlint-disable-next-line landmines/no-elapsed-time-bound -- the mock ignores timeoutMs, so no deadline or call count shows a stray 500 ms poll sleep; only elapsed time does
-    expect(Date.now() - t0).toBeLessThan(200);
   });
 
   test("coordinator assertText / assertValue / assertAttribute use reactive domChannel.waitForMatch", async () => {

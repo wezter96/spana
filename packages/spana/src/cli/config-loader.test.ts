@@ -1,12 +1,11 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import * as nodeFs from "node:fs";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "./config-loader.js";
 
 const originalCwd = process.cwd();
 const tempDirs: string[] = [];
-let importCounter = 0;
 
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "spana-config-loader-"));
@@ -15,7 +14,6 @@ function createTempDir(): string {
 }
 
 beforeEach(() => {
-  mock.restore();
   process.chdir(originalCwd);
 });
 
@@ -25,13 +23,6 @@ afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-async function importFreshConfigLoader() {
-  importCounter += 1;
-  return (await import(
-    new URL(`./config-loader.ts?case=${importCounter}`, import.meta.url).href
-  )) as typeof import("./config-loader.js");
-}
 
 describe("config loader", () => {
   test("loads and resolves relative config paths", async () => {
@@ -71,11 +62,6 @@ describe("config loader", () => {
       "utf8",
     );
 
-    mock.module("node:fs", () => ({
-      ...nodeFs,
-      existsSync: (path: string) => String(path) === configPath,
-    }));
-    const { loadConfig } = await importFreshConfigLoader();
     const result = await loadConfig({ configPath });
 
     expect(result.configPath).toBe(configPath);
@@ -112,11 +98,6 @@ describe("config loader", () => {
     const tempDir = createTempDir();
     process.chdir(tempDir);
 
-    mock.module("node:fs", () => ({
-      ...nodeFs,
-      existsSync: () => false,
-    }));
-    const { loadConfig } = await importFreshConfigLoader();
     const result = await loadConfig({ allowMissing: true });
 
     expect(result).toEqual({ config: {} });
@@ -134,11 +115,6 @@ describe("config loader", () => {
       "utf8",
     );
 
-    mock.module("node:fs", () => ({
-      ...nodeFs,
-      existsSync: (path: string) => String(path) === configPath,
-    }));
-    const { loadConfig } = await importFreshConfigLoader();
     await expect(loadConfig({ configPath })).rejects.toThrow(
       `Config validation failed for ${configPath}:\n- platforms.0: Invalid option: expected one of "web"|"android"|"ios"`,
     );

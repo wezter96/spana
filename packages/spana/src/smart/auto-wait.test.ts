@@ -62,6 +62,14 @@ function createDriver(hierarchies: Element[]) {
 
 const parse = (raw: string): Element => JSON.parse(raw) as Element;
 
+function unwrapFailure<E>(result: { _tag: "Failure"; failure: E } | { _tag: "Success" }): E {
+  expect(result._tag).toBe("Failure");
+  if (result._tag !== "Failure") {
+    throw new Error("Expected Effect failure");
+  }
+  return result.failure;
+}
+
 describe("auto wait", () => {
   test("waitForElement polls until a matching element appears", async () => {
     const root = createElement();
@@ -91,9 +99,9 @@ describe("auto wait", () => {
       ),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure).toBeInstanceOf(ElementNotFoundError);
-    expect(result.failure).toMatchObject({
+    const failure = unwrapFailure(result);
+    expect(failure).toBeInstanceOf(ElementNotFoundError);
+    expect(failure).toMatchObject({
       selector: { text: "Missing" },
       timeoutMs: 5,
     });
@@ -152,9 +160,9 @@ describe("auto wait", () => {
       ),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure).toBeInstanceOf(WaitTimeoutError);
-    expect(result.failure).toMatchObject({
+    const failure = unwrapFailure(result);
+    expect(failure).toBeInstanceOf(WaitTimeoutError);
+    expect(failure).toMatchObject({
       selector: { text: "Ready" },
       timeoutMs: 5,
     });
@@ -196,9 +204,9 @@ describe("error messages", () => {
       ),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure.message).toContain("testID");
-    expect(result.failure.message).toContain("login-btn");
+    const failure = unwrapFailure(result);
+    expect(failure.message).toContain("testID");
+    expect(failure.message).toContain("login-btn");
   });
 
   test("waitForNotVisible error message includes selector JSON", async () => {
@@ -214,9 +222,9 @@ describe("error messages", () => {
       ),
     );
 
-    if (result._tag !== "Failure") throw new Error(`expected Failure, got ${result._tag}`);
-    expect(result.failure.message).toContain("text");
-    expect(result.failure.message).toContain("Loading");
+    const failure = unwrapFailure(result);
+    expect(failure.message).toContain("text");
+    expect(failure.message).toContain("Loading");
   });
 });
 
@@ -279,20 +287,19 @@ describe("adaptive polling", () => {
     const rootEmpty = createElement();
     const target = createElement({ text: "Found" });
     const rootWithTarget = createElement({ children: [target] });
-    // First few polls return empty, then target appears
-    const { driver } = createDriver([rootEmpty, rootEmpty, rootWithTarget]);
+    // First two misses must use initialPollInterval=10 (not pollInterval=500) so the element is found before the 300ms timeout
+    const { driver, getDumpCount } = createDriver([rootEmpty, rootEmpty, rootWithTarget]);
 
-    // timeout < pollInterval: fixed 500ms polling would hit the deadline before the third dump,
-    // so finding the target proves the short initial interval was used.
     const element = await Effect.runPromise(
       waitForElement(driver, { text: "Found" }, parse, {
-        timeout: 400,
+        timeout: 300,
         pollInterval: 500,
         initialPollInterval: 10,
       }),
     );
 
     expect(element.text).toBe("Found");
+    expect(getDumpCount()).toBe(3);
   });
 
   test("falls back to pollInterval when initialPollInterval equals pollInterval", async () => {
@@ -392,7 +399,7 @@ describe("hierarchy cache integration", () => {
       clickable: true,
     };
 
-    const { driver } = createDriver([createElement()]);
+    const { driver, getDumpCount } = createDriver([createElement()]);
     const driverWithDom = {
       ...driver,
       domChannel: {
@@ -412,26 +419,23 @@ describe("hierarchy cache integration", () => {
       },
     };
 
-    const t0 = Date.now();
+    // timeout=250 < pollInterval=500: only succeeds if reactive waitForSelector wakes without sleeping on pollInterval
     const el = await Effect.runPromise(
       waitForElement(driverWithDom, { testID: "async-cta" }, parse, {
-        timeout: 2000,
+        timeout: 250,
         pollInterval: 500,
         initialPollInterval: 500,
         platform: "web",
       }),
     );
-    const elapsed = Date.now() - t0;
     expect(el.id).toBe("async-cta");
     expect(waitForSelectorCalls).toBe(1);
-    // Woke up reactively (~15ms) instead of sleeping 500ms poll interval!
-    // oxlint-disable-next-line landmines/no-elapsed-time-bound -- the mock ignores timeoutMs, so no deadline or call count shows a stray 500 ms poll sleep; only elapsed time does
-    expect(elapsed).toBeLessThan(200);
+    expect(getDumpCount()).toBe(0);
   });
 
-  test("failFastWhenIdle on web fails early instead of waiting full timeout", async () => {
-    const { driver } = createDriver([createElement()]);
+  test("failFastWhenIdle on web fails early after one empty reactive probe instead of retrying until timeout", async () => {
     let waitForSelectorCalls = 0;
+    const { driver, getDumpCount } = createDriver([createElement()]);
     const driverWithDom = {
       ...driver,
       domChannel: {
@@ -460,7 +464,8 @@ describe("hierarchy cache integration", () => {
       ),
     );
     expect(result._tag).toBe("Failure");
-    // Without failFastWhenIdle the empty result is retried until the deadline (~20 calls per second).
+    // One reactive probe plus a single hierarchy snapshot, not a poll loop until the 3s timeout.
     expect(waitForSelectorCalls).toBe(1);
+    expect(getDumpCount()).toBe(1);
   });
 });

@@ -891,9 +891,10 @@ export function makePlaywrightDriver(
             await dialog.dismiss();
           },
         };
-        // oxlint-disable-next-line landmines/no-silent-catch -- a throwing user dialog handler must not block the finally that dismisses the dialog; the error is not surfaced yet (jsErrors could carry it)
         void Promise.resolve(activeHandler(info))
-          .catch(() => {})
+          .catch((err) => {
+            console.warn("[spana] Dialog handler failed:", err);
+          })
           .finally(() => {
             if (!handled) {
               handled = true;
@@ -2165,14 +2166,15 @@ export function makePlaywrightDriver(
             const wrapped = (params: unknown) => {
               if (!unsubscribed) listener((params ?? {}) as Record<string, unknown>);
             };
-            // oxlint-disable-next-line landmines/no-silent-catch -- on() returns an unsubscribe fn and has no error path; if the CDP session fails the listener never fires; send() opens a new session and rejects if that fails too
             void ensureCdpSession()
               .then((session) => {
                 if (unsubscribed) return;
                 attachedSession = session;
                 session.on(event as never, wrapped as never);
               })
-              .catch(() => {});
+              .catch((err) => {
+                console.debug("[spana] Failed to attach CDP event listener:", err);
+              });
             return () => {
               unsubscribed = true;
               if (attachedSession && typeof attachedSession.off === "function") {

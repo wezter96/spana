@@ -489,135 +489,147 @@ describe("Playwright migration feedback — live Direct CDP Chromium E2E", () =>
       throw new Error(`Migration parity flow failed: ${res.error?.message}`);
     }
     expect(res.status).toBe("passed");
-  }, 30_000);
+  });
 
-  test("1.2, 1.3, 1.4, 1.5, 1.6, 3.19 CLI --processes 2 merges JSON/JUnit reports, runs global hooks once, and respects --grep-invert / --pass-with-no-tests", async () => {
+  describe("CLI --processes 2", () => {
     const cliEntry = resolve(import.meta.dirname, "cli/index.ts");
-    const workDir = makeTempDir("spana-cli-proc-");
-    const flowsDir = join(workDir, "flows");
-    mkdirSync(flowsDir, { recursive: true });
-    const hookLogFile = join(workDir, "hooks.log");
-    const jsonOut = join(workDir, "out.json");
-    const junitOut = join(workDir, "out.xml");
-    const configFile = join(workDir, "spana.config.ts");
-
-    writeFileSync(
-      configFile,
-      `import { appendFileSync } from "node:fs";
-export default {
-  flowDir: "./flows",
-  platforms: ["web"],
-  apps: { web: { url: ${JSON.stringify(baseUrl)} } },
-  execution: { web: { engine: "cdp", headless: true, warmBrowser: false } },
-  hooks: {
-    beforeAll: async () => { appendFileSync(${JSON.stringify(hookLogFile)}, "beforeAll\\n"); },
-    afterAll: async () => { appendFileSync(${JSON.stringify(hookLogFile)}, "afterAll\\n"); },
-  },
-};
-`,
-    );
-
-    const apiImport = JSON.stringify(resolve(import.meta.dirname, "index.ts"));
-    writeFileSync(
-      join(flowsDir, "a.flow.ts"),
-      `import { flow } from ${apiImport};
-export default flow("Proc Flow A", { tags: ["fast"], annotations: [{ type: "owner", description: "core" }] }, async ({ app, expect, workerIndex }) => {
-  await app.openLink("/");
-  await expect({ testID: "heading" }).toHaveText("Hello World");
-  if (typeof workerIndex !== "number") throw new Error("missing workerIndex");
-});
-`,
-    );
-    writeFileSync(
-      join(flowsDir, "b.flow.ts"),
-      `import { flow } from ${apiImport};
-export default flow("Proc Flow B", { tags: ["fast"] }, async ({ app, expect }) => {
-  await app.openLink("/");
-  await expect({ testID: "heading" }).toContainText("Hello");
-});
-`,
-    );
-    writeFileSync(
-      join(flowsDir, "c.flow.ts"),
-      `import { flow } from ${apiImport};
-export default flow("Excluded Flow C", { tags: ["skipme"] }, async () => {
-  throw new Error("should have been excluded by --grep-invert");
-});
-`,
-    );
-
-    // 3.19 version check
     const pkg = JSON.parse(readFileSync(resolve(import.meta.dirname, "../package.json"), "utf8"));
-    // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
-    const { stdout: verOut } = await execFileAsync("bun", [cliEntry, "version"]);
-    expect(verOut.trim()).toBe(`spana v${pkg.version}`);
+    let workDir: string;
+    let hookLogFile: string;
+    let jsonOut: string;
+    let junitOut: string;
+    let versionStdout: string;
+    let zeroMatchError: unknown;
+    let passWithNoTestsError: unknown;
 
-    // 1.2 + 1.3 + 1.4 + 1.5 + 3.11: --processes 2 with --grep-invert and file reporters
-    // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
-    await execFileAsync(
-      "bun",
-      [
-        cliEntry,
-        "test",
-        "--config",
+    // Every CLI invocation spawns a cold bun + Chromium, so run them once here and
+    // keep only the assertions in the tests.
+    beforeAll(async () => {
+      workDir = makeTempDir("spana-cli-proc-");
+      const flowsDir = join(workDir, "flows");
+      mkdirSync(flowsDir, { recursive: true });
+      hookLogFile = join(workDir, "hooks.log");
+      jsonOut = join(workDir, "out.json");
+      junitOut = join(workDir, "out.xml");
+      const configFile = join(workDir, "spana.config.ts");
+
+      writeFileSync(
         configFile,
-        "--processes",
-        "2",
-        "--grep-invert",
-        "@skipme",
-        "--reporter",
-        `json:${jsonOut}`,
-        "--reporter",
-        `junit:${junitOut}`,
-      ],
-      { cwd: workDir, timeout: 45_000 },
-    );
+        `import { appendFileSync } from "node:fs";
+  export default {
+    flowDir: "./flows",
+    platforms: ["web"],
+    apps: { web: { url: ${JSON.stringify(baseUrl)} } },
+    execution: { web: { engine: "cdp", headless: true, warmBrowser: false } },
+    hooks: {
+      beforeAll: async () => { appendFileSync(${JSON.stringify(hookLogFile)}, "beforeAll\\n"); },
+      afterAll: async () => { appendFileSync(${JSON.stringify(hookLogFile)}, "afterAll\\n"); },
+    },
+  };
+  `,
+      );
 
-    expect(existsSync(jsonOut)).toBe(true);
-    const report = JSON.parse(readFileSync(jsonOut, "utf8"));
-    expect(report.total).toBe(2);
-    expect(report.passed).toBe(2);
-    expect(report.failed).toBe(0);
+      const apiImport = JSON.stringify(resolve(import.meta.dirname, "index.ts"));
+      writeFileSync(
+        join(flowsDir, "a.flow.ts"),
+        `import { flow } from ${apiImport};
+  export default flow("Proc Flow A", { tags: ["fast"], annotations: [{ type: "owner", description: "core" }] }, async ({ app, expect, workerIndex }) => {
+    await app.openLink("/");
+    await expect({ testID: "heading" }).toHaveText("Hello World");
+    if (typeof workerIndex !== "number") throw new Error("missing workerIndex");
+  });
+  `,
+      );
+      writeFileSync(
+        join(flowsDir, "b.flow.ts"),
+        `import { flow } from ${apiImport};
+  export default flow("Proc Flow B", { tags: ["fast"] }, async ({ app, expect }) => {
+    await app.openLink("/");
+    await expect({ testID: "heading" }).toContainText("Hello");
+  });
+  `,
+      );
+      writeFileSync(
+        join(flowsDir, "c.flow.ts"),
+        `import { flow } from ${apiImport};
+  export default flow("Excluded Flow C", { tags: ["skipme"] }, async () => {
+    throw new Error("should have been excluded by --grep-invert");
+  });
+  `,
+      );
 
-    expect(existsSync(junitOut)).toBe(true);
-    const junitXml = readFileSync(junitOut, "utf8");
-    expect(junitXml).toContain("Proc Flow A");
-    expect(junitXml).toContain("Proc Flow B");
-    expect(junitXml).toContain('name="tag" value="fast"');
+      versionStdout = (await execFileAsync("bun", [cliEntry, "version"])).stdout;
 
-    // Global hooks ran ONCE in parent process (not once per child process)
-    const hookLines = readFileSync(hookLogFile, "utf8").trim().split("\n");
-    expect(hookLines).toEqual(["beforeAll", "afterAll"]);
-
-    // 1.6 zero-match exits non-zero by default, 0 with --pass-with-no-tests
-    let zeroMatchExitedNonZero = false;
-    try {
-      // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
       await execFileAsync(
         "bun",
-        [cliEntry, "test", "--config", configFile, "--grep", "DOES_NOT_EXIST"],
-        {
-          cwd: workDir,
-        },
+        [
+          cliEntry,
+          "test",
+          "--config",
+          configFile,
+          "--processes",
+          "2",
+          "--grep-invert",
+          "@skipme",
+          "--reporter",
+          `json:${jsonOut}`,
+          "--reporter",
+          `junit:${junitOut}`,
+        ],
+        { cwd: workDir, timeout: 45_000 },
       );
-    } catch {
-      zeroMatchExitedNonZero = true;
-    }
-    expect(zeroMatchExitedNonZero).toBe(true);
 
-    // oxlint-disable-next-line landmines/no-cold-start-in-test -- end-to-end CLI test: running the CLI is the behaviour under test, under this test's own 60 s budget
-    await execFileAsync(
-      "bun",
-      [
-        cliEntry,
-        "test",
-        "--config",
-        configFile,
-        "--grep",
-        "DOES_NOT_EXIST",
-        "--pass-with-no-tests",
-      ],
-      { cwd: workDir },
-    );
-  }, 60_000);
+      zeroMatchError = await execFileAsync(
+        "bun",
+        [cliEntry, "test", "--config", configFile, "--grep", "DOES_NOT_EXIST"],
+        { cwd: workDir },
+      ).then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+
+      passWithNoTestsError = await execFileAsync(
+        "bun",
+        [
+          cliEntry,
+          "test",
+          "--config",
+          configFile,
+          "--grep",
+          "DOES_NOT_EXIST",
+          "--pass-with-no-tests",
+        ],
+        { cwd: workDir },
+      ).then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+    }, 120_000);
+
+    test("3.19 version prints the package version", () => {
+      expect(versionStdout.trim()).toBe(`spana v${pkg.version}`);
+    });
+
+    test("1.2-1.5, 3.11 merges JSON/JUnit reports across processes and respects --grep-invert", () => {
+      const report = JSON.parse(readFileSync(jsonOut, "utf8"));
+      expect(report.total).toBe(2);
+      expect(report.passed).toBe(2);
+      expect(report.failed).toBe(0);
+
+      const junitXml = readFileSync(junitOut, "utf8");
+      expect(junitXml).toContain("Proc Flow A");
+      expect(junitXml).toContain("Proc Flow B");
+      expect(junitXml).toContain('name="tag" value="fast"');
+    });
+
+    test("global hooks run once in the parent process, not once per child", () => {
+      const hookLines = readFileSync(hookLogFile, "utf8").trim().split("\n");
+      expect(hookLines).toEqual(["beforeAll", "afterAll"]);
+    });
+
+    test("1.6 zero-match exits non-zero by default and 0 with --pass-with-no-tests", () => {
+      expect(zeroMatchError).toBeInstanceOf(Error);
+      expect(passWithNoTestsError).toBeUndefined();
+    });
+  });
 });

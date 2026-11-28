@@ -347,7 +347,7 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
     await app.openLink(`${server.url}/headers`);
     bunExpect(await app.getText({ testID: "srv-ua" })).toBe("SpanaCombinedUA/3.0");
     bunExpect((await app.getText({ testID: "srv-al" })).toLowerCase()).toContain("fr-fr");
-  }, 20_000);
+  });
 
   test("2. toPassAccessibilityAudit caches axe-core and skips redundant ~560KB re-injection", async () => {
     await Effect.runPromise(driver.beginFlow!("wave3-axe-cache"));
@@ -376,7 +376,7 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
       bunExpect(String(err)).toContain("Accessibility audit failed");
     }
     bunExpect(failed).toBe(true);
-  }, 20_000);
+  });
 
   test("3. runtime ctx.skip() and flow.skip() skip cleanly on BOTH Direct CDP and Playwright", async () => {
     const cdpEngineConfig: EngineConfig = {
@@ -458,7 +458,7 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
     } finally {
       await Effect.runPromise(pwDriver.killApp("cleanup")).catch(() => {});
     }
-  }, 30_000);
+  });
 
   test("4. Promise-only Direct CDP embedding (createCdpApp & launchDirectCdpPage)", async () => {
     const session = await createCdpApp({
@@ -490,7 +490,7 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
     } finally {
       await pageSession.close();
     }
-  }, 20_000);
+  });
 
   test("5. Mobile viewport/device config validation & includeHidden on count/isChecked/getAttribute", async () => {
     const validated = validateConfig({
@@ -558,7 +558,7 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
     bunExpect(
       await app.getAttribute({ testID: "hidden-chk" }, "data-tag", { includeHidden: true }),
     ).toBe("secret-attr");
-  }, 20_000);
+  });
 
   test("6. Direct CDP httpCredentials, lastNavigationStatus(), and file:// -> https:// route() with CORS OPTIONS", async () => {
     await Effect.runPromise(driver.beginFlow!("wave3-network-auth-cors"));
@@ -636,7 +636,7 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
       timeout: 4_000,
     });
     bunExpect(await app.getText({ testID: "res" })).toBe("ok:mocked-over-cors");
-  }, 25_000);
+  });
 
   test("7. Monotirith fixes: opacity:0/inert, closed select option, evaluate across nav, return keyword, regex upload, half-clipped click, ARIA roles, Set-Cookie domain, child-context screenshot", async () => {
     await Effect.runPromise(driver.beginFlow!("wave3-bolagy-fixes"));
@@ -729,5 +729,5 @@ describe("Wave-3 Zero-Bug Polish & Monotirith Regression Suite", () => {
       const pngBytes = readFileSync(shotAtt.path);
       bunExpect(pngBytes.length).toBeGreaterThan(1000);
     }
-  }, 30_000);
+  });
 });

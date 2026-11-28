@@ -62,16 +62,10 @@ describe("startLocalAppium", () => {
 
     await started.stop();
 
-    // stop() resolves only after the child exited, so the port is already closed
-    try {
-      const check = await fetch(`${started.url}/status`, {
-        signal: AbortSignal.timeout(500),
-      });
-      // If fetch succeeds, the server didn't actually stop
-      expect(check.ok).toBe(false);
-    } catch {
-      // Expected — connection refused or aborted
-    }
+    // stop() resolves only after the child exits, so the port is closed now.
+    await expect(
+      fetch(`${started.url}/status`, { signal: AbortSignal.timeout(500) }),
+    ).rejects.toThrow();
   });
 
   test("stop() is idempotent", async () => {

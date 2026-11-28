@@ -125,14 +125,14 @@ describe("runInitFlowCommand", () => {
 });
 
 describe("scaffolds", () => {
-  test("isFlowStubPreset validates correctly", async () => {
+  test("isFlowStubPreset validates correctly", () => {
     expect(isFlowStubPreset("blank")).toBe(true);
     expect(isFlowStubPreset("smoke")).toBe(true);
     expect(isFlowStubPreset("auth")).toBe(true);
     expect(isFlowStubPreset("unknown")).toBe(false);
   });
 
-  test("isInitPreset validates correctly", async () => {
+  test("isInitPreset validates correctly", () => {
     expect(isInitPreset("local-web")).toBe(true);
     expect(isInitPreset("browserstack")).toBe(true);
     expect(isInitPreset("unknown")).toBe(false);

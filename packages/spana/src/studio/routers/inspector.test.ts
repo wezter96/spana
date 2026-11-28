@@ -1,41 +1,56 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { runWithRecoveredSession } from "./inspector.js";
 
 describe("runWithRecoveredSession", () => {
   test("returns the first successful result without resetting the session", async () => {
-    const resetSession = mock(async () => {});
+    let resets = 0;
 
-    const result = await runWithRecoveredSession(async () => "ok", resetSession);
+    const result = await runWithRecoveredSession(
+      async () => "ok",
+      async () => {
+        resets += 1;
+      },
+    );
 
     expect(result).toBe("ok");
-    expect(resetSession).toHaveBeenCalledTimes(0);
+    expect(resets).toBe(0);
   });
 
   test("retries once after a stale-session failure", async () => {
-    const resetSession = mock(async () => {});
+    let resets = 0;
     let attempts = 0;
 
-    const result = await runWithRecoveredSession(async () => {
-      attempts += 1;
-      if (attempts === 1) {
-        throw new Error("stale session");
-      }
-      return "recovered";
-    }, resetSession);
+    const result = await runWithRecoveredSession(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("stale session");
+        }
+        return "recovered";
+      },
+      async () => {
+        resets += 1;
+      },
+    );
 
     expect(result).toBe("recovered");
-    expect(resetSession).toHaveBeenCalledTimes(1);
+    expect(resets).toBe(1);
   });
 
   test("resets again and rethrows when the retry also fails", async () => {
-    const resetSession = mock(async () => {});
+    let resets = 0;
 
     await expect(
-      runWithRecoveredSession(async () => {
-        throw new Error("still broken");
-      }, resetSession),
+      runWithRecoveredSession(
+        async () => {
+          throw new Error("still broken");
+        },
+        async () => {
+          resets += 1;
+        },
+      ),
     ).rejects.toThrow("still broken");
 
-    expect(resetSession).toHaveBeenCalledTimes(2);
+    expect(resets).toBe(2);
   });
 });

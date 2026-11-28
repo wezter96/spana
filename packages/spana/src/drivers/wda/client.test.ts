@@ -1,35 +1,56 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { WDAClient } from "./client.js";
 
-const originalFetch = globalThis.fetch;
-
-interface FetchResponse {
+interface QueuedResponse {
   status?: number;
   body: unknown;
 }
 
-function queueFetch(responses: FetchResponse[]) {
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
-
-  globalThis.fetch = (async (input, init) => {
-    const response = responses.shift();
-    if (!response) {
-      throw new Error(`Unexpected fetch: ${String(input)}`);
-    }
-
-    calls.push({ url: String(input), init });
-
-    return new Response(
-      typeof response.body === "string" ? response.body : JSON.stringify(response.body),
-      {
-        status: response.status ?? 200,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }) as typeof fetch;
-
-  return calls;
+interface RecordedRequest {
+  method: string;
+  path: string;
+  body: string;
 }
+
+let server: Server;
+let port: number;
+let queue: QueuedResponse[] = [];
+let calls: RecordedRequest[] = [];
+
+beforeAll(async () => {
+  server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push({
+        method: req.method ?? "GET",
+        path: req.url ?? "/",
+        body: Buffer.concat(chunks).toString("utf8"),
+      });
+      const next = queue.shift();
+      if (!next) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ value: { message: `Unexpected request: ${req.url}` } }));
+        return;
+      }
+      res.writeHead(next.status ?? 200, { "Content-Type": "application/json" });
+      res.end(typeof next.body === "string" ? next.body : JSON.stringify(next.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  port = (server.address() as AddressInfo).port;
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+beforeEach(() => {
+  queue = [];
+  calls = [];
+});
 
 async function captureError(action: () => Promise<unknown>): Promise<Error> {
   try {
@@ -40,18 +61,14 @@ async function captureError(action: () => Promise<unknown>): Promise<Error> {
   }
 }
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-});
-
 describe("WDA client", () => {
   test("creates sessions, tracks session state, and decodes screenshots", async () => {
-    const calls = queueFetch([
+    queue.push(
       { body: { sessionId: "session-1", value: {} } },
       { body: { value: Buffer.from([1, 2, 3]).toString("base64") } },
       { body: { value: null } },
-    ]);
-    const client = new WDAClient("127.0.0.1", 8100);
+    );
+    const client = new WDAClient("127.0.0.1", port);
 
     const sessionId = await client.createSession("com.example.app", "accept");
     const screenshot = await client.getScreenshot();
@@ -62,8 +79,8 @@ describe("WDA client", () => {
     expect(client.sessionID()).toBeNull();
     expect(Array.from(screenshot)).toEqual([1, 2, 3]);
 
-    expect(calls[0]?.url).toBe("http://127.0.0.1:8100/session");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    expect(calls[0]?.path).toBe("/session");
+    expect(JSON.parse(calls[0]!.body)).toEqual({
       capabilities: {
         alwaysMatch: {
           shouldWaitForQuiescence: false,
@@ -74,34 +91,31 @@ describe("WDA client", () => {
         },
       },
     });
-    expect(calls[1]?.url).toBe("http://127.0.0.1:8100/session/session-1/screenshot");
-    expect(calls[2]?.url).toBe("http://127.0.0.1:8100/session/session-1");
-    expect(calls[2]?.init?.method).toBe("DELETE");
+    expect(calls[1]?.path).toBe("/session/session-1/screenshot");
+    expect(calls[2]?.path).toBe("/session/session-1");
+    expect(calls[2]?.method).toBe("DELETE");
   });
 
   test("sendKeys preserves grapheme clusters for combined Unicode input", async () => {
-    const calls = queueFetch([
-      { body: { sessionId: "session-3", value: {} } },
-      { body: { value: null } },
-    ]);
-    const client = new WDAClient("127.0.0.1", 8100);
+    queue.push({ body: { sessionId: "session-3", value: {} } }, { body: { value: null } });
+    const client = new WDAClient("127.0.0.1", port);
 
     await client.createSession("com.example.app");
     await client.sendKeys("Hi👨‍👩‍👧‍👦e\u0301");
 
-    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+    expect(JSON.parse(calls[1]!.body)).toEqual({
       value: ["H", "i", "👨‍👩‍👧‍👦", "e\u0301"],
       frequency: 25,
     });
   });
 
   test("surfaces embedded WDA errors and non-OK request failures", async () => {
-    queueFetch([
+    queue.push(
       { body: { value: { sessionId: "session-2" } } },
       { body: { value: { error: "stale element", message: "bad source" } } },
       { status: 500, body: { value: { message: "tap exploded" } } },
-    ]);
-    const client = new WDAClient("localhost", 8100);
+    );
+    const client = new WDAClient("127.0.0.1", port);
 
     await client.createSession("com.example.app");
 
@@ -113,8 +127,8 @@ describe("WDA client", () => {
   });
 
   test("reports parse failures for non-JSON responses", async () => {
-    queueFetch([{ body: "not-json" }]);
-    const client = new WDAClient("localhost", 8100);
+    queue.push({ body: "not-json" });
+    const client = new WDAClient("127.0.0.1", port);
 
     const error = await captureError(() => client.getStatus());
 
@@ -122,7 +136,7 @@ describe("WDA client", () => {
   });
 
   test("fails fast when a session-scoped request is made before a session exists", async () => {
-    const client = new WDAClient("localhost", 8100);
+    const client = new WDAClient("127.0.0.1", port);
 
     const error = await captureError(() => client.getSource());
 

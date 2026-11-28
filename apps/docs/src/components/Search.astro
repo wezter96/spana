@@ -282,8 +282,10 @@ const indexUrl = `${base}/search-index.json`;
         if (dialog.open) return;
         dialog.showModal();
         document.body.toggleAttribute("data-search-modal-open", true);
-        // oxlint-disable-next-line landmines/no-silent-catch -- prefetch only; render() awaits loadIndex again and shows the error
-        void loadIndex(indexUrl).catch(() => {});
+        // Prefetch only; render() awaits loadIndex again and shows the error.
+        void loadIndex(indexUrl).catch((error) => {
+          console.debug("[search] index prefetch failed:", error);
+        });
         input.focus();
         input.select();
         void render();

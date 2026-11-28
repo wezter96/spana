@@ -130,7 +130,7 @@ describeWithChrome("E2E: Video Playback, Cross-Origin Iframe (OOPIF) & engine: a
       await closeServer(server);
       rmSync(outDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  });
 
   it("video: 'retain-on-failure' drops recording on pass and retains playback trace on failure", async () => {
     const outDir = mkdtempSync(join(tmpdir(), "spana-e2e-retain-"));
@@ -203,7 +203,7 @@ describeWithChrome("E2E: Video Playback, Cross-Origin Iframe (OOPIF) & engine: a
       await closeServer(server);
       rmSync(outDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  });
 
   it("interacts with elements inside a real cross-origin iframe (OOPIF) over Direct CDP", async () => {
     const iframeHtml = `<!doctype html><html><body style="margin:0;padding:16px;background:#1e293b;color:#fff;font-family:sans-serif">
@@ -254,7 +254,7 @@ describeWithChrome("E2E: Video Playback, Cross-Origin Iframe (OOPIF) & engine: a
       await closeServer(hostSrv.server);
       await closeServer(iframeSrv.server);
     }
-  }, 30_000);
+  });
 
   it("engine: 'auto' launches Direct CDP via buildWebRuntime and executes a flow end-to-end", async () => {
     const appHtml = `<!doctype html><html><body>
@@ -286,5 +286,5 @@ describeWithChrome("E2E: Video Playback, Cross-Origin Iframe (OOPIF) & engine: a
       await runtime.cleanup();
       await closeServer(server);
     }
-  }, 30_000);
+  });
 });

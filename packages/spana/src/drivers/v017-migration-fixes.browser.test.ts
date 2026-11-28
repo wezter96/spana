@@ -199,7 +199,7 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
       delete process.env.__SPANA_PARENT_SECRET__;
       await started.stopAll();
     }
-  }, 15_000);
+  });
 
   test("covers hover media, focus, pointerdown, fieldset/pressed, split text, scaled/dynamic/sandbox iframes, routes, fresh-mode Collie #12, keys, and instant isVisible", async () => {
     const driver = await Effect.runPromise(
@@ -257,10 +257,12 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
       await exp({ testID: "out" }).toHaveText("vis-0");
       await app.tap(nth({ testID: "dup" }, 1));
       await exp({ testID: "out" }).toHaveText("vis-1");
-      const t0 = performance.now();
-      expect(await app.isVisible({ testID: "nonexistent-fast-check" })).toBe(false);
-      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser perf guard: isVisible on a missing node must not wait for auto-wait
-      expect(performance.now() - t0).toBeLessThan(300);
+      // isVisible must answer from the current DOM instead of auto-waiting: the
+      // element is inserted later, so a waiting implementation would report true.
+      await app.evaluate(
+        "setTimeout(() => { const el = document.createElement('div'); el.dataset.testid = 'late-fast-check'; el.textContent = 'late'; document.body.append(el); }, 3000)",
+      );
+      expect(await app.isVisible({ testID: "late-fast-check" })).toBe(false);
 
       // Keyboard chords + held modifier click
       await app.tap({ testID: "kinput" });
@@ -311,10 +313,8 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
 
       // Flow 2 in fresh mode: MUST NOT hang 10s on Page.navigate!
       await driver.beginFlow?.("v017-flow-2");
-      const navStart = performance.now();
       await app.openLink(primaryUrl);
-      // oxlint-disable-next-line landmines/no-elapsed-time-bound -- real-browser regression guard: fresh-mode Page.navigate must not hang 10 s
-      expect(performance.now() - navStart).toBeLessThan(4000);
+      await exp({ testID: "ua" }).toHaveText(/Mozilla/);
 
       // expect.poll(...).toBeNull() + newContext({ userAgent })
       await exp
@@ -329,7 +329,7 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
     } finally {
       await Effect.runPromise(driver.killApp("test")).catch(() => {});
     }
-  }, 30_000);
+  });
 
   test("launchDirectCdpBrowser succeeds with deep TMPDIR > 108 bytes", async () => {
     const deep = `/tmp/spana-deep-test-${"x".repeat(95)}`;
@@ -346,5 +346,5 @@ describe("v0.17.0 real-world migration fixes — unit & live Direct CDP E2E", ()
       await h?.close().catch(() => {});
       rmSync(deep, { recursive: true, force: true });
     }
-  }, 15_000);
+  });
 });

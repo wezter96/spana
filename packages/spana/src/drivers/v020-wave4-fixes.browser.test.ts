@@ -236,7 +236,7 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
     await app.tap(within(dialog, byRole("button", { name: "Create account" })));
     const submitted = await app.evaluate<string>(`document.body.dataset.submitted || ""`);
     bunExpect(submitted).toBe("yes");
-  }, 20_000);
+  });
 
   test("FIX A2: position:fixed element that is ITSELF scrollable scrolls target checkbox & button into view", async () => {
     await Effect.runPromise(driver.beginFlow!("wave4-fix-a2"));
@@ -249,7 +249,7 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
 
     await app.tap(within(dialog, byRole("button", { name: "Confirm" })));
     bunExpect(await app.evaluate<string>(`document.body.dataset.clicked || ""`)).toBe("ok");
-  }, 20_000);
+  });
 
   test("FIX A3: scrollable position:fixed dialog scrolls target clear of internal sticky footer", async () => {
     await Effect.runPromise(driver.beginFlow!("wave4-fix-a3"));
@@ -258,7 +258,7 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
 
     await app.tap(byRole("button", { name: "Hidden Under Sticky" }));
     bunExpect(await app.evaluate<string>(`document.body.dataset.stickyClicked || ""`)).toBe("yes");
-  }, 20_000);
+  });
 
   test("FIX A4: non-scrollable position:fixed dialog covered by full-viewport overlay remains blocked", async () => {
     await Effect.runPromise(driver.beginFlow!("wave4-fix-a4"));
@@ -273,7 +273,7 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
     }
     bunExpect(failed).toBe(true);
     bunExpect(await app.evaluate<string>(`document.body.dataset.blocked || ""`)).toBe("");
-  }, 20_000);
+  });
 
   test("FIX C: hot-cache dirty-tracking emits ZERO redundant CDP commands on untouched flows & restores mutated state cleanly", async () => {
     // Spy on CDP sendCommand calls on the underlying domChannel
@@ -391,5 +391,5 @@ describe("Wave 4 Fixes — Scrollable Fixed Dialogs & Zero-Overhead Hot-Cache Di
     } finally {
       channel.sendCommand = origSend;
     }
-  }, 30_000);
+  });
 });

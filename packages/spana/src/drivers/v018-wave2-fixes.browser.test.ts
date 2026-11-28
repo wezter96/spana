@@ -273,6 +273,6 @@ describe("v0.18 Wave-2 zero-bug fixes (Direct CDP)", () => {
       } finally {
         await browser.close();
       }
-    }, 30_000);
+    });
   }
 });

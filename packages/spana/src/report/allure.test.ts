@@ -1,20 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createAllureReporter } from "./allure.js";
 import type { FlowResult, RunSummary } from "./types.js";
-
-// Capture real fs functions before any mock.module("node:fs") can replace them.
-// Bun's mock.module leaks across test files, so imports from "node:fs" at the
-// top level may already be replaced by the time these tests run.
-const realFs = { ...require("node:fs") } as typeof import("node:fs");
-const { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync } = realFs;
-
-let importCounter = 0;
-async function importFreshAllure() {
-  importCounter += 1;
-  return (await import(
-    new URL(`./allure.ts?v=${importCounter}`, import.meta.url).href
-  )) as typeof import("./allure.js");
-}
 
 function makeFlowResult(overrides: Partial<FlowResult> = {}): FlowResult {
   return {
@@ -52,27 +41,21 @@ describe("Allure reporter", () => {
   let outputDir: string;
 
   beforeEach(() => {
-    mock.restore();
-    // Re-register real node:fs so fresh allure imports get the real functions
-    mock.module("node:fs", () => realFs);
-    mock.module("node:crypto", () => require("node:crypto"));
-    outputDir = mkdtempSync("/tmp/spana-allure-test-");
+    outputDir = mkdtempSync(join(tmpdir(), "spana-allure-test-"));
   });
 
   afterEach(() => {
     rmSync(outputDir, { recursive: true, force: true });
   });
 
-  it("creates the output directory", async () => {
-    const { createAllureReporter } = await importFreshAllure();
+  it("creates the output directory", () => {
     const nested = join(outputDir, "nested", "allure-results");
     createAllureReporter(nested);
     const files = readdirSync(nested);
     expect(files).toBeDefined();
   });
 
-  it("writes a result file on onFlowPass with correct structure", async () => {
-    const { createAllureReporter } = await importFreshAllure();
+  it("writes a result file on onFlowPass with correct structure", () => {
     const reporter = createAllureReporter(outputDir);
     const result = makeFlowResult();
     reporter.onFlowPass!(result);
@@ -100,8 +83,7 @@ describe("Allure reporter", () => {
     expect(content.steps[1].name).toBe('assertVisible {"text":"Welcome"}');
   });
 
-  it("includes error details on onFlowFail", async () => {
-    const { createAllureReporter } = await importFreshAllure();
+  it("includes error details on onFlowFail", () => {
     const reporter = createAllureReporter(outputDir);
     const result = makeFlowResult({
       status: "failed",
@@ -123,8 +105,7 @@ describe("Allure reporter", () => {
     expect(content.statusDetails.trace).toContain("test.ts:10");
   });
 
-  it("marks flaky tests as passed with flaky tag", async () => {
-    const { createAllureReporter } = await importFreshAllure();
+  it("marks flaky tests as passed with flaky tag", () => {
     const reporter = createAllureReporter(outputDir);
     const result = makeFlowResult({
       status: "passed",
@@ -140,8 +121,7 @@ describe("Allure reporter", () => {
     expect(content.labels).toEqual(expect.arrayContaining([{ name: "tag", value: "flaky" }]));
   });
 
-  it("copies attachments into allure output directory", async () => {
-    const { createAllureReporter } = await importFreshAllure();
+  it("copies attachments into allure output directory", () => {
     const reporter = createAllureReporter(outputDir);
     // Create a fake screenshot file
     const fakePng = join(outputDir, "screenshot.png");
@@ -163,8 +143,7 @@ describe("Allure reporter", () => {
     expect(content.attachments[0].source).toMatch(/-attachment\.png$/);
   });
 
-  it("writes environment.properties on onRunComplete", async () => {
-    const { createAllureReporter } = await importFreshAllure();
+  it("writes environment.properties on onRunComplete", () => {
     const reporter = createAllureReporter(outputDir);
     const results = [makeFlowResult()];
     reporter.onRunComplete(makeSummary(results));

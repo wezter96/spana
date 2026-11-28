@@ -110,25 +110,39 @@ function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
+function processGroupAlive(child: ChildProcess): boolean {
+  const pid = child.pid;
+  if (!pid || process.platform === "win32") return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stop the server and resolve only once the whole process tree is gone, so
+ * the port it held is released by the time callers continue. The shell
+ * wrapper usually exits before the dev server it spawned, so waiting on the
+ * direct child alone is not enough.
+ */
 async function stopChildProcess(child: ChildProcess, gracefulMs: number): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  await new Promise<void>((resolve) => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve();
-    };
-    child.once("exit", finish);
-    child.once("close", finish);
-    killProcessTree(child, "SIGTERM");
-    const timer = setTimeout(() => {
-      killProcessTree(child, "SIGKILL");
-      finish();
-    }, gracefulMs);
-    timer.unref?.();
-  });
+  const treeAlive = () =>
+    (child.exitCode === null && child.signalCode === null) || processGroupAlive(child);
+  const waitForTreeExit = async (ms: number) => {
+    const deadline = Date.now() + ms;
+    while (treeAlive() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+  if (!treeAlive()) return;
+  killProcessTree(child, "SIGTERM");
+  await waitForTreeExit(gracefulMs);
+  if (treeAlive()) {
+    killProcessTree(child, "SIGKILL");
+    await waitForTreeExit(1_000);
+  }
 }
 
 /**

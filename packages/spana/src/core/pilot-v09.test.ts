@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,13 +16,6 @@ import { byRole, filterSelector, isComposableDomSelector, or } from "../schemas/
 import { formatSelector } from "../smart/element-matcher.js";
 import type { TestResult } from "./engine.js";
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 2_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate() && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 const dirs: string[] = [];
 function makeTmpDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -38,6 +31,26 @@ afterEach(() => {
 });
 
 describe("0.9.0 pilot fixes unit coverage", () => {
+  // A harmless sleeper process that stands in for an existing warm daemon (#7).
+  let oldChild: ChildProcess;
+  let oldChildExited: Promise<unknown>;
+
+  beforeAll(() => {
+    oldChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    oldChildExited = new Promise((resolve) => oldChild.once("exit", resolve));
+  });
+
+  afterAll(() => {
+    try {
+      process.kill(-oldChild.pid!, "SIGKILL");
+    } catch {
+      // already dead
+    }
+  });
+
   test("#2: provConfigSchema accepts defaults.actionStableFrames", () => {
     expect(
       provConfigSchema.parse({ defaults: { actionStableFrames: 2 } }).defaults?.actionStableFrames,
@@ -76,87 +89,72 @@ describe("0.9.0 pilot fixes unit coverage", () => {
     const dir = makeTmpDir("spana-daemon-v09-");
     const stateFile = join(dir, "daemons.json");
 
-    // Spawn a harmless dummy sleeper process to simulate an existing daemon for scope-a
-    // oxlint-disable-next-line landmines/no-cold-start-in-test -- spawn() is not awaited; the test only needs a live PID for registerWarmDaemon to kill
-    const oldChild = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
-      detached: true,
-      stdio: "ignore",
-    });
     const oldPid = oldChild.pid!;
     expect(isPidAlive(oldPid)).toBe(true);
 
-    try {
-      registerWarmDaemon(
-        {
-          kind: "chromium",
-          deviceId: "scope-a",
-          host: "127.0.0.1",
-          port: 49101,
-          pid: oldPid,
-          startedAt: new Date(Date.now() - 10_000).toISOString(),
-        },
-        stateFile,
-      );
+    registerWarmDaemon(
+      {
+        kind: "chromium",
+        deviceId: "scope-a",
+        host: "127.0.0.1",
+        port: 49101,
+        pid: oldPid,
+        startedAt: new Date(Date.now() - 10_000).toISOString(),
+      },
+      stateFile,
+    );
 
-      // Re-register same scope with a new PID — old PID must be terminated immediately
-      registerWarmDaemon(
-        {
-          kind: "chromium",
-          deviceId: "scope-a",
-          host: "127.0.0.1",
-          port: 49102,
-          pid: 99999999,
-          startedAt: new Date(Date.now() - 60_000).toISOString(),
-          lastUsedAt: new Date(Date.now() - 60_000).toISOString(),
-        },
-        stateFile,
-      );
+    // Re-register same scope with a new PID — old PID must be terminated immediately
+    registerWarmDaemon(
+      {
+        kind: "chromium",
+        deviceId: "scope-a",
+        host: "127.0.0.1",
+        port: 49102,
+        pid: 99999999,
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        lastUsedAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+      stateFile,
+    );
 
-      // SIGTERM is async; poll until the old daemon is gone instead of guessing how long it takes.
-      await waitUntil(() => !isPidAlive(oldPid));
-      expect(isPidAlive(oldPid)).toBe(false);
+    await oldChildExited;
+    expect(isPidAlive(oldPid)).toBe(false);
 
-      // Idle TTL reaping: expired record returns null from getHealthyWarmDaemon
-      const expired = await getHealthyWarmDaemon("chromium", "scope-a", {
-        stateFile,
-        idleTtlMs: 5_000,
-        fetchFn: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
-      });
-      expect(expired).toBeNull();
+    // Idle TTL reaping: expired record returns null from getHealthyWarmDaemon
+    const expired = await getHealthyWarmDaemon("chromium", "scope-a", {
+      stateFile,
+      idleTtlMs: 5_000,
+      fetchFn: (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch,
+    });
+    expect(expired).toBeNull();
 
-      // reapIdleWarmDaemons reaps old records and keeps fresh ones
-      const now = Date.now();
-      registerWarmDaemon(
-        {
-          kind: "chromium",
-          deviceId: "stale-scope",
-          host: "127.0.0.1",
-          port: 49103,
-          startedAt: new Date(now - 120_000).toISOString(),
-          lastUsedAt: new Date(now - 120_000).toISOString(),
-        },
-        stateFile,
-      );
-      registerWarmDaemon(
-        {
-          kind: "chromium",
-          deviceId: "fresh-scope",
-          host: "127.0.0.1",
-          port: 49104,
-          startedAt: new Date(now - 1_000).toISOString(),
-          lastUsedAt: new Date(now - 1_000).toISOString(),
-        },
-        stateFile,
-      );
-      const reaped = reapIdleWarmDaemons({ stateFile, idleTtlMs: 30_000, nowMs: now });
-      expect(reaped).toBe(1);
-    } finally {
-      try {
-        process.kill(-oldPid, "SIGKILL");
-      } catch {
-        // already dead
-      }
-    }
+    // reapIdleWarmDaemons reaps old records and keeps fresh ones
+    const now = Date.now();
+    registerWarmDaemon(
+      {
+        kind: "chromium",
+        deviceId: "stale-scope",
+        host: "127.0.0.1",
+        port: 49103,
+        startedAt: new Date(now - 120_000).toISOString(),
+        lastUsedAt: new Date(now - 120_000).toISOString(),
+      },
+      stateFile,
+    );
+    registerWarmDaemon(
+      {
+        kind: "chromium",
+        deviceId: "fresh-scope",
+        host: "127.0.0.1",
+        port: 49104,
+        startedAt: new Date(now - 1_000).toISOString(),
+        lastUsedAt: new Date(now - 1_000).toISOString(),
+      },
+      stateFile,
+    );
+    const reaped = reapIdleWarmDaemons({ stateFile, idleTtlMs: 30_000, nowMs: now });
+    expect(reaped).toBe(1);
   });
 
   test("#10: failure bundle includes full steps history and POSIX-quoted reproCommand", () => {

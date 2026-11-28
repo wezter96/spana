@@ -2,23 +2,29 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Reporter } from "./types.js";
 
-export function createJsonReporter(outputPath?: string): Reporter {
+export interface JsonReporterOptions {
+  /** Output writer (defaults to console.log). */
+  write?: (line: string) => void;
+}
+
+export function createJsonReporter(outputPath?: string, options?: JsonReporterOptions): Reporter {
+  const write = options?.write ?? ((line: string) => console.log(line));
   return {
     onFlowPass(result) {
       if (!outputPath) {
-        console.log(JSON.stringify({ event: "flowPass", ...result }));
+        write(JSON.stringify({ event: "flowPass", ...result }));
       }
     },
 
     onFlowFail(result) {
       if (!outputPath) {
-        console.log(JSON.stringify({ event: "flowFail", ...result }));
+        write(JSON.stringify({ event: "flowFail", ...result }));
       }
     },
 
     onFlowSkip(result) {
       if (!outputPath) {
-        console.log(JSON.stringify({ event: "flowSkip", ...result }));
+        write(JSON.stringify({ event: "flowSkip", ...result }));
       }
     },
 
@@ -32,10 +38,10 @@ export function createJsonReporter(outputPath?: string): Reporter {
             : undefined,
         };
         writeFileSync(outputPath, JSON.stringify(serializable, null, 2), "utf-8");
-        console.log(`JSON report written to ${outputPath}`);
+        write(`JSON report written to ${outputPath}`);
         return;
       }
-      console.log(JSON.stringify({ event: "runComplete", ...summary }));
+      write(JSON.stringify({ event: "runComplete", ...summary }));
     },
   };
 }
