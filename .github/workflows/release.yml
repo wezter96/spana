@@ -72,7 +72,7 @@ jobs:
     needs: build-native
     permissions:
       contents: read
-      id-token: write # npm provenance; only the publish job needs it
+      id-token: write # npm trusted publishing (OIDC) + provenance; no NPM_TOKEN needed
     # Pinned: Playwright has no Chromium build for ubuntu-latest (26.04) yet.
     runs-on: ubuntu-24.04
     steps:
@@ -125,12 +125,8 @@ jobs:
       - name: Publish spana-test
         working-directory: packages/spana
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish spana-bridge (optional)
         if: ${{ inputs.publish_bridge == true }}
         working-directory: packages/spana-bridge
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
